@@ -171,25 +171,9 @@ export function SeedProductsClient() {
     setSeeding(true);
     setError(null);
     try {
-      const BATCH_SIZE = 100;
-      let totalInserted = 0;
-      let totalUpdated = 0;
-
-      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-        const batch = rows.slice(i, i + BATCH_SIZE);
-        const res = await seedProducts(batch);
-        totalInserted += res.inserted;
-        totalUpdated += res.updated;
-      }
-
-      setResult({
-        inserted: totalInserted,
-        updated: totalUpdated,
-        total: rows.length,
-      });
-      toast.success(
-        `Done — ${totalInserted} inserted, ${totalUpdated} updated`,
-      );
+      const res = await seedProducts(rows);
+      setResult(res);
+      toast.success(`Done — ${res.total} rows seeded`);
     } catch (e: any) {
       setError(e.message);
       toast.error(e.message);

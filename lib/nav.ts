@@ -9,6 +9,7 @@ import {
   KeyIcon,
   WrenchIcon,
   UserIcon,
+  PackageOpen,
 } from "lucide-react";
 import React from "react";
 
@@ -90,6 +91,18 @@ export const navConfig: NavGroup[] = [
         title: "Create Invoice",
         url: "/dashboard/fulfillment/invoice/create",
         permission: "invoice:create",
+      },
+    ],
+  },
+  {
+    title: "Product",
+    url: "#",
+    icon: React.createElement(PackageOpen),
+    items: [
+      {
+        title: "Product Search",
+        url: "/dashboard/products/search",
+        permission: "product:read",
       },
     ],
   },
