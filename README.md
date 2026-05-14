@@ -1,36 +1,32 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+/auth/login
+/auth/register
 
-## Getting Started
+/dashboard ← overview/home
 
-First, run the development server:
+/dashboard/sales/quotation ← quotation:read
+/dashboard/sales/quotation/create ← quotation:create
+/dashboard/sales/order ← sales-order:read
+/dashboard/sales/order/create ← sales-order:create
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+/dashboard/fulfillment/delivery ← delivery-order:read
+/dashboard/fulfillment/delivery/create ← delivery-order:create
+/dashboard/fulfillment/invoice ← invoice:read
+/dashboard/fulfillment/invoice/create ← invoice:create
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+/dashboard/organization/members ← member:read
+/dashboard/organization/invite ← member:invite
+/dashboard/organization/roles ← organization-role:read (rename from members-settings)
+/dashboard/organization/roles/create ← organization-role:create (rename from create-organization-role)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+/dashboard/admin/permissions ← permission:read
+/dashboard/admin/permissions/create ← permission:create
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Then in a second terminal (keep your pnpm dev running in the first), run:
+bash
 
-## Learn More
+pnpm dlx trigger.dev@latest dev
 
-To learn more about Next.js, take a look at the following resources:
+This connects your local machine to Trigger.dev's cloud so jobs can be picked up and executed. In production you'll deploy with:
+bash
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+pnpm dlx trigger.dev@latest deploy
