@@ -130,6 +130,7 @@ export function SeedProductsClient() {
   const [result, setResult] = useState<SeedResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
+  const [seedProgress, setSeedProgress] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (f: File) => {
@@ -167,15 +168,21 @@ export function SeedProductsClient() {
     if (f) handleFile(f);
   };
 
+  // seed-products-client.tsx — replace handleSeed
   const handleSeed = async () => {
     setSeeding(true);
     setError(null);
+    setSeedProgress(0);
+
     try {
-      const BATCH_SIZE = 200;
+      const BATCH_SIZE = 500; // 500 rows per request — still under 1MB
       let total = 0;
+      const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
 
       for (let i = 0; i < rows.length; i += BATCH_SIZE) {
         const batch = rows.slice(i, i + BATCH_SIZE);
+        const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+
         const res = await fetch("/api/products/seed", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -189,6 +196,7 @@ export function SeedProductsClient() {
 
         const data = await res.json();
         total += data.total;
+        setSeedProgress(Math.round((batchNum / totalBatches) * 100));
       }
 
       setResult({ inserted: total, updated: 0, total });
@@ -198,6 +206,7 @@ export function SeedProductsClient() {
       toast.error(e.message);
     } finally {
       setSeeding(false);
+      setSeedProgress(0);
     }
   };
 
@@ -509,15 +518,32 @@ export function SeedProductsClient() {
               {seeding ? (
                 <>
                   <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  Seeding…
+                  {seedProgress > 0 ? `Seeding… ${seedProgress}%` : "Starting…"}
                 </>
               ) : (
                 <>
                   <DatabaseIcon className="w-3.5 h-3.5" />
-                  Seed {rows.length} rows to database
+                  Seed {rows.length.toLocaleString()} rows to database
                 </>
               )}
             </Button>
+            {seeding && seedProgress > 0 && (
+              <div className="mt-3">
+                <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
+                  <span>
+                    Seeding {rows.length.toLocaleString()} rows in batches of
+                    500
+                  </span>
+                  <span>{seedProgress}%</span>
+                </div>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-300"
+                    style={{ width: `${seedProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
