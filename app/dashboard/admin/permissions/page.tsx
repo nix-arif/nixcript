@@ -8,8 +8,10 @@ import {
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { AllPermissions } from "@/app/dashboard/admin/permissions/permissions-client";
+import { requirePermission } from "@/lib/auth/require-permission";
 
 export default async function PermissionsPage() {
+  await requirePermission("permission:read");
   const session = await auth.api.getSession({ headers: await headers() });
   const activeOrgId = session?.session.activeOrganizationId;
 
