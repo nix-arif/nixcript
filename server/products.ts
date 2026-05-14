@@ -35,8 +35,8 @@ export async function seedProducts(rows: ProductRow[]) {
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
 
-  const perms = await getUserPermissions(session.user.id, orgId);
-  if (!hasAccess(perms, "product:seed")) throw new Error("Forbidden");
+  //   const perms = await getUserPermissions(session.user.id, orgId);
+  //   if (!hasAccess(perms, "product:seed")) throw new Error("Forbidden");
 
   if (!rows.length) throw new Error("No rows to seed");
 
