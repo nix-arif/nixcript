@@ -50,6 +50,12 @@ export const auth = betterAuth({
       },
     },
   },
+  trustedOrigins: [
+    "https://nixcrip.com",
+    "http://localhost:3000",
+    "http://192.168.0.117:3000",
+  ],
+
   database: drizzleAdapter(db, { provider: "pg", schema }),
 
   emailAndPassword: {
