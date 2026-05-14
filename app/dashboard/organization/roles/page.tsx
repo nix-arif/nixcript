@@ -3,8 +3,10 @@ import { headers } from "next/headers";
 import { getRoles, getMemberCountPerRole } from "@/server/roles";
 import { getPermissions } from "@/server/permissions";
 import { RolesClient } from "./roles-client";
+import { requirePermission } from "@/lib/auth/require-permission";
 
 export default async function RolesPage() {
+  await requirePermission("organization-role:create");
   const session = await auth.api.getSession({ headers: await headers() });
   const activeOrgId = session?.session.activeOrganizationId;
 

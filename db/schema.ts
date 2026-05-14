@@ -468,6 +468,58 @@ export const profileRelations = relations(profile, ({ one }) => ({
   }),
 }));
 
+export const product = pgTable(
+  "product",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+
+    // Product details
+    productCode: text("product_code").notNull(),
+    description: text("description"),
+    unitPrice: text("unit_price"),
+    uom: text("uom"),
+    supplier: text("supplier"),
+    brand: text("brand"),
+
+    // Certificate
+    registrationNo: text("registration_no"),
+    pageNo: text("page_no"),
+    validFrom: text("valid_from"),
+    expiredOn: text("expired_on"),
+    pdfFile: text("pdf_file"),
+
+    // Coordinates
+    matchX: text("match_x"),
+    matchY: text("match_y"),
+    rowHeight: text("row_height"),
+    pageWidth: text("page_width"),
+    pageHeight: text("page_height"),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("product_code_org_uidx").on(
+      table.productCode,
+      table.organizationId,
+    ),
+    index("product_org_idx").on(table.organizationId),
+  ],
+);
+
+export const productRelations = relations(product, ({ one }) => ({
+  organization: one(organization, {
+    fields: [product.organizationId],
+    references: [organization.id],
+  }),
+}));
+
 /* =========================
    SCHEMA EXPORT
 ========================= */
@@ -484,6 +536,7 @@ export const schema = {
   team,
   teamMember,
   profile,
+  product,
   userRelations,
   sessionRelations,
   accountRelations,
@@ -499,4 +552,5 @@ export const schema = {
   teamRelations,
   teamMemberRelations,
   profileRelations,
+  productRelations,
 };

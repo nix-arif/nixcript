@@ -36,6 +36,9 @@ export const ALL_PERMISSIONS = [
   { key: "profile:read:all", label: "View All Employee Profiles" },
   { key: "profile:update:all", label: "Update Any Employee Profile" },
   { key: "profile:delete:all", label: "Delete Any Employee Profile" },
+
+  { key: "product:seed", label: "Seed Products" },
+  { key: "product:read", label: "View Products" },
 ] as const;
 
 export type PermissionKey = (typeof ALL_PERMISSIONS)[number]["key"];
@@ -71,6 +74,8 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "profile:update",
     "profile:read:all",
     "profile:update:all",
+    "product:seed",
+    "product:read",
   ],
   member: [
     "quotation:read",
@@ -80,6 +85,7 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "member:read",
     "profile:read",
     "profile:update",
+    "product:read",
   ],
   hr: [
     "member:read",

@@ -3,8 +3,10 @@ import { headers } from "next/headers";
 import { getInvitations, getMemberCount } from "@/server/invitations";
 import { getRoles } from "@/server/roles";
 import { InviteClient } from "./invite-client";
+import { requirePermission } from "@/lib/auth/require-permission";
 
 export default async function InvitePage() {
+  await requirePermission("member:invite");
   const session = await auth.api.getSession({ headers: await headers() });
   const activeOrgId = session?.session.activeOrganizationId;
 

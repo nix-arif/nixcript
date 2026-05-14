@@ -159,6 +159,11 @@ export const navConfig: NavGroup[] = [
         url: "/dashboard/tools/certificate-matcher",
         permission: "permission:read",
       },
+      {
+        title: "Seed Products",
+        url: "/dashboard/tools/seed-products",
+        permission: "product:seed",
+      },
     ],
   },
 ];
