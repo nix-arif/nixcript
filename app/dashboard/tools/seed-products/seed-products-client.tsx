@@ -171,9 +171,28 @@ export function SeedProductsClient() {
     setSeeding(true);
     setError(null);
     try {
-      const res = await seedProducts(rows);
-      setResult(res);
-      toast.success(`Done — ${res.total} rows seeded`);
+      const BATCH_SIZE = 200;
+      let total = 0;
+
+      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        const batch = rows.slice(i, i + BATCH_SIZE);
+        const res = await fetch("/api/products/seed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows: batch }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error ?? "Seed failed");
+        }
+
+        const data = await res.json();
+        total += data.total;
+      }
+
+      setResult({ inserted: total, updated: 0, total });
+      toast.success(`Done — ${total} rows seeded`);
     } catch (e: any) {
       setError(e.message);
       toast.error(e.message);
