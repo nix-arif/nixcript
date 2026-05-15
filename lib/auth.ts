@@ -87,7 +87,6 @@ export const auth = betterAuth({
 
       async sendInvitationEmail(data) {
         const inviteLink = `${baseUrl}/api/accept-invitation/${data.id}`;
-        console.log(inviteLink);
 
         const { data: dataResend, error } = await resend.emails.send({
           from: `${process.env.EMAIL_SENDER_NAME} <${process.env.EMAIL_SENDER_ADDRESS}>`,
@@ -101,9 +100,6 @@ export const auth = betterAuth({
             inviteLink,
           }),
         });
-
-        console.log(dataResend);
-        console.log(error);
       },
     }),
     nextCookies(),

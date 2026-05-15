@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { getDistinctBrands, searchProducts } from "@/server/products";
+import { searchProducts, getDistinctBrands } from "@/server/products";
 import {
   SearchIcon,
   ShieldCheckIcon,
@@ -11,9 +11,10 @@ import {
   ChevronRightIcon,
   XIcon,
   ImageIcon,
+  ExternalLinkIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import Image from "next/image";
+import Link from "next/link";
 
 type Product = Awaited<ReturnType<typeof searchProducts>>[number];
 
@@ -72,23 +73,241 @@ function CertBadge({ status }: { status: "certified" | "expired" | "nocert" }) {
   );
 }
 
+function ProductImage({
+  productCode,
+  className,
+}: {
+  productCode: string;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const [extIndex, setExtIndex] = useState(0);
+  const exts = ["jpg", "jpeg", "png", "webp"];
+  const base = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL;
+
+  if (!base || failed || extIndex >= exts.length) {
+    return (
+      <div
+        className={cn("flex items-center justify-center bg-muted", className)}
+      >
+        <ImageIcon className="w-6 h-6 text-muted-foreground/30" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={`${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}`}
+      alt={productCode}
+      className={cn("object-contain", className)}
+      onError={() => {
+        if (extIndex + 1 < exts.length) setExtIndex((i) => i + 1);
+        else setFailed(true);
+      }}
+    />
+  );
+}
+
+// ── Product detail slide-over ─────────────────────────────────────────────────
+function ProductSlideOver({
+  product: p,
+  onClose,
+}: {
+  product: Product;
+  onClose: () => void;
+}) {
+  const status = getCertStatus(p);
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const DetailRow = ({
+    label,
+    value,
+    mono,
+    link,
+  }: {
+    label: string;
+    value?: string | null;
+    mono?: boolean;
+    link?: boolean;
+  }) => {
+    if (!value) return null;
+    return (
+      <div className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+        <span className="text-xs text-muted-foreground shrink-0">{label}</span>
+        {link ? (
+          <Link
+            href={value}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {value.split("/").pop()} <ExternalLinkIcon className="w-3 h-3" />
+          </Link>
+        ) : (
+          <span
+            className={cn(
+              "text-xs text-right ml-4",
+              mono
+                ? "font-mono text-blue-600 dark:text-blue-400"
+                : "text-foreground",
+            )}
+          >
+            {value}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/40 z-40 transition-opacity"
+        onClick={onClose}
+      />
+
+      {/* Panel */}
+      <div className="fixed right-0 top-0 h-full w-full max-w-lg bg-background border-l border-border z-50 flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 shrink-0">
+          <div className="text-sm font-medium">Product detail</div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted"
+            aria-label="Close"
+          >
+            <XIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto">
+          {/* Product image */}
+          <div className="w-full aspect-square bg-muted border-b border-border overflow-hidden">
+            <ProductImage
+              productCode={p.productCode}
+              className="w-full h-full"
+            />
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* Name + badges */}
+            <div>
+              <div className="font-medium text-sm leading-snug mb-2">
+                {p.description ?? "—"}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-mono text-muted-foreground bg-muted border border-border rounded px-1.5 py-0.5">
+                  {p.productCode}
+                </span>
+                <CertBadge status={status} />
+                {p.brand && (
+                  <span className="text-[10px] text-muted-foreground border border-border rounded px-1.5 py-0.5">
+                    {p.brand}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Price + UOM */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-muted/50 rounded-lg p-3">
+                <div className="text-xs text-muted-foreground mb-1">
+                  Unit price
+                </div>
+                <div className="text-base font-medium">
+                  {p.unitPrice
+                    ? `RM ${Number(p.unitPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+                    : "—"}
+                </div>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-3">
+                <div className="text-xs text-muted-foreground mb-1">UOM</div>
+                <div className="text-base font-medium">{p.uom ?? "—"}</div>
+              </div>
+            </div>
+
+            {/* MDA Certificate */}
+            {(p.registrationNo ||
+              p.validFrom ||
+              p.expiredOn ||
+              p.pdfFile ||
+              p.pageNo) && (
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-muted/40 border-b border-border">
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                    MDA certificate
+                  </span>
+                </div>
+                <div className="px-3 py-1">
+                  <DetailRow
+                    label="Registration no."
+                    value={p.registrationNo}
+                    mono
+                  />
+                  <DetailRow label="Valid from" value={p.validFrom} />
+                  <DetailRow label="Expired on" value={p.expiredOn} />
+                  {status === "expired" && p.expiredOn && (
+                    <div className="py-2 border-b border-border/50">
+                      <span className="text-xs text-red-600 dark:text-red-400">
+                        Certificate has expired
+                      </span>
+                    </div>
+                  )}
+                  <DetailRow label="Page no." value={p.pageNo} />
+                  <DetailRow label="PDF file" value={p.pdfFile} link />
+                </div>
+              </div>
+            )}
+
+            {/* Supplier info */}
+            {(p.supplier || p.brand) && (
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-muted/40 border-b border-border">
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                    Supplier info
+                  </span>
+                </div>
+                <div className="px-3 py-1">
+                  <DetailRow label="Supplier" value={p.supplier} />
+                  <DetailRow label="Brand" value={p.brand} />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Product card ──────────────────────────────────────────────────────────────
 function ProductCard({
   product: p,
   query,
+  onView,
 }: {
   product: Product;
   query: string;
+  onView: (p: Product) => void;
 }) {
   const status = getCertStatus(p);
 
   return (
     <div className="bg-background border border-border rounded-xl p-4 flex items-center gap-4 hover:border-border/80 hover:bg-muted/10 transition-colors">
-      {/* Image */}
-      <div className="w-14 h-14 rounded-lg bg-muted border border-border flex items-center justify-center shrink-0 overflow-hidden">
-        <ProductImage productCode={p.productCode} />
+      <div className="w-14 h-14 rounded-lg bg-muted border border-border overflow-hidden shrink-0">
+        <ProductImage productCode={p.productCode} className="w-full h-full" />
       </div>
 
-      {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1.5 flex-wrap">
           <span className="text-xs font-mono text-foreground bg-muted border border-border rounded px-1.5 py-0.5">
@@ -101,11 +320,9 @@ function ProductCard({
             </span>
           )}
         </div>
-
         <div className="text-sm text-foreground mb-1.5 truncate">
           {highlight(p.description ?? "—", query)}
         </div>
-
         <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
           {p.unitPrice && (
             <span className="font-medium text-foreground">
@@ -154,23 +371,34 @@ function ProductCard({
         </div>
       </div>
 
-      <button className="shrink-0 text-xs text-muted-foreground border border-border rounded-lg px-3 py-1.5 hover:bg-muted/60 transition-colors">
+      <button
+        onClick={() => onView(p)}
+        className="shrink-0 text-xs text-muted-foreground border border-border rounded-lg px-3 py-1.5 hover:bg-muted/60 transition-colors"
+      >
         View
       </button>
     </div>
   );
 }
 
+// ── Main component ────────────────────────────────────────────────────────────
 export function ProductSearch() {
   const [query, setQuery] = useState("");
+  const [brand, setBrand] = useState("");
+  const [brands, setBrands] = useState<string[]>([]);
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [page, setPage] = useState(1);
-  const [brand, setBrand] = useState("");
-  const [brands, setBrands] = useState<string[]>([]);
+  const [selected, setSelected] = useState<Product | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    getDistinctBrands()
+      .then(setBrands)
+      .catch(() => {});
+  }, []);
 
   const doSearch = useCallback(async (q: string, b: string) => {
     if (q.trim().length < 3) {
@@ -200,20 +428,8 @@ export function ProductSearch() {
     };
   }, [query, brand, doSearch]);
 
-  // Fetch distinct brands on mount
-  useEffect(() => {
-    async function loadBrands() {
-      try {
-        const res = await getDistinctBrands();
-        setBrands(res);
-      } catch {}
-    }
-    loadBrands();
-  }, []);
-
   const totalPages = Math.ceil(results.length / PAGE_SIZE);
   const paged = results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
   const certified = results.filter(
     (p) => getCertStatus(p) === "certified",
   ).length;
@@ -221,233 +437,219 @@ export function ProductSearch() {
   const nocert = results.filter((p) => getCertStatus(p) === "nocert").length;
 
   return (
-    <div className="p-6 max-w-3xl">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">Product search</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Search by product code, description, supplier or brand
-        </p>
-      </div>
+    <>
+      <div className="p-6 max-w-3xl">
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold tracking-tight">
+            Product search
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Search by product code, description, supplier or brand
+          </p>
+        </div>
 
-      {/* Search input */}
-      <div className="relative mb-4">
-        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input
-          ref={inputRef}
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Type at least 3 characters to search…"
-          className="w-full h-10 pl-9 pr-24 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          autoFocus
-        />
-        {query && (
-          <button
-            onClick={() => {
-              setQuery("");
-              setResults([]);
-              setSearched(false);
-              inputRef.current?.focus();
-            }}
-            className="absolute right-16 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          >
-            <XIcon className="w-3.5 h-3.5" />
-          </button>
-        )}
-        {searched && (
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-            {loading ? "Searching…" : `${results.length} results`}
-          </span>
-        )}
-      </div>
+        {/* Search input */}
+        <div className="relative mb-3">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Type at least 3 characters to search…"
+            className="w-full h-10 pl-9 pr-24 text-sm bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+            autoFocus
+          />
+          {query && (
+            <button
+              onClick={() => {
+                setQuery("");
+                setResults([]);
+                setSearched(false);
+                inputRef.current?.focus();
+              }}
+              className="absolute right-16 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {searched && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+              {loading ? "Searching…" : `${results.length} results`}
+            </span>
+          )}
+        </div>
 
-      {/* Hint */}
-      {!searched && query.length > 0 && query.length < 3 && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-4">
-          <span>
+        {/* Hint */}
+        {!searched && query.length > 0 && query.length < 3 && (
+          <p className="text-xs text-muted-foreground mb-3">
             {3 - query.length} more character{3 - query.length > 1 ? "s" : ""}{" "}
             needed
-          </span>
-        </div>
-      )}
+          </p>
+        )}
 
-      {/* Brand filter */}
-      {brands.length > 0 && (
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
-          <span className="text-xs text-muted-foreground shrink-0">Brand:</span>
-          <button
-            onClick={() => setBrand("")}
-            className={cn(
-              "text-xs px-2.5 py-1 rounded-full border transition-colors",
-              brand === ""
-                ? "bg-primary text-primary-foreground border-primary"
-                : "border-border text-muted-foreground hover:bg-muted/60",
-            )}
-          >
-            All
-          </button>
-          {brands.map((b) => (
+        {/* Brand filter */}
+        {brands.length > 0 && (
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <span className="text-xs text-muted-foreground shrink-0">
+              Brand:
+            </span>
             <button
-              key={b}
-              onClick={() => setBrand(b === brand ? "" : b)}
+              onClick={() => setBrand("")}
               className={cn(
                 "text-xs px-2.5 py-1 rounded-full border transition-colors",
-                brand === b
+                brand === ""
                   ? "bg-primary text-primary-foreground border-primary"
                   : "border-border text-muted-foreground hover:bg-muted/60",
               )}
             >
-              {b}
+              All
             </button>
-          ))}
-        </div>
-      )}
-
-      {/* Stats row */}
-      {searched && !loading && results.length > 0 && (
-        <div className="flex items-center gap-3 mb-4 flex-wrap">
-          <span className="text-xs text-muted-foreground">
-            Matched in product code, description, supplier or brand for{" "}
-            <span className="font-medium text-foreground">"{query}"</span>
-          </span>
-          <div className="flex items-center gap-2 ml-auto">
-            {certified > 0 && (
-              <span className="text-[10px] bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 rounded px-1.5 py-0.5">
-                {certified} certified
-              </span>
-            )}
-            {expired > 0 && (
-              <span className="text-[10px] bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800 rounded px-1.5 py-0.5">
-                {expired} expired
-              </span>
-            )}
-            {nocert > 0 && (
-              <span className="text-[10px] bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 rounded px-1.5 py-0.5">
-                {nocert} no cert
-              </span>
-            )}
+            {brands.map((b) => (
+              <button
+                key={b}
+                onClick={() => setBrand(b === brand ? "" : b)}
+                className={cn(
+                  "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                  brand === b
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border text-muted-foreground hover:bg-muted/60",
+                )}
+              >
+                {b}
+              </button>
+            ))}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Loading skeleton */}
-      {loading && (
-        <div className="space-y-3">
-          {[1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="bg-background border border-border rounded-xl p-4 flex items-center gap-4 animate-pulse"
-            >
-              <div className="w-14 h-14 rounded-lg bg-muted shrink-0" />
-              <div className="flex-1 space-y-2">
-                <div className="h-3 bg-muted rounded w-24" />
-                <div className="h-3 bg-muted rounded w-48" />
-                <div className="h-3 bg-muted rounded w-36" />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* No results */}
-      {searched && !loading && results.length === 0 && (
-        <div className="text-center py-16 text-muted-foreground">
-          <SearchIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-          <div className="text-sm font-medium">No results for "{query}"</div>
-          <div className="text-xs mt-1">
-            Try a different product code or description
-          </div>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!searched && (
-        <div className="text-center py-16 text-muted-foreground">
-          <SearchIcon className="w-8 h-8 mx-auto mb-3 opacity-20" />
-          <div className="text-sm">Start typing to search products</div>
-          <div className="text-xs mt-1">
-            Searches product code, description, supplier and brand
-          </div>
-        </div>
-      )}
-
-      {/* Results */}
-      {!loading && paged.length > 0 && (
-        <div className="space-y-2">
-          {paged.map((p) => (
-            <ProductCard key={p.id} product={p} query={query} />
-          ))}
-        </div>
-      )}
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-          <span className="text-xs text-muted-foreground">
-            Showing {(page - 1) * PAGE_SIZE + 1}–
-            {Math.min(page * PAGE_SIZE, results.length)} of {results.length}{" "}
-            results
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="flex items-center gap-1 text-xs px-3 py-1.5 border border-border rounded-lg disabled:opacity-40 hover:bg-muted/60 transition-colors"
-            >
-              <ChevronLeftIcon className="w-3.5 h-3.5" /> Previous
-            </button>
-            <span className="text-xs text-muted-foreground px-2">
-              {page} / {totalPages}
+        {/* Stats row */}
+        {searched && !loading && results.length > 0 && (
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <span className="text-xs text-muted-foreground">
+              Results for{" "}
+              <span className="font-medium text-foreground">"{query}"</span>
+              {brand && (
+                <>
+                  {" "}
+                  · brand:{" "}
+                  <span className="font-medium text-foreground">{brand}</span>
+                </>
+              )}
             </span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-              className="flex items-center gap-1 text-xs px-3 py-1.5 bg-foreground text-background rounded-lg disabled:opacity-40 hover:opacity-90 transition-colors"
-            >
-              Next <ChevronRightIcon className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-2 ml-auto">
+              {certified > 0 && (
+                <span className="text-[10px] bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 rounded px-1.5 py-0.5">
+                  {certified} certified
+                </span>
+              )}
+              {expired > 0 && (
+                <span className="text-[10px] bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800 rounded px-1.5 py-0.5">
+                  {expired} expired
+                </span>
+              )}
+              {nocert > 0 && (
+                <span className="text-[10px] bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 rounded px-1.5 py-0.5">
+                  {nocert} no cert
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        )}
 
-function ProductImage({ productCode }: { productCode: string }) {
-  const [failed, setFailed] = useState(false);
-  const base = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL;
+        {/* Loading skeleton */}
+        {loading && (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="bg-background border border-border rounded-xl p-4 flex items-center gap-4 animate-pulse"
+              >
+                <div className="w-14 h-14 rounded-lg bg-muted shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3 bg-muted rounded w-24" />
+                  <div className="h-3 bg-muted rounded w-48" />
+                  <div className="h-3 bg-muted rounded w-36" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
-  // Try common extensions
-  const [extIndex, setExtIndex] = useState(0);
-  const exts = ["jpg", "jpeg", "png", "webp"];
+        {/* No results */}
+        {searched && !loading && results.length === 0 && (
+          <div className="text-center py-16 text-muted-foreground">
+            <SearchIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
+            <div className="text-sm font-medium">No results for "{query}"</div>
+            <div className="text-xs mt-1">
+              Try a different product code or description
+            </div>
+          </div>
+        )}
 
-  console.log(`${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}`);
+        {/* Empty state */}
+        {!searched && (
+          <div className="text-center py-16 text-muted-foreground">
+            <SearchIcon className="w-8 h-8 mx-auto mb-3 opacity-20" />
+            <div className="text-sm">Start typing to search products</div>
+            <div className="text-xs mt-1">
+              Searches product code, description, supplier and brand
+            </div>
+          </div>
+        )}
 
-  if (!base || failed || extIndex >= exts.length) {
-    return (
-      <div className="w-14 h-14 rounded-lg bg-muted border border-border flex items-center justify-center shrink-0">
-        <ImageIcon className="w-5 h-5 text-muted-foreground/40" />
+        {/* Results */}
+        {!loading && paged.length > 0 && (
+          <div className="space-y-2">
+            {paged.map((p) => (
+              <ProductCard
+                key={p.id}
+                product={p}
+                query={query}
+                onView={setSelected}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
+            <span className="text-xs text-muted-foreground">
+              Showing {(page - 1) * PAGE_SIZE + 1}–
+              {Math.min(page * PAGE_SIZE, results.length)} of {results.length}{" "}
+              results
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="flex items-center gap-1 text-xs px-3 py-1.5 border border-border rounded-lg disabled:opacity-40 hover:bg-muted/60 transition-colors"
+              >
+                <ChevronLeftIcon className="w-3.5 h-3.5" /> Previous
+              </button>
+              <span className="text-xs text-muted-foreground px-2">
+                {page} / {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="flex items-center gap-1 text-xs px-3 py-1.5 bg-foreground text-background rounded-lg disabled:opacity-40 hover:opacity-90 transition-colors"
+              >
+                Next <ChevronRightIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
-    );
-  }
 
-  return (
-    <div className="w-14 h-14 rounded-lg bg-muted border border-border overflow-hidden shrink-0">
-      <Image
-        src={`${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}`}
-        alt={productCode}
-        className="w-full h-full object-cover"
-        width={100}
-        height={100}
-        onError={() => {
-          if (extIndex + 1 < exts.length) {
-            setExtIndex(extIndex + 1); // try next extension
-          } else {
-            setFailed(true); // all extensions failed, show placeholder
-          }
-        }}
-      />
-    </div>
+      {/* Slide-over */}
+      {selected && (
+        <ProductSlideOver
+          product={selected}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </>
   );
 }
