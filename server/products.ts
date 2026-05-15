@@ -5,7 +5,7 @@ import { member, product } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { nanoid } from "nanoid";
-import { eq, and, sql, asc, or, ilike } from "drizzle-orm";
+import { eq, and, sql, asc, or, ilike, isNotNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
@@ -87,7 +87,7 @@ export async function seedProducts(rows: ProductRow[]) {
   return { inserted: validRows.length, updated: 0, total: validRows.length };
 }
 
-export async function searchProducts(query: string) {
+export async function searchProducts(query: string, brand?: string) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) throw new Error("Unauthorized");
 
@@ -96,24 +96,33 @@ export async function searchProducts(query: string) {
 
   if (query.trim().length < 3) return [];
 
-  // Read from owner's org — all orgs share the same product data
   const ownerOrgId = await getOwnerOrgId(session.user.id, orgId);
+
+  // Split query into individual words — each word must match somewhere
+  const words = query.trim().split(/\s+/).filter(Boolean);
+
+  // Build a condition per word — each word must appear in at least one column
+  const wordConditions = words.map((word) =>
+    or(
+      ilike(product.productCode, `%${word}%`),
+      ilike(product.description, `%${word}%`),
+      ilike(product.supplier, `%${word}%`),
+      ilike(product.brand, `%${word}%`),
+      ilike(product.registrationNo, `%${word}%`),
+    ),
+  );
+
+  const conditions = [
+    eq(product.organizationId, ownerOrgId),
+    ...wordConditions,
+    // Optional brand filter
+    ...(brand ? [ilike(product.brand, `%${brand}%`)] : []),
+  ];
 
   const rows = await db
     .select()
     .from(product)
-    .where(
-      and(
-        eq(product.organizationId, ownerOrgId),
-        or(
-          ilike(product.productCode, `%${query}%`),
-          ilike(product.description, `%${query}%`),
-          ilike(product.supplier, `%${query}%`),
-          ilike(product.brand, `%${query}%`),
-          ilike(product.registrationNo, `%${query}%`),
-        ),
-      ),
-    )
+    .where(and(...conditions))
     .orderBy(asc(product.productCode))
     .limit(50);
 
@@ -146,28 +155,49 @@ export async function getProducts(page = 1, limit = 50) {
   return { rows, total: Number(count), page, limit };
 }
 
-// Helper to get the owner's organization id
 async function getOwnerOrgId(
   userId: string,
   currentOrgId: string,
 ): Promise<string> {
-  // Check if current user is owner of current org
-  const [currentMember] = await db
-    .select()
-    .from(member)
-    .where(
-      and(eq(member.userId, userId), eq(member.organizationId, currentOrgId)),
-    )
-    .limit(1);
-
-  if (currentMember?.role === "owner") return currentOrgId;
-
-  // Otherwise find the org where this user is owner
+  // Find the owner of the current organization
   const [ownerMember] = await db
     .select()
     .from(member)
-    .where(and(eq(member.userId, userId), eq(member.role, "owner")))
+    .where(
+      and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")),
+    )
     .limit(1);
 
-  return ownerMember?.organizationId ?? currentOrgId;
+  if (!ownerMember) return currentOrgId;
+
+  // Now find the primary org of that owner
+  // (the org where they are owner — could be a different org)
+  const [primaryOrg] = await db
+    .select()
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
+    .orderBy(asc(member.createdAt)) // earliest org = primary org
+    .limit(1);
+
+  return primaryOrg?.organizationId ?? currentOrgId;
+}
+
+export async function getDistinctBrands() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) throw new Error("No active organization");
+
+  const ownerOrgId = await getOwnerOrgId(session.user.id, orgId);
+
+  const rows = await db
+    .selectDistinct({ brand: product.brand })
+    .from(product)
+    .where(
+      and(eq(product.organizationId, ownerOrgId), isNotNull(product.brand)),
+    )
+    .orderBy(asc(product.brand));
+
+  return rows.map((r) => r.brand).filter(Boolean) as string[];
 }

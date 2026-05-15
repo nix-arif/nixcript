@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { searchProducts } from "@/server/products";
+import { getDistinctBrands, searchProducts } from "@/server/products";
 import {
   SearchIcon,
   ShieldCheckIcon,
@@ -167,10 +167,12 @@ export function ProductSearch() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [page, setPage] = useState(1);
+  const [brand, setBrand] = useState("");
+  const [brands, setBrands] = useState<string[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const doSearch = useCallback(async (q: string) => {
+  const doSearch = useCallback(async (q: string, b: string) => {
     if (q.trim().length < 3) {
       setResults([]);
       setSearched(false);
@@ -180,10 +182,10 @@ export function ProductSearch() {
     setLoading(true);
     setSearched(true);
     try {
-      const res = await searchProducts(q.trim());
+      const res = await searchProducts(q.trim(), b || undefined);
       setResults(res);
       setPage(1);
-    } catch (e: any) {
+    } catch {
       setResults([]);
     } finally {
       setLoading(false);
@@ -192,11 +194,22 @@ export function ProductSearch() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => doSearch(query), 400);
+    debounceRef.current = setTimeout(() => doSearch(query, brand), 400);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, doSearch]);
+  }, [query, brand, doSearch]);
+
+  // Fetch distinct brands on mount
+  useEffect(() => {
+    async function loadBrands() {
+      try {
+        const res = await getDistinctBrands();
+        setBrands(res);
+      } catch {}
+    }
+    loadBrands();
+  }, []);
 
   const totalPages = Math.ceil(results.length / PAGE_SIZE);
   const paged = results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -256,6 +269,38 @@ export function ProductSearch() {
             {3 - query.length} more character{3 - query.length > 1 ? "s" : ""}{" "}
             needed
           </span>
+        </div>
+      )}
+
+      {/* Brand filter */}
+      {brands.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <span className="text-xs text-muted-foreground shrink-0">Brand:</span>
+          <button
+            onClick={() => setBrand("")}
+            className={cn(
+              "text-xs px-2.5 py-1 rounded-full border transition-colors",
+              brand === ""
+                ? "bg-primary text-primary-foreground border-primary"
+                : "border-border text-muted-foreground hover:bg-muted/60",
+            )}
+          >
+            All
+          </button>
+          {brands.map((b) => (
+            <button
+              key={b}
+              onClick={() => setBrand(b === brand ? "" : b)}
+              className={cn(
+                "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                brand === b
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "border-border text-muted-foreground hover:bg-muted/60",
+              )}
+            >
+              {b}
+            </button>
+          ))}
         </div>
       )}
 
