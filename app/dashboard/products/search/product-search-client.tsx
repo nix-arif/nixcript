@@ -13,6 +13,7 @@ import {
   ImageIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import Image from "next/image";
 
 type Product = Awaited<ReturnType<typeof searchProducts>>[number];
 
@@ -376,6 +377,8 @@ function ProductImage({ productCode }: { productCode: string }) {
   const [extIndex, setExtIndex] = useState(0);
   const exts = ["jpg", "jpeg", "png", "webp"];
 
+  console.log(`${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}`);
+
   if (!base || failed || extIndex >= exts.length) {
     return (
       <div className="w-14 h-14 rounded-lg bg-muted border border-border flex items-center justify-center shrink-0">
@@ -386,10 +389,12 @@ function ProductImage({ productCode }: { productCode: string }) {
 
   return (
     <div className="w-14 h-14 rounded-lg bg-muted border border-border overflow-hidden shrink-0">
-      <img
+      <Image
         src={`${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}`}
         alt={productCode}
         className="w-full h-full object-cover"
+        width={100}
+        height={100}
         onError={() => {
           if (extIndex + 1 < exts.length) {
             setExtIndex(extIndex + 1); // try next extension
