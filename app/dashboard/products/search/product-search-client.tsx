@@ -84,15 +84,7 @@ function ProductCard({
     <div className="bg-background border border-border rounded-xl p-4 flex items-center gap-4 hover:border-border/80 hover:bg-muted/10 transition-colors">
       {/* Image */}
       <div className="w-14 h-14 rounded-lg bg-muted border border-border flex items-center justify-center shrink-0 overflow-hidden">
-        {p.pdfFile ? (
-          <img
-            src={p.pdfFile}
-            alt={p.productCode}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <ImageIcon className="w-5 h-5 text-muted-foreground/40" />
-        )}
+        <ProductImage productCode={p.productCode} />
       </div>
 
       {/* Content */}
@@ -372,6 +364,40 @@ export function ProductSearch() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ProductImage({ productCode }: { productCode: string }) {
+  const [failed, setFailed] = useState(false);
+  const base = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL;
+
+  // Try common extensions
+  const [extIndex, setExtIndex] = useState(0);
+  const exts = ["jpg", "jpeg", "png", "webp"];
+
+  if (!base || failed || extIndex >= exts.length) {
+    return (
+      <div className="w-14 h-14 rounded-lg bg-muted border border-border flex items-center justify-center shrink-0">
+        <ImageIcon className="w-5 h-5 text-muted-foreground/40" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-14 h-14 rounded-lg bg-muted border border-border overflow-hidden shrink-0">
+      <img
+        src={`${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}`}
+        alt={productCode}
+        className="w-full h-full object-cover"
+        onError={() => {
+          if (extIndex + 1 < exts.length) {
+            setExtIndex(extIndex + 1); // try next extension
+          } else {
+            setFailed(true); // all extensions failed, show placeholder
+          }
+        }}
+      />
     </div>
   );
 }

@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { db } from "@/db";
-import { product } from "@/db/schema";
+import { member, product } from "@/db/schema";
 import { nanoid } from "nanoid";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 export const maxDuration = 60;
 
@@ -13,12 +13,34 @@ export async function POST(req: NextRequest) {
   if (!session)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId)
+  const currentOrgId = session.session.activeOrganizationId;
+  if (!currentOrgId)
     return NextResponse.json(
       { error: "No active organization" },
       { status: 400 },
     );
+
+  // Always seed under owner's org
+  let ownerOrgId = currentOrgId;
+  const [currentMember] = await db
+    .select()
+    .from(member)
+    .where(
+      and(
+        eq(member.userId, session.user.id),
+        eq(member.organizationId, currentOrgId),
+      ),
+    )
+    .limit(1);
+
+  if (currentMember?.role !== "owner") {
+    const [ownerMember] = await db
+      .select()
+      .from(member)
+      .where(and(eq(member.userId, session.user.id), eq(member.role, "owner")))
+      .limit(1);
+    if (ownerMember) ownerOrgId = ownerMember.organizationId;
+  }
 
   try {
     const { rows } = await req.json();
@@ -28,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     const values = validRows.map((row: any) => ({
       id: nanoid(),
-      organizationId: orgId,
+      organizationId: ownerOrgId,
       productCode: row.productCode.trim(),
       description: row.description || null,
       unitPrice: row.unitPrice || null,
