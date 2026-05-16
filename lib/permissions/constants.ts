@@ -1,3 +1,5 @@
+// /lib/permissions/constants
+
 export const ALL_PERMISSIONS = [
   { key: "quotation:read", label: "View Quotations" },
   { key: "quotation:create", label: "Create Quotation" },
@@ -39,6 +41,12 @@ export const ALL_PERMISSIONS = [
 
   { key: "product:seed", label: "Seed Products" },
   { key: "product:read", label: "View Products" },
+
+  { key: "payslip:read:own", label: "View own payslip" },
+  { key: "payslip:read:all", label: "View all payslips" },
+  { key: "payslip:create", label: "Create payslip" },
+  { key: "payslip:approve", label: "Approve payroll period" },
+  { key: "payslip:publish", label: "Publish payslips" },
 ] as const;
 
 export type PermissionKey = (typeof ALL_PERMISSIONS)[number]["key"];
@@ -76,6 +84,10 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "profile:update:all",
     "product:seed",
     "product:read",
+    "payslip:read:all",
+    "payslip:create",
+    "payslip:approve",
+    "payslip:publish",
   ],
   member: [
     "quotation:read",
@@ -86,6 +98,7 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "profile:read",
     "profile:update",
     "product:read",
+    "payslip:read:own",
   ],
   hr: [
     "member:read",
@@ -95,5 +108,9 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "profile:read:all",
     "profile:update:all",
     "profile:delete:all",
+    "payslip:read:all",
+    "payslip:create",
+    "payslip:approve",
+    "payslip:publish",
   ],
 };

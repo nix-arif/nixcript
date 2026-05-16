@@ -10,6 +10,7 @@ import {
   WrenchIcon,
   UserIcon,
   PackageOpen,
+  HardHat,
 } from "lucide-react";
 import React from "react";
 
@@ -104,6 +105,11 @@ export const navConfig: NavGroup[] = [
         url: "/dashboard/products/search",
         permission: "product:read",
       },
+      {
+        title: "Catalogue",
+        url: "/dashboard/products/catalogue",
+        permission: "product:read",
+      },
     ],
   },
   {
@@ -147,6 +153,23 @@ export const navConfig: NavGroup[] = [
         title: "Create Permission",
         url: "/dashboard/admin/permissions/create",
         permission: "permission:create",
+      },
+    ],
+  },
+  {
+    title: "Human Resources",
+    url: "#",
+    icon: React.createElement(HardHat),
+    items: [
+      {
+        title: "Payroll",
+        url: "/dashboard/human-resources/payroll",
+        permission: "payslip:read:all",
+      },
+      {
+        title: "My Payslips",
+        url: "/dashboard/human-resources/payslips",
+        permission: "payslip:read:own",
       },
     ],
   },

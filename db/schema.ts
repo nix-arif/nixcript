@@ -520,6 +520,131 @@ export const productRelations = relations(product, ({ one }) => ({
   }),
 }));
 
+/* ============================================================================================================================================================================================================================================
+   HUMAN RESOURCES TABLE
+=============================================================================================================================================================================================================================================== */
+// Payroll period — e.g. "May 2025"
+export const payrollPeriod = pgTable(
+  "payroll_period",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    month: integer("month").notNull(), // 1-12
+    year: integer("year").notNull(),
+    label: text("label").notNull(), // "May 2025"
+    status: text("status").notNull().default("draft"), // draft | approved | published
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    approvedBy: text("approved_by").references(() => user.id),
+    approvedAt: timestamp("approved_at"),
+    publishedAt: timestamp("published_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("payroll_period_month_year_org_uidx").on(
+      t.organizationId,
+      t.month,
+      t.year,
+    ),
+    index("payroll_period_org_idx").on(t.organizationId),
+  ],
+);
+
+// Individual payslip per employee per period
+export const payslip = pgTable(
+  "payslip",
+  {
+    id: text("id").primaryKey(),
+    periodId: text("period_id")
+      .notNull()
+      .references(() => payrollPeriod.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+
+    // Employment snapshot (in case profile changes later)
+    employeeName: text("employee_name").notNull(),
+    icNumber: text("ic_number"),
+    jobTitle: text("job_title"),
+    department: text("department"),
+    employmentType: text("employment_type"),
+    bankAccountNo: text("bank_account_no"),
+
+    // Earnings
+    basicSalary: text("basic_salary").notNull(),
+    bonus: text("bonus").default("0"),
+    overtimePay: text("overtime_pay").default("0"),
+    allowances: json("allowances")
+      .$type<{ label: string; amount: string }[]>()
+      .default([]),
+
+    // Deductions
+    epfEmployee: text("epf_employee").default("0"), // 11%
+    epfEmployer: text("epf_employer").default("0"), // 13% or 12%
+    socsoEmployee: text("socso_employee").default("0"),
+    socsoEmployer: text("socso_employer").default("0"),
+    eisEmployee: text("eis_employee").default("0"),
+    eisEmployer: text("eis_employer").default("0"),
+    lhdn: text("lhdn").default("0"), // PCB/MTD
+    otherDeductions: json("other_deductions")
+      .$type<{ label: string; amount: string }[]>()
+      .default([]),
+
+    // Computed totals
+    grossPay: text("gross_pay").notNull(),
+    totalDeductions: text("total_deductions").notNull(),
+    netPay: text("net_pay").notNull(),
+
+    // Status
+    status: text("status").notNull().default("draft"), // draft | published
+    pdfUrl: text("pdf_url"), // R2 key after PDF is generated
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("payslip_period_user_uidx").on(t.periodId, t.userId),
+    index("payslip_user_idx").on(t.userId),
+    index("payslip_period_idx").on(t.periodId),
+  ],
+);
+
+export const payrollPeriodRelations = relations(
+  payrollPeriod,
+  ({ one, many }) => ({
+    organization: one(organization, {
+      fields: [payrollPeriod.organizationId],
+      references: [organization.id],
+    }),
+    createdByUser: one(user, {
+      fields: [payrollPeriod.createdBy],
+      references: [user.id],
+    }),
+    payslips: many(payslip),
+  }),
+);
+
+export const payslipRelations = relations(payslip, ({ one }) => ({
+  period: one(payrollPeriod, {
+    fields: [payslip.periodId],
+    references: [payrollPeriod.id],
+  }),
+  user: one(user, { fields: [payslip.userId], references: [user.id] }),
+}));
+
 /* =========================
    SCHEMA EXPORT
 ========================= */
@@ -553,4 +678,9 @@ export const schema = {
   teamMemberRelations,
   profileRelations,
   productRelations,
+  // human resources
+  payrollPeriod,
+  payslip,
+  payrollPeriodRelations,
+  payslipRelations,
 };
