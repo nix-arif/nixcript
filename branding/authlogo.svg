@@ -1,11 +1,31 @@
-<?xml version="1.0"?>
-<svg viewBox="-16 -16 32 32" xmlns="http://www.w3.org/2000/svg">
-<clipPath id="m">
-	<path d="m1-2v12h-2v-12l-15-15v33h32v-33z"/>
-</clipPath>
-<g clip-path="url(#m)">
-<circle r="9"/>
-<circle fill="none" r="13" stroke="#000" stroke-width="4"/>
-</g>
-<circle cy="-10" r="5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 80" width="100%" height="100%">
+  <defs>
+    <!-- Melindungi font geometri bersih jika sistem tidak melangsirkan teks dengan baik -->
+    <style>
+      .brand-text { font-family: 'Inter', 'Plus Jakarta Sans', 'Segoe UI', sans-serif; font-weight: 800; font-size: 52px; fill: #09090b; letter-spacing: -1.5px; }
+      .accent-dot { fill: #10b981; } /* Emerald 500 */
+      .slash-cut { stroke: #f8fafc; stroke-width: 4; } /* Warna pemotong (sesuaikan dengan bg) */
+    </style>
+  </defs>
+
+  <g transform="translate(10, 10)">
+    <!-- Huruf 'n' -->
+    <text x="0" y="50" class="brand-text">n</text>
+    
+    <!-- Huruf 'i' (Tanpa titik asal) -->
+    <text x="32" y="50" class="brand-text">ı</text>
+    <!-- Notch / Titik Segi Empat Tepat -->
+    <rect x="34" y="8" width="8" height="8" rx="1" class="accent-dot" />
+    
+    <!-- Huruf 'x' dengan potongan minimalis -->
+    <!-- Garis \ -->
+    <line x1="56" y1="22" x2="84" y2="50" stroke="#09090b" stroke-width="8" stroke-linecap="round" />
+    <!-- Garis / yang dipotong di tengah -->
+    <line x1="84" y1="22" x2="56" y2="50" stroke="#09090b" stroke-width="8" stroke-linecap="round" />
+    <!-- Ruang kosong pemotong (Slash) -->
+    <circle cx="70" cy="36" r="7" fill="#ffffff" /> 
+    
+    <!-- Huruf 'crip' -->
+    <text x="94" y="50" class="brand-text">crip</text>
+  </g>
 </svg>

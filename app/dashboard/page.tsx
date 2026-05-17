@@ -1,6 +1,7 @@
 import React from "react";
 import { SearchParams } from "next/dist/server/request/search-params";
 import { ShieldOffIcon } from "lucide-react";
+import { ensureProfileExists } from "@/server/profile";
 
 const DashboardPage = async ({
   searchParams,
@@ -8,6 +9,7 @@ const DashboardPage = async ({
   searchParams: Promise<{ error?: string }>;
 }) => {
   const params = await searchParams;
+  await ensureProfileExists(); // ← silently creates profile if missing
   return (
     <div className="min-h-screen flex-1 rounded-xl bg-muted/50 md:min-h-min">
       {params.error === "forbidden" && (

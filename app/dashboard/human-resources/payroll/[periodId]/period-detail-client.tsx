@@ -293,7 +293,8 @@ function PayslipSheet({
                 <SelectContent>
                   {members.map((m) => (
                     <SelectItem key={m.userId} value={m.userId}>
-                      {m.fullname || m.name} — {m.jobTitle || m.role}
+                      {m.fullname || m.name} — {m.email} -{" "}
+                      {m.jobTitle || m.role}
                     </SelectItem>
                   ))}
                 </SelectContent>

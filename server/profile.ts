@@ -76,3 +76,27 @@ export async function uploadBankBook(formData: FormData) {
   await upsertProfile({ bankBookUrl: url });
   return url;
 }
+
+export async function ensureProfileExists() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) return;
+
+  const [existing] = await db
+    .select()
+    .from(profile)
+    .where(eq(profile.userId, session.user.id))
+    .limit(1);
+
+  if (!existing) {
+    await db
+      .insert(profile)
+      .values({
+        id: nanoid(),
+        userId: session.user.id,
+        personalEmail: session.user.email ?? "",
+        pdpaConsent: false,
+        isActive: true,
+      })
+      .onConflictDoNothing();
+  }
+}
