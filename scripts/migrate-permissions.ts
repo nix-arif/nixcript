@@ -50,4 +50,9 @@ export const ALL_PERMISSIONS = [
   { key: "organization-profile:update", label: "Organization Profile Update" },
   { key: "organization-profile:read", label: "Organization Profile Read" },
   { key: "organization-profile:delete", label: "Organization Profile Delete" },
+
+  { key: "customer:create", label: "Create customer" },
+  { key: "customer:read", label: "View customers" },
+  { key: "customer:update", label: "Edit customer" },
+  { key: "customer:delete", label: "Delete customer" },
 ] as const;

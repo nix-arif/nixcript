@@ -47,6 +47,11 @@ export const navConfig: NavGroup[] = [
     icon: React.createElement(ShoppingCartIcon),
     items: [
       {
+        title: "Customers",
+        url: "/dashboard/sales/customer",
+        permission: "customer:read",
+      },
+      {
         title: "Quotations",
         url: "/dashboard/sales/quotation",
         permission: "quotation:read",

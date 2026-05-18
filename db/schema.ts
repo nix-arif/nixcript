@@ -593,6 +593,44 @@ export const organizationProfileRelations = relations(
   }),
 );
 
+export const customer = pgTable(
+  "customer",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    title: text("title"), // Dr, Mr, Ms, Mdm, Prof
+    name: text("name").notNull(),
+    organizationName: text("organization_name"),
+    organizationAddress: text("organization_address"),
+    position: text("position"), // ← rename from department
+    department: text("department"), // ← keep as separate field
+    contactNo: text("contact_no"), // ← add
+    email: text("email"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [index("customer_org_idx").on(t.organizationId)],
+);
+
+export const customerRelations = relations(customer, ({ one }) => ({
+  organization: one(organization, {
+    fields: [customer.organizationId],
+    references: [organization.id],
+  }),
+  createdByUser: one(user, {
+    fields: [customer.createdBy],
+    references: [user.id],
+  }),
+}));
+
 /* ============================================================================================================================================================================================================================================
    HUMAN RESOURCES TABLE
 =============================================================================================================================================================================================================================================== */
@@ -760,4 +798,6 @@ export const schema = {
   payslipRelations,
   organizationProfile,
   organizationProfileRelations,
+  customer,
+  customerRelations,
 };
