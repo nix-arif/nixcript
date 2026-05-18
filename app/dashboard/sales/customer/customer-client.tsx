@@ -39,7 +39,18 @@ import { cn } from "@/lib/utils";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
-const TITLES = ["Dr", "Mr", "Ms", "Mdm", "Prof", "Dato", "Datin", "Tan Sri"];
+const TITLES = [
+  "Dr",
+  "Matron",
+  "Sr",
+  "Mr",
+  "Ms",
+  "Mdm",
+  "Prof",
+  "Dato",
+  "Datin",
+  "Tan Sri",
+];
 
 const AVATAR_COLORS = [
   "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400",
