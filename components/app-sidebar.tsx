@@ -17,11 +17,11 @@ import { FrameIcon, PieChartIcon, MapIcon } from "lucide-react";
 import { filterNav, navConfig } from "@/lib/nav";
 import { useAppStore } from "@/lib/store/use-app-store";
 
-const projects = [
-  { name: "Design Engineering", url: "#", icon: <FrameIcon /> },
-  { name: "Sales & Marketing", url: "#", icon: <PieChartIcon /> },
-  { name: "Travel", url: "#", icon: <MapIcon /> },
-];
+// const projects = [
+//   { name: "Design Engineering", url: "#", icon: <FrameIcon /> },
+//   { name: "Sales & Marketing", url: "#", icon: <PieChartIcon /> },
+//   { name: "Travel", url: "#", icon: <MapIcon /> },
+// ];
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { permissions } = useAppStore();
@@ -37,7 +37,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={filteredNav} />
-        <NavProjects projects={projects} />
+        {/* <NavProjects projects={projects} /> */}
       </SidebarContent>
       <SidebarFooter>
         <NavUser />
