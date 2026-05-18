@@ -1,7 +1,9 @@
-import React from "react";
+import { requirePermission } from "@/lib/auth/require-permission";
+import { getQuotations } from "@/server/quotation";
+import { QuotationListClient } from "./quotation-list-client";
 
-const Page = () => {
-  return <div>From Sales</div>;
-};
-
-export default Page;
+export default async function QuotationPage() {
+  await requirePermission("quotation:read");
+  const quotations = await getQuotations();
+  return <QuotationListClient initialQuotations={quotations} />;
+}

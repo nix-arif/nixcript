@@ -57,6 +57,11 @@ export const ALL_PERMISSIONS = [
   { key: "customer:read", label: "View customers" },
   { key: "customer:update", label: "Edit customer" },
   { key: "customer:delete", label: "Delete customer" },
+
+  { key: "quotation:create", label: "Create quotation" },
+  { key: "quotation:read", label: "View quotations" },
+  { key: "quotation:update", label: "Edit quotation" },
+  { key: "quotation:delete", label: "Delete quotation" },
 ] as const;
 
 export type PermissionKey = (typeof ALL_PERMISSIONS)[number]["key"];
@@ -102,6 +107,10 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "customer:read",
     "customer:update",
     "customer:delete",
+    "quotation:create",
+    "quotation:read",
+    "quotation:update",
+    "quotation:delete",
   ],
   member: [
     "quotation:read",
@@ -114,6 +123,9 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "product:read",
     "payslip:read:own",
     "customer:read",
+    "quotation:create",
+    "quotation:read",
+    "quotation:update",
   ],
   hr: [
     "member:read",
@@ -127,5 +139,6 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "payslip:create",
     "payslip:approve",
     "payslip:publish",
+    "quotation:read",
   ],
 };

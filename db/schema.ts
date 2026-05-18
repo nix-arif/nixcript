@@ -489,18 +489,18 @@ export const product = pgTable(
     brand: text("brand"),
 
     // Certificate
-    registrationNo: text("registration_no"),
-    pageNo: text("page_no"),
-    validFrom: text("valid_from"),
-    expiredOn: text("expired_on"),
-    pdfFile: text("pdf_file"),
+    mdaRegistrationNo: text("mda_registration_no"),
+    mdaPageNo: text("page_no"),
+    mdaValidFrom: timestamp("mda_valid_from"),
+    mdaExpiredOn: text("mda_expired_on"),
+    mdaPdfFile: text("mda_pdf_file"),
 
     // Coordinates
-    matchX: text("match_x"),
-    matchY: text("match_y"),
-    rowHeight: text("row_height"),
-    pageWidth: text("page_width"),
-    pageHeight: text("page_height"),
+    mdaMatchX: text("mda_match_x"),
+    mdaMatchY: text("mda_match_y"),
+    mdaRowHeight: text("mda_row_height"),
+    mdaPageWidth: text("mda_page_width"),
+    mdaPageHeight: text("mda_page_height"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
@@ -628,6 +628,160 @@ export const customerRelations = relations(customer, ({ one }) => ({
   createdByUser: one(user, {
     fields: [customer.createdBy],
     references: [user.id],
+  }),
+}));
+
+/* ============================================================================================================================================================================================================================================
+   QUOTATION TABLE
+=============================================================================================================================================================================================================================================== */
+
+// ── Quotation ──────────────────────────────────────────────────────────────
+export const quotation = pgTable(
+  "quotation",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+
+    // Running number
+    quotationNo: text("quotation_no").notNull(), // e.g. BMS-QT-2025-0001
+
+    // Mode
+    mode: text("mode").notNull().default("single"), // single | comparison
+
+    // Customer
+    customerId: text("customer_id").references(() => customer.id),
+    customerSnapshot: json("customer_snapshot").$type<{
+      title?: string;
+      name: string;
+      position?: string;
+      department?: string;
+      email?: string;
+      contactNo?: string;
+      organizationName?: string;
+      organizationAddress?: string;
+    }>(),
+
+    // Sales metadata
+    salesPersonId: text("sales_person_id").references(() => user.id),
+    salesPersonName: text("sales_person_name"),
+    preparedById: text("prepared_by_id").references(() => user.id),
+    preparedByName: text("prepared_by_name"),
+    validUntil: timestamp("valid_until"),
+    notes: text("notes"),
+
+    // Pricing
+    subtotal: text("subtotal").notNull().default("0"),
+    overallDiscountPct: text("overall_discount_pct").default("0"),
+    overallDiscountAmt: text("overall_discount_amt").default("0"),
+    sst: text("sst").default("0"),
+    sstPct: text("sst_pct").default("0"),
+    grandTotal: text("grand_total").notNull().default("0"),
+
+    // Options
+    includeCatalogue: integer("include_catalogue").notNull().default(1),
+    includeMdaCerts: integer("include_mda_certs").notNull().default(1),
+    showUnitPrice: integer("show_unit_price").notNull().default(0),
+    showTotalPrice: integer("show_total_price").notNull().default(1),
+
+    // Status
+    status: text("status").notNull().default("draft"), // draft | final
+
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("quotation_no_org_uidx").on(t.organizationId, t.quotationNo),
+    index("quotation_org_idx").on(t.organizationId),
+  ],
+);
+
+// ── Quotation items ────────────────────────────────────────────────────────
+export const quotationItem = pgTable(
+  "quotation_item",
+  {
+    id: text("id").primaryKey(),
+    quotationId: text("quotation_id")
+      .notNull()
+      .references(() => quotation.id, { onDelete: "cascade" }),
+
+    // Spreadsheet row data
+    rowNo: integer("row_no").notNull(),
+    sku: text("sku"),
+    productCode: text("product_code"),
+    description: text("description"),
+    qty: text("qty").notNull().default("1"),
+    uom: text("uom"),
+    unitPrice: text("unit_price").default("0"),
+    discountPct: text("discount_pct").default("0"),
+    discountAmt: text("discount_amt").default("0"),
+    totalPrice: text("total_price").default("0"),
+
+    // From product DB
+    productId: text("product_id"),
+    productName: text("product_name"),
+    mdaRegNo: text("mda_reg_no"),
+    mdaValidity: text("mda_validity"),
+    hasCert: integer("has_cert").default(0),
+    hasPrice: integer("has_price").default(0),
+
+    // Source flags — which columns came from spreadsheet vs DB
+    descriptionSource: text("description_source").default("db"), // db | sheet
+    priceSource: text("price_source").default("db"), // db | sheet
+    uomSource: text("uom_source").default("db"), // db | sheet
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("quotation_item_quotation_idx").on(t.quotationId)],
+);
+
+// ── Quotation running number counter ──────────────────────────────────────
+export const quotationCounter = pgTable("quotation_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// Relations
+export const quotationRelations = relations(quotation, ({ one, many }) => ({
+  organization: one(organization, {
+    fields: [quotation.organizationId],
+    references: [organization.id],
+  }),
+  customer: one(customer, {
+    fields: [quotation.customerId],
+    references: [customer.id],
+  }),
+  createdByUser: one(user, {
+    fields: [quotation.createdBy],
+    references: [user.id],
+  }),
+  salesPerson: one(user, {
+    fields: [quotation.salesPersonId],
+    references: [user.id],
+  }),
+  items: many(quotationItem),
+}));
+
+export const quotationItemRelations = relations(quotationItem, ({ one }) => ({
+  quotation: one(quotation, {
+    fields: [quotationItem.quotationId],
+    references: [quotation.id],
   }),
 }));
 
@@ -800,4 +954,9 @@ export const schema = {
   organizationProfileRelations,
   customer,
   customerRelations,
+  quotation,
+  quotationItem,
+  quotationCounter,
+  quotationRelations,
+  quotationItemRelations,
 };
