@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   upsertOrganizationProfile,
@@ -9,8 +10,16 @@ import {
   getPresignedUrl,
   removeOrgCertificate,
 } from "@/server/organization-profile";
+import { FullOrganizationProfile } from "@/server/organization-profile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   SaveIcon,
   UploadIcon,
@@ -20,28 +29,71 @@ import {
   EyeIcon,
   BuildingIcon,
   XIcon,
+  StarIcon,
 } from "lucide-react";
+import { nanoid } from "nanoid";
 import { cn } from "@/lib/utils";
-import { getOrganizationWithProfile } from "@/server/organization-profile";
-import { useRouter } from "next/navigation";
 
-type Org = Awaited<ReturnType<typeof getOrganizationWithProfile>>["org"];
-type Profile = Awaited<
-  ReturnType<typeof getOrganizationWithProfile>
->["profile"];
-type CertField = "ssmCertUrl" | "taxCertUrl" | "mofCertUrl" | "pkkCertUrl";
+type CertField =
+  | "ssmCertUrl"
+  | "taxCertUrl"
+  | "mofCertUrl"
+  | "pkkCertUrl"
+  | "mdaCertUrl";
 
-interface WarehouseAddress {
-  label: string;
-  address: string;
+interface BankEntry {
+  id: string;
+  bankName: string;
+  accountHolder: string;
+  accountNo: string;
+  accountType: string;
+  swiftCode: string;
+  isPrimary: boolean;
 }
 
 interface Props {
-  org: Org;
-  profile: Profile;
+  data: FullOrganizationProfile;
 }
 
-// ── Certificate upload row ─────────────────────────────────────────────────
+// ── Module-level components ────────────────────────────────────────────────
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function SectionHeader({
+  icon: Icon,
+  title,
+  action,
+}: {
+  icon: any;
+  title: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="px-4 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+        <div className="text-xs font-medium">{title}</div>
+      </div>
+      {action}
+    </div>
+  );
+}
+
 function CertRow({
   label,
   field,
@@ -60,7 +112,6 @@ function CertRow({
   uploading: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-
   const filename = currentKey
     ? (currentKey.split("/").pop() ?? currentKey)
     : null;
@@ -72,7 +123,7 @@ function CertRow({
         <div className="min-w-0">
           <div className="text-xs font-medium truncate">{label}</div>
           <div className="text-[11px] text-muted-foreground truncate">
-            {filename ? filename : "Not uploaded"}
+            {filename ?? "Not uploaded"}
           </div>
         </div>
       </div>
@@ -136,71 +187,60 @@ function CertRow({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-function SectionHeader({ icon: Icon, title }: { icon: any; title: string }) {
-  return (
-    <div className="px-4 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
-      <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-      <div className="text-xs font-medium">{title}</div>
-    </div>
-  );
-}
-
 // ── Main ───────────────────────────────────────────────────────────────────
-export function OrganizationProfileClient({ org, profile }: Props) {
+export function OrganizationProfileClient({ data }: Props) {
+  const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingCert, setUploadingCert] = useState<CertField | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
-  // Form state
-  const [companyName, setCompanyName] = useState(
-    profile?.companyName ?? org.name ?? "",
-  );
+  // Company identity
+  const [companyName, setCompanyName] = useState(data.companyName ?? "");
   const [companyAddress, setCompanyAddress] = useState(
-    profile?.companyAddress ?? "",
+    data.companyAddress ?? "",
   );
-  const [oldSsmNo, setOldSsmNo] = useState(profile?.oldSsmNo ?? "");
-  const [newSsmNo, setNewSsmNo] = useState(profile?.newSsmNo ?? "");
-  const [taxNo, setTaxNo] = useState(profile?.taxNo ?? "");
-  const [mofNo, setMofNo] = useState(profile?.mofNo ?? "");
-  const [mofValidity, setMofValidity] = useState(profile?.mofValidity ?? "");
-  const [pkkNo, setPkkNo] = useState(profile?.pkkNo ?? "");
-  const [warehouseAddresses, setWarehouseAddresses] = useState<
-    WarehouseAddress[]
-  >((profile?.warehouseAddresses as WarehouseAddress[]) ?? []);
+  const [logoUrl, setLogoUrl] = useState(data.logo);
+
+  // Registration & tax
+  const [oldSsmNo, setOldSsmNo] = useState(data.oldSsmNo ?? "");
+  const [newSsmNo, setNewSsmNo] = useState(data.newSsmNo ?? "");
+  const [taxNo, setTaxNo] = useState(data.taxNo ?? "");
+
+  // MOF & PKK
+  const [mofNo, setMofNo] = useState(data.mofNo ?? "");
+  const [mofValidity, setMofValidity] = useState(data.mofValidity ?? "");
+  const [pkkNo, setPkkNo] = useState(data.pkkNo ?? "");
+
+  // MDA
+  const [mdaEstablishmentNo, setMdaEstablishmentNo] = useState(
+    data.mdaEstablishmentNo ?? "",
+  );
+  const [mdaEstablishmentValidity, setMdaEstablishmentValidity] = useState(
+    data.mdaEstablishmentValidity ?? "",
+  );
+
+  // Warehouse
+  const [warehouseAddresses, setWarehouseAddresses] = useState(
+    data.warehouseAddresses,
+  );
+
+  // Banking
+  const [bankingInfo, setBankingInfo] = useState<BankEntry[]>(data.bankingInfo);
 
   // Certificate keys
-  const [ssmCertUrl, setSsmCertUrl] = useState(profile?.ssmCertUrl ?? null);
-  const [taxCertUrl, setTaxCertUrl] = useState(profile?.taxCertUrl ?? null);
-  const [mofCertUrl, setMofCertUrl] = useState(profile?.mofCertUrl ?? null);
-  const [pkkCertUrl, setPkkCertUrl] = useState(profile?.pkkCertUrl ?? null);
-  const router = useRouter();
-
-  // Logo
-  const [logoUrl, setLogoUrl] = useState(org.logo ?? null);
+  const [ssmCertUrl, setSsmCertUrl] = useState(data.ssmCertKey);
+  const [taxCertUrl, setTaxCertUrl] = useState(data.taxCertKey);
+  const [mofCertUrl, setMofCertUrl] = useState(data.mofCertKey);
+  const [pkkCertUrl, setPkkCertUrl] = useState(data.pkkCertKey);
+  const [mdaCertUrl, setMdaCertUrl] = useState(data.mdaCertKey);
 
   const certSetters: Record<CertField, (v: string | null) => void> = {
     ssmCertUrl: setSsmCertUrl,
     taxCertUrl: setTaxCertUrl,
     mofCertUrl: setMofCertUrl,
     pkkCertUrl: setPkkCertUrl,
+    mdaCertUrl: setMdaCertUrl,
   };
 
   const certValues: Record<CertField, string | null> = {
@@ -208,6 +248,7 @@ export function OrganizationProfileClient({ org, profile }: Props) {
     taxCertUrl,
     mofCertUrl,
     pkkCertUrl,
+    mdaCertUrl,
   };
 
   const handleViewCert = async (key: string) => {
@@ -239,7 +280,7 @@ export function OrganizationProfileClient({ org, profile }: Props) {
       const url = await uploadOrganizationLogo(formData);
       setLogoUrl(url);
       toast.success("Logo updated");
-      router.refresh(); // ← refresh to reflect logo change in switcher
+      router.refresh();
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -260,10 +301,13 @@ export function OrganizationProfileClient({ org, profile }: Props) {
         mofNo,
         mofValidity,
         pkkNo,
+        mdaEstablishmentNo,
+        mdaEstablishmentValidity,
         warehouseAddresses,
+        bankingInfo,
       });
       toast.success("Organization profile saved");
-      router.refresh(); // ← refresh to reflect name change in switcher
+      router.refresh();
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -271,22 +315,58 @@ export function OrganizationProfileClient({ org, profile }: Props) {
     }
   };
 
+  // ── Warehouse handlers ───────────────────────────────────────────────────
   const addWarehouse = () =>
-    setWarehouseAddresses((prev) => [...prev, { label: "", address: "" }]);
+    setWarehouseAddresses((p) => [...p, { label: "", address: "" }]);
 
   const updateWarehouse = (
     i: number,
-    key: keyof WarehouseAddress,
+    key: "label" | "address",
     value: string,
   ) =>
-    setWarehouseAddresses((prev) => {
-      const n = [...prev];
+    setWarehouseAddresses((p) => {
+      const n = [...p];
       n[i] = { ...n[i], [key]: value };
       return n;
     });
 
   const removeWarehouse = (i: number) =>
-    setWarehouseAddresses((prev) => prev.filter((_, idx) => idx !== i));
+    setWarehouseAddresses((p) => p.filter((_, idx) => idx !== i));
+
+  // ── Banking handlers ─────────────────────────────────────────────────────
+  const addBank = () =>
+    setBankingInfo((p) => [
+      ...p,
+      {
+        id: nanoid(),
+        bankName: "",
+        accountHolder: "",
+        accountNo: "",
+        accountType: "current",
+        swiftCode: "",
+        isPrimary: p.length === 0, // first bank is primary
+      },
+    ]);
+
+  const updateBank = (i: number, key: keyof BankEntry, value: any) =>
+    setBankingInfo((p) => {
+      const n = [...p];
+      n[i] = { ...n[i], [key]: value };
+      return n;
+    });
+
+  const setPrimaryBank = (i: number) =>
+    setBankingInfo((p) => p.map((b, idx) => ({ ...b, isPrimary: idx === i })));
+
+  const removeBank = (i: number) =>
+    setBankingInfo((p) => {
+      const filtered = p.filter((_, idx) => idx !== i);
+      // If removed was primary, set first as primary
+      if (p[i].isPrimary && filtered.length > 0) {
+        filtered[0].isPrimary = true;
+      }
+      return filtered;
+    });
 
   return (
     <div className="p-6 max-w-5xl">
@@ -311,11 +391,10 @@ export function OrganizationProfileClient({ org, profile }: Props) {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        {/* Company identity */}
+        {/* ── Company identity ─────────────────────────────────────────── */}
         <div className="bg-background border border-border rounded-xl overflow-hidden">
           <SectionHeader icon={BuildingIcon} title="Company identity" />
           <div className="p-4 space-y-4">
-            {/* Logo */}
             <div className="flex items-center gap-4 pb-4 border-b border-border">
               <div className="w-16 h-16 rounded-lg border border-border bg-muted/30 flex items-center justify-center shrink-0 overflow-hidden">
                 {logoUrl ? (
@@ -356,7 +435,6 @@ export function OrganizationProfileClient({ org, profile }: Props) {
                 />
               </div>
             </div>
-
             <Field label="Company name">
               <Input
                 value={companyName}
@@ -365,7 +443,6 @@ export function OrganizationProfileClient({ org, profile }: Props) {
                 className="h-9 text-sm"
               />
             </Field>
-
             <Field label="Company address">
               <textarea
                 value={companyAddress}
@@ -378,7 +455,7 @@ export function OrganizationProfileClient({ org, profile }: Props) {
           </div>
         </div>
 
-        {/* Registration & Tax */}
+        {/* ── Registration & Tax ───────────────────────────────────────── */}
         <div className="bg-background border border-border rounded-xl overflow-hidden">
           <SectionHeader icon={FileTextIcon} title="Registration & tax" />
           <div className="p-4 space-y-4">
@@ -387,7 +464,7 @@ export function OrganizationProfileClient({ org, profile }: Props) {
                 <Input
                   value={oldSsmNo}
                   onChange={(e) => setOldSsmNo(e.target.value)}
-                  placeholder="e.g. 123456-X"
+                  placeholder="123456-X"
                   className="h-9 text-sm"
                 />
               </Field>
@@ -395,12 +472,11 @@ export function OrganizationProfileClient({ org, profile }: Props) {
                 <Input
                   value={newSsmNo}
                   onChange={(e) => setNewSsmNo(e.target.value)}
-                  placeholder="e.g. 202301234567"
+                  placeholder="202301234567"
                   className="h-9 text-sm"
                 />
               </Field>
             </div>
-
             <CertRow
               label="SSM Certificate"
               field="ssmCertUrl"
@@ -413,16 +489,14 @@ export function OrganizationProfileClient({ org, profile }: Props) {
               onRemove={() => handleRemoveCert("ssmCertUrl")}
               onView={() => ssmCertUrl && handleViewCert(ssmCertUrl)}
             />
-
             <Field label="Tax No. / TIN">
               <Input
                 value={taxNo}
                 onChange={(e) => setTaxNo(e.target.value)}
-                placeholder="e.g. C1234567890"
+                placeholder="C1234567890"
                 className="h-9 text-sm"
               />
             </Field>
-
             <CertRow
               label="Tax Certificate"
               field="taxCertUrl"
@@ -438,7 +512,7 @@ export function OrganizationProfileClient({ org, profile }: Props) {
           </div>
         </div>
 
-        {/* MOF & PKK */}
+        {/* ── MOF & PKK ────────────────────────────────────────────────── */}
         <div className="bg-background border border-border rounded-xl overflow-hidden">
           <SectionHeader icon={FileTextIcon} title="MOF & PKK" />
           <div className="p-4 space-y-4">
@@ -446,11 +520,10 @@ export function OrganizationProfileClient({ org, profile }: Props) {
               <Input
                 value={mofNo}
                 onChange={(e) => setMofNo(e.target.value)}
-                placeholder="e.g. MOF/123/2024"
+                placeholder="MOF/123/2024"
                 className="h-9 text-sm"
               />
             </Field>
-
             <Field label="MOF validity">
               <Input
                 type="date"
@@ -459,7 +532,6 @@ export function OrganizationProfileClient({ org, profile }: Props) {
                 className="h-9 text-sm"
               />
             </Field>
-
             <CertRow
               label="MOF Certificate"
               field="mofCertUrl"
@@ -472,16 +544,14 @@ export function OrganizationProfileClient({ org, profile }: Props) {
               onRemove={() => handleRemoveCert("mofCertUrl")}
               onView={() => mofCertUrl && handleViewCert(mofCertUrl)}
             />
-
             <Field label="PKK No.">
               <Input
                 value={pkkNo}
                 onChange={(e) => setPkkNo(e.target.value)}
-                placeholder="e.g. PKK/B/12345"
+                placeholder="PKK/B/12345"
                 className="h-9 text-sm"
               />
             </Field>
-
             <CertRow
               label="PKK Certificate"
               field="pkkCertUrl"
@@ -497,21 +567,62 @@ export function OrganizationProfileClient({ org, profile }: Props) {
           </div>
         </div>
 
-        {/* Warehouse addresses */}
+        {/* ── MDA Establishment ────────────────────────────────────────── */}
         <div className="bg-background border border-border rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="text-xs font-medium">Warehouse addresses</div>
+          <SectionHeader icon={FileTextIcon} title="MDA establishment" />
+          <div className="p-4 space-y-4">
+            <div className="bg-muted/30 border border-border rounded-lg p-3 text-xs text-muted-foreground leading-relaxed">
+              MDA Establishment Registration is required for companies
+              importing, exporting or distributing medical devices in Malaysia
+              under the Medical Device Act 2012.
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1 text-xs"
-              onClick={addWarehouse}
-            >
-              <PlusIcon className="w-3 h-3" /> Add
-            </Button>
+            <Field label="MDA establishment registration no.">
+              <Input
+                value={mdaEstablishmentNo}
+                onChange={(e) => setMdaEstablishmentNo(e.target.value)}
+                placeholder="e.g. EST-2024-XXXXX"
+                className="h-9 text-sm"
+              />
+            </Field>
+            <Field label="MDA establishment validity">
+              <Input
+                type="date"
+                value={mdaEstablishmentValidity}
+                onChange={(e) => setMdaEstablishmentValidity(e.target.value)}
+                className="h-9 text-sm"
+              />
+            </Field>
+            <CertRow
+              label="MDA certificate"
+              field="mdaCertUrl"
+              currentKey={mdaCertUrl}
+              uploading={uploadingCert === "mdaCertUrl"}
+              onUploaded={(key) => {
+                setMdaCertUrl(key);
+                setUploadingCert(null);
+              }}
+              onRemove={() => handleRemoveCert("mdaCertUrl")}
+              onView={() => mdaCertUrl && handleViewCert(mdaCertUrl)}
+            />
           </div>
+        </div>
+
+        {/* ── Warehouse addresses ──────────────────────────────────────── */}
+        <div className="bg-background border border-border rounded-xl overflow-hidden">
+          <SectionHeader
+            icon={BuildingIcon}
+            title="Warehouse addresses"
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                onClick={addWarehouse}
+              >
+                <PlusIcon className="w-3 h-3" /> Add
+              </Button>
+            }
+          />
           <div className="p-4 space-y-3">
             {warehouseAddresses.length === 0 ? (
               <div
@@ -563,6 +674,147 @@ export function OrganizationProfileClient({ org, profile }: Props) {
                 >
                   <div className="text-xs text-muted-foreground flex items-center justify-center gap-1.5">
                     <PlusIcon className="w-3 h-3" /> Add another warehouse
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ── Banking information ──────────────────────────────────────── */}
+        <div className="bg-background border border-border rounded-xl overflow-hidden">
+          <SectionHeader
+            icon={BuildingIcon}
+            title="Banking information"
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                onClick={addBank}
+              >
+                <PlusIcon className="w-3 h-3" /> Add bank
+              </Button>
+            }
+          />
+          <div className="p-4 space-y-3">
+            {bankingInfo.length === 0 ? (
+              <div
+                onClick={addBank}
+                className="border border-dashed border-border rounded-lg p-5 text-center cursor-pointer hover:bg-muted/20 transition-colors"
+              >
+                <PlusIcon className="w-4 h-4 mx-auto mb-1.5 text-muted-foreground" />
+                <div className="text-xs text-muted-foreground">
+                  Add bank account
+                </div>
+              </div>
+            ) : (
+              <>
+                {bankingInfo.map((bank, i) => (
+                  <div
+                    key={bank.id}
+                    className="border border-border rounded-lg overflow-hidden"
+                  >
+                    {/* Bank header */}
+                    <div className="flex items-center gap-2 px-3 py-2 bg-muted/20 border-b border-border">
+                      <input
+                        value={bank.bankName}
+                        onChange={(e) =>
+                          updateBank(i, "bankName", e.target.value)
+                        }
+                        placeholder="Bank name e.g. Maybank"
+                        className="flex-1 bg-transparent text-xs font-medium outline-none placeholder:text-muted-foreground"
+                      />
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {bank.isPrimary ? (
+                          <span className="text-[10px] bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 rounded px-1.5 py-0.5">
+                            Primary
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setPrimaryBank(i)}
+                            className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                            title="Set as primary"
+                          >
+                            <StarIcon className="w-3 h-3" /> Set primary
+                          </button>
+                        )}
+                        <button
+                          onClick={() => removeBank(i)}
+                          className="text-muted-foreground hover:text-destructive transition-colors ml-1"
+                        >
+                          <TrashIcon className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Bank fields */}
+                    <div className="p-3 grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">
+                          Account holder
+                        </label>
+                        <input
+                          value={bank.accountHolder}
+                          onChange={(e) =>
+                            updateBank(i, "accountHolder", e.target.value)
+                          }
+                          placeholder="Account holder name"
+                          className="w-full h-8 border border-input rounded-md px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">
+                          Account no.
+                        </label>
+                        <input
+                          value={bank.accountNo}
+                          onChange={(e) =>
+                            updateBank(i, "accountNo", e.target.value)
+                          }
+                          placeholder="Account number"
+                          className="w-full h-8 border border-input rounded-md px-2 text-xs bg-background font-mono outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">
+                          Account type
+                        </label>
+                        <Select
+                          value={bank.accountType}
+                          onValueChange={(v) => updateBank(i, "accountType", v)}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="current">Current</SelectItem>
+                            <SelectItem value="savings">Savings</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">
+                          Swift / BIC
+                        </label>
+                        <input
+                          value={bank.swiftCode}
+                          onChange={(e) =>
+                            updateBank(i, "swiftCode", e.target.value)
+                          }
+                          placeholder="e.g. MBBEMYKL"
+                          className="w-full h-8 border border-input rounded-md px-2 text-xs bg-background font-mono outline-none focus:ring-1 focus:ring-ring uppercase"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div
+                  onClick={addBank}
+                  className="border border-dashed border-border rounded-lg p-3 text-center cursor-pointer hover:bg-muted/20 transition-colors"
+                >
+                  <div className="text-xs text-muted-foreground flex items-center justify-center gap-1.5">
+                    <PlusIcon className="w-3 h-3" /> Add another bank account
                   </div>
                 </div>
               </>

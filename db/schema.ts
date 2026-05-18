@@ -555,6 +555,26 @@ export const organizationProfile = pgTable("organization_profile", {
   pkkNo: text("pkk_no"),
   pkkCertUrl: text("pkk_cert_url"), // R2 key
 
+  // MDA
+  mdaEstablishmentNo: text("mda_establishment_no"),
+  mdaEstablishmentValidity: text("mda_establishment_validity"),
+  mdaCertUrl: text("mda_cert_url"),
+
+  // Banking
+  bankingInfo: json("banking_info")
+    .$type<
+      {
+        id: string;
+        bankName: string;
+        accountHolder: string;
+        accountNo: string;
+        accountType: string;
+        swiftCode: string;
+        isPrimary: boolean;
+      }[]
+    >()
+    .default([]),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

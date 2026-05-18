@@ -10,6 +10,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -32,7 +33,12 @@ async function getOrgId(): Promise<string> {
   return orgId;
 }
 
-type CertField = "ssmCertUrl" | "taxCertUrl" | "mofCertUrl" | "pkkCertUrl";
+type CertField =
+  | "ssmCertUrl"
+  | "taxCertUrl"
+  | "mofCertUrl"
+  | "pkkCertUrl"
+  | "mdaCertUrl";
 
 // ── Get organization profile ───────────────────────────────────────────────
 export async function getOrganizationProfile() {
@@ -188,6 +194,104 @@ export async function getOrganizationWithProfile() {
 }
 
 // ── Delete certificate ─────────────────────────────────────────────────────
+
 export async function removeOrgCertificate(field: CertField) {
+  const orgId = await getOrgId();
+
+  // Get current key before nulling it
+  const [current] = await db
+    .select()
+    .from(organizationProfile)
+    .where(eq(organizationProfile.organizationId, orgId))
+    .limit(1);
+
+  const key = current?.[field] as string | null;
+
+  // Delete from R2 if key exists
+  if (key) {
+    try {
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: process.env.R2_CERTIFICATES_BUCKET!,
+          Key: key,
+        }),
+      );
+    } catch (err) {
+      console.error("Failed to delete from R2:", err);
+      // Don't throw — still null the db field even if R2 delete fails
+    }
+  }
+
+  // Null the db field
   await upsertOrganizationProfile({ [field]: null });
 }
+
+export async function getFullOrganizationProfile() {
+  const orgId = await getOrgId();
+
+  const [org] = await db
+    .select()
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+
+  const profile = await getOrganizationProfile();
+
+  const [
+    ssmCertSignedUrl,
+    taxCertSignedUrl,
+    mofCertSignedUrl,
+    pkkCertSignedUrl,
+    mdaCertSignedUrl,
+  ] = await Promise.all([
+    profile.ssmCertUrl ? getPresignedUrl(profile.ssmCertUrl) : null,
+    profile.taxCertUrl ? getPresignedUrl(profile.taxCertUrl) : null,
+    profile.mofCertUrl ? getPresignedUrl(profile.mofCertUrl) : null,
+    profile.pkkCertUrl ? getPresignedUrl(profile.pkkCertUrl) : null,
+    profile.mdaCertUrl ? getPresignedUrl(profile.mdaCertUrl) : null,
+  ]);
+
+  return {
+    id: org.id,
+    name: org.name,
+    slug: org.slug,
+    logo: org.logo ?? null,
+    companyName: profile.companyName ?? org.name,
+    companyAddress: profile.companyAddress ?? null,
+    oldSsmNo: profile.oldSsmNo ?? null,
+    newSsmNo: profile.newSsmNo ?? null,
+    taxNo: profile.taxNo ?? null,
+    mofNo: profile.mofNo ?? null,
+    mofValidity: profile.mofValidity ?? null,
+    pkkNo: profile.pkkNo ?? null,
+    mdaEstablishmentNo: profile.mdaEstablishmentNo ?? null,
+    mdaEstablishmentValidity: profile.mdaEstablishmentValidity ?? null,
+    warehouseAddresses:
+      (profile.warehouseAddresses as { label: string; address: string }[]) ??
+      [],
+    bankingInfo:
+      (profile.bankingInfo as {
+        id: string;
+        bankName: string;
+        accountHolder: string;
+        accountNo: string;
+        accountType: string;
+        swiftCode: string;
+        isPrimary: boolean;
+      }[]) ?? [],
+    ssmCertKey: profile.ssmCertUrl ?? null,
+    taxCertKey: profile.taxCertUrl ?? null,
+    mofCertKey: profile.mofCertUrl ?? null,
+    pkkCertKey: profile.pkkCertUrl ?? null,
+    mdaCertKey: profile.mdaCertUrl ?? null,
+    ssmCertSignedUrl,
+    taxCertSignedUrl,
+    mofCertSignedUrl,
+    pkkCertSignedUrl,
+    mdaCertSignedUrl,
+  };
+}
+
+export type FullOrganizationProfile = Awaited<
+  ReturnType<typeof getFullOrganizationProfile>
+>;
