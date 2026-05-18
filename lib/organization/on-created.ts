@@ -1,6 +1,11 @@
 // lib/organization/on-created.ts
 import { db } from "@/db";
-import { organizationRole, userPermission, permission } from "@/db/schema";
+import {
+  organizationRole,
+  userPermission,
+  permission,
+  organizationProfile,
+} from "@/db/schema";
 import { ALL_PERMISSIONS, ROLE_PERMISSIONS } from "@/lib/permissions/constants";
 import { nanoid } from "nanoid";
 
@@ -39,5 +44,13 @@ export async function onOrganizationCreated(
         allowed: true,
       })),
     )
+    .onConflictDoNothing();
+
+  await db
+    .insert(organizationProfile)
+    .values({
+      id: nanoid(),
+      organizationId,
+    })
     .onConflictDoNothing();
 }

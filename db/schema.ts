@@ -402,6 +402,9 @@ export const profile = pgTable("profile", {
   // Personal
   fullname: text("fullname"),
   icNumber: text("ic_number"),
+  taxNo: text("tax_no"), // TIN No.
+  epfNo: text("epf_no"),
+  socsoNo: text("socso_no"),
   dateOfBirth: date("date_of_birth"),
   gender: text("gender"), // male | female
   nationality: text("nationality"),
@@ -519,6 +522,55 @@ export const productRelations = relations(product, ({ one }) => ({
     references: [organization.id],
   }),
 }));
+
+export const organizationProfile = pgTable("organization_profile", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+
+  // SSM
+  oldSsmNo: text("old_ssm_no"),
+  newSsmNo: text("new_ssm_no"),
+  ssmCertUrl: text("ssm_cert_url"), // R2 key
+
+  // Company info
+  companyName: text("company_name"),
+  taxNo: text("tax_no"), // TIN No.
+  taxCertUrl: text("tax_cert_url"), // R2 key
+  companyAddress: text("company_address"),
+
+  // Warehouse addresses — list
+  warehouseAddresses: json("warehouse_addresses")
+    .$type<{ label: string; address: string }[]>()
+    .default([]),
+
+  // MOF
+  mofNo: text("mof_no"),
+  mofValidity: text("mof_validity"),
+  mofCertUrl: text("mof_cert_url"), // R2 key
+
+  // PKK
+  pkkNo: text("pkk_no"),
+  pkkCertUrl: text("pkk_cert_url"), // R2 key
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const organizationProfileRelations = relations(
+  organizationProfile,
+  ({ one }) => ({
+    organization: one(organization, {
+      fields: [organizationProfile.organizationId],
+      references: [organization.id],
+    }),
+  }),
+);
 
 /* ============================================================================================================================================================================================================================================
    HUMAN RESOURCES TABLE
@@ -683,4 +735,6 @@ export const schema = {
   payslip,
   payrollPeriodRelations,
   payslipRelations,
+  organizationProfile,
+  organizationProfileRelations,
 };
