@@ -81,6 +81,7 @@ const schema = z.object({
   emergencyRelationship2: z.string().optional(),
   emergencyPhone2: z.string().optional(),
   emergencyAddress2: z.string().optional(),
+  bankName: z.string().optional(),
   bankAccountNo: z.string().optional(),
   bankAccountHolder: z.string().optional(),
   jobTitle: z.string().optional(),
@@ -649,6 +650,13 @@ export function ProfileClient({ user, initialProfile }: Props) {
               This information is only accessible by authorised HR personnel.
             </div>
             <div className="grid grid-cols-2 gap-4">
+              <Field label="Bank name">
+                <Input
+                  {...register("bankName")}
+                  placeholder="e.g. Maybank, CIMB, Public Bank"
+                  className="h-9 text-sm"
+                />
+              </Field>
               <Field label="Bank account number">
                 <Input
                   {...register("bankAccountNo")}

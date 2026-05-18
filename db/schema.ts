@@ -430,6 +430,7 @@ export const profile = pgTable("profile", {
   emergencyAddress2: text("emergency_address2"),
 
   // Banking
+  bankName: text("bank_name"),
   bankAccountNo: text("bank_account_no"),
   bankAccountHolder: text("bank_account_holder"),
   bankBookUrl: text("bank_book_url"), // R2 key
@@ -650,7 +651,9 @@ export const payslip = pgTable(
     jobTitle: text("job_title"),
     department: text("department"),
     employmentType: text("employment_type"),
+    bankName: text("bank_name"),
     bankAccountNo: text("bank_account_no"),
+    bankAccountHolder: text("bank_account_holder"),
 
     // Earnings
     basicSalary: text("basic_salary").notNull(),

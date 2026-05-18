@@ -295,3 +295,34 @@ export async function getFullOrganizationProfile() {
 export type FullOrganizationProfile = Awaited<
   ReturnType<typeof getFullOrganizationProfile>
 >;
+
+export async function getLogoAsBase64(): Promise<{
+  data: Uint8Array;
+  format: "png" | "jpg";
+} | null> {
+  const orgId = await getOrgId();
+
+  const [org] = await db
+    .select({ logo: organization.logo })
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+
+  if (!org?.logo) return null;
+
+  try {
+    const res = await fetch(org.logo);
+    const contentType = res.headers.get("content-type") ?? "";
+    const buffer = await res.arrayBuffer();
+
+    if (contentType.includes("svg")) {
+      // SVG not supported by pdf-lib — return null, handle separately
+      return null;
+    }
+
+    const format = contentType.includes("png") ? "png" : "jpg";
+    return { data: new Uint8Array(buffer), format };
+  } catch {
+    return null;
+  }
+}

@@ -5,7 +5,7 @@ import { payrollPeriod, payslip, member, profile, user } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { nanoid } from "nanoid";
-import { eq, and, desc, sql, asc } from "drizzle-orm";
+import { eq, and, desc, sql, asc, lte } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
@@ -195,7 +195,9 @@ export async function getOrgMembers() {
       jobTitle: profile.jobTitle,
       department: profile.department,
       icNumber: profile.icNumber,
+      bankName: profile.bankName,
       bankAccountNo: profile.bankAccountNo,
+      bankAccountHolder: profile.bankAccountHolder,
     })
     .from(member)
     .innerJoin(user, eq(user.id, member.userId))
@@ -242,6 +244,9 @@ export async function getPeriodDetail(periodId: string) {
       totalDeductions: payslip.totalDeductions,
       netPay: payslip.netPay,
       status: payslip.status,
+      bankName: payslip.bankName,
+      bankAccountNo: payslip.bankAccountNo,
+      bankAccountHolder: payslip.bankAccountHolder,
     })
     .from(payslip)
     .where(eq(payslip.periodId, periodId))
@@ -333,7 +338,9 @@ export async function createPayslip(data: {
       jobTitle: profile.jobTitle,
       department: profile.department,
       employmentType: profile.employmentType,
+      bankName: profile.bankName,
       bankAccountNo: profile.bankAccountNo,
+      bankAccountHolder: profile.bankAccountHolder,
     })
     .from(user)
     .leftJoin(profile, eq(profile.userId, user.id))
@@ -367,7 +374,9 @@ export async function createPayslip(data: {
     jobTitle: emp.jobTitle,
     department: emp.department,
     employmentType: emp.employmentType,
+    bankName: emp.bankName,
     bankAccountNo: emp.bankAccountNo,
+    bankAccountHolder: emp.bankAccountHolder,
     basicSalary: String(data.basicSalary),
     bonus: String(data.bonus ?? 0),
     overtimePay: String(data.overtimePay ?? 0),
@@ -496,11 +505,14 @@ export async function getMyPayslips() {
     .select({
       id: payslip.id,
       periodId: payslip.periodId,
+      userId: payslip.userId,
       employeeName: payslip.employeeName,
       jobTitle: payslip.jobTitle,
       department: payslip.department,
       icNumber: payslip.icNumber,
+      bankName: payslip.bankName,
       bankAccountNo: payslip.bankAccountNo,
+      bankAccountHolder: payslip.bankAccountHolder,
       basicSalary: payslip.basicSalary,
       bonus: payslip.bonus,
       overtimePay: payslip.overtimePay,
@@ -520,15 +532,14 @@ export async function getMyPayslips() {
       periodLabel: payrollPeriod.label,
       periodMonth: payrollPeriod.month,
       periodYear: payrollPeriod.year,
+      epfNo: profile.epfNo,
+      socsoNo: profile.socsoNo,
+      employeeTaxNo: profile.taxNo,
     })
     .from(payslip)
     .innerJoin(payrollPeriod, eq(payrollPeriod.id, payslip.periodId))
-    .where(
-      and(
-        eq(payslip.userId, userId), // ← only filter by userId and status
-        eq(payslip.status, "published"),
-      ),
-    )
+    .leftJoin(profile, eq(profile.userId, payslip.userId)) // ← must be here
+    .where(and(eq(payslip.userId, userId), eq(payslip.status, "published")))
     .orderBy(desc(payrollPeriod.year), desc(payrollPeriod.month));
 
   return rows;
@@ -557,4 +568,82 @@ async function getOwnerOrgId(
     .limit(1);
 
   return primaryOrg?.organizationId ?? currentOrgId;
+}
+
+export async function getPayslipYtd(
+  userId: string,
+  year: number,
+  upToMonth: number,
+) {
+  const rows = await db
+    .select({
+      grossPay: payslip.grossPay,
+      netPay: payslip.netPay,
+      basicSalary: payslip.basicSalary,
+      bonus: payslip.bonus,
+      overtimePay: payslip.overtimePay,
+      allowances: payslip.allowances,
+      epfEmployee: payslip.epfEmployee,
+      epfEmployer: payslip.epfEmployer,
+      socsoEmployee: payslip.socsoEmployee,
+      socsoEmployer: payslip.socsoEmployer,
+      eisEmployee: payslip.eisEmployee,
+      eisEmployer: payslip.eisEmployer,
+      lhdn: payslip.lhdn,
+      totalDeductions: payslip.totalDeductions,
+      periodMonth: payrollPeriod.month,
+    })
+    .from(payslip)
+    .innerJoin(payrollPeriod, eq(payrollPeriod.id, payslip.periodId))
+    .where(
+      and(
+        eq(payslip.userId, userId),
+        eq(payslip.status, "published"),
+        eq(payrollPeriod.year, year),
+        lte(payrollPeriod.month, upToMonth),
+      ),
+    );
+
+  const sum = (field: keyof (typeof rows)[0]) =>
+    rows.reduce((s, r) => s + Number(r[field] ?? 0), 0);
+
+  const ytdAllowances = rows.reduce((s, r) => {
+    const arr = (r.allowances as any[]) ?? [];
+    return s + arr.reduce((a: number, x: any) => a + Number(x.amount || 0), 0);
+  }, 0);
+
+  const ytdGross = sum("grossPay");
+  const ytdNet = sum("netPay");
+  const ytdEpfEmployee = sum("epfEmployee");
+  const ytdEpfEmployer = sum("epfEmployer");
+  const ytdSocsoEmployee = sum("socsoEmployee");
+  const ytdSocsoEmployer = sum("socsoEmployer");
+  const ytdEisEmployee = sum("eisEmployee");
+  const ytdEisEmployer = sum("eisEmployer");
+  const ytdLhdn = sum("lhdn");
+  const ytdTotalDeductions = sum("totalDeductions");
+  const ytdBasic = sum("basicSalary");
+  const ytdBonus = sum("bonus");
+  const ytdOvertime = sum("overtimePay");
+
+  // Taxable income = gross - EPF employee (EPF relief under Section 49)
+  const ytdTaxableIncome = ytdGross - ytdEpfEmployee;
+
+  return {
+    ytdGross,
+    ytdNet,
+    ytdBasic,
+    ytdBonus,
+    ytdOvertime,
+    ytdAllowances,
+    ytdEpfEmployee,
+    ytdEpfEmployer,
+    ytdSocsoEmployee,
+    ytdSocsoEmployer,
+    ytdEisEmployee,
+    ytdEisEmployer,
+    ytdLhdn,
+    ytdTotalDeductions,
+    ytdTaxableIncome,
+  };
 }

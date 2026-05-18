@@ -6,6 +6,12 @@ import { Button } from "@/components/ui/button";
 import { DownloadIcon, EyeIcon, FileTextIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { generatePayslipPdf } from "./generate-payslip-pdf";
+import { getPayslipYtd } from "@/server/payroll";
+import {
+  getFullOrganizationProfile,
+  getLogoAsBase64,
+} from "@/server/organization-profile";
+import { toast } from "sonner";
 
 type Payslip = Awaited<ReturnType<typeof getMyPayslips>>[number];
 
@@ -25,15 +31,90 @@ export function MyPayslipsClient({ payslips }: Props) {
   const latest = payslips[0];
   const ytd = payslips.reduce((s, p) => s + Number(p.netPay), 0);
 
+  // const handleDownload = async (p: Payslip) => {
+  //   setGenerating(p.id);
+  //   try {
+  //     // Fetch YTD up to this payslip's month
+  //     const [ytd, org, logoData] = await Promise.all([
+  //       getPayslipYtd(p.userId, p.periodYear, p.periodMonth),
+  //       getFullOrganizationProfile(),
+  //       getLogoAsBase64(),
+  //     ]);
+
+  //     // Find primary bank
+  //     const primaryBank =
+  //       org.bankingInfo.find((b) => b.isPrimary) ?? org.bankingInfo[0];
+
+  //   } catch (err: any) {
+  //     toast.error(err.message);
+  //   } finally {
+  //     setGenerating(null);
+  //   }
+  // };
+
   const handleDownload = async (p: Payslip) => {
     setGenerating(p.id);
     try {
-      await generatePayslipPdf(p);
+      const [ytd, org] = await Promise.all([
+        getPayslipYtd(p.userId, p.periodYear, p.periodMonth),
+        getFullOrganizationProfile(),
+      ]);
+
+      console.log("ytd:", ytd);
+      console.log("org.logo:", org.logo);
+      console.log("generating PDF...");
+
+      await generatePayslipPdf({
+        // Company
+        companyName: org.companyName ?? org.name,
+        companyAddress: org.companyAddress,
+        companyLogo: org.logo, // ← just pass the URL string
+        companySsmNo: org.newSsmNo ?? org.oldSsmNo,
+        companyTaxNo: org.taxNo,
+
+        // Employee
+        employeeName: p.employeeName,
+        jobTitle: p.jobTitle,
+        department: p.department,
+        icNumber: p.icNumber,
+        epfNo: p.epfNo ?? null,
+        socsoNo: p.socsoNo ?? null,
+        taxNo: p.employeeTaxNo ?? null,
+        bankName: p.bankName ?? null,
+        bankAccountHolder: p.bankAccountHolder ?? null,
+        bankAccountNo: p.bankAccountNo ?? null,
+
+        // Period
+        periodLabel: p.periodLabel,
+        periodMonth: p.periodMonth,
+        periodYear: p.periodYear,
+
+        // This month
+        basicSalary: p.basicSalary,
+        bonus: p.bonus,
+        overtimePay: p.overtimePay,
+        allowances: p.allowances as any,
+        grossPay: p.grossPay,
+        epfEmployee: p.epfEmployee,
+        epfEmployer: p.epfEmployer,
+        socsoEmployee: p.socsoEmployee,
+        socsoEmployer: p.socsoEmployer,
+        eisEmployee: p.eisEmployee,
+        eisEmployer: p.eisEmployer,
+        lhdn: p.lhdn,
+        otherDeductions: p.otherDeductions as any,
+        totalDeductions: p.totalDeductions,
+        netPay: p.netPay,
+
+        // YTD
+        ...ytd,
+      });
+    } catch (err: any) {
+      toast.error(err.message);
     } finally {
       setGenerating(null);
     }
   };
-
   if (payslips.length === 0) {
     return (
       <div className="p-6 max-w-4xl">
