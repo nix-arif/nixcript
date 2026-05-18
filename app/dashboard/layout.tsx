@@ -14,7 +14,9 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { getCurrentUser } from "@/server/users";
+import Image from "next/image";
 import { redirect } from "next/navigation";
+import authLogo from "@/branding/authlogo.svg";
 // import { getOrganizations } from "@/server/organizations";
 // import { getCurrentUser } from "@/server/users";
 
@@ -44,7 +46,7 @@ export default async function DashboardLayout({
               orientation="vertical"
               className="mr-2 data-vertical:h-4 data-vertical:self-auto"
             />
-            <Breadcrumb>
+            {/* <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem className="hidden md:block">
                   <BreadcrumbLink href="#">
@@ -56,7 +58,12 @@ export default async function DashboardLayout({
                   <BreadcrumbPage>Data Fetching</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
-            </Breadcrumb>
+            </Breadcrumb> */}
+            {/* <!-- Contoh Logo pada Navbar (Light Mode) --> */}
+            {/* <div className="flex items-center space-x-1 font-sans tracking-tight text-xl font-bold text-zinc-950"> */}
+            <div>
+              <Image src={authLogo} width={100} height={100} alt="logo" />
+            </div>
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
