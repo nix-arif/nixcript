@@ -81,6 +81,14 @@ export async function upsertOrganizationProfile(
         updatedAt: new Date(),
       },
     });
+
+  // ← Sync companyName to Better Auth organization.name
+  if (data.companyName) {
+    await db
+      .update(organization)
+      .set({ name: data.companyName })
+      .where(eq(organization.id, orgId));
+  }
 }
 
 // ── Upload organization logo (public bucket) ───────────────────────────────

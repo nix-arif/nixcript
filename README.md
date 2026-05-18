@@ -30,3 +30,5 @@ This connects your local machine to Trigger.dev's cloud so jobs can be picked up
 bash
 
 pnpm dlx trigger.dev@latest deploy
+
+pnpm tsx scripts/migrate-permissions.ts

@@ -139,7 +139,7 @@ export const navConfig: NavGroup[] = [
       },
       {
         title: "Organization",
-        url: "/dashboard/organization/profile",
+        url: "/dashboard/organization/organization-profile",
         permission: "organization-profile:create", // admin/owner only
       },
     ],

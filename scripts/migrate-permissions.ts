@@ -39,4 +39,15 @@ export const ALL_PERMISSIONS = [
 
   { key: "product:seed", label: "Seed Products" },
   { key: "product:read", label: "View Products" },
+
+  { key: "payslip:read:own", label: "View own payslip" },
+  { key: "payslip:read:all", label: "View all payslips" },
+  { key: "payslip:create", label: "Create payslip" },
+  { key: "payslip:approve", label: "Approve payroll period" },
+  { key: "payslip:publish", label: "Publish payslips" },
+
+  { key: "organization-profile:create", label: "Organization Profile Create" },
+  { key: "organization-profile:update", label: "Organization Profile Update" },
+  { key: "organization-profile:read", label: "Organization Profile Read" },
+  { key: "organization-profile:delete", label: "Organization Profile Delete" },
 ] as const;

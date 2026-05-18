@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getOrganizationWithProfile } from "@/server/organization-profile";
+import { useRouter } from "next/navigation";
 
 type Org = Awaited<ReturnType<typeof getOrganizationWithProfile>>["org"];
 type Profile = Awaited<
@@ -135,6 +136,32 @@ function CertRow({
   );
 }
 
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function SectionHeader({ icon: Icon, title }: { icon: any; title: string }) {
+  return (
+    <div className="px-4 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
+      <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+      <div className="text-xs font-medium">{title}</div>
+    </div>
+  );
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 export function OrganizationProfileClient({ org, profile }: Props) {
   const [saving, setSaving] = useState(false);
@@ -164,6 +191,7 @@ export function OrganizationProfileClient({ org, profile }: Props) {
   const [taxCertUrl, setTaxCertUrl] = useState(profile?.taxCertUrl ?? null);
   const [mofCertUrl, setMofCertUrl] = useState(profile?.mofCertUrl ?? null);
   const [pkkCertUrl, setPkkCertUrl] = useState(profile?.pkkCertUrl ?? null);
+  const router = useRouter();
 
   // Logo
   const [logoUrl, setLogoUrl] = useState(org.logo ?? null);
@@ -211,6 +239,7 @@ export function OrganizationProfileClient({ org, profile }: Props) {
       const url = await uploadOrganizationLogo(formData);
       setLogoUrl(url);
       toast.success("Logo updated");
+      router.refresh(); // ← refresh to reflect logo change in switcher
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -234,6 +263,7 @@ export function OrganizationProfileClient({ org, profile }: Props) {
         warehouseAddresses,
       });
       toast.success("Organization profile saved");
+      router.refresh(); // ← refresh to reflect name change in switcher
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -257,34 +287,6 @@ export function OrganizationProfileClient({ org, profile }: Props) {
 
   const removeWarehouse = (i: number) =>
     setWarehouseAddresses((prev) => prev.filter((_, idx) => idx !== i));
-
-  const Field = ({
-    label,
-    children,
-  }: {
-    label: string;
-    children: React.ReactNode;
-  }) => (
-    <div>
-      <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-
-  const SectionHeader = ({
-    icon: Icon,
-    title,
-  }: {
-    icon: any;
-    title: string;
-  }) => (
-    <div className="px-4 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
-      <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-      <div className="text-xs font-medium">{title}</div>
-    </div>
-  );
 
   return (
     <div className="p-6 max-w-5xl">
