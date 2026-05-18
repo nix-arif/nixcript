@@ -81,15 +81,23 @@ const schema = z.object({
   emergencyRelationship2: z.string().optional(),
   emergencyPhone2: z.string().optional(),
   emergencyAddress2: z.string().optional(),
+  // Statutory numbers
+  taxNo: z.string().optional(),
+  epfNo: z.string().optional(),
+  socsoNo: z.string().optional(),
+  // Bank details
   bankName: z.string().optional(),
   bankAccountNo: z.string().optional(),
   bankAccountHolder: z.string().optional(),
+  // Employment
   jobTitle: z.string().optional(),
   department: z.string().optional(),
   employmentType: z.string().optional(),
   employmentStatus: z.string().optional(),
+  // Education
   educationLevel: z.string().optional(),
   fieldOfStudy: z.string().optional(),
+  // PDPA
   pdpaConsent: z.boolean().refine((v) => v === true, {
     message: "You must agree to the PDPA 2010 before saving",
   }),
@@ -227,14 +235,23 @@ export function ProfileClient({ user, initialProfile }: Props) {
       emergencyRelationship2: initialProfile?.emergencyRelationship2 ?? "",
       emergencyPhone2: initialProfile?.emergencyPhone2 ?? "",
       emergencyAddress2: initialProfile?.emergencyAddress2 ?? "",
+      // Statutory
+      taxNo: initialProfile?.taxNo ?? "",
+      epfNo: initialProfile?.epfNo ?? "",
+      socsoNo: initialProfile?.socsoNo ?? "",
+      // Bank
+      bankName: initialProfile?.bankName ?? "",
       bankAccountNo: initialProfile?.bankAccountNo ?? "",
       bankAccountHolder: initialProfile?.bankAccountHolder ?? "",
+      // Employment
       jobTitle: initialProfile?.jobTitle ?? "",
       department: initialProfile?.department ?? "",
       employmentType: initialProfile?.employmentType ?? "",
       employmentStatus: initialProfile?.employmentStatus ?? "",
+      // Education
       educationLevel: initialProfile?.educationLevel ?? "",
       fieldOfStudy: initialProfile?.fieldOfStudy ?? "",
+      // PDPA
       pdpaConsent: initialProfile?.pdpaConsent ?? false,
     },
   });
@@ -283,7 +300,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
       case "education":
         return !!p.educationLevel;
       case "banking":
-        return !!(p.bankAccountNo && p.bankAccountHolder);
+        return !!(p.bankAccountNo && p.bankAccountHolder && p.bankName);
     }
   };
 
@@ -330,6 +347,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
 
   const renderSection = () => {
     switch (activeSection) {
+      // ── Personal ──────────────────────────────────────────────────────
       case "personal":
         return (
           <div className="grid grid-cols-2 gap-4">
@@ -397,6 +415,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
           </div>
         );
 
+      // ── Contact ───────────────────────────────────────────────────────
       case "contact":
         return (
           <div className="space-y-4">
@@ -509,6 +528,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
           </div>
         );
 
+      // ── Emergency ─────────────────────────────────────────────────────
       case "emergency":
         return (
           <div className="space-y-4">
@@ -570,6 +590,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
           </div>
         );
 
+      // ── Employment ────────────────────────────────────────────────────
       case "employment":
         return (
           <div className="grid grid-cols-2 gap-4">
@@ -614,6 +635,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
           </div>
         );
 
+      // ── Education ─────────────────────────────────────────────────────
       case "education":
         return (
           <div className="grid grid-cols-2 gap-4">
@@ -642,38 +664,91 @@ export function ProfileClient({ user, initialProfile }: Props) {
           </div>
         );
 
+      // ── Banking ───────────────────────────────────────────────────────
       case "banking":
         return (
-          <div className="space-y-4">
+          <div className="space-y-5">
+            {/* Security notice */}
             <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200">
               <ShieldCheckIcon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               This information is only accessible by authorised HR personnel.
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Bank name">
-                <Input
-                  {...register("bankName")}
-                  placeholder="e.g. Maybank, CIMB, Public Bank"
-                  className="h-9 text-sm"
-                />
-              </Field>
-              <Field label="Bank account number">
-                <Input
-                  {...register("bankAccountNo")}
-                  placeholder="Account number"
-                  className="h-9 text-sm font-mono"
-                />
-              </Field>
-              <Field label="Account holder name">
-                <Input
-                  {...register("bankAccountHolder")}
-                  placeholder="As per bank records"
-                  className="h-9 text-sm"
-                />
-              </Field>
+
+            {/* Statutory numbers */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-1 h-3.5 rounded-full bg-primary" />
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Statutory numbers
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <Field label="EPF / KWSP No.">
+                  <Input
+                    {...register("epfNo")}
+                    placeholder="e.g. 10001234567"
+                    className="h-9 text-sm font-mono"
+                  />
+                </Field>
+                <Field label="SOCSO / PERKESO No.">
+                  <Input
+                    {...register("socsoNo")}
+                    placeholder="e.g. 30-12345678-9"
+                    className="h-9 text-sm font-mono"
+                  />
+                </Field>
+                <Field label="Tax No. / TIN">
+                  <Input
+                    {...register("taxNo")}
+                    placeholder="e.g. SG 12345678090"
+                    className="h-9 text-sm font-mono"
+                  />
+                </Field>
+              </div>
             </div>
-            <Field label="Bank book / account screenshot">
-              <div className="mt-1 rounded-lg border-2 border-dashed border-border p-5 text-center hover:border-primary/40 hover:bg-muted/20 transition-colors">
+
+            {/* Bank details */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-1 h-3.5 rounded-full bg-primary/40" />
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Bank details
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Bank name">
+                  <Input
+                    {...register("bankName")}
+                    placeholder="e.g. Maybank, CIMB, Public Bank"
+                    className="h-9 text-sm"
+                  />
+                </Field>
+                <Field label="Bank account number">
+                  <Input
+                    {...register("bankAccountNo")}
+                    placeholder="Account number"
+                    className="h-9 text-sm font-mono"
+                  />
+                </Field>
+                <Field label="Account holder name" className="col-span-2">
+                  <Input
+                    {...register("bankAccountHolder")}
+                    placeholder="Full name as per bank records"
+                    className="h-9 text-sm"
+                  />
+                </Field>
+              </div>
+            </div>
+
+            {/* Bank book upload */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-1 h-3.5 rounded-full bg-primary/20" />
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Supporting document
+                </span>
+              </div>
+              <div className="rounded-lg border-2 border-dashed border-border p-5 text-center hover:border-primary/40 hover:bg-muted/20 transition-colors">
                 {bankBookUrl ? (
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-center gap-2 text-green-600">
@@ -711,7 +786,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
                         <UploadIcon className="w-4 h-4 text-muted-foreground" />
                       </div>
                       <span className="text-sm font-medium">
-                        {uploading ? "Uploading…" : "Click to upload"}
+                        {uploading ? "Uploading…" : "Click to upload bank book"}
                       </span>
                       <p className="text-xs text-muted-foreground">
                         Image or PDF — max 5MB
@@ -720,7 +795,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
                   </label>
                 )}
               </div>
-            </Field>
+            </div>
           </div>
         );
     }
@@ -729,189 +804,183 @@ export function ProfileClient({ user, initialProfile }: Props) {
   return (
     <div className="p-6 max-w-3xl">
       <h1 className="text-xl font-medium mb-6">Profile</h1>
-      <div className="flex mb-6">
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <div className="bg-background border border-border rounded-xl overflow-hidden">
-            {/* ── Avatar header ─────────────────────────────────────────── */}
-            <div className="px-6 py-5 bg-muted/30 border-b border-border flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-base font-semibold text-primary shrink-0">
-                {getInitials(displayName)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm text-foreground leading-tight">
-                  {displayName}
-                </div>
-                <div className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {jobTitle} · {department}
-                </div>
-              </div>
-              {pdpaConsent && (
-                <div className="flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-full px-3 py-1.5 shrink-0">
-                  <ShieldCheckIcon className="w-3.5 h-3.5" />
-                  PDPA agreed
-                </div>
-              )}
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <div className="bg-background border border-border rounded-xl overflow-hidden">
+          {/* ── Avatar header ──────────────────────────────────────────── */}
+          <div className="px-6 py-5 bg-muted/30 border-b border-border flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-base font-semibold text-primary shrink-0">
+              {getInitials(displayName)}
             </div>
-
-            {/* ── Stepper ───────────────────────────────────────────────── */}
-            <div className="px-6 py-4 border-b border-border bg-background overflow-x-auto">
-              <div className="flex items-center min-w-max">
-                {SECTIONS.map((s, i) => {
-                  const isActive = activeSection === s.id;
-                  const isDone = getSectionCompletion(s.id);
-                  const isPast = i < currentIndex;
-                  return (
-                    <div key={s.id} className="flex items-center">
-                      <button
-                        type="button"
-                        onClick={() => setActiveSection(s.id)}
-                        className="flex items-center gap-2 group"
-                      >
-                        <div
-                          className={cn(
-                            "w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-all shrink-0",
-                            isActive
-                              ? "bg-primary border-primary text-primary-foreground"
-                              : isDone
-                                ? "bg-green-500 border-green-500 text-white"
-                                : isPast
-                                  ? "bg-muted border-border text-muted-foreground"
-                                  : "bg-background border-border text-muted-foreground group-hover:border-primary/40",
-                          )}
-                        >
-                          {isDone && !isActive ? (
-                            <CheckIcon className="w-3.5 h-3.5" />
-                          ) : (
-                            i + 1
-                          )}
-                        </div>
-                        <span
-                          className={cn(
-                            "text-xs font-medium whitespace-nowrap",
-                            isActive
-                              ? "text-primary"
-                              : isDone
-                                ? "text-green-600 dark:text-green-400"
-                                : "text-muted-foreground",
-                          )}
-                        >
-                          {s.label}
-                        </span>
-                      </button>
-                      {i < SECTIONS.length - 1 && (
-                        <div
-                          className={cn(
-                            "h-px mx-3 transition-colors",
-                            isDone ? "bg-green-400 w-8" : "bg-border w-8",
-                          )}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-sm text-foreground leading-tight">
+                {displayName}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                {jobTitle} · {department}
               </div>
             </div>
+            {pdpaConsent && (
+              <div className="flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-full px-3 py-1.5 shrink-0">
+                <ShieldCheckIcon className="w-3.5 h-3.5" />
+                PDPA agreed
+              </div>
+            )}
+          </div>
 
-            {/* ── Section content ───────────────────────────────────────── */}
-            <div className="p-6">{renderSection()}</div>
-
-            {/* ── PDPA ─────────────────────────────────────────────────── */}
-            <div className="px-6 pb-5">
-              <div className="border border-border rounded-lg p-4 space-y-3">
-                <div className="flex items-start gap-3">
-                  <Checkbox
-                    id="pdpa"
-                    checked={pdpaConsent}
-                    onCheckedChange={(v) =>
-                      setValue("pdpaConsent", v as boolean)
-                    }
-                    className="mt-0.5"
-                  />
-                  <div className="flex-1 space-y-0.5">
-                    <label
-                      htmlFor="pdpa"
-                      className="text-sm font-medium cursor-pointer select-none"
+          {/* ── Stepper ────────────────────────────────────────────────── */}
+          <div className="px-6 py-4 border-b border-border bg-background overflow-x-auto">
+            <div className="flex items-center min-w-max">
+              {SECTIONS.map((s, i) => {
+                const isActive = activeSection === s.id;
+                const isDone = getSectionCompletion(s.id);
+                const isPast = i < currentIndex;
+                return (
+                  <div key={s.id} className="flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => setActiveSection(s.id)}
+                      className="flex items-center gap-2 group"
                     >
-                      I agree to the Personal Data Protection Act (PDPA) 2010
-                    </label>
-                    <p className="text-xs text-muted-foreground">
-                      Your data is collected for employment purposes only.{" "}
-                      <button
-                        type="button"
-                        className="text-primary underline underline-offset-2 hover:opacity-80"
-                        onClick={() => setShowPdpa(true)}
+                      <div
+                        className={cn(
+                          "w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-all shrink-0",
+                          isActive
+                            ? "bg-primary border-primary text-primary-foreground"
+                            : isDone
+                              ? "bg-green-500 border-green-500 text-white"
+                              : isPast
+                                ? "bg-muted border-border text-muted-foreground"
+                                : "bg-background border-border text-muted-foreground group-hover:border-primary/40",
+                        )}
                       >
-                        Read full PDPA notice
-                      </button>
-                    </p>
-                    {errors.pdpaConsent && (
-                      <p className="text-xs text-destructive">
-                        {errors.pdpaConsent.message}
-                      </p>
+                        {isDone && !isActive ? (
+                          <CheckIcon className="w-3.5 h-3.5" />
+                        ) : (
+                          i + 1
+                        )}
+                      </div>
+                      <span
+                        className={cn(
+                          "text-xs font-medium whitespace-nowrap",
+                          isActive
+                            ? "text-primary"
+                            : isDone
+                              ? "text-green-600 dark:text-green-400"
+                              : "text-muted-foreground",
+                        )}
+                      >
+                        {s.label}
+                      </span>
+                    </button>
+                    {i < SECTIONS.length - 1 && (
+                      <div
+                        className={cn(
+                          "h-px mx-3 transition-colors",
+                          isDone ? "bg-green-400 w-8" : "bg-border w-8",
+                        )}
+                      />
                     )}
                   </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
+          </div>
 
-            {/* ── Footer nav ────────────────────────────────────────────── */}
-            <div className="px-6 py-4 border-t border-border bg-muted/20 flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <ShieldCheckIcon className="w-3.5 h-3.5" />
-                Protected under PDPA 2010
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1 h-8 text-xs"
-                  disabled={currentIndex === 0}
-                  onClick={() =>
-                    setActiveSection(SECTIONS[currentIndex - 1].id)
-                  }
-                >
-                  <ChevronLeftIcon className="w-3.5 h-3.5" />
-                  {currentIndex > 0
-                    ? SECTIONS[currentIndex - 1].label
-                    : "Previous"}
-                </Button>
-                {currentIndex < SECTIONS.length - 1 ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="gap-1 h-8 text-xs"
-                    onClick={() =>
-                      setActiveSection(SECTIONS[currentIndex + 1].id)
-                    }
+          {/* ── Section content ────────────────────────────────────────── */}
+          <div className="p-6">{renderSection()}</div>
+
+          {/* ── PDPA ───────────────────────────────────────────────────── */}
+          <div className="px-6 pb-5">
+            <div className="border border-border rounded-lg p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="pdpa"
+                  checked={pdpaConsent}
+                  onCheckedChange={(v) => setValue("pdpaConsent", v as boolean)}
+                  className="mt-0.5"
+                />
+                <div className="flex-1 space-y-0.5">
+                  <label
+                    htmlFor="pdpa"
+                    className="text-sm font-medium cursor-pointer select-none"
                   >
-                    {SECTIONS[currentIndex + 1].label}
-                    <ChevronRightIcon className="w-3.5 h-3.5" />
-                  </Button>
-                ) : (
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={saving}
-                    className="h-8 text-xs min-w-24 gap-1.5"
-                  >
-                    {saving ? (
-                      <>
-                        <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                        Saving…
-                      </>
-                    ) : (
-                      "Save profile"
-                    )}
-                  </Button>
-                )}
+                    I agree to the Personal Data Protection Act (PDPA) 2010
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Your data is collected for employment purposes only.{" "}
+                    <button
+                      type="button"
+                      className="text-primary underline underline-offset-2 hover:opacity-80"
+                      onClick={() => setShowPdpa(true)}
+                    >
+                      Read full PDPA notice
+                    </button>
+                  </p>
+                  {errors.pdpaConsent && (
+                    <p className="text-xs text-destructive">
+                      {errors.pdpaConsent.message}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </form>
-      </div>
 
-      {/* ── PDPA dialog ───────────────────────────────────────────────── */}
+          {/* ── Footer nav ─────────────────────────────────────────────── */}
+          <div className="px-6 py-4 border-t border-border bg-muted/20 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <ShieldCheckIcon className="w-3.5 h-3.5" />
+              Protected under PDPA 2010
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1 h-8 text-xs"
+                disabled={currentIndex === 0}
+                onClick={() => setActiveSection(SECTIONS[currentIndex - 1].id)}
+              >
+                <ChevronLeftIcon className="w-3.5 h-3.5" />
+                {currentIndex > 0
+                  ? SECTIONS[currentIndex - 1].label
+                  : "Previous"}
+              </Button>
+              {currentIndex < SECTIONS.length - 1 ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1 h-8 text-xs"
+                  onClick={() =>
+                    setActiveSection(SECTIONS[currentIndex + 1].id)
+                  }
+                >
+                  {SECTIONS[currentIndex + 1].label}
+                  <ChevronRightIcon className="w-3.5 h-3.5" />
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={saving}
+                  className="h-8 text-xs min-w-24 gap-1.5"
+                >
+                  {saving ? (
+                    <>
+                      <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      Saving…
+                    </>
+                  ) : (
+                    "Save profile"
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </form>
+
+      {/* ── PDPA dialog ──────────────────────────────────────────────── */}
       <Dialog open={showPdpa} onOpenChange={setShowPdpa}>
         <DialogContent className="max-w-lg">
           <DialogHeader>

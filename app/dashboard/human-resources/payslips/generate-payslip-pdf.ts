@@ -91,6 +91,8 @@ export async function generatePayslipPdf(data: PayslipData) {
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
+  console.log("companyLogo:", data.companyLogo);
+
   const page = pdfDoc.addPage([595.28, 841.89]);
   const { width, height } = page.getSize();
   const ML = 32;

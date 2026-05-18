@@ -6,14 +6,18 @@ import { auth } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { nanoid } from "nanoid";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from "@aws-sdk/client-s3";
 
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT!,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY!,
-    secretAccessKey: process.env.R2_SECRET_KEY!,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!, // ← fixed key name
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!, // ← fixed key name
   },
 });
 
@@ -59,22 +63,37 @@ export async function uploadBankBook(formData: FormData) {
   const file = formData.get("file") as File;
   if (!file) throw new Error("No file");
 
+  // Delete old bank book from R2 if exists
+  const existing = await getProfile();
+  if (existing?.bankBookUrl) {
+    try {
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: process.env.R2_CERTIFICATES_BUCKET!,
+          Key: existing.bankBookUrl, // stored as key not URL
+        }),
+      );
+    } catch {
+      // ignore delete errors
+    }
+  }
+
   const ext = file.name.split(".").pop();
   const key = `bank-books/${session.user.id}/${nanoid()}.${ext}`;
   const buf = Buffer.from(await file.arrayBuffer());
 
   await s3.send(
     new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET!,
+      Bucket: process.env.R2_CERTIFICATES_BUCKET!, // ← private bucket
       Key: key,
       Body: buf,
       ContentType: file.type,
     }),
   );
 
-  const url = `${process.env.R2_PUBLIC_URL}/${key}`;
-  await upsertProfile({ bankBookUrl: url });
-  return url;
+  // Store key only — not public URL (private bucket)
+  await upsertProfile({ bankBookUrl: key });
+  return key;
 }
 
 export async function ensureProfileExists() {
