@@ -152,13 +152,14 @@ export function OrganizationSwitcher() {
                   </div>
                 ) : (
                   <>
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg text-sidebar-primary-foreground bg-transparent!">
                       {activeOrganization.logo ? (
                         <Image
                           src={activeOrganization.logo}
                           alt={activeOrganization.name}
                           width={32}
                           height={32}
+                          className="bg-transparent!"
                         />
                       ) : (
                         activeOrganization.name[0]
