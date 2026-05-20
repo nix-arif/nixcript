@@ -173,7 +173,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
   let textX = ML;
 
   if (headerLayout === "standard" && logoImg) {
-    // Logo left, name right of logo — cy is already at correct position
+    // Logo left, name right of logo
     page.drawImage(logoImg, { x: ML, y: cy - logoLh, width: logoLw, height: logoLh });
     textX = ML + logoLw + 8;
   } else if (headerLayout === "logo-top" && logoImg) {
@@ -187,11 +187,20 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
     cy -= logoLh + 4;
     textX = cx - fontB.widthOfTextAtSize(dispName, nameSize) / 2;
     textX = Math.max(ML, textX);
+  } else if (headerLayout === "logo-right" && logoImg) {
+    // Company info left, logo right (space-between)
+    page.drawImage(logoImg, { x: W - MR - logoLw, y: cy - logoLh, width: logoLw, height: logoLh });
+    // textX stays ML; text zone computed below
   }
   // text-only: no logo, textX stays ML
 
+  // Effective text zone width — logo-right narrows the zone so text never overlaps the logo
+  const textZoneW = (headerLayout === "logo-right" && logoImg)
+    ? CW - logoLw - 8
+    : companyZoneW - (textX - ML);
+
   // Company name
-  page.drawText(trunc(dispName, nameFont, nameSize, companyZoneW - (textX - ML)), {
+  page.drawText(trunc(dispName, nameFont, nameSize, textZoneW), {
     x: textX, y: cy - nameSize, size: nameSize, font: nameFont, color: effectiveNameColor,
   });
   cy -= nameSize + 10;
@@ -202,7 +211,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
 
   // Address (may wrap)
   if (companyAddress) {
-    const addrLines = wrap(companyAddress, fontR, infoSize, companyZoneW - (textX - ML));
+    const addrLines = wrap(companyAddress, fontR, infoSize, textZoneW);
     for (const line of addrLines) {
       page.drawText(line, { x: textX, y: cy, size: infoSize, font: fontR, color: infoColor });
       cy -= infoLH;
@@ -214,7 +223,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
     const ssm = newSsmNo && oldSsmNo
       ? `SSM: ${newSsmNo} (${oldSsmNo})`
       : `SSM: ${newSsmNo ?? oldSsmNo}`;
-    page.drawText(trunc(ssm, fontR, infoSize, companyZoneW - (textX - ML)), {
+    page.drawText(trunc(ssm, fontR, infoSize, textZoneW), {
       x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
     });
     cy -= infoLH;
@@ -222,7 +231,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
 
   // MDA Establishment
   if (mdaEstablishmentNo) {
-    page.drawText(trunc(`MDA Est: ${mdaEstablishmentNo}`, fontR, infoSize, companyZoneW - (textX - ML)), {
+    page.drawText(trunc(`MDA Est: ${mdaEstablishmentNo}`, fontR, infoSize, textZoneW), {
       x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
     });
     cy -= infoLH;
@@ -230,27 +239,24 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
 
   // Tax No
   if (taxNo) {
-    page.drawText(trunc(`Tax: ${taxNo}`, fontR, infoSize, companyZoneW - (textX - ML)), {
+    page.drawText(trunc(`Tax: ${taxNo}`, fontR, infoSize, textZoneW), {
       x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
     });
     cy -= infoLH;
   }
 
-  // Contact line: email · website · phone (compact, one line or two)
+  // Contact line: email · website · phone
   const contacts: string[] = [
     email && `✉ ${email}`,
     website && `🌐 ${website}`,
     phone && `✆ ${phone}`,
   ].filter(Boolean) as string[];
 
-  // Draw one contact per line (cleaner)
   for (const c of contacts) {
-    // Strip emoji for PDF since WinAnsi can't render them
     const safe = sanitizeText(c).replace(/[✉🌐✆]/g, "").trim();
-    // Add prefix label instead
     const label = c.startsWith("✉") ? "Email: " : c.startsWith("🌐") ? "Web: " : "Tel: ";
     const full = label + safe;
-    page.drawText(trunc(full, fontR, infoSize - 0.5, companyZoneW - (textX - ML)), {
+    page.drawText(trunc(full, fontR, infoSize - 0.5, textZoneW), {
       x: textX, y: cy, size: infoSize - 0.5, font: fontR, color: C_LITE,
     });
     cy -= infoLH;
@@ -421,12 +427,14 @@ export function estimateHeaderH(opts: {
     logoLw = logoImg.width * scale;
   }
   const textOffsetX = (headerLayout === "standard" && logoImg) ? logoLw + 8 : 0;
-  const textZoneW = companyZoneW - textOffsetX;
+  const textZoneW = (headerLayout === "logo-right" && logoImg)
+    ? CW - logoLw - 8
+    : companyZoneW - textOffsetX;
 
   let h = 0;
   // Centered doc label sits above company info as its own row
   if (docLabelAlign === "center" && docLabelSize > 0) h += docLabelSize + 12;
-  // Logo height (only adds vertical space for stacked layouts)
+  // Logo height (only adds vertical space for stacked layouts; logo-right is beside text)
   if (logoImg && (headerLayout === "logo-top" || headerLayout === "centered")) {
     const scale = Math.min(logoHMax / logoImg.height, logoWMax / logoImg.width);
     h += logoImg.height * scale + 4;

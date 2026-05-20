@@ -1,7 +1,7 @@
 import { getQuotationDetail } from "@/server/quotation";
 import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, StandardFonts } from "pdf-lib";
 import {
-  drawCompanyHeader, drawInfoSection, estimateHeaderH, estimateInfoH,
+  drawCompanyHeader, estimateHeaderH,
 } from "./_pdf-header";
 
 type Data = NonNullable<Awaited<ReturnType<typeof getQuotationDetail>>>;
@@ -102,6 +102,37 @@ function dashedLine(page: PDFPage, y: number, x1 = ML, x2 = W - MR, color = C_LI
   }
 }
 
+// drawBox: draws a rectangle (optionally rounded) given top-left corner coords.
+// yTop = PDF y-coordinate of the TOP of the box.
+function drawBox(
+  page: PDFPage,
+  x: number, yTop: number, width: number, height: number,
+  opts: {
+    fillColor?: ReturnType<typeof rgb>;
+    borderColor?: ReturnType<typeof rgb>;
+    borderWidth?: number;
+    rounded?: boolean;
+    r?: number;
+  },
+) {
+  const { fillColor, borderColor, borderWidth = 0.5, rounded = false, r = 5 } = opts;
+  if (rounded) {
+    const W = width, H = height;
+    const path = `M ${r},0 L ${W - r},0 Q ${W},0 ${W},${r} L ${W},${H - r} Q ${W},${H} ${W - r},${H} L ${r},${H} Q 0,${H} 0,${H - r} L 0,${r} Q 0,0 ${r},0 Z`;
+    page.drawSvgPath(path, {
+      x, y: yTop,
+      ...(fillColor   ? { color: fillColor }                 : {}),
+      ...(borderColor ? { borderColor, borderWidth } : {}),
+    });
+  } else {
+    page.drawRectangle({
+      x, y: yTop - height, width, height,
+      ...(fillColor   ? { color: fillColor }                 : {}),
+      ...(borderColor ? { borderColor, borderWidth } : {}),
+    });
+  }
+}
+
 // ── Main export ────────────────────────────────────────────────────────────
 function hexToColor(hex: string | null | undefined, fallback: ReturnType<typeof rgb>): ReturnType<typeof rgb> {
   if (!hex) return fallback;
@@ -126,7 +157,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   const {
     quotation: q, items,
     orgName, orgLogoUrl, orgBrandColor,
-    orgSlateTextColor, orgSlateHeadingColor,
+    orgSlateTextColor, orgSlateHeadingColor, orgSlateInfoFontSize,
     orgCompanyName, orgCompanyAddress, orgTaxNo, orgPhone,
     orgEmail, orgWebsite, orgOldSsmNo, orgNewSsmNo, orgMdaEstablishmentNo,
     orgBankingInfo,
@@ -170,6 +201,11 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   const orgInfoSide = data.orgInfoSide ?? "left";
   const attnNameSz = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string,number>)[data.orgAttentionNameSize ?? "medium"] ?? 13;
   const detailFSz  = ({ small: 8, normal: 9, large: 10.5 } as Record<string,number>)[data.orgDetailFontSize ?? "normal"] ?? 9;
+  const slateInfoFS = ({ small: 8, normal: 9, large: 10 } as Record<string,number>)[orgSlateInfoFontSize ?? "normal"] ?? 9;
+  const slateInfoLH = slateInfoFS + 3;  // line height for info section
+  const IPAD_H = 10; // horizontal padding inside info boxes
+  const IPAD_T = 10; // top padding inside info boxes
+  const IPAD_B = 8;  // bottom padding inside info boxes
 
   // ── Logo ──────────────────────────────────────────────────────────────────
   let logoImg: PDFImage | null = null;
@@ -255,13 +291,22 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   }) + 6;
   const DIVIDER_GAP   = 10;
   const TABLE_HDR_H   = 22;
-  const INFO_BLOCK = estimateInfoH({
-    cust, attentionNameSize: attnNameSz,
-    salesPersonName: q.salesPersonName ?? null,
-    preparedByName: q.preparedByName ?? null,
-    title: q.title ?? null,
-    detailFontSize: detailFSz, fontR,
-  }) + 10;
+
+  // ── Slate-specific info section height estimate ───────────────────────────
+  const custName = cust ? [cust.title, cust.name].filter(Boolean).join(" ") : null;
+  let leftH = IPAD_T + slateInfoFS + 6; // "ATTENTION TO" label
+  if (cust) {
+    if (custName) leftH += slateInfoFS + 4;
+    if (cust.position || cust.department) leftH += slateInfoLH;
+    if (cust.organizationName) leftH += slateInfoLH;
+    if (cust.organizationAddress) leftH += slateInfoLH * 2;
+    if (cust.email || cust.contactNo) leftH += slateInfoLH;
+  } else { leftH += slateInfoLH; }
+  leftH += IPAD_B;
+
+  const detailRowCount = 3 + (q.salesPersonName ? 1 : 0) + (q.preparedByName ? 1 : 0) + (q.title ? 1 : 0);
+  const rightH = IPAD_T + slateInfoFS + 6 + detailRowCount * slateInfoLH + IPAD_B;
+  const INFO_BLOCK = Math.max(leftH, rightH);
 
   const totRowCount = 1 + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines   = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
@@ -339,27 +384,89 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       hLine(page, curY, ML, W - MR, accent, 1.2);
       curY -= DIVIDER_GAP;
 
-      // Draw boxes around ATTENTION TO (left) and QUOTATION DETAILS (right) before text
+      // ── Info section: two boxes + content ──────────────────────────────
       {
+        const isRounded   = tableRowStyle === "rounded";
         const INFO_LEFT_W  = CW * 0.55;
         const INFO_RIGHT_X = ML + INFO_LEFT_W;
         const INFO_RIGHT_W = CW * 0.45;
         const boxTop = curY + 4;
         const boxH   = INFO_BLOCK + 6;
-        const boxBot = boxTop - boxH;
-        page.drawRectangle({ x: ML,           y: boxBot, width: INFO_LEFT_W  - 3, height: boxH, borderColor: C_LINE, borderWidth: 0.6 });
-        page.drawRectangle({ x: INFO_RIGHT_X + 3, y: boxBot, width: INFO_RIGHT_W - 3, height: boxH, borderColor: C_LINE, borderWidth: 0.6 });
-      }
 
-      drawInfoSection({
-        page, startY: curY, accent: accentT, fontR, fontB, cust,
-        attentionNameSize: attnNameSz, attentionNameBold: !!(data.orgAttentionNameBold ?? 1),
-        detailFontSize: detailFSz, detailFontBold: !!(data.orgDetailFontBold ?? 0),
-        detailAlignment: (data.orgDetailAlignment ?? "right") as "left" | "right",
-        quotationNo: q.quotationNo, createdAt: q.createdAt,
-        validUntil: q.validUntil, salesPersonName: q.salesPersonName ?? null,
-        preparedByName: q.preparedByName ?? null, title: q.title ?? null,
-      });
+        // Draw boxes (rounded if table is rounded)
+        drawBox(page, ML,                boxTop, INFO_LEFT_W  - 3, boxH, { borderColor: C_LINE, borderWidth: 0.6, rounded: isRounded });
+        drawBox(page, INFO_RIGHT_X + 3,  boxTop, INFO_RIGHT_W - 3, boxH, { borderColor: C_LINE, borderWidth: 0.6, rounded: isRounded });
+
+        // ── Left box: ATTENTION TO ──────────────────────────────────────
+        const leftX    = ML + IPAD_H;
+        const leftMaxW = INFO_LEFT_W - 3 - IPAD_H * 2;
+        let ly = boxTop - IPAD_T - slateInfoFS;
+
+        page.drawText("ATTENTION TO", { x: leftX, y: ly, size: slateInfoFS, font: fontB, color: accentT });
+        ly -= slateInfoFS + 6;
+
+        if (cust) {
+          if (custName) {
+            page.drawText(trunc(custName, fontB, slateInfoFS, leftMaxW), {
+              x: leftX, y: ly, size: slateInfoFS, font: fontB, color: C_DARK,
+            });
+            ly -= slateInfoFS + 4;
+          }
+          if (cust.position || cust.department) {
+            const pos = [cust.position, cust.department].filter(Boolean).join(", ");
+            page.drawText(trunc(pos, fontR, slateInfoFS, leftMaxW), {
+              x: leftX, y: ly, size: slateInfoFS, font: fontR, color: C_BODY,
+            });
+            ly -= slateInfoLH;
+          }
+          if (cust.organizationName) {
+            page.drawText(trunc(cust.organizationName, fontR, slateInfoFS, leftMaxW), {
+              x: leftX, y: ly, size: slateInfoFS, font: fontR, color: C_BODY,
+            });
+            ly -= slateInfoLH;
+          }
+          if (cust.organizationAddress) {
+            for (const line of wrap(cust.organizationAddress, fontR, slateInfoFS, leftMaxW).slice(0, 2)) {
+              page.drawText(line, { x: leftX, y: ly, size: slateInfoFS, font: fontR, color: C_MID });
+              ly -= slateInfoLH;
+            }
+          }
+          if (cust.email || cust.contactNo) {
+            const contact = [cust.email, cust.contactNo].filter(Boolean).join("  ·  ");
+            page.drawText(trunc(contact, fontR, slateInfoFS, leftMaxW), {
+              x: leftX, y: ly, size: slateInfoFS, font: fontR, color: C_MID,
+            });
+          }
+        } else {
+          page.drawText("—", { x: leftX, y: ly, size: slateInfoFS, font: fontR, color: C_MID });
+        }
+
+        // ── Right box: QUOTATION DETAILS ────────────────────────────────
+        const rightX    = INFO_RIGHT_X + 3 + IPAD_H;
+        const rightMaxW = INFO_RIGHT_W - 3 - IPAD_H * 2;
+        let ry = boxTop - IPAD_T - slateInfoFS;
+
+        page.drawText("QUOTATION DETAILS", { x: rightX, y: ry, size: slateInfoFS, font: fontB, color: accentT });
+        ry -= slateInfoFS + 6;
+
+        const detailRows: [string, string][] = [
+          ["Quotation No", q.quotationNo],
+          ["Date",         fmtD(q.createdAt)],
+          ["Valid Until",  fmtD(q.validUntil)],
+          ...(q.salesPersonName ? [["Sales",       q.salesPersonName]] as [string,string][] : []),
+          ...(q.preparedByName  ? [["Prepared By", q.preparedByName]]  as [string,string][] : []),
+          ...(q.title           ? [["Subject",     q.title]]           as [string,string][] : []),
+        ];
+        for (const [lbl, val] of detailRows) {
+          const lblStr = `${lbl}: `;
+          const lblW = fontR.widthOfTextAtSize(lblStr, slateInfoFS);
+          page.drawText(lblStr, { x: rightX, y: ry, size: slateInfoFS, font: fontR, color: C_MID });
+          page.drawText(trunc(val, fontB, slateInfoFS, rightMaxW - lblW), {
+            x: rightX + lblW, y: ry, size: slateInfoFS, font: fontB, color: C_DARK,
+          });
+          ry -= slateInfoLH;
+        }
+      }
       curY -= INFO_BLOCK + DIVIDER_GAP;
       hLine(page, curY);
       curY -= 4;
@@ -525,9 +632,9 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       if (bank) {
         const bBoxH = 58;
         const bBoxW = CW * 0.46;
-        page.drawRectangle({
-          x: ML, y: curY - bBoxH, width: bBoxW, height: bBoxH,
-          color: C_BG1, borderColor: C_LINE, borderWidth: 0.4,
+        drawBox(page, ML, curY, bBoxW, bBoxH, {
+          fillColor: C_BG1, borderColor: C_LINE, borderWidth: 0.4,
+          rounded: tableRowStyle === "rounded",
         });
         page.drawText("PAYMENT TO", {
           x: ML + 10, y: curY - 13, size: 6.5, font: fontB, color: accentT,
@@ -592,9 +699,9 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         const nLines   = wrap(q.notes, fontR, 9.5, CW - 24);
         const noteBoxH = nLines.length * 12 + 26;
 
-        page.drawRectangle({
-          x: ML, y: curY - noteBoxH, width: CW, height: noteBoxH,
-          color: C_BG1, borderColor: C_LINE, borderWidth: 0.4,
+        drawBox(page, ML, curY, CW, noteBoxH, {
+          fillColor: C_BG1, borderColor: C_LINE, borderWidth: 0.4,
+          rounded: tableRowStyle === "rounded",
         });
         page.drawRectangle({ x: ML, y: curY - noteBoxH, width: 3, height: noteBoxH, color: accent });
         page.drawText("NOTES", {

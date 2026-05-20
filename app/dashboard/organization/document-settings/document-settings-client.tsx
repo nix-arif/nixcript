@@ -30,6 +30,7 @@ export function DocumentSettingsClient({ data }: Props) {
   const [brandColor, setBrandColor] = useState(data.brandColor ?? "#1a56db");
   const [slateTextColor, setSlateTextColor] = useState(data.slateTextColor ?? "");
   const [slateHeadingColor, setSlateHeadingColor] = useState(data.slateHeadingColor ?? "");
+  const [slateInfoFontSize, setSlateInfoFontSize] = useState(data.slateInfoFontSize ?? "normal");
 
   // Template — single picker controlling both HTML preview and PDF download
   const [pdfTemplate, setPdfTemplate] = useState(data.pdfTemplate ?? "affirma");
@@ -77,6 +78,7 @@ export function DocumentSettingsClient({ data }: Props) {
         brandColor,
         slateTextColor:    slateTextColor    || null,
         slateHeadingColor: slateHeadingColor || null,
+        slateInfoFontSize: slateInfoFontSize || null,
         pdfTemplate,
         templateStyle,
         headerLayout,
@@ -231,6 +233,28 @@ export function DocumentSettingsClient({ data }: Props) {
                   )}
                 </div>
               </div>
+              {/* Info section font size */}
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">
+                  Info section font size <span className="font-normal text-muted-foreground/60">(Attention To &amp; Quotation Details boxes)</span>
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { id: "small",  label: "Small",  pt: "8 pt" },
+                    { id: "normal", label: "Normal", pt: "9 pt" },
+                    { id: "large",  label: "Large",  pt: "10 pt" },
+                  ] as const).map((opt) => {
+                    const active = slateInfoFontSize === opt.id;
+                    return (
+                      <button key={opt.id} type="button" onClick={() => setSlateInfoFontSize(opt.id)}
+                        className={cn("border rounded-lg px-2 py-2 text-center transition-colors", active ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30")}>
+                        <div className={cn("text-xs font-semibold", active ? "text-primary" : "text-foreground")}>{opt.label}</div>
+                        <div className="text-[10px] text-muted-foreground">{opt.pt}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
@@ -377,10 +401,11 @@ export function DocumentSettingsClient({ data }: Props) {
             <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">Logo & name arrangement</label>
             <div className="grid grid-cols-2 gap-2">
               {([
-                { id: "standard",  label: "Standard",  desc: "Logo left of company name" },
-                { id: "logo-top",  label: "Logo Top",  desc: "Logo above company name" },
-                { id: "centered",  label: "Centered",  desc: "Logo and name centered" },
-                { id: "text-only", label: "Text Only", desc: "No logo — name and address only" },
+                { id: "standard",   label: "Standard",    desc: "Logo left of company name" },
+                { id: "logo-right", label: "Logo Right",  desc: "Company info left · logo right" },
+                { id: "logo-top",   label: "Logo Top",    desc: "Logo above company name" },
+                { id: "centered",   label: "Centered",    desc: "Logo and name centered" },
+                { id: "text-only",  label: "Text Only",   desc: "No logo — name and address only" },
               ] as const).map((opt) => {
                 const active = headerLayout === opt.id;
                 return (
@@ -399,6 +424,16 @@ export function DocumentSettingsClient({ data }: Props) {
                             <div className="h-1 rounded-sm w-1/2 bg-muted-foreground/30" />
                           </div>
                         </>
+                      )}
+                      {opt.id === "logo-right" && (
+                        <div className="flex items-start justify-between gap-1 w-full">
+                          <div className="flex flex-col gap-0.5 flex-1">
+                            <div className="h-1.5 rounded-sm w-3/4" style={{ backgroundColor: brandColor, opacity: 0.8 }} />
+                            <div className="h-1 rounded-sm w-1/2 bg-muted-foreground/30" />
+                            <div className="h-1 rounded-sm w-2/5 bg-muted-foreground/20" />
+                          </div>
+                          <div className="w-4 h-4 rounded-sm shrink-0" style={{ backgroundColor: brandColor }} />
+                        </div>
                       )}
                       {opt.id === "logo-top" && (
                         <div className="flex flex-col items-start gap-0.5 flex-1">
