@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   finalizeQuotation,
   deleteQuotation,
-  getQuotationDetail,
+  getQuotationGroupAllDetails,
 } from "@/server/quotation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,10 +26,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type Data = NonNullable<Awaited<ReturnType<typeof getQuotationDetail>>>;
+type Data = NonNullable<Awaited<ReturnType<typeof getQuotationGroupAllDetails>>>[number];
 
 interface Props {
-  data: Data;
+  group: Data[];
+  initialId: string;
 }
 
 const fmt = (v: string | number | null | undefined) =>
@@ -79,8 +80,12 @@ function generateRandomMarkups(siblings: Data["siblings"]): MarkupRow[] {
   });
 }
 
-export function QuotationDetailClient({ data }: Props) {
+export function QuotationDetailClient({ group, initialId }: Props) {
   const router = useRouter();
+  const [selectedId, setSelectedId] = useState(initialId);
+
+  // All data is already loaded — switch is instant, no navigation
+  const data = group.find((d) => d.quotation.id === selectedId) ?? group[0];
   const { quotation: q, orgName, items, siblings } = data;
   const cust = q.customerSnapshot as any;
 
@@ -92,12 +97,10 @@ export function QuotationDetailClient({ data }: Props) {
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
   const [markupRows, setMarkupRows] = useState<MarkupRow[]>([]);
 
-  // Pre-fetch all sibling pages so tab switches feel instant
+  // Keep URL in sync without triggering a page reload
   useEffect(() => {
-    siblings.forEach((s) => {
-      if (s.id !== q.id) router.prefetch(`/dashboard/sales/quotation/${s.id}`);
-    });
-  }, [siblings, q.id, router]);
+    window.history.replaceState(null, "", `/dashboard/sales/quotation/${selectedId}`);
+  }, [selectedId]);
 
   const isDraft = q.status === "draft";
   const isComparison = q.mode === "comparison";
@@ -450,16 +453,13 @@ export function QuotationDetailClient({ data }: Props) {
           </div>
           <div className="flex items-center gap-1 p-2 flex-wrap">
             {siblings.map((s) => {
-              const isCurrent = s.id === q.id;
+              const isCurrent = s.id === selectedId;
               const sibStatus =
                 STATUS[s.status as keyof typeof STATUS] ?? STATUS.draft;
               return (
                 <button
                   key={s.id}
-                  onClick={() =>
-                    !isCurrent &&
-                    router.push(`/dashboard/sales/quotation/${s.id}`)
-                  }
+                  onClick={() => !isCurrent && setSelectedId(s.id)}
                   className={cn(
                     "flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors",
                     isCurrent

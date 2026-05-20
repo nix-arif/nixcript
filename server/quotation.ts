@@ -941,6 +941,180 @@ export async function getQuotationDetail(id: string) {
   };
 }
 
+// ── Get full detail for every quotation in a comparison group (batch) ────
+// Used by the detail page so tab-switching is pure client-side (no navigation).
+export async function getQuotationGroupAllDetails(id: string) {
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
+
+  // 1. Anchor quotation
+  const [anchor] = await db
+    .select()
+    .from(quotation)
+    .where(and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)))
+    .limit(1);
+  if (!anchor) return null;
+
+  // 2. All quotations in the group (or just the one)
+  const allQuotations = anchor.groupId
+    ? await db
+        .select()
+        .from(quotation)
+        .where(and(eq(quotation.groupId, anchor.groupId), inArray(quotation.organizationId, ownerOrgIds)))
+        .orderBy(asc(quotation.isDummy))
+    : [anchor];
+
+  const quotationIds = allQuotations.map((q) => q.id);
+  const orgIds = [...new Set(allQuotations.map((q) => q.organizationId))];
+
+  // 3. All org profiles in one query
+  const orgRows = await db
+    .select({
+      id: organization.id,
+      name: organization.name,
+      logo: organization.logo,
+      logoKey: organizationProfile.logoKey,
+      brandColor: organizationProfile.brandColor,
+      companyName: organizationProfile.companyName,
+      companyAddress: organizationProfile.companyAddress,
+      taxNo: organizationProfile.taxNo,
+      phone: organizationProfile.phone,
+      email: organizationProfile.email,
+      website: organizationProfile.website,
+      oldSsmNo: organizationProfile.oldSsmNo,
+      newSsmNo: organizationProfile.newSsmNo,
+      mdaEstablishmentNo: organizationProfile.mdaEstablishmentNo,
+      bankingInfo: organizationProfile.bankingInfo,
+      pdfTemplate: organizationProfile.pdfTemplate,
+      titlePosition: organizationProfile.titlePosition,
+      tableFontSize: organizationProfile.tableFontSize,
+      headerLayout: organizationProfile.headerLayout,
+      orgNameSize: organizationProfile.orgNameSize,
+      orgNameBold: organizationProfile.orgNameBold,
+      orgNameUppercase: organizationProfile.orgNameUppercase,
+      orgInfoSide: organizationProfile.orgInfoSide,
+      quotationLabelSize: organizationProfile.quotationLabelSize,
+      quotationLabelBold: organizationProfile.quotationLabelBold,
+      quotationLabelUppercase: organizationProfile.quotationLabelUppercase,
+      tableRowStyle: organizationProfile.tableRowStyle,
+      showCodeColumn: organizationProfile.showCodeColumn,
+      attentionNameSize: organizationProfile.attentionNameSize,
+      attentionNameBold: organizationProfile.attentionNameBold,
+      detailFontSize: organizationProfile.detailFontSize,
+      detailFontBold: organizationProfile.detailFontBold,
+      detailAlignment: organizationProfile.detailAlignment,
+    })
+    .from(organization)
+    .leftJoin(organizationProfile, eq(organizationProfile.organizationId, organization.id))
+    .where(inArray(organization.id, orgIds));
+
+  // 4. All items in one query
+  const allItems = await db
+    .select()
+    .from(quotationItem)
+    .where(inArray(quotationItem.quotationId, quotationIds))
+    .orderBy(asc(quotationItem.rowNo));
+
+  // 5. Customer data (shared across group)
+  const customerId = anchor.customerId;
+  let customerData: Record<string, string | null> | null = null;
+  if (customerId) {
+    const [cust] = await db
+      .select({
+        title: customer.title,
+        name: customer.name,
+        position: customer.position,
+        department: customer.department,
+        email: customer.email,
+        contactNo: customer.contactNo,
+        organizationName: customer.organizationName,
+        organizationAddress: customer.organizationAddress,
+      })
+      .from(customer)
+      .where(eq(customer.id, customerId))
+      .limit(1);
+    if (cust) customerData = cust as Record<string, string | null>;
+  }
+
+  const r2Public = process.env.R2_PUBLIC_URL ?? "";
+  const orgMap = new Map(orgRows.map((o) => [o.id, o]));
+
+  // 6. Build siblings summary (shared)
+  const siblings = allQuotations.map((q) => ({
+    id: q.id,
+    quotationNo: q.quotationNo,
+    organizationId: q.organizationId,
+    orgName: orgMap.get(q.organizationId)?.name ?? "",
+    isDummy: q.isDummy,
+    status: q.status,
+    grandTotal: q.grandTotal,
+  }));
+
+  // 7. Assemble one detail object per quotation
+  return allQuotations.map((q) => {
+    const orgRow = orgMap.get(q.organizationId);
+    const orgLogoUrl = orgRow?.logoKey ? `${r2Public}/${orgRow.logoKey}` : (orgRow?.logo ?? null);
+    const snapshot = q.customerSnapshot as Record<string, string> | null;
+    const mergedCustomerSnapshot = customerData
+      ? {
+          title: customerData.title ?? snapshot?.title,
+          name: customerData.name ?? snapshot?.name ?? "",
+          position: customerData.position ?? snapshot?.position,
+          department: customerData.department ?? snapshot?.department,
+          email: customerData.email ?? snapshot?.email,
+          contactNo: customerData.contactNo ?? snapshot?.contactNo,
+          organizationName: customerData.organizationName ?? snapshot?.organizationName,
+          organizationAddress: customerData.organizationAddress ?? snapshot?.organizationAddress,
+        }
+      : snapshot;
+
+    return {
+      quotation: { ...q, customerSnapshot: mergedCustomerSnapshot },
+      orgName: orgRow?.name ?? "",
+      orgLogoUrl,
+      orgBrandColor: orgRow?.brandColor ?? null,
+      orgCompanyName: orgRow?.companyName ?? null,
+      orgCompanyAddress: orgRow?.companyAddress ?? null,
+      orgTaxNo: orgRow?.taxNo ?? null,
+      orgPhone: orgRow?.phone ?? null,
+      orgEmail: orgRow?.email ?? null,
+      orgWebsite: orgRow?.website ?? null,
+      orgOldSsmNo: orgRow?.oldSsmNo ?? null,
+      orgNewSsmNo: orgRow?.newSsmNo ?? null,
+      orgMdaEstablishmentNo: orgRow?.mdaEstablishmentNo ?? null,
+      orgBankingInfo: orgRow?.bankingInfo ?? [],
+      orgPdfTemplate: orgRow?.pdfTemplate ?? "affirma",
+      orgTitlePosition: orgRow?.titlePosition ?? "stamp",
+      orgTableFontSize: orgRow?.tableFontSize ?? "normal",
+      orgHeaderLayout: orgRow?.headerLayout ?? "standard",
+      orgNameSize: orgRow?.orgNameSize ?? "medium",
+      orgNameBold: orgRow?.orgNameBold ?? 1,
+      orgNameUppercase: orgRow?.orgNameUppercase ?? 0,
+      orgInfoSide: orgRow?.orgInfoSide ?? "left",
+      orgQuotationLabelSize: orgRow?.quotationLabelSize ?? "normal",
+      orgQuotationLabelBold: orgRow?.quotationLabelBold ?? 1,
+      orgQuotationLabelUppercase: orgRow?.quotationLabelUppercase ?? 1,
+      orgTableRowStyle: orgRow?.tableRowStyle ?? "default",
+      orgShowCodeColumn: orgRow?.showCodeColumn ?? 1,
+      orgAttentionNameSize: orgRow?.attentionNameSize ?? "medium",
+      orgAttentionNameBold: orgRow?.attentionNameBold ?? 1,
+      orgDetailFontSize: orgRow?.detailFontSize ?? "normal",
+      orgDetailFontBold: orgRow?.detailFontBold ?? 0,
+      orgDetailAlignment: orgRow?.detailAlignment ?? "right",
+      orgMofCertUrl: null,
+      orgSsmCertUrl: null,
+      orgMdaCertUrl: null,
+      orgTccCertUrl: null,
+      orgBankStatementUrl: null,
+      orgLampiran12Url: null,
+      orgLampiran13Url: null,
+      items: allItems.filter((item) => item.quotationId === q.id),
+      siblings,
+    };
+  });
+}
+
 // ── Get all quotations in a group for print (single batch) ────────────────
 export async function getQuotationGroupForPrint(id: string) {
   const { orgId, userId } = await requireAccess("quotation:read");
