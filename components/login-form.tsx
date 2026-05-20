@@ -19,10 +19,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import authLogo from "@/branding/authlogo.svg";
 import Image from "next/image";
-import { signIn } from "@/server/users";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { Spinner } from "./ui/spinner";
 
 const formSchema = z.object({
   email: z.email("Please enter a valid email"),
@@ -120,7 +120,16 @@ export function LoginForm({
               />
 
               <Field>
-                <Button type="submit">Login</Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting ? (
+                    <>
+                      <Spinner className="size-6" />
+                      Signing in...
+                    </>
+                  ) : (
+                    "Login"
+                  )}
+                </Button>
               </Field>
 
               <FieldDescription className="text-center">

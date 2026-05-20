@@ -552,7 +552,7 @@ export const organizationProfile = pgTable("organization_profile", {
 
   // MOF
   mofNo: text("mof_no"),
-  mofValidity: text("mof_validity"),
+  mofValidity: timestamp("mof_validity", { mode: "string" }),
   mofCertUrl: text("mof_cert_url"), // R2 key
 
   // PKK
@@ -566,22 +566,22 @@ export const organizationProfile = pgTable("organization_profile", {
 
   // PDF download template: affirma | nexus | slate
   pdfTemplate: text("pdf_template").default("affirma"),
-  titlePosition: text("title_position").default("stamp"),   // stamp | table-banner
-  tableFontSize: text("table_font_size").default("normal"),  // small | normal | large
+  titlePosition: text("title_position").default("stamp"), // stamp | table-banner
+  tableFontSize: text("table_font_size").default("normal"), // small | normal | large
 
   // Header customisation
-  headerLayout:    text("header_layout").default("standard"),    // standard | logo-top | centered | text-only
-  orgNameSize:     text("org_name_size").default("medium"),      // small | medium | large | xlarge
-  orgNameBold:     integer("org_name_bold").default(1),
+  headerLayout: text("header_layout").default("standard"), // standard | logo-top | centered | text-only
+  orgNameSize: text("org_name_size").default("medium"), // small | medium | large | xlarge
+  orgNameBold: integer("org_name_bold").default(1),
   orgNameUppercase: integer("org_name_uppercase").default(0),
-  orgInfoSide:     text("org_info_side").default("left"),        // left | right — which side the org info panel is on
-  quotationLabelSize:      text("quotation_label_size").default("normal"),  // small | normal | large
-  quotationLabelBold:      integer("quotation_label_bold").default(1),
+  orgInfoSide: text("org_info_side").default("left"), // left | right — which side the org info panel is on
+  quotationLabelSize: text("quotation_label_size").default("normal"), // small | normal | large
+  quotationLabelBold: integer("quotation_label_bold").default(1),
   quotationLabelUppercase: integer("quotation_label_uppercase").default(1),
 
   // Table style
-  tableRowStyle:   text("table_row_style").default("default"),  // default | simple | rounded
-  showCodeColumn:  integer("show_code_column").default(1),
+  tableRowStyle: text("table_row_style").default("default"), // default | simple | rounded
+  showCodeColumn: integer("show_code_column").default(1),
 
   // Quotation number format: A | B | C
   quotationNoFormat: text("quotation_no_format").default("A"),
@@ -593,17 +593,19 @@ export const organizationProfile = pgTable("organization_profile", {
 
   // MDA
   mdaEstablishmentNo: text("mda_establishment_no"),
-  mdaEstablishmentValidity: text("mda_establishment_validity"),
+  mdaEstablishmentValidity: timestamp("mda_establishment_validity", {
+    mode: "string",
+  }),
   mdaCertUrl: text("mda_cert_url"),
 
   // Attention block style (customer info section)
-  attentionNameSize: text("attention_name_size").default("medium"),  // small | medium | large | xlarge
+  attentionNameSize: text("attention_name_size").default("medium"), // small | medium | large | xlarge
   attentionNameBold: integer("attention_name_bold").default(1),
 
   // Quotation detail block style (right-side info section)
-  detailFontSize:  text("detail_font_size").default("normal"),   // small | normal | large
-  detailFontBold:  integer("detail_font_bold").default(0),
-  detailAlignment: text("detail_alignment").default("right"),    // left | right
+  detailFontSize: text("detail_font_size").default("normal"), // small | normal | large
+  detailFontBold: integer("detail_font_bold").default(0),
+  detailAlignment: text("detail_alignment").default("right"), // left | right
 
   // Bank statement
   bankStatementUrl: text("bank_statement_url"),
@@ -746,7 +748,9 @@ export const quotation = pgTable(
     inclSsm: integer("incl_ssm").notNull().default(1),
     inclTcc: integer("incl_tcc").notNull().default(1),
     inclBankStatement: integer("incl_bank_statement").notNull().default(1),
-    inclMdaEstablishment: integer("incl_mda_establishment").notNull().default(1),
+    inclMdaEstablishment: integer("incl_mda_establishment")
+      .notNull()
+      .default(1),
     inclLampiran12: integer("incl_lampiran12").notNull().default(1),
     inclLampiran13: integer("incl_lampiran13").notNull().default(1),
 
@@ -797,7 +801,7 @@ export const quotationItem = pgTable(
     productName: text("product_name"),
     imageKey: text("image_key"), // R2 key for catalogue image
     mdaRegNo: text("mda_reg_no"),
-    mdaValidity: text("mda_validity"),
+    mdaValidity: timestamp("mda_validity"),
     hasCert: integer("has_cert").default(0),
     hasPrice: integer("has_price").default(0),
 
