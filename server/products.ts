@@ -16,16 +16,16 @@ type ProductRow = {
   uom?: string;
   supplier?: string;
   brand?: string;
-  registrationNo?: string;
-  pageNo?: string;
-  validFrom?: string;
-  expiredOn?: string;
-  pdfFile?: string;
-  matchX?: string;
-  matchY?: string;
-  rowHeight?: string;
-  pageWidth?: string;
-  pageHeight?: string;
+  mdaRegistrationNo?: string;
+  mdaPageNo?: string;
+  mdaValidFrom?: string;
+  mdaExpiredOn?: string;
+  mdaPdfFile?: string;
+  mdaMatchX?: string;
+  mdaMatchY?: string;
+  mdaRowHeight?: string;
+  mdaPageWidth?: string;
+  mdaPageHeight?: string;
 };
 
 export async function seedProducts(rows: ProductRow[]) {
@@ -47,16 +47,16 @@ export async function seedProducts(rows: ProductRow[]) {
     uom: row.uom,
     supplier: row.supplier,
     brand: row.brand,
-    registrationNo: row.registrationNo,
-    pageNo: row.pageNo,
-    validFrom: row.validFrom,
-    expiredOn: row.expiredOn,
-    pdfFile: row.pdfFile,
-    matchX: row.matchX,
-    matchY: row.matchY,
-    rowHeight: row.rowHeight,
-    pageWidth: row.pageWidth,
-    pageHeight: row.pageHeight,
+    mdaRegistrationNo: row.mdaRegistrationNo,
+    mdaPageNo: row.mdaPageNo,
+    mdaValidFrom: row.mdaValidFrom,
+    mdaExpiredOn: row.mdaExpiredOn,
+    mdaPdfFile: row.mdaPdfFile,
+    mdaMatchX: row.mdaMatchX,
+    mdaMatchY: row.mdaMatchY,
+    mdaRowHeight: row.mdaRowHeight,
+    mdaPageWidth: row.mdaPageWidth,
+    mdaPageHeight: row.mdaPageHeight,
   }));
 
   await db

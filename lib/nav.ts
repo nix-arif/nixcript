@@ -147,6 +147,11 @@ export const navConfig: NavGroup[] = [
         url: "/dashboard/organization/organization-profile",
         permission: "organization-profile:create", // admin/owner only
       },
+      {
+        title: "Document Settings",
+        url: "/dashboard/organization/document-settings",
+        permission: "organization-profile:create",
+      },
     ],
   },
   {

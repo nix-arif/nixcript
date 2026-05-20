@@ -2,7 +2,8 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { getCustomers } from "@/server/customer";
 import {
   getOrgMembersForQuotation,
-  generateQuotationNo,
+  peekNextQuotationNo,
+  getOwnerOrganizations,
 } from "@/server/quotation";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -14,10 +15,11 @@ export default async function NewQuotationPage() {
   const session = await auth.api.getSession({ headers: await headers() });
   const orgId = session?.session.activeOrganizationId ?? "";
 
-  const [customers, members, quotationNo] = await Promise.all([
+  const [customers, members, quotationNo, ownerOrgs] = await Promise.all([
     getCustomers(),
     getOrgMembersForQuotation(),
-    generateQuotationNo(orgId),
+    peekNextQuotationNo(orgId),
+    getOwnerOrganizations(),
   ]);
 
   return (
@@ -27,6 +29,8 @@ export default async function NewQuotationPage() {
       quotationNo={quotationNo}
       currentUserId={session?.user.id ?? ""}
       currentUserName={session?.user.name ?? ""}
+      ownerOrgs={ownerOrgs}
+      activeOrgId={orgId}
     />
   );
 }

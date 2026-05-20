@@ -1,0 +1,16 @@
+import { requirePermission } from "@/lib/auth/require-permission";
+import { getQuotationGroupForPrint } from "@/server/quotation";
+import { notFound } from "next/navigation";
+import { PrintClient } from "./print-client";
+
+interface Props {
+  params: Promise<{ id: string }>;
+}
+
+export default async function QuotationPrintPage({ params }: Props) {
+  await requirePermission("quotation:read");
+  const { id } = await params;
+  const group = await getQuotationGroupForPrint(id);
+  if (!group || group.length === 0) notFound();
+  return <PrintClient group={group} />;
+}

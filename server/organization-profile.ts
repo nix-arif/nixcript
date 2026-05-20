@@ -38,7 +38,10 @@ type CertField =
   | "taxCertUrl"
   | "mofCertUrl"
   | "pkkCertUrl"
-  | "mdaCertUrl";
+  | "mdaCertUrl"
+  | "bankStatementUrl"
+  | "lampiran12Url"
+  | "lampiran13Url";
 
 // ── Get organization profile ───────────────────────────────────────────────
 export async function getOrganizationProfile() {
@@ -243,12 +246,18 @@ export async function getFullOrganizationProfile() {
     mofCertSignedUrl,
     pkkCertSignedUrl,
     mdaCertSignedUrl,
+    bankStatementSignedUrl,
+    lampiran12SignedUrl,
+    lampiran13SignedUrl,
   ] = await Promise.all([
     profile.ssmCertUrl ? getPresignedUrl(profile.ssmCertUrl) : null,
     profile.taxCertUrl ? getPresignedUrl(profile.taxCertUrl) : null,
     profile.mofCertUrl ? getPresignedUrl(profile.mofCertUrl) : null,
     profile.pkkCertUrl ? getPresignedUrl(profile.pkkCertUrl) : null,
     profile.mdaCertUrl ? getPresignedUrl(profile.mdaCertUrl) : null,
+    profile.bankStatementUrl ? getPresignedUrl(profile.bankStatementUrl) : null,
+    profile.lampiran12Url ? getPresignedUrl(profile.lampiran12Url) : null,
+    profile.lampiran13Url ? getPresignedUrl(profile.lampiran13Url) : null,
   ]);
 
   return {
@@ -256,8 +265,27 @@ export async function getFullOrganizationProfile() {
     name: org.name,
     slug: org.slug,
     logo: org.logo ?? null,
+    quotationNoFormat: profile.quotationNoFormat ?? "A",
+    pdfTemplate: profile.pdfTemplate ?? "affirma",
+    titlePosition: profile.titlePosition ?? "stamp",
+    tableFontSize: profile.tableFontSize ?? "normal",
+    headerLayout:     profile.headerLayout    ?? "standard",
+    orgNameSize:      profile.orgNameSize     ?? "medium",
+    orgNameBold:      profile.orgNameBold     ?? 1,
+    orgNameUppercase: profile.orgNameUppercase ?? 0,
+    orgInfoSide:             profile.orgInfoSide             ?? "left",
+    quotationLabelSize:      profile.quotationLabelSize      ?? "normal",
+    quotationLabelBold:      profile.quotationLabelBold      ?? 1,
+    quotationLabelUppercase: profile.quotationLabelUppercase ?? 1,
+    tableRowStyle:           profile.tableRowStyle           ?? "default",
+    showCodeColumn:          profile.showCodeColumn          ?? 1,
+    brandColor: profile.brandColor ?? "#1a56db",
+    templateStyle: profile.templateStyle ?? "corporate",
     companyName: profile.companyName ?? org.name,
     companyAddress: profile.companyAddress ?? null,
+    phone: profile.phone ?? null,
+    email: profile.email ?? null,
+    website: profile.website ?? null,
     oldSsmNo: profile.oldSsmNo ?? null,
     newSsmNo: profile.newSsmNo ?? null,
     taxNo: profile.taxNo ?? null,
@@ -266,6 +294,11 @@ export async function getFullOrganizationProfile() {
     pkkNo: profile.pkkNo ?? null,
     mdaEstablishmentNo: profile.mdaEstablishmentNo ?? null,
     mdaEstablishmentValidity: profile.mdaEstablishmentValidity ?? null,
+    attentionNameSize: profile.attentionNameSize ?? "medium",
+    attentionNameBold: profile.attentionNameBold ?? 1,
+    detailFontSize:    profile.detailFontSize    ?? "normal",
+    detailFontBold:    profile.detailFontBold    ?? 0,
+    detailAlignment:   profile.detailAlignment   ?? "right",
     warehouseAddresses:
       (profile.warehouseAddresses as { label: string; address: string }[]) ??
       [],
@@ -284,11 +317,17 @@ export async function getFullOrganizationProfile() {
     mofCertKey: profile.mofCertUrl ?? null,
     pkkCertKey: profile.pkkCertUrl ?? null,
     mdaCertKey: profile.mdaCertUrl ?? null,
+    bankStatementKey: profile.bankStatementUrl ?? null,
+    lampiran12Key: profile.lampiran12Url ?? null,
+    lampiran13Key: profile.lampiran13Url ?? null,
     ssmCertSignedUrl,
     taxCertSignedUrl,
     mofCertSignedUrl,
     pkkCertSignedUrl,
     mdaCertSignedUrl,
+    bankStatementSignedUrl,
+    lampiran12SignedUrl,
+    lampiran13SignedUrl,
   };
 }
 

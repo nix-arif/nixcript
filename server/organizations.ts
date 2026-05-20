@@ -42,40 +42,32 @@ export const createOrganization = async (
     let logoUrl: string | undefined = undefined;
 
     if (logo && logo?.size > 0) {
-      if (logo.type !== "image/svg+xml")
-        return { success: false, message: "Invalid file type, must be svg" };
+      if (logo.type !== "image/png")
+        return { success: false, message: "Invalid file type, must be PNG" };
 
-      // ==============================
-      // ✅ UPLOAD TO R2 (PRIVATE API)
-      // ==============================
       const s3 = new S3Client({
         region: "auto",
         endpoint: process.env.R2_ENDPOINT!,
         credentials: {
-          accessKeyId: process.env.R2_ACCESS_KEY!,
-          secretAccessKey: process.env.R2_SECRET_KEY!,
+          accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
         },
       });
 
-      const buffer = Buffer.from(await logo!.arrayBuffer());
-
-      const key = `organizations/${randomUUID()}.svg`;
+      const ext = logo.name.split(".").pop() ?? "png";
+      const key = `logos/${randomUUID()}/logo-${Date.now()}.${ext}`;
+      const bytes = new Uint8Array(await logo.arrayBuffer());
 
       await s3.send(
         new PutObjectCommand({
-          Bucket: process.env.R2_BUCKET!,
+          Bucket: process.env.R2_LOGO_BUCKET!,
           Key: key,
-          Body: buffer,
-          ContentType: "image/svg+xml",
-          CacheControl: "public, max-age=31536000, immutable",
+          Body: bytes,
+          ContentType: logo.type,
         }),
       );
 
-      // ==============================
-      // ✅ PUBLIC URL (FOR FRONTEND)
-      // ==============================
-
-      logoUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
+      logoUrl = `${process.env.R2_LOGO_PUBLIC_URL}/${key}`;
     }
 
     await auth.api.createOrganization({
@@ -138,4 +130,11 @@ export const getActiveOrganization = async (userId: string) => {
   }
 
   return activeOrganization;
+};
+
+export const getOrganizationLogo = async (organizationId: string) => {
+  return await db
+    .select()
+    .from(organization)
+    .where(eq(organization.id, organizationId));
 };

@@ -227,6 +227,7 @@ export function CertificateMatcher() {
   const [colName, setColName] = useState<string>("");
   const [detectedCols, setDetectedCols] = useState<string[]>([]);
   const [colStatus, setColStatus] = useState<"found" | "notfound" | null>(null);
+  const [pdfColName, setPdfColName] = useState<string>("");
   const [status, setStatus] = useState<StatusType>(STATUS.IDLE);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [stats, setStats] = useState<Stats>({
@@ -394,7 +395,12 @@ export function CertificateMatcher() {
       };
 
       worker.postMessage(
-        { xlsxData: xlsxBuffer, allPages, productCodeColumn: colName },
+        {
+          xlsxData: xlsxBuffer,
+          allPages,
+          productCodeColumn: colName,
+          pdfIdentifierColumn: pdfColName.trim() || null,
+        },
         [],
       );
     } catch (err: any) {
@@ -411,6 +417,7 @@ export function CertificateMatcher() {
     setXlsxFiles([]);
     setPdfFiles([]);
     setColName("");
+    setPdfColName("");
     setDetectedCols([]);
     setColStatus(null);
     setStatus(STATUS.IDLE);
@@ -671,6 +678,59 @@ export function CertificateMatcher() {
               )}
             </div>
           )}
+        </div>
+
+        {/* PDF identifier column selector */}
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              color: "#4b5563",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              marginBottom: 8,
+            }}
+          >
+            Identifier column header in PDF{" "}
+            <span style={{ fontWeight: 400, textTransform: "none", color: "#374151" }}>
+              (optional — restricts matching to that column only)
+            </span>
+          </div>
+          <input
+            value={pdfColName}
+            onChange={(e) => setPdfColName(e.target.value)}
+            placeholder="e.g. Product Code, Kod Produk, Identifier…"
+          />
+          <div
+            style={{
+              marginTop: 8,
+              display: "flex",
+              gap: 5,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <span style={{ fontSize: 10, color: "#374151" }}>Suggestions:</span>
+            {["Product Code", "Kod Produk", "Product Name", "Nama Produk", "Identifier", "Pengenal"].map((s) => (
+              <button
+                key={s}
+                onClick={() => setPdfColName(s)}
+                style={{
+                  fontSize: 10,
+                  fontFamily: "'DM Mono', monospace",
+                  color: pdfColName === s ? "#818cf8" : "#4b5563",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "1px 3px",
+                  textDecoration: pdfColName === s ? "underline" : "none",
+                }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Stats */}

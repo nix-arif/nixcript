@@ -23,16 +23,16 @@ type ProductRow = {
   uom?: string;
   supplier?: string;
   brand?: string;
-  registrationNo?: string;
-  pageNo?: string;
-  validFrom?: string;
-  expiredOn?: string;
-  pdfFile?: string;
-  matchX?: string;
-  matchY?: string;
-  rowHeight?: string;
-  pageWidth?: string;
-  pageHeight?: string;
+  mdaRegistrationNo?: string;
+  mdaPageNo?: string;
+  mdaValidFrom?: string;
+  mdaExpiredOn?: string;
+  mdaPdfFile?: string;
+  mdaMatchX?: string;
+  mdaMatchY?: string;
+  mdaRowHeight?: string;
+  mdaPageWidth?: string;
+  mdaPageHeight?: string;
 };
 
 type SeedResult = { inserted: number; updated: number; total: number };
@@ -65,21 +65,38 @@ function mapRow(row: Record<string, any>): ProductRow {
     uom: get("uom", "oum", "unit", "unit of measure"),
     supplier: get("supplier", "vendor", "pembekal"),
     brand: get("brand", "jenama", "make"),
-    registrationNo: get(
-      "registrationno",
-      "registration no",
-      "no pendaftaran",
-      "reg no",
+    mdaRegistrationNo: get(
+      "mdaregistrationno",
+      "mda registration no",
+      "no pendaftaran mda",
+      "mda reg no",
     ),
-    pageNo: get("pageno", "page no", "page", "halaman"),
-    validFrom: get("validfrom", "valid from", "tarikh mula"),
-    expiredOn: get("expiredon", "expired on", "expiry", "tarikh luput"),
-    pdfFile: get("pdffile", "pdf file", "pdf", "file"),
-    matchX: get("matchx", "match x", "x"),
-    matchY: get("matchy", "match y", "y"),
-    rowHeight: get("rowheight", "row height", "height"),
-    pageWidth: get("pagewidth", "page width", "width"),
-    pageHeight: get("pageheight", "page height"),
+    mdaPageNo: get(
+      "mdapageno",
+      "mda page no",
+      "page",
+      "halaman",
+      "MDA Registration No",
+    ),
+    mdaValidFrom: get(
+      "validfrom",
+      "valid from",
+      "tarikh mula",
+      "MDA Valid From",
+    ),
+    mdaExpiredOn: get(
+      "expiredon",
+      "expired on",
+      "expiry",
+      "tarikh luput",
+      "MDA Expired On",
+    ),
+    mdaPdfFile: get("pdffile", "pdf file", "pdf", "file", "MDA PDF File"),
+    mdaMatchX: get("mdamatchx", "match x", "x", "MDA Match X"),
+    mdaMatchY: get("mdamatchy", "match y", "y", "MDA Match Y"),
+    mdaRowHeight: get("mdarowheight", "row height", "height", "MDA Row Height"),
+    mdaPageWidth: get("mdapagewidth", "page width", "width", "MDA Page Width"),
+    mdaPageHeight: get("mdapageheight", "page height", "MDA Page Width"),
   };
 }
 
@@ -103,20 +120,20 @@ const PREVIEW_COLS = [
     width: "w-20",
   },
   {
-    key: "registrationNo" as keyof ProductRow,
-    label: "Reg. no",
+    key: "mdaRegistrationNo" as keyof ProductRow,
+    label: "MDA Reg. no",
     mono: true,
     width: "w-36",
   },
   {
-    key: "validFrom" as keyof ProductRow,
-    label: "Valid from",
+    key: "mdaValidFrom" as keyof ProductRow,
+    label: "MDA Valid from",
     mono: false,
     width: "w-24",
   },
   {
-    key: "expiredOn" as keyof ProductRow,
-    label: "Expired on",
+    key: "mdaExpiredOn" as keyof ProductRow,
+    label: "MDA Expired on",
     mono: false,
     width: "w-24",
   },
@@ -218,7 +235,7 @@ export function SeedProductsClient() {
     if (inputRef.current) inputRef.current.value = "";
   };
 
-  const matched = rows.filter((r) => r.registrationNo).length;
+  const matched = rows.filter((r) => r.mdaRegistrationNo).length;
   const unmatched = rows.length - matched;
 
   // ── Success state ──────────────────────────────────────────────────────────
@@ -456,7 +473,7 @@ export function SeedProductsClient() {
                           col.mono ? "font-mono" : "",
                           col.key === "productCode"
                             ? "font-medium text-foreground"
-                            : col.key === "registrationNo" && row[col.key]
+                            : col.key === "mdaRegistrationNo" && row[col.key]
                               ? "text-blue-600 dark:text-blue-400"
                               : "text-muted-foreground",
                           !row[col.key] && "text-muted-foreground/40 italic",
@@ -467,7 +484,7 @@ export function SeedProductsClient() {
                       </td>
                     ))}
                     <td className="px-3 py-2">
-                      {row.registrationNo ? (
+                      {row.mdaRegistrationNo ? (
                         <span className="inline-flex items-center text-[10px] font-medium bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 rounded-md px-2 py-0.5">
                           Matched
                         </span>

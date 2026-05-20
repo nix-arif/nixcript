@@ -27,8 +27,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { permissions } = useAppStore();
   const filteredNav = filterNav(navConfig, permissions);
 
-  console.log("app-sidebar.tsx line 30", permissions);
-  console.log("app-sidebar.tsx line 31", filteredNav);
+  // console.log("app-sidebar.tsx line 30", permissions);
+  // console.log("app-sidebar.tsx line 31", filteredNav);
 
   return (
     <Sidebar collapsible="icon" {...props}>

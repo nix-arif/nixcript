@@ -98,6 +98,8 @@ interface Props {
   quotationNo: string;
   currentUserId: string;
   currentUserName: string;
+  ownerOrgs: { id: string; name: string; slug: string }[];
+  activeOrgId: string;
 }
 
 export function NewQuotationClient({
@@ -106,12 +108,15 @@ export function NewQuotationClient({
   quotationNo,
   currentUserId,
   currentUserName,
+  ownerOrgs,
+  activeOrgId,
 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
 
   // Step 1 state
   const [mode, setMode] = useState<"single" | "comparison">("single");
+  const [title, setTitle] = useState("Loose Items");
   const [customerId, setCustomerId] = useState("");
   const [salesPersonId, setSalesPersonId] = useState("");
   const [salesPersonName, setSalesPersonName] = useState("");
@@ -137,8 +142,15 @@ export function NewQuotationClient({
   // Step 5 state
   const [includeCatalogue, setIncludeCatalogue] = useState(true);
   const [includeMdaCerts, setIncludeMdaCerts] = useState(true);
-  const [showUnitPrice, setShowUnitPrice] = useState(false);
   const [showTotalPrice, setShowTotalPrice] = useState(true);
+  const [showItemizeDiscount, setShowItemizeDiscount] = useState(false);
+  const [inclMof, setInclMof] = useState(true);
+  const [inclSsm, setInclSsm] = useState(true);
+  const [inclTcc, setInclTcc] = useState(true);
+  const [inclBankStatement, setInclBankStatement] = useState(true);
+  const [inclMdaEstablishment, setInclMdaEstablishment] = useState(true);
+  const [inclLampiran12, setInclLampiran12] = useState(true);
+  const [inclLampiran13, setInclLampiran13] = useState(true);
   const [creating, setCreating] = useState(false);
 
   // ── Computed totals ──────────────────────────────────────────────────────
@@ -354,6 +366,7 @@ export function NewQuotationClient({
     try {
       const q = await createQuotation({
         mode,
+        title: title || "Loose Items",
         customerId: customerId || undefined,
         salesPersonId: salesPersonId || undefined,
         salesPersonName,
@@ -364,10 +377,18 @@ export function NewQuotationClient({
         sstPct: applySST ? sstPct || "8" : "0",
         includeCatalogue,
         includeMdaCerts,
-        showUnitPrice,
         showTotalPrice,
+        showItemizeDiscount,
+        inclMof,
+        inclSsm,
+        inclTcc,
+        inclBankStatement,
+        inclMdaEstablishment,
+        inclLampiran12,
+        inclLampiran13,
       });
 
+      if (!q) throw new Error("Failed to create quotation");
       toast.success(`Quotation ${q.quotationNo} created`);
       router.push(`/dashboard/sales/quotation/${q.id}`);
     } catch (e: any) {
@@ -467,24 +488,32 @@ export function NewQuotationClient({
                   {
                     value: "single",
                     label: "Single quotation",
-                    desc: "Only current organization",
+                    desc: "Current organization only",
                   },
                   {
                     value: "comparison",
                     label: "With comparison",
-                    desc: "Current org + 2 dummy orgs (3 total)",
+                    desc:
+                      ownerOrgs.length > 1
+                        ? `${ownerOrgs.length} quotations (1 original + ${ownerOrgs.length - 1} dummy)`
+                        : "No other organizations found for comparison",
+                    disabled: ownerOrgs.length <= 1,
                   },
                 ] as const
               ).map((opt) => (
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() => setMode(opt.value)}
+                  onClick={() => !("disabled" in opt && opt.disabled) && setMode(opt.value)}
+                  disabled={"disabled" in opt && opt.disabled}
                   className={cn(
                     "p-3 rounded-lg border text-left transition-all",
                     mode === opt.value
                       ? "border-2 border-primary bg-primary/5"
                       : "border border-border hover:border-border",
+                    "disabled" in opt && opt.disabled
+                      ? "opacity-40 cursor-not-allowed"
+                      : "",
                   )}
                 >
                   <div className="text-sm font-medium">{opt.label}</div>
@@ -493,6 +522,42 @@ export function NewQuotationClient({
                   </div>
                 </button>
               ))}
+              {mode === "comparison" && ownerOrgs.length > 1 && (
+                <div className="col-span-2 rounded-lg bg-muted/30 border border-border p-3 space-y-1.5">
+                  {ownerOrgs.map((org) => (
+                    <div key={org.id} className="flex items-center justify-between text-xs">
+                      <span className="font-medium">{org.name}</span>
+                      <span className={cn(
+                        "rounded px-1.5 py-0.5 text-[10px]",
+                        org.id === activeOrgId
+                          ? "bg-primary/10 text-primary"
+                          : "bg-muted text-muted-foreground",
+                      )}>
+                        {org.id === activeOrgId ? "original" : "dummy"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Quotation title */}
+          <div className="bg-background border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Quotation title
+              </div>
+            </div>
+            <div className="p-4">
+              <Field label="Title (shown on document)">
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Loose Items, Medical Equipment Supply..."
+                  className="h-9 text-sm"
+                />
+              </Field>
             </div>
           </div>
 
@@ -1052,49 +1117,38 @@ export function NewQuotationClient({
               </div>
 
               {/* Options */}
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  {
-                    id: "catalogue",
-                    label: "Include product catalogue",
-                    value: includeCatalogue,
-                    set: setIncludeCatalogue,
-                  },
-                  {
-                    id: "certs",
-                    label: "Include MDA certificates",
-                    value: includeMdaCerts,
-                    set: setIncludeMdaCerts,
-                  },
-                  {
-                    id: "unitprice",
-                    label: "Show unit prices",
-                    value: showUnitPrice,
-                    set: setShowUnitPrice,
-                  },
-                  {
-                    id: "totalprice",
-                    label: "Show total prices",
-                    value: showTotalPrice,
-                    set: setShowTotalPrice,
-                  },
-                ].map((opt) => (
-                  <div
-                    key={opt.id}
-                    className="flex items-center gap-2.5 p-3 border border-border rounded-lg"
-                  >
-                    <input
-                      type="checkbox"
-                      id={opt.id}
-                      checked={opt.value}
-                      onChange={(e) => opt.set(e.target.checked)}
-                      className="w-4 h-4"
-                    />
-                    <label htmlFor={opt.id} className="text-sm cursor-pointer">
-                      {opt.label}
-                    </label>
-                  </div>
-                ))}
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Display</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: "catalogue",  label: "Product catalogue",  value: includeCatalogue,     set: setIncludeCatalogue },
+                    { id: "certs",      label: "MDA certificates",   value: includeMdaCerts,      set: setIncludeMdaCerts },
+                    { id: "totalprice", label: "Show total prices",  value: showTotalPrice,       set: setShowTotalPrice },
+                    { id: "itemdisc",   label: "Itemize discount",   value: showItemizeDiscount,  set: setShowItemizeDiscount },
+                  ].map((opt) => (
+                    <div key={opt.id} className="flex items-center gap-2.5 p-3 border border-border rounded-lg">
+                      <input type="checkbox" id={opt.id} checked={opt.value} onChange={(e) => opt.set(e.target.checked)} className="w-4 h-4" />
+                      <label htmlFor={opt.id} className="text-sm cursor-pointer">{opt.label}</label>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Attached Documents</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: "mof",      label: "MOF Certificate",                         value: inclMof,              set: setInclMof },
+                    { id: "ssm",      label: "SSM",                                     value: inclSsm,              set: setInclSsm },
+                    { id: "tcc",      label: "TCC (Tax Compliance Certificate)",         value: inclTcc,              set: setInclTcc },
+                    { id: "bank",     label: "Bank Statement",                           value: inclBankStatement,    set: setInclBankStatement },
+                    { id: "mda",      label: "MDA Establishment",                        value: inclMdaEstablishment, set: setInclMdaEstablishment },
+                    { id: "lamp12",   label: "Lampiran 12",                              value: inclLampiran12,       set: setInclLampiran12 },
+                    { id: "lamp13",   label: "Lampiran 13",                              value: inclLampiran13,       set: setInclLampiran13 },
+                  ].map((opt) => (
+                    <div key={opt.id} className="flex items-center gap-2.5 p-3 border border-border rounded-lg">
+                      <input type="checkbox" id={opt.id} checked={opt.value} onChange={(e) => opt.set(e.target.checked)} className="w-4 h-4" />
+                      <label htmlFor={opt.id} className="text-sm cursor-pointer">{opt.label}</label>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Warnings */}

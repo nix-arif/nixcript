@@ -39,7 +39,10 @@ type CertField =
   | "taxCertUrl"
   | "mofCertUrl"
   | "pkkCertUrl"
-  | "mdaCertUrl";
+  | "mdaCertUrl"
+  | "bankStatementUrl"
+  | "lampiran12Url"
+  | "lampiran13Url";
 
 interface BankEntry {
   id: string;
@@ -197,9 +200,10 @@ export function OrganizationProfileClient({ data }: Props) {
 
   // Company identity
   const [companyName, setCompanyName] = useState(data.companyName ?? "");
-  const [companyAddress, setCompanyAddress] = useState(
-    data.companyAddress ?? "",
-  );
+  const [companyAddress, setCompanyAddress] = useState(data.companyAddress ?? "");
+  const [phone, setPhone] = useState(data.phone ?? "");
+  const [email, setEmail] = useState(data.email ?? "");
+  const [website, setWebsite] = useState(data.website ?? "");
   const [logoUrl, setLogoUrl] = useState(data.logo);
 
   // Registration & tax
@@ -228,12 +232,16 @@ export function OrganizationProfileClient({ data }: Props) {
   // Banking
   const [bankingInfo, setBankingInfo] = useState<BankEntry[]>(data.bankingInfo);
 
+
   // Certificate keys
   const [ssmCertUrl, setSsmCertUrl] = useState(data.ssmCertKey);
   const [taxCertUrl, setTaxCertUrl] = useState(data.taxCertKey);
   const [mofCertUrl, setMofCertUrl] = useState(data.mofCertKey);
   const [pkkCertUrl, setPkkCertUrl] = useState(data.pkkCertKey);
   const [mdaCertUrl, setMdaCertUrl] = useState(data.mdaCertKey);
+  const [bankStatementUrl, setBankStatementUrl] = useState(data.bankStatementKey);
+  const [lampiran12Url, setLampiran12Url] = useState(data.lampiran12Key);
+  const [lampiran13Url, setLampiran13Url] = useState(data.lampiran13Key);
 
   const certSetters: Record<CertField, (v: string | null) => void> = {
     ssmCertUrl: setSsmCertUrl,
@@ -241,6 +249,9 @@ export function OrganizationProfileClient({ data }: Props) {
     mofCertUrl: setMofCertUrl,
     pkkCertUrl: setPkkCertUrl,
     mdaCertUrl: setMdaCertUrl,
+    bankStatementUrl: setBankStatementUrl,
+    lampiran12Url: setLampiran12Url,
+    lampiran13Url: setLampiran13Url,
   };
 
   const certValues: Record<CertField, string | null> = {
@@ -249,6 +260,9 @@ export function OrganizationProfileClient({ data }: Props) {
     mofCertUrl,
     pkkCertUrl,
     mdaCertUrl,
+    bankStatementUrl,
+    lampiran12Url,
+    lampiran13Url,
   };
 
   const handleViewCert = async (key: string) => {
@@ -295,6 +309,9 @@ export function OrganizationProfileClient({ data }: Props) {
       await upsertOrganizationProfile({
         companyName,
         companyAddress,
+        phone: phone || null,
+        email: email || null,
+        website: website || null,
         oldSsmNo,
         newSsmNo,
         taxNo,
@@ -450,6 +467,33 @@ export function OrganizationProfileClient({ data }: Props) {
                 placeholder="Full company address"
                 rows={4}
                 className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Phone / Contact No.">
+                <Input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+60-11-12345678"
+                  className="h-9 text-sm"
+                />
+              </Field>
+              <Field label="Email">
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="info@company.com"
+                  className="h-9 text-sm"
+                />
+              </Field>
+            </div>
+            <Field label="Website">
+              <Input
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                placeholder="https://www.company.com"
+                className="h-9 text-sm"
               />
             </Field>
           </div>
@@ -680,7 +724,6 @@ export function OrganizationProfileClient({ data }: Props) {
             )}
           </div>
         </div>
-
         {/* ── Banking information ──────────────────────────────────────── */}
         <div className="bg-background border border-border rounded-xl overflow-hidden">
           <SectionHeader
@@ -819,6 +862,56 @@ export function OrganizationProfileClient({ data }: Props) {
                 </div>
               </>
             )}
+            <div className="pt-2 border-t border-border">
+              <div className="text-[11px] font-medium text-muted-foreground mb-2">
+                Bank statement
+              </div>
+              <CertRow
+                label="Bank Statement"
+                field="bankStatementUrl"
+                currentKey={certValues.bankStatementUrl}
+                uploading={uploadingCert === "bankStatementUrl"}
+                onUploaded={(key) => {
+                  certSetters.bankStatementUrl(key);
+                  setUploadingCert(null);
+                }}
+                onRemove={() => handleRemoveCert("bankStatementUrl")}
+                onView={() =>
+                  certValues.bankStatementUrl &&
+                  handleViewCert(certValues.bankStatementUrl)
+                }
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* ── Compliance documents ─────────────────────────────────────── */}
+        <div className="bg-background border border-border rounded-xl overflow-hidden">
+          <SectionHeader icon={FileTextIcon} title="Compliance documents" />
+          <div className="p-4 space-y-2">
+            <p className="text-[11px] text-muted-foreground mb-3">
+              Upload Lampiran 12 and Lampiran 13 to include them in quotation packages.
+            </p>
+            {(
+              [
+                { field: "lampiran12Url" as CertField, label: "Lampiran 12" },
+                { field: "lampiran13Url" as CertField, label: "Lampiran 13" },
+              ] as const
+            ).map(({ field, label }) => (
+              <CertRow
+                key={field}
+                label={label}
+                field={field}
+                currentKey={certValues[field]}
+                uploading={uploadingCert === field}
+                onUploaded={(key) => {
+                  certSetters[field](key);
+                  setUploadingCert(null);
+                }}
+                onRemove={() => handleRemoveCert(field)}
+                onView={() => certValues[field] && handleViewCert(certValues[field]!)}
+              />
+            ))}
           </div>
         </div>
       </div>

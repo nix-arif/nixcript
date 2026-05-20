@@ -488,11 +488,14 @@ export const product = pgTable(
     supplier: text("supplier"),
     brand: text("brand"),
 
+    // Image
+    imageKey: text("image_key"), // R2 key for product catalogue image
+
     // Certificate
     mdaRegistrationNo: text("mda_registration_no"),
-    mdaPageNo: text("page_no"),
-    mdaValidFrom: timestamp("mda_valid_from"),
-    mdaExpiredOn: text("mda_expired_on"),
+    mdaPageNo: text("mda_page_no"),
+    mdaValidFrom: timestamp("mda_valid_from", { mode: "string" }),
+    mdaExpiredOn: timestamp("mda_expired_on", { mode: "string" }),
     mdaPdfFile: text("mda_pdf_file"),
 
     // Coordinates
@@ -556,10 +559,58 @@ export const organizationProfile = pgTable("organization_profile", {
   pkkNo: text("pkk_no"),
   pkkCertUrl: text("pkk_cert_url"), // R2 key
 
+  // Branding
+  logoKey: text("logo_key"), // R2 key for company logo
+  brandColor: text("brand_color"), // hex e.g. "#1a56db"
+  templateStyle: text("template_style").default("corporate"), // corporate | modern | bold
+
+  // PDF download template: affirma | nexus | slate
+  pdfTemplate: text("pdf_template").default("affirma"),
+  titlePosition: text("title_position").default("stamp"),   // stamp | table-banner
+  tableFontSize: text("table_font_size").default("normal"),  // small | normal | large
+
+  // Header customisation
+  headerLayout:    text("header_layout").default("standard"),    // standard | logo-top | centered | text-only
+  orgNameSize:     text("org_name_size").default("medium"),      // small | medium | large | xlarge
+  orgNameBold:     integer("org_name_bold").default(1),
+  orgNameUppercase: integer("org_name_uppercase").default(0),
+  orgInfoSide:     text("org_info_side").default("left"),        // left | right — which side the org info panel is on
+  quotationLabelSize:      text("quotation_label_size").default("normal"),  // small | normal | large
+  quotationLabelBold:      integer("quotation_label_bold").default(1),
+  quotationLabelUppercase: integer("quotation_label_uppercase").default(1),
+
+  // Table style
+  tableRowStyle:   text("table_row_style").default("default"),  // default | simple | rounded
+  showCodeColumn:  integer("show_code_column").default(1),
+
+  // Quotation number format: A | B | C
+  quotationNoFormat: text("quotation_no_format").default("A"),
+
+  // Phone / Contact
+  phone: text("phone"),
+  email: text("email"),
+  website: text("website"),
+
   // MDA
   mdaEstablishmentNo: text("mda_establishment_no"),
   mdaEstablishmentValidity: text("mda_establishment_validity"),
   mdaCertUrl: text("mda_cert_url"),
+
+  // Attention block style (customer info section)
+  attentionNameSize: text("attention_name_size").default("medium"),  // small | medium | large | xlarge
+  attentionNameBold: integer("attention_name_bold").default(1),
+
+  // Quotation detail block style (right-side info section)
+  detailFontSize:  text("detail_font_size").default("normal"),   // small | normal | large
+  detailFontBold:  integer("detail_font_bold").default(0),
+  detailAlignment: text("detail_alignment").default("right"),    // left | right
+
+  // Bank statement
+  bankStatementUrl: text("bank_statement_url"),
+
+  // Lampiran
+  lampiran12Url: text("lampiran12_url"),
+  lampiran13Url: text("lampiran13_url"),
 
   // Banking
   bankingInfo: json("banking_info")
@@ -650,6 +701,10 @@ export const quotation = pgTable(
     // Mode
     mode: text("mode").notNull().default("single"), // single | comparison
 
+    // Comparison group — shared across all quotations created together
+    groupId: text("group_id"),
+    isDummy: integer("is_dummy").notNull().default(0), // 1 = dummy (non-active org)
+
     // Customer
     customerId: text("customer_id").references(() => customer.id),
     customerSnapshot: json("customer_snapshot").$type<{
@@ -682,8 +737,21 @@ export const quotation = pgTable(
     // Options
     includeCatalogue: integer("include_catalogue").notNull().default(1),
     includeMdaCerts: integer("include_mda_certs").notNull().default(1),
-    showUnitPrice: integer("show_unit_price").notNull().default(0),
+    showUnitPrice: integer("show_unit_price").notNull().default(1), // kept for compat, always true
     showTotalPrice: integer("show_total_price").notNull().default(1),
+    showItemizeDiscount: integer("show_itemize_discount").notNull().default(0),
+
+    // Attached documents
+    inclMof: integer("incl_mof").notNull().default(1),
+    inclSsm: integer("incl_ssm").notNull().default(1),
+    inclTcc: integer("incl_tcc").notNull().default(1),
+    inclBankStatement: integer("incl_bank_statement").notNull().default(1),
+    inclMdaEstablishment: integer("incl_mda_establishment").notNull().default(1),
+    inclLampiran12: integer("incl_lampiran12").notNull().default(1),
+    inclLampiran13: integer("incl_lampiran13").notNull().default(1),
+
+    // Document
+    title: text("title").default("Loose Items"),
 
     // Status
     status: text("status").notNull().default("draft"), // draft | final
@@ -727,6 +795,7 @@ export const quotationItem = pgTable(
     // From product DB
     productId: text("product_id"),
     productName: text("product_name"),
+    imageKey: text("image_key"), // R2 key for catalogue image
     mdaRegNo: text("mda_reg_no"),
     mdaValidity: text("mda_validity"),
     hasCert: integer("has_cert").default(0),

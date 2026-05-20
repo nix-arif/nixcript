@@ -35,8 +35,8 @@ const formSchema = z.object({
   name: z.string().min(3, "Please enter organization name"),
   logo: z
     .instanceof(File)
-    .refine((file) => file.type === "image/svg+xml", {
-      message: "Only SVG files are allowed",
+    .refine((file) => file.type === "image/png", {
+      message: "Only PNG files are allowed",
     })
     .refine((file) => file.size <= 500 * 1024, {
       message: "Max file size is 500KB",
@@ -105,12 +105,12 @@ const CreateOrganizationForm = ({
               render={({ field, fieldState }) => (
                 <Field data-invalid={fieldState.invalid}>
                   <FieldLabel htmlFor="logo">
-                    Organization Logo (SVG)
+                    Organization Logo (PNG)
                   </FieldLabel>
                   <Input
                     id="logo"
                     type="file"
-                    accept="image/svy+xml"
+                    accept="image/png"
                     onChange={(e) => {
                       const file = e.target.files?.[0] || null;
                       field.onChange(file);
