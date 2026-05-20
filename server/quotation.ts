@@ -36,6 +36,12 @@ async function presignCertKey(key: string | null | undefined): Promise<string | 
   return getSignedUrl(s3Cert, cmd, { expiresIn: 3600 });
 }
 
+async function presignMdaKey(key: string | null | undefined): Promise<string | null> {
+  if (!key) return null;
+  const cmd = new GetObjectCommand({ Bucket: process.env.R2_MDA_CERTIFICATES_BUCKET!, Key: key });
+  return getSignedUrl(s3Cert, cmd, { expiresIn: 3600 });
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function subtractWeekdays(from: Date, days: number): Date {
@@ -881,7 +887,7 @@ export async function getQuotationDetail(id: string) {
       mdaPageWidth: product.mdaPageWidth,
       mdaPageHeight: product.mdaPageHeight,
     }).from(product).where(and(
-      eq(product.organizationId, q.organizationId),
+      eq(product.organizationId, ownerOrgs[0]?.id ?? q.organizationId),
       inArray(product.productCode, certCodes),
     ));
     for (const r of pRows) pMdaMap.set(r.productCode, r);
@@ -891,7 +897,7 @@ export async function getQuotationDetail(id: string) {
   )];
   const mdaPresignMap = new Map<string, string>();
   await Promise.all(uniqueMdaKeys.map(async key => {
-    const url = await presignCertKey(key);
+    const url = await presignMdaKey(key);
     if (url) mdaPresignMap.set(key, url);
   }));
   const items = rawItems.map(item => {
@@ -1206,7 +1212,6 @@ export async function getQuotationGroupForPrint(id: string) {
     .orderBy(asc(quotationItem.rowNo));
 
   // Enrich allItems with product MDA PDF fields
-  const quotOrgMap = new Map(allQuotations.map(q => [q.id, q.organizationId]));
   const groupCertCodes = [...new Set(
     rawAllItems.filter(i => i.hasCert && i.productCode).map(i => i.productCode!),
   )];
@@ -1217,8 +1222,8 @@ export async function getQuotationGroupForPrint(id: string) {
     mdaRowHeight: string | null; mdaPageWidth: string | null; mdaPageHeight: string | null;
   }>();
   if (groupCertCodes.length > 0) {
+    const productOrgId = ownerOrgs[0]?.id ?? ownerOrgIds[0];
     const pRows = await db.select({
-      organizationId: product.organizationId,
       productCode: product.productCode,
       mdaPdfFile: product.mdaPdfFile,
       mdaPageNo: product.mdaPageNo,
@@ -1228,22 +1233,21 @@ export async function getQuotationGroupForPrint(id: string) {
       mdaPageWidth: product.mdaPageWidth,
       mdaPageHeight: product.mdaPageHeight,
     }).from(product).where(and(
-      inArray(product.organizationId, groupAllOrgIds),
+      eq(product.organizationId, productOrgId),
       inArray(product.productCode, groupCertCodes),
     ));
-    for (const r of pRows) grpPMdaMap.set(`${r.organizationId}:${r.productCode}`, r);
+    for (const r of pRows) grpPMdaMap.set(r.productCode, r);
   }
   const grpUniqueMdaKeys = [...new Set(
     [...grpPMdaMap.values()].map(r => r.mdaPdfFile).filter(Boolean) as string[],
   )];
   const grpMdaPresignMap = new Map<string, string>();
   await Promise.all(grpUniqueMdaKeys.map(async key => {
-    const url = await presignCertKey(key);
+    const url = await presignMdaKey(key);
     if (url) grpMdaPresignMap.set(key, url);
   }));
   const allItems = rawAllItems.map(item => {
-    const orgId = quotOrgMap.get(item.quotationId);
-    const mda = (orgId && item.productCode) ? grpPMdaMap.get(`${orgId}:${item.productCode}`) : undefined;
+    const mda = item.productCode ? grpPMdaMap.get(item.productCode) : undefined;
     return {
       ...item,
       mdaPdfFile: mda?.mdaPdfFile ?? null,
