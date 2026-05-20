@@ -282,13 +282,14 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   });
 
   // ── Height estimates ──────────────────────────────────────────────────────
+  const QL_BAND_H = 34; // space reserved below company info for the QUOTATION label
   const HEADER_BLOCK = estimateHeaderH({
     companyAddress: orgCompanyAddress, phone: orgPhone, email: orgEmail,
     website: orgWebsite, oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
     mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
     nameSize, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX, headerLayout: hLayout,
-    logoImg, fontR,
-  }) + 6;
+    logoImg, fontR, skipDocLabel: true,
+  }) + 6 + QL_BAND_H;
   const DIVIDER_GAP   = 10;
   const TABLE_HDR_H   = 22;
 
@@ -376,12 +377,19 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
         nameSize, nameBold: !!(data.orgNameBold ?? 1),
         nameUppercase: !!(data.orgNameUppercase ?? 0),
-        headerLayout: hLayout, docLabel: QL_TEXT,
+        headerLayout: hLayout, docLabel: "",  // label drawn separately below
         docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
         nameColor: accentH, labelColor: accentH,
         logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
       });
       curY = H - 5 - HEADER_BLOCK;
+
+      // QUOTATION label sits between company info and the divider line
+      page.drawText(QL_TEXT, {
+        x: ML, y: curY + QL_BAND_H - 14,
+        size: 16, font: fontB, color: accentH,
+      });
+
       hLine(page, curY, ML, W - MR, accent, 1.2);
       curY -= DIVIDER_GAP;
 

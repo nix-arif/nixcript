@@ -139,13 +139,14 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
   const effectiveNameColor  = nameColor  ?? accent;
   const effectiveLabelColor = labelColor ?? accent;
 
-  // Company zone width depends on whether the doc label shares the same row
+  // Company zone width depends on label placement; empty docLabel = no label = full width
+  const hasLabel = docLabel.trim().length > 0;
   const DOC_LABEL_W = 100;
-  const companyZoneW = docLabelAlign === "center" ? CW : CW - DOC_LABEL_W - 8;
+  const companyZoneW = (docLabelAlign === "center" || !hasLabel) ? CW : CW - DOC_LABEL_W - 8;
 
   let cy = startY;
 
-  if (docLabelAlign === "center") {
+  if (hasLabel && docLabelAlign === "center") {
     // Centered label as standalone heading above company info
     const lw = labelFont.widthOfTextAtSize(docLabel, docLabelSize);
     page.drawText(docLabel, {
@@ -153,7 +154,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
       size: docLabelSize, font: labelFont, color: effectiveLabelColor,
     });
     cy -= docLabelSize + 12;
-  } else {
+  } else if (hasLabel) {
     // Right-aligned label alongside company info
     const lw = labelFont.widthOfTextAtSize(docLabel, docLabelSize);
     page.drawText(docLabel, {
@@ -414,11 +415,12 @@ export function estimateHeaderH(opts: {
   fontR: PDFFont;
   docLabelSize?: number;
   docLabelAlign?: "left" | "center" | "right";
+  skipDocLabel?: boolean;  // when true, full CW is used for company text zone
 }): number {
-  const { companyAddress, phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo, nameSize, logoHMax, logoWMax, headerLayout, logoImg, fontR, docLabelSize = 0, docLabelAlign = "right" } = opts;
+  const { companyAddress, phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo, nameSize, logoHMax, logoWMax, headerLayout, logoImg, fontR, docLabelSize = 0, docLabelAlign = "right", skipDocLabel = false } = opts;
 
   const DOC_LABEL_W = 100;
-  const companyZoneW = docLabelAlign === "center" ? CW : CW - DOC_LABEL_W - 8;
+  const companyZoneW = (docLabelAlign === "center" || skipDocLabel) ? CW : CW - DOC_LABEL_W - 8;
 
   // Compute the same effective text width as drawCompanyHeader
   let logoLw = 0;
