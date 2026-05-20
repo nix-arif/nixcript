@@ -855,11 +855,59 @@ export async function getQuotationDetail(id: string) {
       }
     : snapshot;
 
-  const items = await db
+  const rawItems = await db
     .select()
     .from(quotationItem)
     .where(eq(quotationItem.quotationId, id))
     .orderBy(asc(quotationItem.rowNo));
+
+  // Enrich items with product MDA PDF fields
+  const certCodes = [...new Set(
+    rawItems.filter(i => i.hasCert && i.productCode).map(i => i.productCode!),
+  )];
+  const pMdaMap = new Map<string, {
+    mdaPdfFile: string | null; mdaPageNo: string | null;
+    mdaMatchX: string | null; mdaMatchY: string | null;
+    mdaRowHeight: string | null; mdaPageWidth: string | null; mdaPageHeight: string | null;
+  }>();
+  if (certCodes.length > 0) {
+    const pRows = await db.select({
+      productCode: product.productCode,
+      mdaPdfFile: product.mdaPdfFile,
+      mdaPageNo: product.mdaPageNo,
+      mdaMatchX: product.mdaMatchX,
+      mdaMatchY: product.mdaMatchY,
+      mdaRowHeight: product.mdaRowHeight,
+      mdaPageWidth: product.mdaPageWidth,
+      mdaPageHeight: product.mdaPageHeight,
+    }).from(product).where(and(
+      eq(product.organizationId, q.organizationId),
+      inArray(product.productCode, certCodes),
+    ));
+    for (const r of pRows) pMdaMap.set(r.productCode, r);
+  }
+  const uniqueMdaKeys = [...new Set(
+    [...pMdaMap.values()].map(r => r.mdaPdfFile).filter(Boolean) as string[],
+  )];
+  const mdaPresignMap = new Map<string, string>();
+  await Promise.all(uniqueMdaKeys.map(async key => {
+    const url = await presignCertKey(key);
+    if (url) mdaPresignMap.set(key, url);
+  }));
+  const items = rawItems.map(item => {
+    const mda = item.productCode ? pMdaMap.get(item.productCode) : undefined;
+    return {
+      ...item,
+      mdaPdfFile: mda?.mdaPdfFile ?? null,
+      mdaPdfUrl:  mda?.mdaPdfFile ? (mdaPresignMap.get(mda.mdaPdfFile) ?? null) : null,
+      mdaPageNo:    mda?.mdaPageNo    ?? null,
+      mdaMatchX:    mda?.mdaMatchX    ?? null,
+      mdaMatchY:    mda?.mdaMatchY    ?? null,
+      mdaRowHeight: mda?.mdaRowHeight ?? null,
+      mdaPageWidth: mda?.mdaPageWidth ?? null,
+      mdaPageHeight: mda?.mdaPageHeight ?? null,
+    };
+  });
 
   // Siblings: other quotations in the same comparison group
   type Sibling = {
@@ -1151,13 +1199,65 @@ export async function getQuotationGroupForPrint(id: string) {
     : [mainQ];
 
   const qIds = allQuotations.map((q) => q.id);
-  const allItems = await db
+  const rawAllItems = await db
     .select()
     .from(quotationItem)
     .where(inArray(quotationItem.quotationId, qIds))
     .orderBy(asc(quotationItem.rowNo));
 
-  const allOrgIds = [...new Set(allQuotations.map((q) => q.organizationId))];
+  // Enrich allItems with product MDA PDF fields
+  const quotOrgMap = new Map(allQuotations.map(q => [q.id, q.organizationId]));
+  const groupCertCodes = [...new Set(
+    rawAllItems.filter(i => i.hasCert && i.productCode).map(i => i.productCode!),
+  )];
+  const groupAllOrgIds = [...new Set(allQuotations.map(q => q.organizationId))];
+  const grpPMdaMap = new Map<string, {
+    mdaPdfFile: string | null; mdaPageNo: string | null;
+    mdaMatchX: string | null; mdaMatchY: string | null;
+    mdaRowHeight: string | null; mdaPageWidth: string | null; mdaPageHeight: string | null;
+  }>();
+  if (groupCertCodes.length > 0) {
+    const pRows = await db.select({
+      organizationId: product.organizationId,
+      productCode: product.productCode,
+      mdaPdfFile: product.mdaPdfFile,
+      mdaPageNo: product.mdaPageNo,
+      mdaMatchX: product.mdaMatchX,
+      mdaMatchY: product.mdaMatchY,
+      mdaRowHeight: product.mdaRowHeight,
+      mdaPageWidth: product.mdaPageWidth,
+      mdaPageHeight: product.mdaPageHeight,
+    }).from(product).where(and(
+      inArray(product.organizationId, groupAllOrgIds),
+      inArray(product.productCode, groupCertCodes),
+    ));
+    for (const r of pRows) grpPMdaMap.set(`${r.organizationId}:${r.productCode}`, r);
+  }
+  const grpUniqueMdaKeys = [...new Set(
+    [...grpPMdaMap.values()].map(r => r.mdaPdfFile).filter(Boolean) as string[],
+  )];
+  const grpMdaPresignMap = new Map<string, string>();
+  await Promise.all(grpUniqueMdaKeys.map(async key => {
+    const url = await presignCertKey(key);
+    if (url) grpMdaPresignMap.set(key, url);
+  }));
+  const allItems = rawAllItems.map(item => {
+    const orgId = quotOrgMap.get(item.quotationId);
+    const mda = (orgId && item.productCode) ? grpPMdaMap.get(`${orgId}:${item.productCode}`) : undefined;
+    return {
+      ...item,
+      mdaPdfFile: mda?.mdaPdfFile ?? null,
+      mdaPdfUrl:  mda?.mdaPdfFile ? (grpMdaPresignMap.get(mda.mdaPdfFile) ?? null) : null,
+      mdaPageNo:    mda?.mdaPageNo    ?? null,
+      mdaMatchX:    mda?.mdaMatchX    ?? null,
+      mdaMatchY:    mda?.mdaMatchY    ?? null,
+      mdaRowHeight: mda?.mdaRowHeight ?? null,
+      mdaPageWidth: mda?.mdaPageWidth ?? null,
+      mdaPageHeight: mda?.mdaPageHeight ?? null,
+    };
+  });
+
+  const allOrgIds = groupAllOrgIds;
   const orgProfiles = await db
     .select({
       organizationId: organization.id,
@@ -1238,6 +1338,7 @@ export async function getQuotationGroupForPrint(id: string) {
       orgBrandColor: org?.brandColor ?? null,
       orgSlateTextColor: org?.slateTextColor ?? null,
       orgSlateHeadingColor: org?.slateHeadingColor ?? null,
+      orgSlateInfoFontSize: org?.slateInfoFontSize ?? null,
       orgCompanyName: org?.companyName ?? null,
       orgCompanyAddress: org?.companyAddress ?? null,
       orgTaxNo: org?.taxNo ?? null,
