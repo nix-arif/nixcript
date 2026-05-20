@@ -562,6 +562,8 @@ export const organizationProfile = pgTable("organization_profile", {
   // Branding
   logoKey: text("logo_key"), // R2 key for company logo
   brandColor: text("brand_color"), // hex e.g. "#1a56db"
+  slateTextColor: text("slate_text_color"),    // slate: text accent colour (labels, codes, headers)
+  slateHeadingColor: text("slate_heading_color"), // slate: company name + QUOTATION label colour
   templateStyle: text("template_style").default("corporate"), // corporate | modern | bold
 
   // PDF download template: affirma | nexus | slate

@@ -114,6 +114,9 @@ export interface CompanyHeaderOptions {
   docLabelSize: number;
   docLabelBold: boolean;
   docLabelAlign?: "left" | "center" | "right"; // default "right"
+  // Optional colour overrides (fall back to accent)
+  nameColor?: Color;       // company name colour
+  labelColor?: Color;      // QUOTATION label colour
   // Heights
   logoHMax: number;
   logoWMax: number;
@@ -126,12 +129,15 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
     companyName, companyAddress, phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo,
     nameSize, nameBold, nameUppercase, headerLayout,
     docLabel, docLabelSize, docLabelBold, docLabelAlign = "right",
+    nameColor, labelColor,
     logoHMax, logoWMax,
   } = opts;
 
-  const nameFont = nameBold ? fontB : fontR;
+  const nameFont  = nameBold ? fontB : fontR;
   const labelFont = docLabelBold ? fontB : fontR;
-  const dispName = nameUppercase ? companyName.toUpperCase() : companyName;
+  const dispName  = nameUppercase ? companyName.toUpperCase() : companyName;
+  const effectiveNameColor  = nameColor  ?? accent;
+  const effectiveLabelColor = labelColor ?? accent;
 
   // Company zone width depends on whether the doc label shares the same row
   const DOC_LABEL_W = 100;
@@ -144,7 +150,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
     const lw = labelFont.widthOfTextAtSize(docLabel, docLabelSize);
     page.drawText(docLabel, {
       x: ML + (CW - lw) / 2, y: cy - docLabelSize,
-      size: docLabelSize, font: labelFont, color: accent,
+      size: docLabelSize, font: labelFont, color: effectiveLabelColor,
     });
     cy -= docLabelSize + 12;
   } else {
@@ -152,7 +158,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
     const lw = labelFont.widthOfTextAtSize(docLabel, docLabelSize);
     page.drawText(docLabel, {
       x: W - MR - lw, y: startY - docLabelSize,
-      size: docLabelSize, font: labelFont, color: accent,
+      size: docLabelSize, font: labelFont, color: effectiveLabelColor,
     });
   }
 
@@ -186,7 +192,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
 
   // Company name
   page.drawText(trunc(dispName, nameFont, nameSize, companyZoneW - (textX - ML)), {
-    x: textX, y: cy - nameSize, size: nameSize, font: nameFont, color: accent,
+    x: textX, y: cy - nameSize, size: nameSize, font: nameFont, color: effectiveNameColor,
   });
   cy -= nameSize + 10;
 

@@ -28,6 +28,8 @@ export function DocumentSettingsClient({ data }: Props) {
 
   // Branding
   const [brandColor, setBrandColor] = useState(data.brandColor ?? "#1a56db");
+  const [slateTextColor, setSlateTextColor] = useState(data.slateTextColor ?? "");
+  const [slateHeadingColor, setSlateHeadingColor] = useState(data.slateHeadingColor ?? "");
 
   // Template — single picker controlling both HTML preview and PDF download
   const [pdfTemplate, setPdfTemplate] = useState(data.pdfTemplate ?? "affirma");
@@ -73,6 +75,8 @@ export function DocumentSettingsClient({ data }: Props) {
 
       await upsertOrganizationProfile({
         brandColor,
+        slateTextColor:    slateTextColor    || null,
+        slateHeadingColor: slateHeadingColor || null,
         pdfTemplate,
         templateStyle,
         headerLayout,
@@ -147,7 +151,9 @@ export function DocumentSettingsClient({ data }: Props) {
 
           {/* Brand color */}
           <div>
-            <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">Brand colour</label>
+            <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">
+              {pdfTemplate === "slate" ? "Line & box colour" : "Brand colour"}
+            </label>
             <div className="flex items-center gap-3">
               <input
                 type="color"
@@ -167,8 +173,66 @@ export function DocumentSettingsClient({ data }: Props) {
                 style={{ backgroundColor: brandColor }}
               />
             </div>
-            <p className="text-[11px] text-muted-foreground mt-1.5">Used as the accent colour across all document templates.</p>
+            <p className="text-[11px] text-muted-foreground mt-1.5">
+              {pdfTemplate === "slate"
+                ? "Slate: used for lines, borders, badges, and accent bars."
+                : "Used as the accent colour across all document templates."}
+            </p>
           </div>
+
+          {/* Slate-specific colours */}
+          {pdfTemplate === "slate" && (
+            <div className="space-y-4 pl-3 border-l-2 border-border">
+              {/* Text colour */}
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">
+                  Text colour <span className="font-normal text-muted-foreground/60">(labels, codes, table headers)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={slateTextColor || brandColor}
+                    onChange={(e) => setSlateTextColor(e.target.value)}
+                    className="w-10 h-10 rounded-lg border border-border cursor-pointer bg-transparent p-0.5"
+                  />
+                  <Input
+                    value={slateTextColor}
+                    onChange={(e) => setSlateTextColor(e.target.value)}
+                    placeholder={`defaults to ${brandColor}`}
+                    className="h-9 text-sm font-mono w-40"
+                    maxLength={7}
+                  />
+                  {slateTextColor && (
+                    <div className="h-9 flex-1 rounded-lg border border-border" style={{ backgroundColor: slateTextColor }} />
+                  )}
+                </div>
+              </div>
+              {/* Heading colour */}
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1.5">
+                  Heading colour <span className="font-normal text-muted-foreground/60">(company name + QUOTATION label)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={slateHeadingColor || slateTextColor || brandColor}
+                    onChange={(e) => setSlateHeadingColor(e.target.value)}
+                    className="w-10 h-10 rounded-lg border border-border cursor-pointer bg-transparent p-0.5"
+                  />
+                  <Input
+                    value={slateHeadingColor}
+                    onChange={(e) => setSlateHeadingColor(e.target.value)}
+                    placeholder={`defaults to text colour`}
+                    className="h-9 text-sm font-mono w-40"
+                    maxLength={7}
+                  />
+                  {slateHeadingColor && (
+                    <div className="h-9 flex-1 rounded-lg border border-border" style={{ backgroundColor: slateHeadingColor }} />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Template — unified selector (HTML preview + PDF) */}
           <div>

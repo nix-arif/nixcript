@@ -103,10 +103,30 @@ function dashedLine(page: PDFPage, y: number, x1 = ML, x2 = W - MR, color = C_LI
 }
 
 // ── Main export ────────────────────────────────────────────────────────────
+function hexToColor(hex: string | null | undefined, fallback: ReturnType<typeof rgb>): ReturnType<typeof rgb> {
+  if (!hex) return fallback;
+  const h = hex.replace("#", "");
+  if (h.length !== 6) return fallback;
+  return rgb(
+    parseInt(h.slice(0, 2), 16) / 255,
+    parseInt(h.slice(2, 4), 16) / 255,
+    parseInt(h.slice(4, 6), 16) / 255,
+  );
+}
+
+function muteColor(c: ReturnType<typeof rgb>, factor = 0.48): ReturnType<typeof rgb> {
+  return rgb(
+    c.red   + (1 - c.red)   * factor,
+    c.green + (1 - c.green) * factor,
+    c.blue  + (1 - c.blue)  * factor,
+  );
+}
+
 export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   const {
     quotation: q, items,
     orgName, orgLogoUrl, orgBrandColor,
+    orgSlateTextColor, orgSlateHeadingColor,
     orgCompanyName, orgCompanyAddress, orgTaxNo, orgPhone,
     orgEmail, orgWebsite, orgOldSsmNo, orgNewSsmNo, orgMdaEstablishmentNo,
     orgBankingInfo,
@@ -114,15 +134,14 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
     orgBankStatementUrl, orgLampiran12Url, orgLampiran13Url,
   } = data;
 
-  const accent = orgBrandColor
-    ? (() => {
-        const hex = orgBrandColor.replace("#", "");
-        const r = parseInt(hex.slice(0, 2), 16) / 255;
-        const g = parseInt(hex.slice(2, 4), 16) / 255;
-        const b = parseInt(hex.slice(4, 6), 16) / 255;
-        return rgb(r, g, b);
-      })()
-    : rgb(0.05, 0.14, 0.30);
+  const DEFAULT_ACCENT = rgb(0.05, 0.14, 0.30);
+  // accent  = line/box/badge colour (brandColor)
+  // accentT = text accent colour (slateTextColor ?? accent)
+  // accentH = heading colour for company name + QUOTATION (slateHeadingColor ?? accentT)
+  const accent  = hexToColor(orgBrandColor,       DEFAULT_ACCENT);
+  const accentT = hexToColor(orgSlateTextColor,   accent);
+  const accentH = hexToColor(orgSlateHeadingColor, accentT);
+  const accentMDA = muteColor(accentT, 0.48); // muted text for MDA line
 
   const cust     = q.customerSnapshot as any;
   const bankList = (orgBankingInfo ?? []) as any[];
@@ -313,14 +332,27 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         nameUppercase: !!(data.orgNameUppercase ?? 0),
         headerLayout: hLayout, docLabel: QL_TEXT,
         docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
+        nameColor: accentH, labelColor: accentH,
         logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
       });
       curY = H - 5 - HEADER_BLOCK;
       hLine(page, curY, ML, W - MR, accent, 1.2);
       curY -= DIVIDER_GAP;
 
+      // Draw boxes around ATTENTION TO (left) and QUOTATION DETAILS (right) before text
+      {
+        const INFO_LEFT_W  = CW * 0.55;
+        const INFO_RIGHT_X = ML + INFO_LEFT_W;
+        const INFO_RIGHT_W = CW * 0.45;
+        const boxTop = curY + 4;
+        const boxH   = INFO_BLOCK + 6;
+        const boxBot = boxTop - boxH;
+        page.drawRectangle({ x: ML,           y: boxBot, width: INFO_LEFT_W  - 3, height: boxH, borderColor: C_LINE, borderWidth: 0.6 });
+        page.drawRectangle({ x: INFO_RIGHT_X + 3, y: boxBot, width: INFO_RIGHT_W - 3, height: boxH, borderColor: C_LINE, borderWidth: 0.6 });
+      }
+
       drawInfoSection({
-        page, startY: curY, accent, fontR, fontB, cust,
+        page, startY: curY, accent: accentT, fontR, fontB, cust,
         attentionNameSize: attnNameSz, attentionNameBold: !!(data.orgAttentionNameBold ?? 1),
         detailFontSize: detailFSz, detailFontBold: !!(data.orgDetailFontBold ?? 0),
         detailAlignment: (data.orgDetailAlignment ?? "right") as "left" | "right",
@@ -376,10 +408,10 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       const tw = fontB.widthOfTextAtSize(col.label, 7.5);
       const tx = col.x + (col.w - tw) / 2;
       page.drawText(col.label.toUpperCase(), {
-        x: tx, y: tHdrY + 8, size: 7.5, font: fontB, color: accent,
+        x: tx, y: tHdrY + 8, size: 7.5, font: fontB, color: accentT,
       });
     }
-    // Underline the column headers with a solid accent rule
+    // Underline the column headers with a solid accent rule (line colour)
     page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: 1.8, color: accent });
     curY = tHdrY;
 
@@ -390,7 +422,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
 
       const textBaseline = curY - 11;
 
-      // Row number: small accent-colored badge square
+      // Row number: small badge square (line colour background)
       const badgeX = X_NO + (C_NO - BADGE_SZ) / 2;
       const badgeY = textBaseline - 3;
       page.drawRectangle({ x: badgeX, y: badgeY, width: BADGE_SZ, height: BADGE_SZ, color: accent });
@@ -401,15 +433,15 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         size: 7, font: fontB, color: C_WHITE,
       });
 
-      // Code column or code prefix in description
+      // Code column or code prefix in description (text colour)
       let dy = textBaseline;
       if (showCode) {
         page.drawText(trunc(item.productCode ?? "—", fontB, FS_CODE, C_CODE - TABLE_PAD), {
-          x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontB, color: accent,
+          x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontB, color: accentT,
         });
       } else if (item.productCode) {
         page.drawText(trunc(item.productCode, fontB, FS_CODE - 1, C_DESC - TABLE_PAD * 2), {
-          x: X_DESC + TABLE_PAD, y: dy, size: FS_CODE - 1, font: fontB, color: accent,
+          x: X_DESC + TABLE_PAD, y: dy, size: FS_CODE - 1, font: fontB, color: accentT,
         });
         dy -= CODE_LINE_H;
       }
@@ -419,11 +451,12 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         page.drawText(line, { x: X_DESC + TABLE_PAD, y: dy, size: FS_DESC, font: fontR, color: C_DARK });
         dy -= LH;
       }
+      // MDA line — muted text colour
       if (extraLine) {
         dy -= MDA_GAP;
         page.drawText(extraLine, {
           x: X_DESC + TABLE_PAD, y: dy, size: FS_DETAIL, font: fontR,
-          color: isGreenRow ? C_GREEN : C_AMBER,
+          color: accentMDA,
         });
       }
 
@@ -440,12 +473,12 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         x: X_UOM + (C_UOM - uomW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_MID,
       });
 
-      // Unit price — right column: thin left accent border + right-aligned text
+      // Unit price — thin left border + centred normal-weight text
       page.drawRectangle({ x: X_UP, y: rowY, width: 2, height: rowH, color: rgb(0.88, 0.90, 0.95) });
       const up  = `RM ${Number(item.unitPrice ?? 0).toFixed(2)}`;
       const upW = fontR.widthOfTextAtSize(up, FS_CODE);
       page.drawText(up, {
-        x: X_UP + C_UP - TABLE_PAD - upW, y: textBaseline, size: FS_CODE, font: fontR, color: C_BODY,
+        x: X_UP + (C_UP - upW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_BODY,
       });
 
       // Disc%
@@ -457,13 +490,13 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         });
       }
 
-      // Total — bold, right-aligned, slightly tinted column
+      // Total — normal-weight, centred, slightly tinted column
       if (showTP) {
         page.drawRectangle({ x: X_TOT, y: rowY, width: C_TOT, height: rowH, color: rgb(0.965, 0.967, 0.975) });
         const tot  = `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`;
-        const totW = fontB.widthOfTextAtSize(tot, FS_DESC);
+        const totW = fontR.widthOfTextAtSize(tot, FS_DESC);
         page.drawText(tot, {
-          x: X_TOT + C_TOT - TABLE_PAD - totW, y: textBaseline, size: FS_DESC, font: fontB, color: C_DARK,
+          x: X_TOT + (C_TOT - totW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
         });
       }
 
@@ -497,7 +530,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
           color: C_BG1, borderColor: C_LINE, borderWidth: 0.4,
         });
         page.drawText("PAYMENT TO", {
-          x: ML + 10, y: curY - 13, size: 6.5, font: fontB, color: accent,
+          x: ML + 10, y: curY - 13, size: 6.5, font: fontB, color: accentT,
         });
         let by = curY - 28;
         for (const [lbl, val] of [
@@ -540,15 +573,15 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       dashedLine(page, ty, totX, W - MR, accent);
       ty -= 14;
 
-      // Grand total — pure typography, oversized accent
+      // Grand total — pure typography, oversized text colour
       page.drawText("GRAND TOTAL", {
-        x: totX, y: ty, size: 8, font: fontB, color: accent,
+        x: totX, y: ty, size: 8, font: fontB, color: accentT,
       });
       ty -= 22;
       const gtStr = fmtM(grand);
       const gtW   = fontB.widthOfTextAtSize(gtStr, 18);
       page.drawText(gtStr, {
-        x: W - MR - gtW, y: ty, size: 18, font: fontB, color: accent,
+        x: W - MR - gtW, y: ty, size: 18, font: fontB, color: accentT,
       });
 
       curY = Math.min(curY - 60, ty - 14);
@@ -565,7 +598,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         });
         page.drawRectangle({ x: ML, y: curY - noteBoxH, width: 3, height: noteBoxH, color: accent });
         page.drawText("NOTES", {
-          x: ML + 10, y: curY - 12, size: 7, font: fontB, color: accent,
+          x: ML + 10, y: curY - 12, size: 7, font: fontB, color: accentT,
         });
         let ny = curY - 26;
         for (const line of nLines) {
@@ -629,7 +662,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H - ACCENT_BAR_H, color: C_BG1 });
 
         catPage.drawText("PRODUCT CATALOGUE", {
-          x: ML, y: H - 22, size: 14, font: fontB, color: accent,
+          x: ML, y: H - 22, size: 14, font: fontB, color: accentT,
         });
         if (q.title) {
           catPage.drawText(trunc(q.title, fontR, 9, CW / 2), {
@@ -646,7 +679,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         const pgLabel = `${pi + 1} / ${totalCatPgs}`;
         catPage.drawText(pgLabel, {
           x: W - MR - fontB.widthOfTextAtSize(pgLabel, 10),
-          y: H - 30, size: 10, font: fontB, color: accent,
+          y: H - 30, size: 10, font: fontB, color: accentT,
         });
         // Bottom accent rule under header
         catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: 1, color: accent });
@@ -662,10 +695,10 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
           const tw = fontB.widthOfTextAtSize(col.label, 7.5);
           catPage.drawText(col.label, {
             x: col.x + (col.w - tw) / 2, y: colHdrY + 8,
-            size: 7.5, font: fontB, color: accent,
+            size: 7.5, font: fontB, color: accentT,
           });
         }
-        // Accent underline for column headers
+        // Underline for column headers (line colour)
         catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: 1.5, color: accent });
 
         // Vertical separators
@@ -687,7 +720,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
 
           dashedLine(catPage, rowY, ML, ML + CW, rgb(0.86, 0.86, 0.86));
 
-          // No — accent badge
+          // No — line-colour badge
           const bx = ML + (CAT_COL_NO - BADGE_SZ) / 2;
           const by = rowY + CAT_ROW_H / 2 - BADGE_SZ / 2;
           catPage.drawRectangle({ x: bx, y: by, width: BADGE_SZ, height: BADGE_SZ, color: accent });
@@ -733,7 +766,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
 
           if (item.productCode) {
             catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), {
-              x: detX, y: detY, size: 8, font: fontB, color: accent,
+              x: detX, y: detY, size: 8, font: fontB, color: accentT,
             });
             detY -= 11;
           }

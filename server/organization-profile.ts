@@ -279,6 +279,8 @@ export async function getFullOrganizationProfile() {
     tableRowStyle:           profile.tableRowStyle           ?? "default",
     showCodeColumn:          profile.showCodeColumn          ?? 1,
     brandColor: profile.brandColor ?? "#1a56db",
+    slateTextColor: profile.slateTextColor ?? null,
+    slateHeadingColor: profile.slateHeadingColor ?? null,
     templateStyle: profile.templateStyle ?? "corporate",
     companyName: profile.companyName ?? org.name,
     companyAddress: profile.companyAddress ?? null,
