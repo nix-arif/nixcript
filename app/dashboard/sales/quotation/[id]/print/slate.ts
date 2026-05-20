@@ -403,8 +403,8 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         const boxH   = INFO_BLOCK + 6;
 
         // Draw boxes (rounded if table is rounded)
-        drawBox(page, ML,                boxTop, INFO_LEFT_W  - 3, boxH, { borderColor: C_LINE, borderWidth: 0.6, rounded: isRounded });
-        drawBox(page, INFO_RIGHT_X + 3,  boxTop, INFO_RIGHT_W - 3, boxH, { borderColor: C_LINE, borderWidth: 0.6, rounded: isRounded });
+        drawBox(page, ML,                boxTop, INFO_LEFT_W  - 3, boxH, { borderColor: accent, borderWidth: 0.6, rounded: isRounded });
+        drawBox(page, INFO_RIGHT_X + 3,  boxTop, INFO_RIGHT_W - 3, boxH, { borderColor: accent, borderWidth: 0.6, rounded: isRounded });
 
         // ── Left box: ATTENTION TO ──────────────────────────────────────
         const leftX    = ML + IPAD_H;
