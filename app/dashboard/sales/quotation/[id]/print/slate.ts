@@ -386,7 +386,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
 
       // QUOTATION label sits between company info and the divider line
       page.drawText(QL_TEXT, {
-        x: ML, y: curY + QL_BAND_H - 14,
+        x: ML, y: curY + QL_BAND_H - 24,
         size: 16, font: fontB, color: accentH,
       });
 
