@@ -235,7 +235,8 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
   const TOTALS_H     = 14 + totRowCount * 13 + 6 + GRAND_BAND_H + 10;
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 30;
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16;
+  const CLOSING_H    = 38;
+  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H;
 
   const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - BOTTOM_RESERVE - MB;
   const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - BOTTOM_RESERVE - MB;
@@ -526,6 +527,15 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
         x: W - MR - gtW - 10, y: ty - GRAND_BAND_H + 7, size: 14, font: fontB, color: C_WHITE,
       });
       curY = ty - GRAND_BAND_H - 14;
+
+      // ── Closing message ──────────────────────────────────────────────────
+      curY -= 14;
+      const closeMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order. Should you have any enquiries, please do not hesitate to contact us.";
+      for (const cl of wrap(closeMsg, fontR, 8, CW - 40)) {
+        const clW = fontR.widthOfTextAtSize(cl, 8);
+        page.drawText(cl, { x: (W - clW) / 2, y: curY, size: 8, font: fontR, color: C_LITE });
+        curY -= 12;
+      }
 
       // Notes
       if (q.notes) {

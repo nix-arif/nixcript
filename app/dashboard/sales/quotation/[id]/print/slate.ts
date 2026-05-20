@@ -313,7 +313,8 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   const TOTALS_H      = 14 + totRowCount * 13 + 14 + 50 + 18;
   const NOTES_H       = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK  = 32;
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 12;
+  const CLOSING_H     = 38;
+  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 12 + CLOSING_H;
 
   const P1_ROW_AVAIL = H - MB - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - BOTTOM_RESERVE;
   const PN_ROW_AVAIL = H - ACCENT_BAR_H - 26 - TABLE_HDR_H - BOTTOM_RESERVE - MB;
@@ -457,13 +458,24 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
           ...(q.preparedByName  ? [["Prepared By", q.preparedByName]]  as [string,string][] : []),
           ...(q.title           ? [["Subject",     q.title]]           as [string,string][] : []),
         ];
+        const rightAlign = (data.orgDetailAlignment ?? "right") === "right";
+        const rightEdgeX = INFO_RIGHT_X + 3 + INFO_RIGHT_W - 3 - IPAD_H; // inner right edge of box
         for (const [lbl, val] of detailRows) {
-          const lblStr = `${lbl}: `;
-          const lblW = fontR.widthOfTextAtSize(lblStr, slateInfoFS);
-          page.drawText(lblStr, { x: rightX, y: ry, size: slateInfoFS, font: fontR, color: C_MID });
-          page.drawText(trunc(val, fontB, slateInfoFS, rightMaxW - lblW), {
-            x: rightX + lblW, y: ry, size: slateInfoFS, font: fontB, color: C_DARK,
-          });
+          const lblStr = `${lbl}:`;
+          if (rightAlign) {
+            // Label flush-left, value flush-right inside the box
+            page.drawText(lblStr, { x: rightX, y: ry, size: slateInfoFS, font: fontR, color: C_MID });
+            const valStr = trunc(val, fontB, slateInfoFS, rightMaxW * 0.55);
+            const valW   = fontB.widthOfTextAtSize(valStr, slateInfoFS);
+            page.drawText(valStr, { x: rightEdgeX - valW, y: ry, size: slateInfoFS, font: fontB, color: C_DARK });
+          } else {
+            // Left-aligned: label + value inline
+            const lblW = fontR.widthOfTextAtSize(`${lblStr} `, slateInfoFS);
+            page.drawText(`${lblStr} `, { x: rightX, y: ry, size: slateInfoFS, font: fontR, color: C_MID });
+            page.drawText(trunc(val, fontB, slateInfoFS, rightMaxW - lblW), {
+              x: rightX + lblW, y: ry, size: slateInfoFS, font: fontB, color: C_DARK,
+            });
+          }
           ry -= slateInfoLH;
         }
       }
@@ -692,6 +704,15 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       });
 
       curY = Math.min(curY - 60, ty - 14);
+
+      // ── Closing message ──────────────────────────────────────────────────
+      curY -= 14;
+      const closeMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order. Should you have any enquiries, please do not hesitate to contact us.";
+      for (const cl of wrap(closeMsg, fontR, 8, CW - 40)) {
+        const clW = fontR.widthOfTextAtSize(cl, 8);
+        page.drawText(cl, { x: (W - clW) / 2, y: curY, size: 8, font: fontR, color: C_LITE });
+        curY -= 12;
+      }
 
       // Notes
       if (q.notes) {
