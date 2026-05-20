@@ -316,10 +316,10 @@ export function OrganizationProfileClient({ data }: Props) {
         newSsmNo,
         taxNo,
         mofNo,
-        mofValidity,
+        mofValidity: mofValidity || null,
         pkkNo,
         mdaEstablishmentNo,
-        mdaEstablishmentValidity,
+        mdaEstablishmentValidity: mdaEstablishmentValidity || null,
         warehouseAddresses,
         bankingInfo,
       });
