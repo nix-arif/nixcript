@@ -367,8 +367,6 @@ export function drawInfoSection(opts: InfoSectionOptions): number {
     ["Quotation No", quotationNo],
     ["Date",         fmtD(createdAt)],
     ["Valid Until",  fmtD(validUntil)],
-    ...(salesPersonName ? [["Sales Person", salesPersonName]] as [string,string][] : []),
-    ...(preparedByName  ? [["Prepared By",  preparedByName]]  as [string,string][] : []),
     ...(title           ? [["Subject",      title]]           as [string,string][] : []),
   ];
 
@@ -473,7 +471,7 @@ export function estimateInfoH(opts: {
   }
 
   let rightH = 8; // label
-  const rows = 3 + (salesPersonName ? 1 : 0) + (preparedByName ? 1 : 0) + (title ? 1 : 0);
+  const rows = 3 + (title ? 1 : 0);
   rightH += rows * (detailFontSize + 4);
 
   return Math.max(leftH, rightH) + 6;

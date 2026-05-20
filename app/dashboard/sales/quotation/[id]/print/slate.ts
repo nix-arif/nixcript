@@ -305,7 +305,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   } else { leftH += slateInfoLH; }
   leftH += IPAD_B;
 
-  const detailRowCount = 3 + (q.salesPersonName ? 1 : 0) + (q.preparedByName ? 1 : 0) + (q.title ? 1 : 0);
+  const detailRowCount = 3 + (q.title ? 1 : 0);
   const rightH = IPAD_T + slateInfoFS + 6 + detailRowCount * slateInfoLH + IPAD_B;
   const INFO_BLOCK = Math.max(leftH, rightH);
 
@@ -462,8 +462,6 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
           ["Quotation No", q.quotationNo],
           ["Date",         fmtD(q.createdAt)],
           ["Valid Until",  fmtD(q.validUntil)],
-          ...(q.salesPersonName ? [["Sales",       q.salesPersonName]] as [string,string][] : []),
-          ...(q.preparedByName  ? [["Prepared By", q.preparedByName]]  as [string,string][] : []),
           ...(q.title           ? [["Subject",     q.title]]           as [string,string][] : []),
         ];
         const rightAlign = (data.orgDetailAlignment ?? "right") === "right";
