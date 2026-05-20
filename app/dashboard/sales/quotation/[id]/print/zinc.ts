@@ -772,53 +772,5 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
     } catch { /* skip unavailable documents */ }
   }
 
-  // ── Append MDA product certificates ───────────────────────────────────────
-  if (Number(q.includeMdaCerts)) {
-    type MdaItem = { mdaPdfUrl: string; mdaPdfFile: string; mdaPageNo: string | null; mdaMatchX: string | null; mdaMatchY: string | null; mdaRowHeight: string | null; mdaPageWidth: string | null; mdaPageHeight: string | null };
-    const mdaGroups = new Map<string, { url: string; items: MdaItem[] }>();
-    for (const item of items) {
-      const it = item as any;
-      if (!Number(it.hasCert) || !it.mdaPdfFile || !it.mdaPdfUrl) continue;
-      const g = mdaGroups.get(it.mdaPdfFile) ?? { url: it.mdaPdfUrl as string, items: [] as MdaItem[] };
-      g.items.push(it as MdaItem);
-      mdaGroups.set(it.mdaPdfFile, g);
-    }
-    for (const [, g] of mdaGroups) {
-      try {
-        const res = await fetch(g.url);
-        if (!res.ok) continue;
-        const buf    = await res.arrayBuffer();
-        const srcPdf = await PDFDocument.load(buf);
-        const total  = srcPdf.getPageCount();
-        const pageSet = new Set<number>([0, 1].filter(i => i < total));
-        const highlights = new Map<number, Array<{ x: number; y: number; w: number; h: number }>>();
-        for (const item of g.items) {
-          if (!item.mdaPageNo) continue;
-          const idx = parseInt(item.mdaPageNo) - 1;
-          if (isNaN(idx) || idx < 0 || idx >= total) continue;
-          pageSet.add(idx);
-          if (item.mdaMatchX && item.mdaMatchY && item.mdaRowHeight && item.mdaPageWidth && item.mdaPageHeight) {
-            const srcPage = srcPdf.getPage(idx);
-            
-            const scaleY  = srcPage.getHeight() / parseFloat(item.mdaPageHeight);
-            const hl = { x: 0, y: parseFloat(item.mdaMatchY) * scaleY - 2, w: srcPage.getWidth(), h: parseFloat(item.mdaRowHeight) * scaleY + 4 };
-            const arr = highlights.get(idx) ?? [];
-            arr.push(hl);
-            highlights.set(idx, arr);
-          }
-        }
-        const sortedIdx = [...pageSet].sort((a, b) => a - b);
-        const copied = await pdfDoc.copyPages(srcPdf, sortedIdx);
-        sortedIdx.forEach((srcIdx, i) => {
-          const page = copied[i];
-          for (const hl of (highlights.get(srcIdx) ?? [])) {
-            page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
-          }
-          pdfDoc.addPage(page);
-        });
-      } catch { /* skip */ }
-    }
-  }
-
   return pdfDoc.save();
 }

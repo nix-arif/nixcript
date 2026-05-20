@@ -635,7 +635,6 @@ export function PrintClient({ group }: Props) {
   }, []);
 
   const first = group[0];
-
   return (
     <>
       <style>{`
@@ -660,6 +659,13 @@ export function PrintClient({ group }: Props) {
         <button onClick={() => window.print()} style={{ fontSize: "13px", padding: "6px 16px", border: "none", borderRadius: "6px", cursor: "pointer", background: "#111", color: "white", fontWeight: "600" }}>
           Print / Save as PDF
         </button>
+        <a
+          href={`/api/quotation/${first.quotation.id}/mda-certs`}
+          download
+          style={{ fontSize: "13px", padding: "6px 14px", border: "1px solid #2563eb", borderRadius: "6px", cursor: "pointer", background: "#eff6ff", color: "#1d4ed8", fontWeight: "600", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "5px" }}
+        >
+          ↓ MDA Certs
+        </a>
         <span style={{ fontSize: "12px", color: "#6b7280", marginLeft: "4px" }}>
           {group.length > 1 ? `${group.length} quotations · all pages included` : first.quotation.quotationNo}
         </span>

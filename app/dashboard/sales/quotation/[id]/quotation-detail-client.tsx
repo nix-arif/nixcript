@@ -94,6 +94,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfGroupLoading, setPdfGroupLoading] = useState(false);
   const [pdfGroupProgress, setPdfGroupProgress] = useState("");
+  const [mdaLoading, setMdaLoading] = useState(false);
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
   const [markupRows, setMarkupRows] = useState<MarkupRow[]>([]);
 
@@ -390,6 +391,26 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               <PrinterIcon className="w-3.5 h-3.5" />
             )}
             {pdfLoading ? "Generating…" : "Download PDF"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 h-8"
+            disabled={mdaLoading}
+            onClick={() =>
+              downloadPdf(
+                `/api/quotation/${q.id}/mda-certs`,
+                `${q.quotationNo}-mda-certs.pdf`,
+                setMdaLoading,
+              )
+            }
+          >
+            {mdaLoading ? (
+              <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <ShieldCheckIcon className="w-3.5 h-3.5" />
+            )}
+            {mdaLoading ? "Generating…" : "MDA Certs"}
           </Button>
           {siblings.length > 1 && (
             <Button
