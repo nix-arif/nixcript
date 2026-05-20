@@ -801,7 +801,7 @@ export const quotationItem = pgTable(
     productName: text("product_name"),
     imageKey: text("image_key"), // R2 key for catalogue image
     mdaRegNo: text("mda_reg_no"),
-    mdaValidity: timestamp("mda_validity"),
+    mdaValidity: text("mda_validity"),
     hasCert: integer("has_cert").default(0),
     hasPrice: integer("has_price").default(0),
 
