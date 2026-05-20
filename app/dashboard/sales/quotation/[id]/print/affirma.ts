@@ -573,7 +573,7 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
       }
 
       // ── Table layout constants ─────────────────────────────────────────
-      const CAT_HDR_H    = 48;   // section title strip
+      const CAT_HDR_H    = 64;   // section title strip
       const CAT_COLHDR_H = 20;   // column labels row
       const CAT_FOOT_H   = 32;   // footer zone
       const CAT_COL_NO   = 26;   // "#" column

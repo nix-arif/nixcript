@@ -246,30 +246,39 @@ export function QuotationListClient({ initialGroups }: Props) {
                         <span className="font-mono text-sm font-medium">
                           {m.quotationNo}
                         </span>
-                        {group.title && group.title !== "Loose Items" && (
-                          <span className="text-[10px] border border-border rounded px-1.5 py-0.5 text-muted-foreground">
-                            {group.title}
-                          </span>
-                        )}
                         <span className="text-[10px] font-medium bg-muted/60 rounded px-1.5 py-0.5 text-muted-foreground tabular-nums">
                           {fmtDate(group.createdAt)}
                         </span>
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
-                        {custName && <span>{custName}</span>}
-                        {group.salesPersonName && (
-                          <>
-                            {custName && <span>·</span>}
-                            <span>{group.salesPersonName}</span>
-                          </>
-                        )}
-                        {m.orgName && (
-                          <>
-                            {(custName || group.salesPersonName) && <span>·</span>}
-                            <span>{m.orgName}</span>
-                          </>
-                        )}
-                      </div>
+                      {(custName || m.orgName) && (
+                        <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
+                          {custName && <span>{custName}</span>}
+                          {custName && m.orgName && <span>·</span>}
+                          {m.orgName && <span>{m.orgName}</span>}
+                        </div>
+                      )}
+                      {(group.title || group.salesPersonName || group.preparedByName) && (
+                        <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
+                          {group.title && group.title !== "Loose Items" && (
+                            <span>
+                              <span className="text-muted-foreground/50">Title:</span>{" "}
+                              {group.title}
+                            </span>
+                          )}
+                          {group.salesPersonName && (
+                            <span>
+                              <span className="text-muted-foreground/50">Sales:</span>{" "}
+                              {group.salesPersonName}
+                            </span>
+                          )}
+                          {group.preparedByName && (
+                            <span>
+                              <span className="text-muted-foreground/50">By:</span>{" "}
+                              {group.preparedByName}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0">
@@ -334,20 +343,32 @@ export function QuotationListClient({ initialGroups }: Props) {
                       {custName && (
                         <span className="text-sm font-medium">{custName}</span>
                       )}
-                      {group.title && group.title !== "Loose Items" && (
-                        <span className="text-[10px] border border-border rounded px-1.5 py-0.5 text-muted-foreground">
-                          {group.title}
-                        </span>
-                      )}
                       <span className="text-[10px] font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded px-1.5 py-0.5 tabular-nums">
                         {fmtDate(group.createdAt)}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
-                      {group.salesPersonName && (
-                        <span>{group.salesPersonName}</span>
-                      )}
-                    </div>
+                    {(group.title || group.salesPersonName || group.preparedByName) && (
+                      <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
+                        {group.title && group.title !== "Loose Items" && (
+                          <span>
+                            <span className="text-muted-foreground/50">Title:</span>{" "}
+                            {group.title}
+                          </span>
+                        )}
+                        {group.salesPersonName && (
+                          <span>
+                            <span className="text-muted-foreground/50">Sales:</span>{" "}
+                            {group.salesPersonName}
+                          </span>
+                        )}
+                        {group.preparedByName && (
+                          <span>
+                            <span className="text-muted-foreground/50">By:</span>{" "}
+                            {group.preparedByName}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0">

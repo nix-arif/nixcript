@@ -552,7 +552,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         }
       }
 
-      const CAT_HDR_H    = 48;
+      const CAT_HDR_H    = 64;
       const CAT_COLHDR_H = 20;
       const CAT_FOOT_H   = 32;
       const CAT_COL_NO   = 26;

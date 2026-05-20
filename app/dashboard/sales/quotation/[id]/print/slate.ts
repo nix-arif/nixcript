@@ -606,7 +606,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         }
       }
 
-      const CAT_HDR_H    = 50;
+      const CAT_HDR_H    = 64;
       const CAT_COLHDR_H = 22;
       const CAT_FOOT_H   = 34;
       const CAT_COL_NO   = 26;
