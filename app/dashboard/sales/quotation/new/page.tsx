@@ -16,10 +16,10 @@ export default async function NewQuotationPage() {
   const orgId = session?.session.activeOrganizationId ?? "";
 
   const [customers, members, quotationNo, ownerOrgs] = await Promise.all([
-    getCustomers(),
-    getOrgMembersForQuotation(),
-    peekNextQuotationNo(orgId),
-    getOwnerOrganizations(),
+    getCustomers().catch((e) => { console.error("[new-quotation] getCustomers failed:", e); throw e; }),
+    getOrgMembersForQuotation().catch((e) => { console.error("[new-quotation] getOrgMembersForQuotation failed:", e); throw e; }),
+    peekNextQuotationNo(orgId).catch((e) => { console.error("[new-quotation] peekNextQuotationNo failed:", e); throw e; }),
+    getOwnerOrganizations().catch((e) => { console.error("[new-quotation] getOwnerOrganizations failed:", e); throw e; }),
   ]);
 
   return (

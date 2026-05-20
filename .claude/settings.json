@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/nix_arif/Desktop/learn/programming/rbac/nixcript log --oneline -10)",
+      "Bash(git -C /Users/nix_arif/Desktop/learn/programming/rbac/nixcript status --short)"
+    ]
+  }
+}

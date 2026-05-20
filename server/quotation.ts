@@ -316,12 +316,6 @@ export async function matchSpreadsheetToProducts(
           )
       : [];
 
-  console.log("ownerOrgId:", ownerOrgId);
-  await db.select().from(product).where(eq(product.organizationId, ownerOrgId));
-  console.log("product codes arif:", productCodes);
-
-  console.log("products arif:", products);
-
   const productMap = new Map(products.map((p) => [p.productCode, p]));
 
   return rows.map((row) => {
@@ -363,9 +357,6 @@ export async function matchSpreadsheetToProducts(
       mdaValidity &&
       new Date(mdaValidity) > new Date()
     );
-    console.log("new Date()", new Date());
-    console.log(new Date(mdaValidity));
-    console.log(new Date(mdaValidity) > new Date());
 
     let status: ReviewItem["status"] = "ok";
     if (!dbProduct) status = "not_found";
