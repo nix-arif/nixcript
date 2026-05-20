@@ -370,7 +370,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
     if (isFirst) {
       curY = H - MB; // reset to top margin area (slate uses no MT constant)
       drawCompanyHeader({
-        page, startY: H - 5, accent, fontR, fontB, logoImg,
+        page, startY: H - 15, accent, fontR, fontB, logoImg,
         companyName: coName, companyAddress: orgCompanyAddress,
         phone: orgPhone, email: orgEmail, website: orgWebsite,
         oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
