@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { member, userPermission } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
+import { ROLE_PERMISSIONS } from "@/lib/permissions/constants";
 
 const OWNER_ALL_PERMISSIONS = "*";
 
@@ -19,23 +20,12 @@ export async function getUserPermissions(
 
   if (memberData) {
     if (memberData.role === "owner") return [OWNER_ALL_PERMISSIONS];
-
-    const rows = await db
-      .select()
-      .from(userPermission)
-      .where(
-        and(
-          eq(userPermission.userId, userId),
-          eq(userPermission.organizationId, organizationId),
-          eq(userPermission.allowed, true),
-        ),
-      );
-    return rows.map((r) => r.permissionKey);
+    return resolvePermissions(userId, organizationId, memberData.role);
   }
 
-  // 2. No direct membership — check sibling orgs under the same owner.
-  //    Members of org X can access org Y if both are owned by the same owner,
-  //    using their home-org permissions. This supports multi-org comparison flows.
+  // 2. No direct membership — sibling org fallback.
+  //    Members of any org in an owner's cluster can access sibling orgs
+  //    using their home-org permissions (supports multi-org comparison flows).
   const [ownerMembership] = await db
     .select({ userId: member.userId })
     .from(member)
@@ -60,7 +50,6 @@ export async function getUserPermissions(
 
   if (siblingOrgIds.length === 0) return [];
 
-  // Find user's membership in any sibling org
   const [siblingMembership] = await db
     .select({ role: member.role, organizationId: member.organizationId })
     .from(member)
@@ -75,16 +64,38 @@ export async function getUserPermissions(
   if (!siblingMembership) return [];
   if (siblingMembership.role === "owner") return [OWNER_ALL_PERMISSIONS];
 
-  // Return permissions from their home org
-  const rows = await db
-    .select()
+  return resolvePermissions(
+    userId,
+    siblingMembership.organizationId,
+    siblingMembership.role,
+  );
+}
+
+// Returns the effective permission keys for a non-owner member.
+// Uses explicit user_permission rows when they exist; otherwise falls back
+// to the role's default permissions from ROLE_PERMISSIONS.
+async function resolvePermissions(
+  userId: string,
+  organizationId: string,
+  role: string,
+): Promise<string[]> {
+  // Fetch all rows — both allowed and denied — to detect whether any
+  // explicit configuration exists for this user/org combination.
+  const allRows = await db
+    .select({ permissionKey: userPermission.permissionKey, allowed: userPermission.allowed })
     .from(userPermission)
     .where(
       and(
         eq(userPermission.userId, userId),
-        eq(userPermission.organizationId, siblingMembership.organizationId),
-        eq(userPermission.allowed, true),
+        eq(userPermission.organizationId, organizationId),
       ),
     );
-  return rows.map((r) => r.permissionKey);
+
+  if (allRows.length > 0) {
+    // Explicit rows exist — honour them (only return allowed ones).
+    return allRows.filter((r) => r.allowed).map((r) => r.permissionKey);
+  }
+
+  // No explicit rows at all — fall back to the role's default permissions.
+  return [...(ROLE_PERMISSIONS[role] ?? [])];
 }
