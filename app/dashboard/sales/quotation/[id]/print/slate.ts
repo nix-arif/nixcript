@@ -318,7 +318,8 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 12 + CLOSING_H;
 
   const P1_ROW_AVAIL = H - MB - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - BOTTOM_RESERVE;
-  const PN_ROW_AVAIL = H - ACCENT_BAR_H - 26 - TABLE_HDR_H - BOTTOM_RESERVE - MB;
+  const PN_HDR_H     = q.title ? 38 : 26; // continuation header height varies with title
+  const PN_ROW_AVAIL = H - ACCENT_BAR_H - PN_HDR_H - TABLE_HDR_H - BOTTOM_RESERVE - MB;
 
   // ── Paginate rows ─────────────────────────────────────────────────────────
   const pageGroups: number[][] = [];
@@ -493,6 +494,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       // ── Continuation header ────────────────────────────────────────────
       page.drawRectangle({ x: 0, y: H - ACCENT_BAR_H, width: W, height: ACCENT_BAR_H, color: accent });
       curY = H - ACCENT_BAR_H - 10;
+      // Quotation no + "continued" on the first meta line
       page.drawText(`${q.quotationNo}`, {
         x: ML, y: curY - 8, size: 8, font: fontR, color: C_MID,
       });
@@ -500,7 +502,15 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         x: ML + fontR.widthOfTextAtSize(`${q.quotationNo}  `, 8),
         y: curY - 8, size: 8, font: fontR, color: C_LITE,
       });
-      curY -= 26;
+      // Title on a second line (if present)
+      if (q.title) {
+        page.drawText(trunc(q.title, fontB, 11, CW), {
+          x: ML, y: curY - 22, size: 11, font: fontB, color: accentT,
+        });
+        curY -= 38;
+      } else {
+        curY -= 26;
+      }
     }
 
     // ── Title banner (optional merged row above column headers) ───────────────
