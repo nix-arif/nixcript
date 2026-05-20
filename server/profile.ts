@@ -2,9 +2,8 @@
 
 import { db } from "@/db";
 import { profile } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { getCachedSession } from "@/lib/auth/cached-session";
 import { eq } from "drizzle-orm";
-import { headers } from "next/headers";
 import { nanoid } from "nanoid";
 import {
   S3Client,
@@ -22,7 +21,7 @@ const s3 = new S3Client({
 });
 
 export async function getProfile() {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) return null;
 
   const [existing] = await db
@@ -37,7 +36,7 @@ export async function getProfile() {
 export async function upsertProfile(
   data: Partial<typeof profile.$inferInsert>,
 ) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
 
   const existing = await getProfile();
@@ -57,7 +56,7 @@ export async function upsertProfile(
 }
 
 export async function uploadBankBook(formData: FormData) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
 
   const file = formData.get("file") as File;
@@ -97,7 +96,7 @@ export async function uploadBankBook(formData: FormData) {
 }
 
 export async function ensureProfileExists() {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) return;
 
   const [existing] = await db

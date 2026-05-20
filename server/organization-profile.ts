@@ -2,8 +2,7 @@
 
 import { db } from "@/db";
 import { organizationProfile, organization } from "@/db/schema";
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
+import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import {
@@ -26,7 +25,7 @@ const s3 = new S3Client({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 async function getOrgId(): Promise<string> {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
@@ -102,7 +101,7 @@ export async function upsertOrganizationProfile(
 
 // ── Upload organization logo (public bucket) ───────────────────────────────
 export async function uploadOrganizationLogo(formData: FormData) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
 
   const orgId = session.session.activeOrganizationId;
@@ -170,7 +169,7 @@ export async function getPresignedUrl(
   key: string,
   expiresIn = 3600,
 ): Promise<string> {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
 
   const command = new GetObjectCommand({

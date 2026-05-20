@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { db } from "@/db";
 import { member, userPermission } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
@@ -5,7 +6,7 @@ import { ROLE_PERMISSIONS } from "@/lib/permissions/constants";
 
 const OWNER_ALL_PERMISSIONS = "*";
 
-export async function getUserPermissions(
+export const getUserPermissions = cache(async function getUserPermissions(
   userId: string,
   organizationId: string,
 ): Promise<string[]> {
@@ -69,7 +70,7 @@ export async function getUserPermissions(
     siblingMembership.organizationId,
     siblingMembership.role,
   );
-}
+});
 
 // Returns the effective permission keys for a non-owner member.
 // Uses explicit user_permission rows when they exist; otherwise falls back

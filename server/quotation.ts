@@ -12,8 +12,7 @@ import {
   organization,
   organizationProfile,
 } from "@/db/schema";
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
+import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, asc, desc, inArray, sql } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -56,7 +55,7 @@ function randomWeekdaysBack(from: Date, min: number, max: number): Date {
 }
 
 async function getSession() {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");

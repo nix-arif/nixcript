@@ -2,8 +2,7 @@
 
 import { db } from "@/db";
 import { member, product } from "@/db/schema";
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
+import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, sql, asc, or, ilike, isNotNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -29,7 +28,7 @@ type ProductRow = {
 };
 
 export async function seedProducts(rows: ProductRow[]) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
 
   const orgId = session.session.activeOrganizationId;
@@ -88,7 +87,7 @@ export async function seedProducts(rows: ProductRow[]) {
 }
 
 export async function searchProducts(query: string, brand?: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
 
   const orgId = session.session.activeOrganizationId;
@@ -130,7 +129,7 @@ export async function searchProducts(query: string, brand?: string) {
 }
 
 export async function getProducts(page = 1, limit = 50) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
 
   const orgId = session.session.activeOrganizationId;
@@ -183,7 +182,7 @@ async function getOwnerOrgId(
 }
 
 export async function getDistinctBrands() {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
 
   const orgId = session.session.activeOrganizationId;

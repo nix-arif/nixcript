@@ -5,14 +5,12 @@ import { db } from "@/db";
 import { user } from "@/db/schema";
 import { mapUser } from "@/helper/map-user";
 import { auth } from "@/lib/auth";
+import { getCachedSession } from "@/lib/auth/cached-session";
 import { eq } from "drizzle-orm";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 export const getCurrentUser = async () => {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const session = await getCachedSession();
 
   if (!session) {
     redirect("/auth/login");

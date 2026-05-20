@@ -1,12 +1,11 @@
 // lib/auth/require-permission.ts
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
 export async function requirePermission(permission: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getCachedSession();
 
   if (!session) redirect("/login");
 
