@@ -556,6 +556,26 @@ export async function createQuotation(input: CreateQuotationInput) {
   const targetOrgs =
     ownerOrgs.length > 0 ? ownerOrgs : [{ id: orgId, name: "", slug: "" }];
 
+  // Determine primary org: for owners, use the active org; for members who may
+  // be viewing a sibling org they don't directly belong to, use their home org.
+  const [activeOrgMembership] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
+    .limit(1);
+
+  let primaryOrgId = orgId;
+  if (!activeOrgMembership || activeOrgMembership.role !== "owner") {
+    const clusterIds = targetOrgs.map((o) => o.id);
+    const [homeOrgRow] = await db
+      .select({ organizationId: member.organizationId })
+      .from(member)
+      .where(and(eq(member.userId, userId), inArray(member.organizationId, clusterIds)))
+      .orderBy(asc(member.createdAt))
+      .limit(1);
+    if (homeOrgRow) primaryOrgId = homeOrgRow.organizationId;
+  }
+
   const groupId = nanoid();
   let originalQuotation: typeof quotation.$inferSelect | null = null;
 
@@ -563,7 +583,7 @@ export async function createQuotation(input: CreateQuotationInput) {
 
   for (const org of targetOrgs) {
     const quotationNo = await generateQuotationNo(org.id);
-    const isDummy = org.id !== orgId ? 1 : 0;
+    const isDummy = org.id !== primaryOrgId ? 1 : 0;
     const dummyDate = isDummy ? randomWeekdaysBack(originalDate, 1, 5) : undefined;
     const qDate = dummyDate ?? originalDate;
     const validUntil = new Date(qDate);
