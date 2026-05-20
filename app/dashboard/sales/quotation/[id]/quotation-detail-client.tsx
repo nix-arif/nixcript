@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -91,6 +91,13 @@ export function QuotationDetailClient({ data }: Props) {
   const [pdfGroupProgress, setPdfGroupProgress] = useState("");
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
   const [markupRows, setMarkupRows] = useState<MarkupRow[]>([]);
+
+  // Pre-fetch all sibling pages so tab switches feel instant
+  useEffect(() => {
+    siblings.forEach((s) => {
+      if (s.id !== q.id) router.prefetch(`/dashboard/sales/quotation/${s.id}`);
+    });
+  }, [siblings, q.id, router]);
 
   const isDraft = q.status === "draft";
   const isComparison = q.mode === "comparison";
