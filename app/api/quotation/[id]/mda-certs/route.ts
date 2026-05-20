@@ -73,7 +73,8 @@ export async function GET(_req: Request, { params }: Props) {
 
       // Always include pages 1 & 2, plus each item's specific product page
       const pageSet = new Set<number>([0, 1].filter(i => i < total));
-      const highlights = new Map<number, Array<{ x: number; y: number; w: number; h: number; no: number | null }>>();
+      // Key: "pageIdx:y" — merges duplicate-product rows into one highlight with combined nos
+      const hlMap = new Map<string, { x: number; y: number; w: number; h: number; nos: number[] }>();
 
       for (const item of g.items) {
         if (!item.mdaPageNo) continue;
@@ -83,17 +84,30 @@ export async function GET(_req: Request, { params }: Props) {
         if (item.mdaMatchX && item.mdaMatchY && item.mdaRowHeight && item.mdaPageWidth && item.mdaPageHeight) {
           const srcPage = srcPdf.getPage(idx);
           const scaleY  = srcPage.getHeight() / parseFloat(item.mdaPageHeight);
-          const hl = {
-            x: 0,
-            y: parseFloat(item.mdaMatchY) * scaleY - 2,
-            w: srcPage.getWidth(),
-            h: parseFloat(item.mdaRowHeight) * scaleY + 4,
-            no: item.no,
-          };
-          const arr = highlights.get(idx) ?? [];
-          arr.push(hl);
-          highlights.set(idx, arr);
+          const y = parseFloat(item.mdaMatchY) * scaleY - 2;
+          const key = `${idx}:${y.toFixed(1)}`;
+          const existing = hlMap.get(key);
+          if (existing) {
+            if (item.no != null) existing.nos.push(item.no);
+          } else {
+            hlMap.set(key, {
+              x: 0,
+              y,
+              w: srcPage.getWidth(),
+              h: parseFloat(item.mdaRowHeight) * scaleY + 4,
+              nos: item.no != null ? [item.no] : [],
+            });
+          }
         }
+      }
+
+      // Re-bucket by page index for rendering
+      const highlights = new Map<number, Array<{ x: number; y: number; w: number; h: number; nos: number[] }>>();
+      for (const [key, hl] of hlMap) {
+        const idx = parseInt(key.split(":")[0]);
+        const arr = highlights.get(idx) ?? [];
+        arr.push(hl);
+        highlights.set(idx, arr);
       }
 
       const sortedIdx = [...pageSet].sort((a, b) => a - b);
@@ -102,8 +116,8 @@ export async function GET(_req: Request, { params }: Props) {
         const page = copied[i];
         for (const hl of (highlights.get(srcIdx) ?? [])) {
           page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
-          if (hl.no != null) {
-            const label = String(hl.no);
+          if (hl.nos.length > 0) {
+            const label = hl.nos.slice().sort((a, b) => a - b).join(", ");
             const fontSize = Math.max(7, Math.min(10, hl.h * 0.75));
             const badgeW = font.widthOfTextAtSize(label, fontSize) + 6;
             const badgeH = hl.h;
