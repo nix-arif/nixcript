@@ -147,7 +147,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (enrichedItems.length === 0) {
-    return new Response("No MDA certificates found for the provided product codes", { status: 404 });
+    const dbFound = pRows.length;
+    const withPdf = pRows.filter((r) => r.mdaPdfFile).length;
+    const presigned = presignMap.size;
+    console.error(`[mda-cert] enrichedItems empty. DB rows: ${dbFound}, with mdaPdfFile: ${withPdf}, presigned: ${presigned}, codes: ${codes.join(",")}, ownerOrgIds: ${ownerOrgIds.join(",")}`);
+    return new Response(
+      `No MDA certificates found. DB rows found: ${dbFound}, with PDF file: ${withPdf}, presigned: ${presigned}`,
+      { status: 404 },
+    );
   }
 
   // Group by PDF file key — same PDF fetched once even if multiple rows use it
