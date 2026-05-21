@@ -256,7 +256,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   const FS_CODE   = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 9;
   const FS_NUM    = tfs === "small" ? 7.5  : tfs === "large" ? 9.5  : 8.5;
   const LH        = tfs === "small" ? 10   : tfs === "large" ? 13.5 : 11.5;
-  const RH_MIN    = tfs === "small" ? 15   : tfs === "large" ? 21   : 18;
+  const RH_MIN    = tfs === "small" ? 20   : tfs === "large" ? 27   : 24;
   const MDA_GAP   = 3;
 
   const hasBanner = (data.orgTitlePosition ?? "stamp") === "table-banner";
@@ -281,7 +281,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
     const codeLineH  = !showCode && item.productCode ? CODE_LINE_H : 0;
     const rowH = Math.max(
       RH_MIN,
-      codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
+      codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 10),
     );
     return { item, descLines, extraLine, isGreenRow, rowH };
   });
