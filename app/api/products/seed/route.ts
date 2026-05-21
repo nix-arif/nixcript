@@ -124,7 +124,7 @@ import { headers } from "next/headers";
 import { db } from "@/db";
 import { member, product } from "@/db/schema";
 import { nanoid } from "nanoid";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
 export const maxDuration = 60;
 
@@ -140,27 +140,24 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
 
-  // Always seed under owner's org
-  let ownerOrgId = currentOrgId;
-  const [currentMember] = await db
-    .select()
+  // Resolve the primary owner org using the same logic as product search:
+  // find who owns the current org, then find their earliest-created org.
+  const [orgOwner] = await db
+    .select({ userId: member.userId })
     .from(member)
-    .where(
-      and(
-        eq(member.userId, session.user.id),
-        eq(member.organizationId, currentOrgId),
-      ),
-    )
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
     .limit(1);
 
-  if (currentMember?.role !== "owner") {
-    const [ownerMember] = await db
-      .select()
-      .from(member)
-      .where(and(eq(member.userId, session.user.id), eq(member.role, "owner")))
-      .limit(1);
-    if (ownerMember) ownerOrgId = ownerMember.organizationId;
-  }
+  const ownerId = orgOwner?.userId ?? session.user.id;
+
+  const [primaryOrg] = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerId), eq(member.role, "owner")))
+    .orderBy(asc(member.createdAt))
+    .limit(1);
+
+  const ownerOrgId = primaryOrg?.organizationId ?? currentOrgId;
 
   try {
     const { rows } = await req.json();
