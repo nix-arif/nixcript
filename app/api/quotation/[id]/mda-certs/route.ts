@@ -1,7 +1,11 @@
-import { getQuotationDetail } from "@/server/quotation";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { db } from "@/db";
+import { member, quotation, quotationItem, product } from "@/db/schema";
+import { and, eq, inArray } from "drizzle-orm";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 
 export const maxDuration = 60;
 
@@ -10,7 +14,7 @@ interface Props {
 }
 
 type MdaItem = {
-  no: number | null;
+  no: number;
   mdaPdfFile: string;
   mdaPdfUrl: string;
   mdaRegNo: string | null;
@@ -21,6 +25,35 @@ type MdaItem = {
   mdaPageWidth: string | null;
   mdaPageHeight: string | null;
 };
+
+const s3 = new S3Client({
+  region: "auto",
+  endpoint: process.env.R2_ENDPOINT!,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+});
+
+async function presignMdaKey(key: string): Promise<string> {
+  const cmd = new GetObjectCommand({ Bucket: process.env.R2_MDA_CERTIFICATES_BUCKET!, Key: key });
+  return getSignedUrl(s3, cmd, { expiresIn: 3600 });
+}
+
+async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
+  const [orgOwner] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
+    .limit(1);
+  const ownerId = orgOwner?.userId ?? userId;
+  const ownedOrgs = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerId), eq(member.role, "owner")));
+  const ids = ownedOrgs.map((o) => o.organizationId);
+  return ids.length ? ids : [currentOrgId];
+}
 
 function isMdapc(items: MdaItem[]): boolean {
   return items.some((i) => i.mdaRegNo?.toUpperCase().startsWith("MDAPC"));
@@ -47,37 +80,107 @@ export async function GET(_req: Request, { params }: Props) {
 
   const { id } = await params;
 
-  let data;
-  try {
-    data = await getQuotationDetail(id);
-  } catch {
-    return new Response("Forbidden", { status: 403 });
+  // Resolve all org IDs the user's owner controls
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) return new Response("No active organization", { status: 400 });
+
+  const ownerOrgIds = await getAllOwnerOrgIds(session.user.id, orgId);
+
+  // Load quotation — must belong to one of the owner's orgs
+  const [q] = await db
+    .select({ id: quotation.id, quotationNo: quotation.quotationNo, organizationId: quotation.organizationId })
+    .from(quotation)
+    .where(and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)))
+    .limit(1);
+
+  if (!q) return new Response("Not Found", { status: 404 });
+
+  // Load quotation items that have a cert
+  const items = await db
+    .select({
+      rowNo: quotationItem.rowNo,
+      productCode: quotationItem.productCode,
+      hasCert: quotationItem.hasCert,
+      mdaRegNo: quotationItem.mdaRegNo,
+    })
+    .from(quotationItem)
+    .where(and(eq(quotationItem.quotationId, id), eq(quotationItem.hasCert, 1)));
+
+  if (items.length === 0) {
+    return new Response("No certified items in this quotation", { status: 404 });
   }
-  if (!data) return new Response("Not Found", { status: 404 });
 
-  const { quotation: q, items } = data;
+  // Get unique product codes that need MDA enrichment
+  const codes = [...new Set(items.map((i) => i.productCode).filter(Boolean) as string[])];
 
-  // Group certified items by unique MDA PDF file key
-  const mdaGroups = new Map<string, { url: string; items: MdaItem[] }>();
+  const productRows = await db
+    .select({
+      productCode: product.productCode,
+      mdaPdfFile: product.mdaPdfFile,
+      mdaPageNo: product.mdaPageNo,
+      mdaMatchX: product.mdaMatchX,
+      mdaMatchY: product.mdaMatchY,
+      mdaRowHeight: product.mdaRowHeight,
+      mdaPageWidth: product.mdaPageWidth,
+      mdaPageHeight: product.mdaPageHeight,
+    })
+    .from(product)
+    .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, codes)));
+
+  // Deduplicate by productCode (same product in multiple owner orgs)
+  const pMap = new Map<string, typeof productRows[number]>();
+  for (const row of productRows) {
+    if (!pMap.has(row.productCode)) pMap.set(row.productCode, row);
+  }
+
+  // Presign unique MDA PDF keys
+  const uniqueKeys = [...new Set(
+    [...pMap.values()].map((r) => r.mdaPdfFile).filter(Boolean) as string[],
+  )];
+  const presignMap = new Map<string, string>();
+  await Promise.all(
+    uniqueKeys.map(async (key) => {
+      presignMap.set(key, await presignMdaKey(key));
+    }),
+  );
+
+  // Build enriched MDA items
+  const mdaItems: MdaItem[] = [];
   for (const item of items) {
-    const it = item as any;
-    if (!Number(it.hasCert) || !it.mdaPdfFile || !it.mdaPdfUrl) continue;
-    const g = mdaGroups.get(it.mdaPdfFile) ?? { url: it.mdaPdfUrl as string, items: [] as MdaItem[] };
-    g.items.push({
-      ...(it as MdaItem),
-      no: it.rowNo ?? null,
-      mdaRegNo: it.mdaRegNo ?? null,
+    if (!item.productCode) continue;
+    const p = pMap.get(item.productCode);
+    if (!p?.mdaPdfFile) continue;
+    const url = presignMap.get(p.mdaPdfFile);
+    if (!url) continue;
+    mdaItems.push({
+      no: item.rowNo,
+      mdaPdfFile: p.mdaPdfFile,
+      mdaPdfUrl: url,
+      mdaRegNo: item.mdaRegNo ?? null,
+      mdaPageNo: p.mdaPageNo ?? null,
+      mdaMatchX: p.mdaMatchX ?? null,
+      mdaMatchY: p.mdaMatchY ?? null,
+      mdaRowHeight: p.mdaRowHeight ?? null,
+      mdaPageWidth: p.mdaPageWidth ?? null,
+      mdaPageHeight: p.mdaPageHeight ?? null,
     });
-    mdaGroups.set(it.mdaPdfFile, g);
   }
 
-  if (mdaGroups.size === 0) {
-    const certCount = items.filter((i) => Number((i as any).hasCert)).length;
-    const withPdf = items.filter((i) => Number((i as any).hasCert) && (i as any).mdaPdfFile).length;
+  if (mdaItems.length === 0) {
+    const certCount = items.length;
+    const withPdf = items.filter((i) => i.productCode && pMap.get(i.productCode!)?.mdaPdfFile).length;
     return new Response(
       `No MDA certificates available. Certified items: ${certCount}, with PDF file in product table: ${withPdf}`,
       { status: 404 },
     );
+  }
+
+  // Group by PDF file key
+  const mdaGroups = new Map<string, { url: string; items: MdaItem[] }>();
+  for (const item of mdaItems) {
+    const g = mdaGroups.get(item.mdaPdfFile) ?? { url: item.mdaPdfUrl, items: [] };
+    g.items.push(item);
+    mdaGroups.set(item.mdaPdfFile, g);
   }
 
   const mergedPdf = await PDFDocument.create();
