@@ -288,7 +288,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
     website: orgWebsite, oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
     mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
     nameSize, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX, headerLayout: hLayout,
-    logoImg, fontR, skipDocLabel: true,
+    logoImg, fontR, skipDocLabel: true, inlineSsmMdaTax: true,
   }) + 6 + QL_BAND_H;
   const DIVIDER_GAP   = 10;
   const TABLE_HDR_H   = 22;
@@ -382,6 +382,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
         nameColor: accentH, labelColor: accentH,
         logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
+        inlineSsmMdaTax: true,
       });
       curY = H - 5 - HEADER_BLOCK;
 

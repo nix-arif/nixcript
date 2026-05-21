@@ -120,6 +120,8 @@ export interface CompanyHeaderOptions {
   // Heights
   logoHMax: number;
   logoWMax: number;
+  // Layout options
+  inlineSsmMdaTax?: boolean; // render SSM · MDA Est · Tax on one smaller line instead of stacked
 }
 
 /** Draws the company info block and document label. Returns the Y after drawing. */
@@ -219,31 +221,42 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
     }
   }
 
-  // SSM
-  if (newSsmNo || oldSsmNo) {
-    const ssm = newSsmNo && oldSsmNo
-      ? `SSM: ${newSsmNo} (${oldSsmNo})`
-      : `SSM: ${newSsmNo ?? oldSsmNo}`;
-    page.drawText(trunc(ssm, fontR, infoSize, textZoneW), {
-      x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
-    });
-    cy -= infoLH;
-  }
-
-  // MDA Establishment
-  if (mdaEstablishmentNo) {
-    page.drawText(trunc(`MDA Est: ${mdaEstablishmentNo}`, fontR, infoSize, textZoneW), {
-      x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
-    });
-    cy -= infoLH;
-  }
-
-  // Tax No
-  if (taxNo) {
-    page.drawText(trunc(`Tax: ${taxNo}`, fontR, infoSize, textZoneW), {
-      x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
-    });
-    cy -= infoLH;
+  if (opts.inlineSsmMdaTax) {
+    // Slate layout: SSM · MDA Est · Tax on one line, smaller than address
+    const parts: string[] = [];
+    if (newSsmNo || oldSsmNo) parts.push(newSsmNo && oldSsmNo ? `SSM: ${newSsmNo} (${oldSsmNo})` : `SSM: ${newSsmNo ?? oldSsmNo}`);
+    if (mdaEstablishmentNo) parts.push(`MDA Est: ${mdaEstablishmentNo}`);
+    if (taxNo) parts.push(`Tax No: ${taxNo}`);
+    if (parts.length > 0) {
+      const smallSz = 7.5;
+      page.drawText(trunc(parts.join("  ·  "), fontR, smallSz, textZoneW), {
+        x: textX, y: cy, size: smallSz, font: fontR, color: infoColor,
+      });
+      cy -= 10;
+    }
+  } else {
+    // Default: SSM, MDA Est, Tax No on separate lines
+    if (newSsmNo || oldSsmNo) {
+      const ssm = newSsmNo && oldSsmNo
+        ? `SSM: ${newSsmNo} (${oldSsmNo})`
+        : `SSM: ${newSsmNo ?? oldSsmNo}`;
+      page.drawText(trunc(ssm, fontR, infoSize, textZoneW), {
+        x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
+      });
+      cy -= infoLH;
+    }
+    if (mdaEstablishmentNo) {
+      page.drawText(trunc(`MDA Est: ${mdaEstablishmentNo}`, fontR, infoSize, textZoneW), {
+        x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
+      });
+      cy -= infoLH;
+    }
+    if (taxNo) {
+      page.drawText(trunc(`Tax: ${taxNo}`, fontR, infoSize, textZoneW), {
+        x: textX, y: cy, size: infoSize, font: fontR, color: infoColor,
+      });
+      cy -= infoLH;
+    }
   }
 
   // Contact line: email · website · phone
@@ -413,9 +426,10 @@ export function estimateHeaderH(opts: {
   fontR: PDFFont;
   docLabelSize?: number;
   docLabelAlign?: "left" | "center" | "right";
-  skipDocLabel?: boolean;  // when true, full CW is used for company text zone
+  skipDocLabel?: boolean;
+  inlineSsmMdaTax?: boolean;
 }): number {
-  const { companyAddress, phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo, nameSize, logoHMax, logoWMax, headerLayout, logoImg, fontR, docLabelSize = 0, docLabelAlign = "right", skipDocLabel = false } = opts;
+  const { companyAddress, phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo, nameSize, logoHMax, logoWMax, headerLayout, logoImg, fontR, docLabelSize = 0, docLabelAlign = "right", skipDocLabel = false, inlineSsmMdaTax = false } = opts;
 
   const DOC_LABEL_W = 100;
   const companyZoneW = (docLabelAlign === "center" || skipDocLabel) ? CW : CW - DOC_LABEL_W - 8;
@@ -443,9 +457,15 @@ export function estimateHeaderH(opts: {
   // Address lines — use same wrap width as drawCompanyHeader
   const addrLines = companyAddress ? Math.min(wrap(companyAddress, fontR, 8.5, textZoneW).length, 6) : 0;
   h += addrLines * 11;
-  if (newSsmNo || oldSsmNo) h += 11;
-  if (mdaEstablishmentNo) h += 11;
-  if (taxNo) h += 11;
+  if (inlineSsmMdaTax) {
+    // All three on one compact line
+    const hasSsmMdaTax = !!(newSsmNo || oldSsmNo || mdaEstablishmentNo || taxNo);
+    if (hasSsmMdaTax) h += 10;
+  } else {
+    if (newSsmNo || oldSsmNo) h += 11;
+    if (mdaEstablishmentNo) h += 11;
+    if (taxNo) h += 11;
+  }
   const contactCount = [email, website, phone].filter(Boolean).length;
   h += contactCount * 10.5;
   return Math.max(h, logoImg ? logoHMax : 40) + 12;
