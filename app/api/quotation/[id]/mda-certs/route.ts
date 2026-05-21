@@ -75,6 +75,7 @@ function drawBadge(
 }
 
 export async function GET(_req: Request, { params }: Props) {
+  try {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) return new Response("Unauthorized", { status: 401 });
 
@@ -113,6 +114,10 @@ export async function GET(_req: Request, { params }: Props) {
   // Get unique product codes that need MDA enrichment
   const codes = [...new Set(items.map((i) => i.productCode).filter(Boolean) as string[])];
 
+  if (codes.length === 0) {
+    return new Response("No product codes on certified items", { status: 404 });
+  }
+
   const productRows = await db
     .select({
       productCode: product.productCode,
@@ -140,7 +145,11 @@ export async function GET(_req: Request, { params }: Props) {
   const presignMap = new Map<string, string>();
   await Promise.all(
     uniqueKeys.map(async (key) => {
-      presignMap.set(key, await presignMdaKey(key));
+      try {
+        presignMap.set(key, await presignMdaKey(key));
+      } catch (e) {
+        console.error("[mda-certs] presign failed for key:", key, e);
+      }
     }),
   );
 
@@ -284,4 +293,8 @@ export async function GET(_req: Request, { params }: Props) {
       "Content-Disposition": `attachment; filename="${filename}"`,
     },
   });
+  } catch (e) {
+    console.error("[mda-certs] unhandled error:", e);
+    return new Response("Internal Server Error", { status: 500 });
+  }
 }

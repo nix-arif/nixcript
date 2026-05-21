@@ -75,6 +75,7 @@ function drawBadge(
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) return new Response("Unauthorized", { status: 401 });
 
@@ -89,6 +90,10 @@ export async function POST(req: NextRequest) {
 
   const ownerOrgIds = await getAllOwnerOrgIds(session.user.id, orgId);
   const codes = [...new Set(rows.map((r) => r.productCode).filter(Boolean))];
+
+  if (codes.length === 0) {
+    return new Response("No valid product codes provided", { status: 400 });
+  }
 
   const pRows = await db
     .select({
@@ -111,8 +116,12 @@ export async function POST(req: NextRequest) {
   const presignMap = new Map<string, string>();
   await Promise.all(
     uniqueKeys.map(async (key) => {
-      const url = await presignMdaKey(key);
-      presignMap.set(key, url);
+      try {
+        const url = await presignMdaKey(key);
+        presignMap.set(key, url);
+      } catch (e) {
+        console.error("[mda-cert] presign failed for key:", key, e);
+      }
     }),
   );
 
@@ -250,4 +259,8 @@ export async function POST(req: NextRequest) {
       "Content-Disposition": `attachment; filename="mda-certificates.pdf"`,
     },
   });
+  } catch (e) {
+    console.error("[mda-cert] unhandled error:", e);
+    return new Response("Internal Server Error", { status: 500 });
+  }
 }
