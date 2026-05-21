@@ -527,8 +527,7 @@ export async function createQuotation(input: CreateQuotationInput) {
   };
 
   if (input.mode === "single") {
-    const ownerOrgId = await getOwnerOrgId(userId, orgId);
-    const quotationNo = await generateQuotationNo(ownerOrgId);
+    const quotationNo = await generateQuotationNo(orgId);
     const baseDate = new Date();
     const validUntil = new Date(baseDate);
     validUntil.setDate(validUntil.getDate() + validDaysNum);
@@ -537,7 +536,7 @@ export async function createQuotation(input: CreateQuotationInput) {
       .insert(quotation)
       .values({
         id: nanoid(),
-        organizationId: ownerOrgId,
+        organizationId: orgId,
         quotationNo,
         isDummy: 0,
         validUntil,
