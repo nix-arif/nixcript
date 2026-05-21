@@ -302,7 +302,8 @@ export async function matchSpreadsheetToProducts(
   rows: SpreadsheetRow[],
 ): Promise<ReviewItem[]> {
   const { orgId, userId } = await requireAccess("quotation:create");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
   const productCodes = rows
     .map((r) => r.productCode)
@@ -315,7 +316,7 @@ export async function matchSpreadsheetToProducts(
           .from(product)
           .where(
             and(
-              eq(product.organizationId, ownerOrgId),
+              inArray(product.organizationId, ownerOrgIds),
               inArray(product.productCode, productCodes),
             ),
           )
