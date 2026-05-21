@@ -3,6 +3,8 @@ import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
+export const maxDuration = 60;
+
 interface Props {
   params: Promise<{ id: string }>;
 }
@@ -55,12 +57,6 @@ export async function GET(_req: Request, { params }: Props) {
 
   const { quotation: q, items } = data;
 
-  console.log(`[mda-certs] quotation=${q.quotationNo} items=${items.length}`);
-  for (const item of items) {
-    const it = item as any;
-    console.log(`[mda-certs] item=${it.productCode ?? it.id} hasCert=${it.hasCert} mdaPdfFile=${it.mdaPdfFile ?? "null"} mdaPdfUrl=${it.mdaPdfUrl ? "set" : "null"}`);
-  }
-
   // Group certified items by unique MDA PDF file key
   const mdaGroups = new Map<string, { url: string; items: MdaItem[] }>();
   for (const item of items) {
@@ -78,9 +74,10 @@ export async function GET(_req: Request, { params }: Props) {
   if (mdaGroups.size === 0) {
     const certCount = items.filter((i) => Number((i as any).hasCert)).length;
     const withPdf = items.filter((i) => Number((i as any).hasCert) && (i as any).mdaPdfFile).length;
-    const msg = `No MDA certificates available. Certified items: ${certCount}, with PDF file in product table: ${withPdf}`;
-    console.log(`[mda-certs] ${msg}`);
-    return new Response(msg, { status: 404 });
+    return new Response(
+      `No MDA certificates available. Certified items: ${certCount}, with PDF file in product table: ${withPdf}`,
+      { status: 404 },
+    );
   }
 
   const mergedPdf = await PDFDocument.create();
