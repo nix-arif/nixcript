@@ -95,12 +95,10 @@ export async function searchProducts(query: string, brand?: string) {
 
   if (query.trim().length < 3) return [];
 
-  const ownerOrgId = await getOwnerOrgId(session.user.id, orgId);
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
 
-  // Split query into individual words — each word must match somewhere
   const words = query.trim().split(/\s+/).filter(Boolean);
 
-  // Build a condition per word — each word must appear in at least one column
   const wordConditions = words.map((word) =>
     or(
       ilike(product.productCode, `%${word}%`),
@@ -112,9 +110,8 @@ export async function searchProducts(query: string, brand?: string) {
   );
 
   const conditions = [
-    eq(product.organizationId, ownerOrgId),
+    inArray(product.organizationId, ownerOrgIds),
     ...wordConditions,
-    // Optional brand filter
     ...(brand ? [ilike(product.brand, `%${brand}%`)] : []),
   ];
 
@@ -123,9 +120,15 @@ export async function searchProducts(query: string, brand?: string) {
     .from(product)
     .where(and(...conditions))
     .orderBy(asc(product.productCode))
-    .limit(50);
+    .limit(100);
 
-  return rows;
+  // Deduplicate by productCode — same product may exist in multiple owner orgs
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (seen.has(r.productCode)) return false;
+    seen.add(r.productCode);
+    return true;
+  }).slice(0, 50);
 }
 
 export async function getProducts(page = 1, limit = 50) {
@@ -135,13 +138,13 @@ export async function getProducts(page = 1, limit = 50) {
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
 
-  const ownerOrgId = await getOwnerOrgId(session.user.id, orgId);
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   const offset = (page - 1) * limit;
 
   const rows = await db
     .select()
     .from(product)
-    .where(eq(product.organizationId, ownerOrgId))
+    .where(inArray(product.organizationId, ownerOrgIds))
     .orderBy(asc(product.productCode))
     .limit(limit)
     .offset(offset);
@@ -149,36 +152,31 @@ export async function getProducts(page = 1, limit = 50) {
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)` })
     .from(product)
-    .where(eq(product.organizationId, ownerOrgId));
+    .where(inArray(product.organizationId, ownerOrgIds));
 
   return { rows, total: Number(count), page, limit };
 }
 
-async function getOwnerOrgId(
-  userId: string,
+// Returns all org IDs the owner of currentOrgId controls, so product queries
+// work regardless of which org products were seeded into.
+async function getAllOwnerOrgIds(
   currentOrgId: string,
-): Promise<string> {
-  // Find the owner of the current organization
+): Promise<string[]> {
   const [ownerMember] = await db
-    .select()
+    .select({ userId: member.userId })
     .from(member)
-    .where(
-      and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")),
-    )
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
     .limit(1);
 
-  if (!ownerMember) return currentOrgId;
+  if (!ownerMember) return [currentOrgId];
 
-  // Now find the primary org of that owner
-  // (the org where they are owner — could be a different org)
-  const [primaryOrg] = await db
-    .select()
+  const ownedOrgs = await db
+    .select({ organizationId: member.organizationId })
     .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
-    .orderBy(asc(member.createdAt)) // earliest org = primary org
-    .limit(1);
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
 
-  return primaryOrg?.organizationId ?? currentOrgId;
+  const ids = ownedOrgs.map((o) => o.organizationId);
+  return ids.length ? ids : [currentOrgId];
 }
 
 export async function getProductDetailsByCodes(codes: string[]) {
@@ -187,8 +185,8 @@ export async function getProductDetailsByCodes(codes: string[]) {
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
   if (!codes.length) return [];
-  const ownerOrgId = await getOwnerOrgId(session.user.id, orgId);
-  return db
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const rows = await db
     .select({
       productCode: product.productCode,
       description: product.description,
@@ -198,7 +196,14 @@ export async function getProductDetailsByCodes(codes: string[]) {
       hasPdf: product.mdaPdfFile,
     })
     .from(product)
-    .where(and(eq(product.organizationId, ownerOrgId), inArray(product.productCode, codes)));
+    .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, codes)));
+  // Deduplicate by productCode
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (seen.has(r.productCode)) return false;
+    seen.add(r.productCode);
+    return true;
+  });
 }
 
 export async function getDistinctBrands() {
@@ -208,14 +213,12 @@ export async function getDistinctBrands() {
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
 
-  const ownerOrgId = await getOwnerOrgId(session.user.id, orgId);
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
 
   const rows = await db
     .selectDistinct({ brand: product.brand })
     .from(product)
-    .where(
-      and(eq(product.organizationId, ownerOrgId), isNotNull(product.brand)),
-    )
+    .where(and(inArray(product.organizationId, ownerOrgIds), isNotNull(product.brand)))
     .orderBy(asc(product.brand));
 
   return rows.map((r) => r.brand).filter(Boolean) as string[];
