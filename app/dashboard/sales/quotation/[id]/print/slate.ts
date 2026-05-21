@@ -295,7 +295,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
     nameSize, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX, headerLayout: hLayout,
     logoImg, fontR, skipDocLabel: true, inlineSsmMdaTax: true,
   }) + 6 + QL_BAND_H;
-  const DIVIDER_GAP   = 10;
+  const DIVIDER_GAP   = 18;
   const TABLE_HDR_H   = 22;
 
   // ── Slate-specific info section height estimate ───────────────────────────
@@ -515,7 +515,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       }
       curY -= INFO_BLOCK + DIVIDER_GAP;
       hLine(page, curY);
-      curY -= 4;
+      curY -= 10;
 
     } else {
       // ── Continuation header ────────────────────────────────────────────
