@@ -12,17 +12,25 @@ import { hasAccess } from "@/lib/permissions/has-access";
 
 export const maxDuration = 60;
 
+const R2_BUCKET = process.env.R2_MDA_CERTIFICATES_BUCKET;
+const R2_ENDPOINT = process.env.R2_ENDPOINT;
+const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY_ID;
+const R2_SECRET_KEY = process.env.R2_SECRET_ACCESS_KEY;
+
 const s3 = new S3Client({
   region: "auto",
-  endpoint: process.env.R2_ENDPOINT!,
+  endpoint: R2_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+    accessKeyId: R2_ACCESS_KEY ?? "",
+    secretAccessKey: R2_SECRET_KEY ?? "",
   },
 });
 
 async function presignMdaKey(key: string): Promise<string> {
-  const cmd = new GetObjectCommand({ Bucket: process.env.R2_MDA_CERTIFICATES_BUCKET!, Key: key });
+  if (!R2_BUCKET) throw new Error("R2_MDA_CERTIFICATES_BUCKET env var is not set");
+  if (!R2_ENDPOINT) throw new Error("R2_ENDPOINT env var is not set");
+  if (!R2_ACCESS_KEY || !R2_SECRET_KEY) throw new Error("R2 credentials env vars are not set");
+  const cmd = new GetObjectCommand({ Bucket: R2_BUCKET, Key: key });
   return getSignedUrl(s3, cmd, { expiresIn: 3600 });
 }
 
@@ -114,12 +122,14 @@ export async function POST(req: NextRequest) {
 
   const uniqueKeys = [...new Set(pRows.map((r) => r.mdaPdfFile).filter(Boolean) as string[])];
   const presignMap = new Map<string, string>();
+  let presignError: string | null = null;
   await Promise.all(
     uniqueKeys.map(async (key) => {
       try {
         const url = await presignMdaKey(key);
         presignMap.set(key, url);
-      } catch (e) {
+      } catch (e: any) {
+        presignError = e?.message ?? String(e);
         console.error("[mda-cert] presign failed for key:", key, e);
       }
     }),
@@ -152,7 +162,7 @@ export async function POST(req: NextRequest) {
     const presigned = presignMap.size;
     console.error(`[mda-cert] enrichedItems empty. DB rows: ${dbFound}, with mdaPdfFile: ${withPdf}, presigned: ${presigned}, codes: ${codes.join(",")}, ownerOrgIds: ${ownerOrgIds.join(",")}`);
     return new Response(
-      `No MDA certificates found. DB rows found: ${dbFound}, with PDF file: ${withPdf}, presigned: ${presigned}`,
+      `No MDA certificates found. DB rows: ${dbFound}, with PDF file: ${withPdf}, presigned: ${presigned}${presignError ? `. Presign error: ${presignError}` : ""}`,
       { status: 404 },
     );
   }
