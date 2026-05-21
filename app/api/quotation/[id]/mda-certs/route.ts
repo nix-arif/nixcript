@@ -11,6 +11,7 @@ type MdaItem = {
   no: number | null;
   mdaPdfFile: string;
   mdaPdfUrl: string;
+  mdaRegNo: string | null;
   mdaPageNo: string | null;
   mdaMatchX: string | null;
   mdaMatchY: string | null;
@@ -18,6 +19,25 @@ type MdaItem = {
   mdaPageWidth: string | null;
   mdaPageHeight: string | null;
 };
+
+function isMdapc(items: MdaItem[]): boolean {
+  return items.some((i) => i.mdaRegNo?.toUpperCase().startsWith("MDAPC"));
+}
+
+function drawBadge(
+  page: ReturnType<PDFDocument["getPage"]>,
+  font: Awaited<ReturnType<PDFDocument["embedFont"]>>,
+  label: string,
+  x: number,
+  y: number,
+  h: number,
+) {
+  const fontSize = Math.max(7, Math.min(10, h * 0.75));
+  const w = font.widthOfTextAtSize(label, fontSize) + 6;
+  page.drawRectangle({ x, y, width: w, height: h, color: rgb(0.09, 0.29, 0.65), opacity: 0.9 });
+  page.drawText(label, { x: x + 3, y: y + (h - fontSize) / 2 + 1, size: fontSize, font, color: rgb(1, 1, 1) });
+  return w;
+}
 
 export async function GET(_req: Request, { params }: Props) {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -35,7 +55,6 @@ export async function GET(_req: Request, { params }: Props) {
 
   const { quotation: q, items } = data;
 
-  // Debug: log what each certified item looks like
   console.log(`[mda-certs] quotation=${q.quotationNo} items=${items.length}`);
   for (const item of items) {
     const it = item as any;
@@ -48,13 +67,17 @@ export async function GET(_req: Request, { params }: Props) {
     const it = item as any;
     if (!Number(it.hasCert) || !it.mdaPdfFile || !it.mdaPdfUrl) continue;
     const g = mdaGroups.get(it.mdaPdfFile) ?? { url: it.mdaPdfUrl as string, items: [] as MdaItem[] };
-    g.items.push({ ...(it as MdaItem), no: it.rowNo ?? null });
+    g.items.push({
+      ...(it as MdaItem),
+      no: it.rowNo ?? null,
+      mdaRegNo: it.mdaRegNo ?? null,
+    });
     mdaGroups.set(it.mdaPdfFile, g);
   }
 
   if (mdaGroups.size === 0) {
-    const certCount = items.filter(i => Number((i as any).hasCert)).length;
-    const withPdf = items.filter(i => Number((i as any).hasCert) && (i as any).mdaPdfFile).length;
+    const certCount = items.filter((i) => Number((i as any).hasCert)).length;
+    const withPdf = items.filter((i) => Number((i as any).hasCert) && (i as any).mdaPdfFile).length;
     const msg = `No MDA certificates available. Certified items: ${certCount}, with PDF file in product table: ${withPdf}`;
     console.log(`[mda-certs] ${msg}`);
     return new Response(msg, { status: 404 });
@@ -71,70 +94,80 @@ export async function GET(_req: Request, { params }: Props) {
       const srcPdf = await PDFDocument.load(buf);
       const total  = srcPdf.getPageCount();
 
-      // Always include pages 1 & 2, plus each item's specific product page
-      const pageSet = new Set<number>([0, 1].filter(i => i < total));
-      // Key: "pageIdx:y" — merges duplicate-product rows into one highlight with combined nos
-      const hlMap = new Map<string, { x: number; y: number; w: number; h: number; nos: number[] }>();
+      const allNos = [...new Set(
+        g.items.map((i) => i.no).filter((n): n is number => n != null),
+      )].sort((a, b) => a - b);
+      const nosLabel = allNos.join(", ");
 
-      for (const item of g.items) {
-        if (!item.mdaPageNo) continue;
-        const idx = parseInt(item.mdaPageNo) - 1;
-        if (isNaN(idx) || idx < 0 || idx >= total) continue;
-        pageSet.add(idx);
-        if (item.mdaMatchX && item.mdaMatchY && item.mdaRowHeight && item.mdaPageWidth && item.mdaPageHeight) {
-          const srcPage = srcPdf.getPage(idx);
-          const scaleY  = srcPage.getHeight() / parseFloat(item.mdaPageHeight);
-          const y = parseFloat(item.mdaMatchY) * scaleY - 2;
-          const key = `${idx}:${y.toFixed(1)}`;
-          const existing = hlMap.get(key);
-          if (existing) {
-            if (item.no != null) existing.nos.push(item.no);
-          } else {
-            hlMap.set(key, {
-              x: 0,
-              y,
-              w: srcPage.getWidth(),
-              h: parseFloat(item.mdaRowHeight) * scaleY + 4,
-              nos: item.no != null ? [item.no] : [],
-            });
+      if (isMdapc(g.items)) {
+        // MDAPC: full certificate, no highlights, nos badge on first page only
+        const allIdx = Array.from({ length: total }, (_, i) => i);
+        const copied = await mergedPdf.copyPages(srcPdf, allIdx);
+        copied.forEach((page, i) => {
+          if (i === 0 && nosLabel) {
+            const badgeH = 16;
+            const badgeX = page.getWidth() - font.widthOfTextAtSize(nosLabel, 10) - 6 - 10;
+            const badgeY = page.getHeight() - badgeH - 10;
+            drawBadge(page, font, nosLabel, badgeX, badgeY, badgeH);
+          }
+          mergedPdf.addPage(page);
+        });
+      } else {
+        // Standard: pages 1 & 2 + item-specific pages with row highlights
+        const pageSet = new Set<number>([0, 1].filter((i) => i < total));
+        // Key: "pageIdx:y" — merges same-product duplicate rows into one highlight
+        const hlMap = new Map<string, { x: number; y: number; w: number; h: number; nos: number[] }>();
+
+        for (const item of g.items) {
+          if (!item.mdaPageNo) continue;
+          const idx = parseInt(item.mdaPageNo) - 1;
+          if (isNaN(idx) || idx < 0 || idx >= total) continue;
+          pageSet.add(idx);
+          if (item.mdaMatchX && item.mdaMatchY && item.mdaRowHeight && item.mdaPageWidth && item.mdaPageHeight) {
+            const srcPage = srcPdf.getPage(idx);
+            const scaleY  = srcPage.getHeight() / parseFloat(item.mdaPageHeight);
+            const y = parseFloat(item.mdaMatchY) * scaleY - 2;
+            const key = `${idx}:${y.toFixed(1)}`;
+            const existing = hlMap.get(key);
+            if (existing) {
+              if (item.no != null) existing.nos.push(item.no);
+            } else {
+              hlMap.set(key, {
+                x: 0,
+                y,
+                w: srcPage.getWidth(),
+                h: parseFloat(item.mdaRowHeight) * scaleY + 4,
+                nos: item.no != null ? [item.no] : [],
+              });
+            }
           }
         }
-      }
 
-      // Re-bucket by page index for rendering
-      const highlights = new Map<number, Array<{ x: number; y: number; w: number; h: number; nos: number[] }>>();
-      for (const [key, hl] of hlMap) {
-        const idx = parseInt(key.split(":")[0]);
-        const arr = highlights.get(idx) ?? [];
-        arr.push(hl);
-        highlights.set(idx, arr);
-      }
-
-      const sortedIdx = [...pageSet].sort((a, b) => a - b);
-      const copied = await mergedPdf.copyPages(srcPdf, sortedIdx);
-      sortedIdx.forEach((srcIdx, i) => {
-        const page = copied[i];
-        for (const hl of (highlights.get(srcIdx) ?? [])) {
-          page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
-          if (hl.nos.length > 0) {
-            const label = hl.nos.slice().sort((a, b) => a - b).join(", ");
-            const fontSize = Math.max(7, Math.min(10, hl.h * 0.75));
-            const badgeW = font.widthOfTextAtSize(label, fontSize) + 6;
-            const badgeH = hl.h;
-            const badgeX = hl.w - badgeW - 2;
-            const badgeY = hl.y;
-            page.drawRectangle({ x: badgeX, y: badgeY, width: badgeW, height: badgeH, color: rgb(0.09, 0.29, 0.65), opacity: 0.9 });
-            page.drawText(label, {
-              x: badgeX + 3,
-              y: badgeY + (badgeH - fontSize) / 2 + 1,
-              size: fontSize,
-              font,
-              color: rgb(1, 1, 1),
-            });
-          }
+        // Re-bucket by page index for rendering
+        const highlights = new Map<number, Array<{ x: number; y: number; w: number; h: number; nos: number[] }>>();
+        for (const [key, hl] of hlMap) {
+          const idx = parseInt(key.split(":")[0]);
+          const arr = highlights.get(idx) ?? [];
+          arr.push(hl);
+          highlights.set(idx, arr);
         }
-        mergedPdf.addPage(page);
-      });
+
+        const sortedIdx = [...pageSet].sort((a, b) => a - b);
+        const copied = await mergedPdf.copyPages(srcPdf, sortedIdx);
+        sortedIdx.forEach((srcIdx, i) => {
+          const page = copied[i];
+          for (const hl of (highlights.get(srcIdx) ?? [])) {
+            page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
+            if (hl.nos.length > 0) {
+              const label = hl.nos.slice().sort((a, b) => a - b).join(", ");
+              const badgeH = hl.h;
+              const badgeX = hl.w - font.widthOfTextAtSize(label, Math.max(7, Math.min(10, badgeH * 0.75))) - 6 - 2;
+              drawBadge(page, font, label, badgeX, hl.y, badgeH);
+            }
+          }
+          mergedPdf.addPage(page);
+        });
+      }
     } catch { /* skip unavailable cert */ }
   }
 
