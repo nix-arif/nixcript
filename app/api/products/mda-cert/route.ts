@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { db } from "@/db";
 import { member, product } from "@/db/schema";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
@@ -26,20 +26,19 @@ async function presignMdaKey(key: string): Promise<string> {
   return getSignedUrl(s3, cmd, { expiresIn: 3600 });
 }
 
-async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<string> {
+async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
   const [orgOwner] = await db
     .select({ userId: member.userId })
     .from(member)
     .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
     .limit(1);
   const ownerId = orgOwner?.userId ?? userId;
-  const [primaryOrg] = await db
+  const ownedOrgs = await db
     .select({ organizationId: member.organizationId })
     .from(member)
-    .where(and(eq(member.userId, ownerId), eq(member.role, "owner")))
-    .orderBy(asc(member.createdAt))
-    .limit(1);
-  return primaryOrg?.organizationId ?? currentOrgId;
+    .where(and(eq(member.userId, ownerId), eq(member.role, "owner")));
+  const ids = ownedOrgs.map((o) => o.organizationId);
+  return ids.length ? ids : [currentOrgId];
 }
 
 type EnrichedItem = {
@@ -88,7 +87,7 @@ export async function POST(req: NextRequest) {
   const { rows }: { rows: Array<{ no: number; productCode: string }> } = await req.json();
   if (!rows?.length) return new Response("No rows provided", { status: 400 });
 
-  const ownerOrgId = await getOwnerOrgId(session.user.id, orgId);
+  const ownerOrgIds = await getAllOwnerOrgIds(session.user.id, orgId);
   const codes = [...new Set(rows.map((r) => r.productCode).filter(Boolean))];
 
   const pRows = await db
@@ -104,7 +103,7 @@ export async function POST(req: NextRequest) {
       mdaPageHeight: product.mdaPageHeight,
     })
     .from(product)
-    .where(and(eq(product.organizationId, ownerOrgId), inArray(product.productCode, codes)));
+    .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, codes)));
 
   const pMap = new Map(pRows.map((r) => [r.productCode, r]));
 

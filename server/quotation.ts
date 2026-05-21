@@ -888,7 +888,7 @@ export async function getQuotationDetail(id: string) {
       mdaPageWidth: product.mdaPageWidth,
       mdaPageHeight: product.mdaPageHeight,
     }).from(product).where(and(
-      eq(product.organizationId, ownerOrgs[0]?.id ?? q.organizationId),
+      inArray(product.organizationId, ownerOrgIds),
       inArray(product.productCode, certCodes),
     ));
     for (const r of pRows) pMdaMap.set(r.productCode, r);
@@ -1223,7 +1223,6 @@ export async function getQuotationGroupForPrint(id: string) {
     mdaRowHeight: string | null; mdaPageWidth: string | null; mdaPageHeight: string | null;
   }>();
   if (groupCertCodes.length > 0) {
-    const productOrgId = ownerOrgs[0]?.id ?? ownerOrgIds[0];
     const pRows = await db.select({
       productCode: product.productCode,
       mdaPdfFile: product.mdaPdfFile,
@@ -1234,7 +1233,7 @@ export async function getQuotationGroupForPrint(id: string) {
       mdaPageWidth: product.mdaPageWidth,
       mdaPageHeight: product.mdaPageHeight,
     }).from(product).where(and(
-      eq(product.organizationId, productOrgId),
+      inArray(product.organizationId, ownerOrgIds),
       inArray(product.productCode, groupCertCodes),
     ));
     for (const r of pRows) grpPMdaMap.set(r.productCode, r);
