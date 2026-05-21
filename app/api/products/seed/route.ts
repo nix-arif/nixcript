@@ -203,7 +203,15 @@ export async function POST(req: NextRequest) {
     };
 
     // Combine parsing and string date formatting into a single highly efficient map loop
-    const cleanValues = validRows.map((row: any) => ({
+    // Deduplicate by productCode within the batch — Postgres cannot ON CONFLICT UPDATE
+    // the same row twice in one statement when the batch itself has duplicates.
+    const seen = new Map<string, any>();
+    for (const row of validRows) {
+      seen.set(row.productCode.trim(), row); // last occurrence wins
+    }
+    const dedupedRows = [...seen.values()];
+
+    const cleanValues = dedupedRows.map((row: any) => ({
       id: nanoid(),
       organizationId: ownerOrgId,
       productCode: row.productCode.trim(),
@@ -214,11 +222,8 @@ export async function POST(req: NextRequest) {
       brand: row.brand || null,
       mdaRegistrationNo: row.mdaRegistrationNo || null,
       mdaPageNo: row.mdaPageNo || null,
-
-      // Fixed: Strings parsed into clean, standard ISO timestamp strings for your schema
       mdaValidFrom: formatToIsoString(row.mdaValidFrom),
       mdaExpiredOn: formatToIsoString(row.mdaExpiredOn),
-
       mdaPdfFile: row.mdaPdfFile || null,
       mdaMatchX: row.mdaMatchX || null,
       mdaMatchY: row.mdaMatchY || null,
@@ -255,7 +260,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-    return NextResponse.json({ total: validRows.length });
+    return NextResponse.json({ total: dedupedRows.length });
   } catch (e: any) {
     console.error("Seed error:", e);
     return NextResponse.json({ error: e.message }, { status: 500 });

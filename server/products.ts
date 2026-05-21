@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { member, product } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, sql, asc, or, ilike, isNotNull } from "drizzle-orm";
+import { eq, and, sql, asc, or, ilike, isNotNull, inArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
@@ -179,6 +179,26 @@ async function getOwnerOrgId(
     .limit(1);
 
   return primaryOrg?.organizationId ?? currentOrgId;
+}
+
+export async function getProductDetailsByCodes(codes: string[]) {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) throw new Error("No active organization");
+  if (!codes.length) return [];
+  const ownerOrgId = await getOwnerOrgId(session.user.id, orgId);
+  return db
+    .select({
+      productCode: product.productCode,
+      description: product.description,
+      mdaRegistrationNo: product.mdaRegistrationNo,
+      mdaValidFrom: product.mdaValidFrom,
+      mdaExpiredOn: product.mdaExpiredOn,
+      hasPdf: product.mdaPdfFile,
+    })
+    .from(product)
+    .where(and(eq(product.organizationId, ownerOrgId), inArray(product.productCode, codes)));
 }
 
 export async function getDistinctBrands() {

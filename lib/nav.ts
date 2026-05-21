@@ -115,6 +115,11 @@ export const navConfig: NavGroup[] = [
         url: "/dashboard/products/catalogue",
         permission: "product:read",
       },
+      {
+        title: "MDA Certificate Generator",
+        url: "/dashboard/products/mda-certificate-generator",
+        permission: "product:read",
+      },
     ],
   },
   {
