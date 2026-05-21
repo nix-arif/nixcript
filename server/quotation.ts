@@ -353,16 +353,11 @@ export async function matchSpreadsheetToProducts(
     const total = (qty * price).toFixed(2);
     const hasPrice = Number(unitPrice.value) > 0;
 
-    // Cert check — has MDA reg no that hasn't expired
     const mdaRegNo = dbProduct?.mdaRegistrationNo ?? "";
-
     const mdaValidity = dbProduct?.mdaExpiredOn ?? "";
 
-    const hasCert = !!(
-      mdaRegNo &&
-      mdaValidity &&
-      new Date(mdaValidity) > new Date()
-    );
+    // Cert check — product has an MDA PDF cert file (matches MDA generator logic)
+    const hasCert = !!(dbProduct?.mdaPdfFile);
 
     let status: ReviewItem["status"] = "ok";
     if (!dbProduct) status = "not_found";

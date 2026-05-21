@@ -265,9 +265,13 @@ export function MdaCertGeneratorClient() {
                       <td className="px-3 py-2 text-muted-foreground tabular-nums">{formatDate(d?.mdaValidFrom ?? null)}</td>
                       <td className="px-3 py-2 text-muted-foreground tabular-nums">{formatDate(d?.mdaExpiredOn ?? null)}</td>
                       <td className="px-3 py-2 text-center">
-                        {d?.hasPdf
-                          ? <CheckCircle2Icon className="w-3.5 h-3.5 text-green-500 inline" />
-                          : <CircleIcon className="w-3.5 h-3.5 text-muted-foreground/30 inline" />
+                        {!d?.hasPdf
+                          ? <CircleIcon className="w-3.5 h-3.5 text-muted-foreground/30 inline" />
+                          : !d.mdaExpiredOn
+                            ? <span className="text-[10px] text-muted-foreground">N/A</span>
+                            : new Date(d.mdaExpiredOn) > new Date()
+                              ? <CheckCircle2Icon className="w-3.5 h-3.5 text-green-500 inline" />
+                              : <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">Expired</span>
                         }
                       </td>
                     </tr>

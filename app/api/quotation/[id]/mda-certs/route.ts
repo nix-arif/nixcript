@@ -104,26 +104,20 @@ export async function GET(_req: Request, { params }: Props) {
 
   if (!q) return new Response("Not Found", { status: 404 });
 
-  // Load quotation items that have a cert
+  // Load all quotation items that have a product code (hasCert not trusted — may be stale)
   const items = await db
     .select({
       rowNo: quotationItem.rowNo,
       productCode: quotationItem.productCode,
-      hasCert: quotationItem.hasCert,
       mdaRegNo: quotationItem.mdaRegNo,
     })
     .from(quotationItem)
-    .where(and(eq(quotationItem.quotationId, id), eq(quotationItem.hasCert, 1)));
+    .where(and(eq(quotationItem.quotationId, id)));
 
-  if (items.length === 0) {
-    return new Response("No certified items in this quotation", { status: 404 });
-  }
-
-  // Get unique product codes that need MDA enrichment
   const codes = [...new Set(items.map((i) => i.productCode).filter(Boolean) as string[])];
 
   if (codes.length === 0) {
-    return new Response("No product codes on certified items", { status: 404 });
+    return new Response("No product codes in this quotation", { status: 404 });
   }
 
   const productRows = await db
@@ -186,10 +180,9 @@ export async function GET(_req: Request, { params }: Props) {
   }
 
   if (mdaItems.length === 0) {
-    const certCount = items.length;
     const withPdf = items.filter((i) => i.productCode && pMap.get(i.productCode!)?.mdaPdfFile).length;
     return new Response(
-      `No MDA certificates available. Certified items: ${certCount}, with PDF file: ${withPdf}, presigned: ${presignMap.size}${presignError ? `. Presign error: ${presignError}` : ""}`,
+      `No MDA certificates available. Items: ${items.length}, with PDF file: ${withPdf}, presigned: ${presignMap.size}${presignError ? `. Presign error: ${presignError}` : ""}`,
       { status: 404 },
     );
   }

@@ -42,6 +42,12 @@ type Step = 1 | 2 | 3 | 4 | 5;
 const fmt = (v: string | number) =>
   Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 });
 
+function certState(hasCert: boolean, mdaValidity?: string): "valid" | "expired" | "na" | "none" {
+  if (!hasCert) return "none";
+  if (!mdaValidity) return "na";
+  return new Date(mdaValidity) > new Date() ? "valid" : "expired";
+}
+
 function Field({
   label,
   children,
@@ -924,11 +930,13 @@ export function NewQuotationClient({
                           {fmt(item.computedTotal)}
                         </td>
                         <td className="px-3 py-2 text-center">
-                          {item.hasCert ? (
-                            <CheckCircleIcon className="w-3.5 h-3.5 text-green-600 inline" />
-                          ) : (
-                            <AlertCircleIcon className="w-3.5 h-3.5 text-orange-500 inline" />
-                          )}
+                          {(() => {
+                            const cs = certState(item.hasCert, item.mdaValidity);
+                            if (cs === "valid") return <CheckCircleIcon className="w-3.5 h-3.5 text-green-600 inline" />;
+                            if (cs === "expired") return <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">Expired</span>;
+                            if (cs === "na") return <span className="text-[10px] text-muted-foreground">N/A</span>;
+                            return <AlertCircleIcon className="w-3.5 h-3.5 text-orange-500 inline" />;
+                          })()}
                         </td>
                         <td className="px-3 py-2">
                           <div
