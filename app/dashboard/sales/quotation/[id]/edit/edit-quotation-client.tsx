@@ -168,9 +168,11 @@ export function EditQuotationClient({ data, customers, members }: Props) {
   const [saving, setSaving] = useState(false);
 
   // ── Computed totals ──────────────────────────────────────────────────────
-  const subtotal = items.reduce((s, it) => {
+  const sets = Number(q.sets ?? 1);
+  const subtotalPerSet = items.reduce((s, it) => {
     return s + Number(it.qty) * Number(it.unitPrice) * (1 - Number(it.discountPct) / 100);
   }, 0);
+  const subtotal = subtotalPerSet * sets;
   const discAmt = subtotal * (Number(overallDiscount) / 100);
   const afterDiscount = subtotal - discAmt;
   const sstAmt = afterDiscount * (Number(sstPct) / 100);
@@ -585,10 +587,23 @@ export function EditQuotationClient({ data, customers, members }: Props) {
               </Field>
               {/* Live summary */}
               <div className="pt-2 border-t border-border space-y-1.5 text-xs">
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Subtotal</span>
-                  <span className="tabular-nums">{fmt(subtotal)}</span>
-                </div>
+                {sets > 1 ? (
+                  <>
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Subtotal (1 set)</span>
+                      <span className="tabular-nums">{fmt(subtotalPerSet)}</span>
+                    </div>
+                    <div className="flex justify-between text-muted-foreground font-medium">
+                      <span>× {sets} sets</span>
+                      <span className="tabular-nums">{fmt(subtotal)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Subtotal</span>
+                    <span className="tabular-nums">{fmt(subtotal)}</span>
+                  </div>
+                )}
                 {Number(overallDiscount) > 0 && (
                   <div className="flex justify-between text-red-600 dark:text-red-400">
                     <span>Discount ({overallDiscount}%)</span>

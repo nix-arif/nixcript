@@ -24,6 +24,7 @@
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.1",
     "drizzle-orm": "^0.45.2",
+    "fflate": "^0.8.3",
     "lucide-react": "^1.8.0",
     "nanoid": "^5.1.11",
     "next": "16.2.3",

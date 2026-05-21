@@ -759,6 +759,7 @@ export const quotation = pgTable(
 
     // Document
     title: text("title").default("Loose Items"),
+    sets: integer("sets").notNull().default(1),
 
     // Status
     status: text("status").notNull().default("draft"), // draft | final

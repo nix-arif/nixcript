@@ -117,6 +117,7 @@ export function NewQuotationClient({
   // Step 1 state
   const [mode, setMode] = useState<"single" | "comparison">("single");
   const [title, setTitle] = useState("Loose Items");
+  const [sets, setSets] = useState(1);
   const [customerId, setCustomerId] = useState("");
   const [salesPersonId, setSalesPersonId] = useState("");
   const [salesPersonName, setSalesPersonName] = useState("");
@@ -136,6 +137,8 @@ export function NewQuotationClient({
   const [overallDiscount, setOverallDiscount] = useState("0");
   const [sstPct, setSstPct] = useState("0");
   const [applySST, setApplySST] = useState(false);
+  const [applyItemizeDiscount, setApplyItemizeDiscount] = useState(false);
+  const [applyTotalDiscount, setApplyTotalDiscount] = useState(false);
 
   const [isDragging, setIsDragging] = useState(false);
 
@@ -154,17 +157,27 @@ export function NewQuotationClient({
   const [creating, setCreating] = useState(false);
 
   // ── Computed totals ──────────────────────────────────────────────────────
-  const subtotal = reviewItems.reduce((s, item) => {
+  const subtotalPerSet = reviewItems.reduce((s, item) => {
+    return s + Number(item.qty ?? 1) * Number(item.unitPrice ?? 0);
+  }, 0);
+  const subtotalNSets = subtotalPerSet * sets;
+
+  const itemDiscPerSet = reviewItems.reduce((s, item) => {
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
-    const disc = Number(item.discountPct ?? 0);
-    return s + qty * price * (1 - disc / 100);
+    const disc = Number(item.discountPct ?? 0) / 100;
+    return s + qty * price * disc;
   }, 0);
+  const itemDiscTotal = applyItemizeDiscount ? itemDiscPerSet * sets : 0;
 
-  const overallDiscAmt = subtotal * (Number(overallDiscount) / 100);
-  const afterDiscount = subtotal - overallDiscAmt;
-  const sstAmt = applySST ? afterDiscount * (Number(sstPct || 8) / 100) : 0;
-  const grandTotal = afterDiscount + sstAmt;
+  const afterItemDisc = subtotalNSets - itemDiscTotal;
+  const overallDiscAmt = applyTotalDiscount
+    ? afterItemDisc * (Number(overallDiscount || 0) / 100)
+    : 0;
+  const totalDisc = itemDiscTotal + overallDiscAmt;
+  const afterAllDisc = subtotalNSets - totalDisc;
+  const sstAmt = applySST ? afterAllDisc * (Number(sstPct || 8) / 100) : 0;
+  const grandTotal = afterAllDisc + sstAmt;
 
   // ── Step 2: parse spreadsheet ────────────────────────────────────────────
   //   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -275,6 +288,15 @@ export function NewQuotationClient({
                 row["unit price"] ??
                 "",
             ).trim(),
+            discountPct: String(
+              row["Disc %"] ??
+                row["Disc"] ??
+                row["disc"] ??
+                row["Discount %"] ??
+                row["Discount"] ??
+                row["discount"] ??
+                "",
+            ).trim(),
             totalPrice: String(
               row["Total Price"] ??
                 row["total_price"] ??
@@ -308,8 +330,10 @@ export function NewQuotationClient({
     setMatching(true);
     try {
       const items = await matchSpreadsheetToProducts(rawRows);
-      console.log(items);
       setReviewItems(items);
+      // Auto-check itemize discount if any item came with a disc value
+      const hasDiscounts = items.some((i) => Number(i.discountPct) > 0);
+      setApplyItemizeDiscount(hasDiscounts);
       setStep(3);
     } catch (e: any) {
       toast.error(e.message);
@@ -364,16 +388,31 @@ export function NewQuotationClient({
   const handleCreate = async () => {
     setCreating(true);
     try {
+      // Keep per-set qty as-is; only zero out discounts if checkbox is unchecked
+      const finalItems = reviewItems.map((item) => {
+        const qty = Number(item.qty ?? 1);
+        const price = Number(item.unitPrice ?? 0);
+        const effectiveDiscPct = applyItemizeDiscount ? Number(item.discountPct ?? 0) : 0;
+        const disc = effectiveDiscPct / 100;
+        return {
+          ...item,
+          discountPct: String(effectiveDiscPct),
+          discountAmt: (qty * price * disc).toFixed(2),
+          computedTotal: (qty * price * (1 - disc)).toFixed(2),
+        };
+      });
+
       const q = await createQuotation({
         mode,
-        title: title || "Loose Items",
+        title: sets > 1 ? `${title || "Loose Items"} X ${sets} SETS` : (title || "Loose Items"),
+        sets,
         customerId: customerId || undefined,
         salesPersonId: salesPersonId || undefined,
         salesPersonName,
         validDays: Number(validDays),
         notes,
-        items: reviewItems,
-        overallDiscountPct: overallDiscount,
+        items: finalItems,
+        overallDiscountPct: applyTotalDiscount ? (overallDiscount || "0") : "0",
         sstPct: applySST ? sstPct || "8" : "0",
         includeCatalogue,
         includeMdaCerts,
@@ -549,7 +588,7 @@ export function NewQuotationClient({
                 Quotation title
               </div>
             </div>
-            <div className="p-4">
+            <div className="p-4 space-y-4">
               <Field label="Title (shown on document)">
                 <Input
                   value={title}
@@ -557,6 +596,22 @@ export function NewQuotationClient({
                   placeholder="e.g. Loose Items, Medical Equipment Supply..."
                   className="h-9 text-sm"
                 />
+              </Field>
+              <Field label="Number of sets">
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    value={sets}
+                    onChange={(e) => setSets(Math.max(1, Number(e.target.value) || 1))}
+                    className="h-9 text-sm w-28"
+                    min="1"
+                  />
+                  {sets > 1 && (
+                    <span className="text-xs text-muted-foreground">
+                      All spreadsheet quantities × {sets} sets
+                    </span>
+                  )}
+                </div>
               </Field>
             </div>
           </div>
@@ -757,6 +812,7 @@ export function NewQuotationClient({
                     "Qty",
                     "UOM",
                     "Unit Price",
+                    "Disc %",
                     "Total Price",
                   ].map((col) => (
                     <span
@@ -807,7 +863,7 @@ export function NewQuotationClient({
                   Review items
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">
-                  {reviewItems.length} items
+                  {reviewItems.length} items{sets > 1 ? ` · ${sets} sets (qty shown per set)` : ""}
                 </div>
               </div>
               <div className="flex gap-1.5">
@@ -974,54 +1030,76 @@ export function NewQuotationClient({
               </div>
             </div>
             <div className="p-4 space-y-4">
-              <div className="p-3 bg-muted/30 rounded-lg text-xs text-muted-foreground">
-                Item-level discounts are set in the review table. Set overall
-                quotation discount below.
+
+              {/* Subtotal rows */}
+              <div className="rounded-lg border border-border divide-y divide-border">
+                <div className="flex items-center justify-between px-4 py-2.5 text-sm">
+                  <span className="text-muted-foreground">Subtotal × 1 set</span>
+                  <span className="font-mono font-medium">RM {fmt(subtotalPerSet)}</span>
+                </div>
+                {sets > 1 && (
+                  <div className="flex items-center justify-between px-4 py-2.5 text-sm bg-muted/20">
+                    <span className="text-muted-foreground">Subtotal × {sets} sets</span>
+                    <span className="font-mono font-semibold">RM {fmt(subtotalNSets)}</span>
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-muted/40 rounded-lg p-3">
-                  <div className="text-xs text-muted-foreground mb-1">
-                    Subtotal
-                  </div>
-                  <div className="text-base font-semibold">
-                    RM {fmt(subtotal)}
-                  </div>
+              {/* Three checkboxes: itemize disc, total disc, SST */}
+              <div className="rounded-lg border border-border divide-y divide-border">
+                {/* Itemize discount */}
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    id="applyItemDisc"
+                    checked={applyItemizeDiscount}
+                    onChange={(e) => setApplyItemizeDiscount(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  <label htmlFor="applyItemDisc" className="text-sm font-medium cursor-pointer flex-1">
+                    Apply itemize discount
+                  </label>
+                  {applyItemizeDiscount && itemDiscTotal > 0 && (
+                    <span className="text-sm text-red-600 dark:text-red-400 font-mono tabular-nums">
+                      − RM {fmt(itemDiscTotal)}
+                    </span>
+                  )}
                 </div>
-                <div className="bg-muted/40 rounded-lg p-3">
-                  <div className="text-xs text-muted-foreground mb-1.5">
-                    Overall discount
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      value={overallDiscount}
-                      onChange={(e) => setOverallDiscount(e.target.value)}
-                      className="h-8 text-sm w-20"
-                      min="0"
-                      max="100"
-                    />
-                    <span className="text-sm text-muted-foreground">%</span>
-                    {Number(overallDiscount) > 0 && (
-                      <span className="text-xs text-muted-foreground">
-                        - RM {fmt(overallDiscAmt)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="bg-muted/40 rounded-lg p-3">
-                  <div className="text-xs text-muted-foreground mb-1">
-                    After discount
-                  </div>
-                  <div className="text-base font-semibold">
-                    RM {fmt(afterDiscount)}
-                  </div>
-                </div>
-              </div>
 
-              {/* SST */}
-              <div className="border border-border rounded-lg p-3 space-y-3">
-                <div className="flex items-center gap-3">
+                {/* Total discount */}
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    id="applyTotalDisc"
+                    checked={applyTotalDiscount}
+                    onChange={(e) => setApplyTotalDiscount(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  <label htmlFor="applyTotalDisc" className="text-sm font-medium cursor-pointer flex-1">
+                    Apply total discount
+                  </label>
+                  {applyTotalDiscount && (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        value={overallDiscount}
+                        onChange={(e) => setOverallDiscount(e.target.value)}
+                        className="h-7 text-sm w-16 text-right"
+                        min="0"
+                        max="100"
+                      />
+                      <span className="text-sm text-muted-foreground">%</span>
+                      {overallDiscAmt > 0 && (
+                        <span className="text-sm text-red-600 dark:text-red-400 font-mono tabular-nums">
+                          − RM {fmt(overallDiscAmt)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Apply SST */}
+                <div className="flex items-center gap-3 px-4 py-3">
                   <input
                     type="checkbox"
                     id="applySST"
@@ -1029,36 +1107,65 @@ export function NewQuotationClient({
                     onChange={(e) => setApplySST(e.target.checked)}
                     className="w-4 h-4"
                   />
-                  <label
-                    htmlFor="applySST"
-                    className="text-sm font-medium cursor-pointer"
-                  >
+                  <label htmlFor="applySST" className="text-sm font-medium cursor-pointer flex-1">
                     Apply SST
                   </label>
                   {applySST && (
-                    <div className="flex items-center gap-2 ml-auto">
+                    <div className="flex items-center gap-2">
                       <Input
                         type="number"
                         value={sstPct || "8"}
                         onChange={(e) => setSstPct(e.target.value)}
-                        className="h-7 text-sm w-16"
+                        className="h-7 text-sm w-16 text-right"
                         min="0"
                       />
                       <span className="text-sm text-muted-foreground">%</span>
-                      <span className="text-sm text-muted-foreground">
-                        = RM {fmt(sstAmt)}
-                      </span>
+                      {sstAmt > 0 && (
+                        <span className="text-sm text-muted-foreground font-mono tabular-nums">
+                          + RM {fmt(sstAmt)}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Grand total */}
-              <div className="border-t border-border pt-3 flex items-center justify-between">
-                <span className="text-sm font-medium">Grand total</span>
-                <span className="text-xl font-semibold text-green-600 dark:text-green-400">
-                  RM {fmt(grandTotal)}
-                </span>
+              {/* Grand total formula */}
+              <div className="rounded-lg border border-border bg-muted/10 p-4 space-y-2">
+                <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">
+                  Grand Total
+                </div>
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm font-mono tabular-nums">
+                  <span className="text-foreground">
+                    RM {fmt(subtotalNSets)}
+                  </span>
+                  {(applyItemizeDiscount || applyTotalDiscount) && totalDisc > 0 && (
+                    <>
+                      <span className="text-muted-foreground">−</span>
+                      <span className="text-red-600 dark:text-red-400">RM {fmt(totalDisc)}</span>
+                    </>
+                  )}
+                  {applySST && sstAmt > 0 && (
+                    <>
+                      <span className="text-muted-foreground">+</span>
+                      <span className="text-blue-600 dark:text-blue-400">RM {fmt(sstAmt)}</span>
+                    </>
+                  )}
+                  <span className="text-muted-foreground">=</span>
+                  <span className="text-xl font-semibold text-green-600 dark:text-green-400">
+                    RM {fmt(grandTotal)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-x-2 text-[10px] text-muted-foreground font-sans">
+                  <span>Subtotal × {sets} {sets > 1 ? "sets" : "set"}</span>
+                  {(applyItemizeDiscount || applyTotalDiscount) && totalDisc > 0 && (
+                    <><span>−</span><span>Total disc</span></>
+                  )}
+                  {applySST && sstAmt > 0 && (
+                    <><span>+</span><span>SST</span></>
+                  )}
+                  <span>=</span><span>Grand total</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1109,10 +1216,20 @@ export function NewQuotationClient({
                   <span className="font-medium">{reviewItems.length}</span>
                 </div>
                 <div>
+                  <span className="text-muted-foreground">Sets </span>
+                  <span className="font-medium">{sets}</span>
+                </div>
+                <div className="col-span-2">
                   <span className="text-muted-foreground">Grand total </span>
                   <span className="font-medium text-green-600">
                     RM {fmt(grandTotal)}
                   </span>
+                  <div className="text-xs text-muted-foreground mt-0.5 font-mono tabular-nums">
+                    RM {fmt(subtotalNSets)}
+                    {totalDisc > 0 && ` − RM ${fmt(totalDisc)} disc`}
+                    {sstAmt > 0 && ` + RM ${fmt(sstAmt)} SST`}
+                    {` = RM ${fmt(grandTotal)}`}
+                  </div>
                 </div>
               </div>
 

@@ -104,6 +104,7 @@ export interface CompanyHeaderOptions {
   newSsmNo: string | null;
   mdaEstablishmentNo: string | null;
   taxNo: string | null;
+  mofNo?: string | null;
   // Company name style
   nameSize: number;
   nameBold: boolean;
@@ -121,7 +122,9 @@ export interface CompanyHeaderOptions {
   logoHMax: number;
   logoWMax: number;
   // Layout options
-  inlineSsmMdaTax?: boolean; // render SSM · MDA Est · Tax on one smaller line instead of stacked
+  inlineSsmMdaTax?: boolean;     // render SSM · MDA Est · Tax on one smaller line instead of stacked
+  inlineSsmMdaTaxStar?: boolean; // aura style: SSM * MOF * MDA inline, bold accent *, 7pt
+  inlineContactsStar?: boolean;  // aura style: email * website * phone inline, no labels, bold accent *, 7pt
 }
 
 /** Draws the company info block and document label. Returns the Y after drawing. */
@@ -221,7 +224,35 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
     }
   }
 
-  if (opts.inlineSsmMdaTax) {
+  if (opts.inlineSsmMdaTaxStar) {
+    // Aura style: SSM * MOF * MDA inline, bold accent *, 7pt
+    const segments: string[] = [];
+    if (newSsmNo || oldSsmNo) segments.push(newSsmNo && oldSsmNo ? `SSM No: ${newSsmNo} (${oldSsmNo})` : `SSM No: ${newSsmNo ?? oldSsmNo}`);
+    if (opts.mofNo) segments.push(`MOF No: ${opts.mofNo}`);
+    if (mdaEstablishmentNo) segments.push(`MDA No: ${mdaEstablishmentNo}`);
+    if (segments.length > 0) {
+      const sz   = 7;
+      const sepW = fontB.widthOfTextAtSize("*", sz);
+      const spW  = fontR.widthOfTextAtSize("  ", sz);
+      let dx = textX;
+      for (let si = 0; si < segments.length; si++) {
+        const seg = segments[si];
+        const segW = fontR.widthOfTextAtSize(seg, sz);
+        if (dx + segW > textX + textZoneW) break;
+        page.drawText(seg, { x: dx, y: cy, size: sz, font: fontR, color: infoColor });
+        dx += segW;
+        if (si < segments.length - 1) {
+          page.drawText("  ", { x: dx, y: cy, size: sz, font: fontR, color: infoColor });
+          dx += spW;
+          page.drawText("*", { x: dx, y: cy, size: sz, font: fontB, color: accent });
+          dx += sepW;
+          page.drawText("  ", { x: dx, y: cy, size: sz, font: fontR, color: infoColor });
+          dx += spW;
+        }
+      }
+      cy -= 10;
+    }
+  } else if (opts.inlineSsmMdaTax) {
     // Slate layout: SSM · MDA Est · Tax on one line, smaller than address
     const parts: string[] = [];
     if (newSsmNo || oldSsmNo) parts.push(newSsmNo && oldSsmNo ? `SSM: ${newSsmNo} (${oldSsmNo})` : `SSM: ${newSsmNo ?? oldSsmNo}`);
@@ -260,20 +291,43 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
   }
 
   // Contact line: email · website · phone
-  const contacts: string[] = [
-    email && `✉ ${email}`,
-    website && `🌐 ${website}`,
-    phone && `✆ ${phone}`,
+  const contactVals: string[] = [
+    email    ? sanitizeText(email)   : null,
+    website  ? sanitizeText(website) : null,
+    phone    ? sanitizeText(phone)   : null,
   ].filter(Boolean) as string[];
 
-  for (const c of contacts) {
-    const safe = sanitizeText(c).replace(/[✉🌐✆]/g, "").trim();
-    const label = c.startsWith("✉") ? "Email: " : c.startsWith("🌐") ? "Web: " : "Tel: ";
-    const full = label + safe;
-    page.drawText(trunc(full, fontR, infoSize - 0.5, textZoneW), {
-      x: textX, y: cy, size: infoSize - 0.5, font: fontR, color: C_LITE,
-    });
-    cy -= infoLH;
+  if (opts.inlineContactsStar) {
+    if (contactVals.length > 0) {
+      const sz   = 7;
+      const sepW = fontB.widthOfTextAtSize("*", sz);
+      const spW  = fontR.widthOfTextAtSize("  ", sz);
+      let dx = textX;
+      for (let ci = 0; ci < contactVals.length; ci++) {
+        const val  = contactVals[ci];
+        const valW = fontR.widthOfTextAtSize(val, sz);
+        if (dx + valW > textX + textZoneW) break;
+        page.drawText(val, { x: dx, y: cy, size: sz, font: fontR, color: infoColor });
+        dx += valW;
+        if (ci < contactVals.length - 1) {
+          page.drawText("  ", { x: dx, y: cy, size: sz, font: fontR, color: infoColor });
+          dx += spW;
+          page.drawText("*", { x: dx, y: cy, size: sz, font: fontB, color: accent });
+          dx += sepW;
+          page.drawText("  ", { x: dx, y: cy, size: sz, font: fontR, color: infoColor });
+          dx += spW;
+        }
+      }
+      cy -= 10;
+    }
+  } else {
+    for (const val of contactVals) {
+      const label = val === sanitizeText(email ?? "") ? "Email: " : val === sanitizeText(website ?? "") ? "Web: " : "Tel: ";
+      page.drawText(trunc(label + val, fontR, infoSize - 0.5, textZoneW), {
+        x: textX, y: cy, size: infoSize - 0.5, font: fontR, color: C_LITE,
+      });
+      cy -= infoLH;
+    }
   }
 
   return cy;
@@ -373,7 +427,7 @@ export function drawInfoSection(opts: InfoSectionOptions): number {
 
   // Right: Quotation detail
   page.drawText("QUOTATION DETAILS", {
-    x: RIGHT_X, y: startY - 8, size: 7, font: fontB, color: mutedColor,
+    x: RIGHT_X, y: startY - 8, size: 7, font: fontB, color: accent,
   });
 
   const detailRows: [string, string][] = [
@@ -418,6 +472,7 @@ export function estimateHeaderH(opts: {
   newSsmNo: string | null;
   mdaEstablishmentNo: string | null;
   taxNo: string | null;
+  mofNo?: string | null;
   nameSize: number;
   logoHMax: number;
   logoWMax: number;
@@ -428,8 +483,10 @@ export function estimateHeaderH(opts: {
   docLabelAlign?: "left" | "center" | "right";
   skipDocLabel?: boolean;
   inlineSsmMdaTax?: boolean;
+  inlineSsmMdaTaxStar?: boolean;
+  inlineContactsStar?: boolean;
 }): number {
-  const { companyAddress, phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo, nameSize, logoHMax, logoWMax, headerLayout, logoImg, fontR, docLabelSize = 0, docLabelAlign = "right", skipDocLabel = false, inlineSsmMdaTax = false } = opts;
+  const { companyAddress, phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo, nameSize, logoHMax, logoWMax, headerLayout, logoImg, fontR, docLabelSize = 0, docLabelAlign = "right", skipDocLabel = false, inlineSsmMdaTax = false, inlineSsmMdaTaxStar = false, inlineContactsStar = false } = opts;
 
   const DOC_LABEL_W = 100;
   const companyZoneW = (docLabelAlign === "center" || skipDocLabel) ? CW : CW - DOC_LABEL_W - 8;
@@ -457,9 +514,9 @@ export function estimateHeaderH(opts: {
   // Address lines — use same wrap width as drawCompanyHeader
   const addrLines = companyAddress ? Math.min(wrap(companyAddress, fontR, 8.5, textZoneW).length, 6) : 0;
   h += addrLines * 11;
-  if (inlineSsmMdaTax) {
-    // All three on one compact line
-    const hasSsmMdaTax = !!(newSsmNo || oldSsmNo || mdaEstablishmentNo || taxNo);
+  if (inlineSsmMdaTaxStar || inlineSsmMdaTax) {
+    // All three on one compact line (star or dot style)
+    const hasSsmMdaTax = !!(newSsmNo || oldSsmNo || opts.mofNo || mdaEstablishmentNo || taxNo);
     if (hasSsmMdaTax) h += 10;
   } else {
     if (newSsmNo || oldSsmNo) h += 11;
@@ -467,7 +524,11 @@ export function estimateHeaderH(opts: {
     if (taxNo) h += 11;
   }
   const contactCount = [email, website, phone].filter(Boolean).length;
-  h += contactCount * 10.5;
+  if (inlineContactsStar) {
+    if (contactCount > 0) h += 10;
+  } else {
+    h += contactCount * 10.5;
+  }
   return Math.max(h, logoImg ? logoHMax : 40) + 12;
 }
 

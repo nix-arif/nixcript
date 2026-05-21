@@ -125,11 +125,16 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
   const showTP   = !!Number(q.showTotalPrice);
   const coName   = orgCompanyName ?? orgName;
 
-  const subtotal  = Number(q.subtotal  ?? 0);
-  const discAmt   = Number(q.overallDiscountAmt ?? 0);
-  const sstAmt    = Number(q.sst       ?? 0);
-  const grand     = Number(q.grandTotal ?? 0);
-  const afterDisc = subtotal - discAmt;
+  const sets           = Number(q.sets ?? 1);
+  const subtotal       = Number(q.subtotal  ?? 0);
+  const discAmt        = Number(q.overallDiscountAmt ?? 0);
+  const sstAmt         = Number(q.sst       ?? 0);
+  const grand          = Number(q.grandTotal ?? 0);
+  const subtotalPerSet = subtotal / sets;
+  const itemDiscPerSet = items.reduce((s, i) => s + Number(i.discountAmt ?? 0), 0);
+  const itemDiscTotal  = itemDiscPerSet * sets;
+  const rawSubtotalPerSet = subtotalPerSet + itemDiscPerSet;
+  const afterDisc      = subtotal - discAmt;
 
   const pdfDoc = await PDFDocument.create();
   const fontR  = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -236,7 +241,7 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
   }) + 10;
 
   // Totals + notes + footer
-  const totRowCount  = 1 + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
+  const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
   const TOTALS_H     = 16 + totRowCount * 13 + 6 + 1.5 + 10 + 18 + 8;
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
@@ -244,8 +249,8 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
   const CLOSING_H    = 38;
   const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H;
 
-  const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - BOTTOM_RESERVE - MB;
-  const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - BOTTOM_RESERVE - MB;
+  const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 20;
+  const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 20;
 
   // ── Paginate rows ─────────────────────────────────────────────────────────
   const pageGroups: number[][] = [];
@@ -267,13 +272,34 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
     }
   }
   pageGroups.push(curGroup);
+
+  // ── Ensure last page fits totals; split rather than leave totals alone ────
+  {
+    const lastGroup   = pageGroups[pageGroups.length - 1];
+    const lastIsFirst = pageGroups.length === 1;
+    const lastAvail   = Math.max(lastIsFirst ? P1_ROW_AVAIL : PN_ROW_AVAIL, RH_MIN * 3);
+    const lastItemsH  = lastGroup.reduce((s, i) => s + rowInfos[i].rowH, 0);
+    if (lastItemsH + BOTTOM_RESERVE > lastAvail && lastGroup.length > 1) {
+      let fitH = 0, splitAt = 0;
+      for (const idx of lastGroup) {
+        if (fitH + rowInfos[idx].rowH + BOTTOM_RESERVE <= lastAvail) { fitH += rowInfos[idx].rowH; splitAt++; }
+        else break;
+      }
+      splitAt = Math.max(1, splitAt);
+      if (splitAt < lastGroup.length) {
+        pageGroups[pageGroups.length - 1] = lastGroup.slice(0, splitAt);
+        pageGroups.push(lastGroup.slice(splitAt));
+      }
+    }
+  }
+
   const totalPages = pageGroups.length;
 
   // ── Draw pages ────────────────────────────────────────────────────────────
   for (let pi = 0; pi < pageGroups.length; pi++) {
-    const page      = pdfDoc.addPage([W, H]);
     const isFirst   = pi === 0;
     const isLast    = pi === pageGroups.length - 1;
+    const page      = pdfDoc.addPage([W, H]);
     const pageItems = pageGroups[pi];
 
     // ── Footer ──────────────────────────────────────────────────────────────
@@ -485,16 +511,20 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
       const totW  = 220;
       const totX  = W - MR - totW;
       let ty      = curY;
-      const totItems: [string, string][] = [
-        ["Subtotal", fmtM(subtotal)],
-        ...(discAmt > 0
-          ? [
-              [`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`],
-              ["After Discount", fmtM(afterDisc)],
-            ] as [string,string][]
-          : []),
-        ...(sstAmt > 0 ? [[`SST (${q.sstPct}%)`, fmtM(sstAmt)]] as [string,string][] : []),
-      ];
+      const totItems: [string, string][] = [];
+      if (showDisc && itemDiscPerSet > 0) {
+        totItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
+        totItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
+        totItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
+      } else {
+        totItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
+      }
+      if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
+      if (discAmt > 0) {
+        totItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
+        totItems.push(["After Discount", fmtM(afterDisc)]);
+      }
+      if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
 
       for (const [lbl, val] of totItems) {
         page.drawText(lbl, { x: totX, y: ty, size: 9.5, font: fontR, color: C_MID });

@@ -11,6 +11,7 @@ import {
   UserIcon,
   PackageOpen,
   HardHat,
+  FolderOpenIcon,
 } from "lucide-react";
 import React from "react";
 
@@ -161,6 +162,18 @@ export const navConfig: NavGroup[] = [
         title: "Document Settings",
         url: "/dashboard/organization/document-settings",
         permission: "organization-profile:create",
+      },
+    ],
+  },
+  {
+    title: "Projects",
+    url: "#",
+    icon: React.createElement(FolderOpenIcon),
+    items: [
+      {
+        title: "Government",
+        url: "/dashboard/project/government",
+        permission: "quotation:create",
       },
     ],
   },

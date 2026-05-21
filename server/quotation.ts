@@ -278,6 +278,7 @@ export type SpreadsheetRow = {
   qty?: string;
   uom?: string;
   unitPrice?: string;
+  discountPct?: string;
   totalPrice?: string;
 };
 
@@ -348,9 +349,14 @@ export async function matchSpreadsheetToProducts(
           ? { value: dbPrice, source: "db" as const }
           : { value: "0", source: "db" as const };
 
+    const discountPct = row.discountPct?.trim() && Number(row.discountPct) > 0
+      ? row.discountPct.trim()
+      : "0";
+
     const qty = Number(row.qty ?? 1);
     const price = Number(unitPrice.value);
-    const total = (qty * price).toFixed(2);
+    const disc = Number(discountPct) / 100;
+    const total = (qty * price * (1 - disc)).toFixed(2);
     const hasPrice = Number(unitPrice.value) > 0;
 
     const mdaRegNo = dbProduct?.mdaRegistrationNo ?? "";
@@ -380,8 +386,8 @@ export async function matchSpreadsheetToProducts(
       uomSource: uom.source,
       unitPrice: unitPrice.value,
       priceSource: unitPrice.source,
-      discountPct: "0",
-      discountAmt: "0",
+      discountPct,
+      discountAmt: (qty * price * disc).toFixed(2),
       computedTotal: total,
       status,
     };
@@ -392,6 +398,7 @@ export async function matchSpreadsheetToProducts(
 export type CreateQuotationInput = {
   mode: "single" | "comparison";
   title?: string;
+  sets?: number;
   customerId?: string;
   salesPersonId?: string;
   salesPersonName?: string;
@@ -479,13 +486,15 @@ export async function createQuotation(input: CreateQuotationInput) {
     }
   }
 
-  // Calculate shared pricing
-  const subtotal = input.items.reduce((s, item) => {
+  // Calculate shared pricing — items store per-set values; multiply by sets for quotation totals
+  const setsCount = Math.max(1, input.sets ?? 1);
+  const perSetSubtotal = input.items.reduce((s, item) => {
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
     const disc = Number(item.discountPct ?? 0);
     return s + qty * price * (1 - disc / 100);
   }, 0);
+  const subtotal = perSetSubtotal * setsCount;
 
   const overallDisc = Number(input.overallDiscountPct ?? 0);
   const afterDiscount = subtotal * (1 - overallDisc / 100);
@@ -510,6 +519,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     sstPct: input.sstPct,
     grandTotal: grandTotal.toFixed(2),
     title: input.title ?? "Loose Items",
+    sets: setsCount,
     includeCatalogue: input.includeCatalogue ? 1 : 0,
     includeMdaCerts: input.includeMdaCerts ? 1 : 0,
     showUnitPrice: 1,
@@ -765,6 +775,7 @@ export async function getQuotationDetail(id: string) {
       companyName: organizationProfile.companyName,
       companyAddress: organizationProfile.companyAddress,
       taxNo: organizationProfile.taxNo,
+      mofNo: organizationProfile.mofNo,
       phone: organizationProfile.phone,
       email: organizationProfile.email,
       website: organizationProfile.website,
@@ -910,6 +921,20 @@ export async function getQuotationDetail(id: string) {
     };
   });
 
+  // Collect unique product brands for PDF terms box
+  const allProductCodes = [...new Set(rawItems.filter(i => i.productCode).map(i => i.productCode!))];
+  const brandByCode = new Map<string, string>();
+  if (allProductCodes.length > 0) {
+    const bRows = await db
+      .select({ productCode: product.productCode, brand: product.brand })
+      .from(product)
+      .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, allProductCodes)));
+    for (const r of bRows) { if (r.brand) brandByCode.set(r.productCode, r.brand); }
+  }
+  const itemBrands = [...new Set(
+    rawItems.map(i => i.productCode ? brandByCode.get(i.productCode) : undefined).filter(Boolean) as string[]
+  )];
+
   // Siblings: other quotations in the same comparison group
   type Sibling = {
     id: string;
@@ -949,6 +974,7 @@ export async function getQuotationDetail(id: string) {
     orgCompanyName: orgRow?.companyName ?? null,
     orgCompanyAddress: orgRow?.companyAddress ?? null,
     orgTaxNo: orgRow?.taxNo ?? null,
+    orgMofNo: orgRow?.mofNo ?? null,
     orgPhone: orgRow?.phone ?? null,
     orgEmail: orgRow?.email ?? null,
     orgWebsite: orgRow?.website ?? null,
@@ -992,6 +1018,7 @@ export async function getQuotationDetail(id: string) {
       orgLampiran13Url,
     })),
     items,
+    itemBrands,
     siblings,
   };
 }
@@ -1037,6 +1064,7 @@ export async function getQuotationGroupAllDetails(id: string) {
       companyName: organizationProfile.companyName,
       companyAddress: organizationProfile.companyAddress,
       taxNo: organizationProfile.taxNo,
+      mofNo: organizationProfile.mofNo,
       phone: organizationProfile.phone,
       email: organizationProfile.email,
       website: organizationProfile.website,
@@ -1137,6 +1165,7 @@ export async function getQuotationGroupAllDetails(id: string) {
       orgCompanyName: orgRow?.companyName ?? null,
       orgCompanyAddress: orgRow?.companyAddress ?? null,
       orgTaxNo: orgRow?.taxNo ?? null,
+      orgMofNo: orgRow?.mofNo ?? null,
       orgPhone: orgRow?.phone ?? null,
       orgEmail: orgRow?.email ?? null,
       orgWebsite: orgRow?.website ?? null,
@@ -1269,6 +1298,7 @@ export async function getQuotationGroupForPrint(id: string) {
       companyName: organizationProfile.companyName,
       companyAddress: organizationProfile.companyAddress,
       taxNo: organizationProfile.taxNo,
+      mofNo: organizationProfile.mofNo,
       phone: organizationProfile.phone,
       email: organizationProfile.email,
       website: organizationProfile.website,
@@ -1340,6 +1370,7 @@ export async function getQuotationGroupForPrint(id: string) {
       orgCompanyName: org?.companyName ?? null,
       orgCompanyAddress: org?.companyAddress ?? null,
       orgTaxNo: org?.taxNo ?? null,
+      orgMofNo: org?.mofNo ?? null,
       orgPhone: org?.phone ?? null,
       orgEmail: org?.email ?? null,
       orgWebsite: org?.website ?? null,
@@ -1470,6 +1501,7 @@ export async function finalizeQuotation(
 // ── Update (edit) draft quotation ─────────────────────────────────────────
 export type UpdateQuotationInput = {
   title?: string;
+  sets?: number;
   customerId?: string | null;
   salesPersonId?: string | null;
   salesPersonName?: string | null;
@@ -1517,7 +1549,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
     ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
   const [q] = await db
-    .select({ status: quotation.status, createdAt: quotation.createdAt })
+    .select({ status: quotation.status, createdAt: quotation.createdAt, sets: quotation.sets })
     .from(quotation)
     .where(
       and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)),
@@ -1549,13 +1581,15 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
     }
   }
 
-  // Recalculate totals from edited items
-  const subtotal = input.items.reduce((s, item) => {
+  // Recalculate totals — items store per-set values; multiply by sets for quotation totals
+  const setsCount = Math.max(1, input.sets ?? Number(q.sets ?? 1));
+  const perSetSubtotal = input.items.reduce((s, item) => {
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
     const disc = Number(item.discountPct ?? 0);
     return s + qty * price * (1 - disc / 100);
   }, 0);
+  const subtotal = perSetSubtotal * setsCount;
 
   const overallDisc = Number(input.overallDiscountPct ?? 0);
   const afterDiscount = subtotal * (1 - overallDisc / 100);
@@ -1570,6 +1604,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
     .update(quotation)
     .set({
       title: input.title ?? "Loose Items",
+      sets: setsCount,
       customerId: input.customerId ?? null,
       customerSnapshot,
       salesPersonId: input.salesPersonId ?? null,
@@ -1637,6 +1672,267 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
 }
 
 // ── Delete quotation ───────────────────────────────────────────────────────
+// ── Government bulk quotation creation ───────────────────────────────────────
+
+export type GovRawItem = {
+  rowNo: number;
+  productCode?: string;
+  description?: string;
+  qty?: string;
+  uom?: string;
+  unitPrice?: string;
+};
+
+export type GovFileInput = {
+  title: string;
+  items: GovRawItem[];
+  customerId: string;
+  validityDays: number;
+  originalOrgId: string;
+  includeMdaCerts: boolean;
+  inclMof: boolean;
+  inclSsm: boolean;
+  inclTcc: boolean;
+  inclBankStatement: boolean;
+  inclMdaEstablishment: boolean;
+  inclLampiran12: boolean;
+  inclLampiran13: boolean;
+};
+
+export type GovQuotationEntry = {
+  id: string;
+  orgId: string;
+  orgName: string;
+  isDummy: boolean;
+  dummyIndex: number;
+};
+
+export type GovGroupResult = {
+  title: string;
+  groupId: string;
+  customerOrgName: string;
+  originalId: string;
+  quotations: GovQuotationEntry[];
+};
+
+function buildGovItem(
+  raw: GovRawItem,
+  productMap: Map<string, typeof product.$inferSelect>,
+): ReviewItem {
+  const dbProduct = raw.productCode ? productMap.get(raw.productCode) : undefined;
+
+  const description = raw.description?.trim() || dbProduct?.description || "";
+  const qty = raw.qty?.trim() || "1";
+  const uom = raw.uom?.trim() || dbProduct?.uom || "";
+  const unitPrice = raw.unitPrice?.trim() || dbProduct?.unitPrice || "0";
+
+  const hasCert = !!(dbProduct?.mdaPdfFile);
+  const hasPrice = !!(unitPrice && Number(unitPrice) > 0);
+  const qtyN = Number(qty) || 1;
+  const priceN = Number(unitPrice) || 0;
+  const total = (qtyN * priceN).toFixed(2);
+
+  let status: ReviewItem["status"];
+  if (!dbProduct) status = "not_found";
+  else if (!hasPrice && !hasCert) status = "no_price_no_cert";
+  else if (!hasPrice) status = "no_price";
+  else if (!hasCert) status = "no_cert";
+  else status = "ok";
+
+  return {
+    rowNo: raw.rowNo,
+    productCode: raw.productCode,
+    description,
+    qty,
+    uom,
+    unitPrice,
+    hasCert,
+    hasPrice,
+    descriptionSource: raw.description?.trim() ? "sheet" : "db",
+    priceSource: raw.unitPrice?.trim() ? "sheet" : "db",
+    uomSource: raw.uom?.trim() ? "sheet" : "db",
+    discountPct: "0",
+    discountAmt: "0",
+    computedTotal: total,
+    status,
+    productId: dbProduct?.id,
+    productName: dbProduct?.description ?? undefined,
+    imageKey: dbProduct?.imageKey ?? undefined,
+    mdaRegNo: dbProduct?.mdaRegistrationNo ?? undefined,
+    mdaValidity: dbProduct?.mdaExpiredOn ?? undefined,
+  };
+}
+
+export async function createGovernmentBatch(
+  files: GovFileInput[],
+): Promise<GovGroupResult[]> {
+  const { orgId, userId } = await requireAccess("quotation:create");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const orgs =
+    ownerOrgs.length > 0 ? ownerOrgs : [{ id: orgId, name: orgId, slug: "" }];
+  const ownerOrgIds = orgs.map((o) => o.id);
+
+  const [me] = await db
+    .select({ name: user.name })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+
+  // Batch-lookup all unique product codes across all files
+  const allCodes = [
+    ...new Set(
+      files.flatMap((f) =>
+        f.items.map((i) => i.productCode).filter((c): c is string => !!c),
+      ),
+    ),
+  ];
+  const dbProductRows =
+    allCodes.length > 0
+      ? await db
+          .select()
+          .from(product)
+          .where(
+            and(
+              inArray(product.organizationId, ownerOrgIds),
+              inArray(product.productCode, allCodes),
+            ),
+          )
+      : [];
+
+  const productMap = new Map<string, typeof dbProductRows[0]>();
+  for (const p of dbProductRows) {
+    if (!productMap.has(p.productCode)) productMap.set(p.productCode, p);
+  }
+
+  // Batch-lookup customers
+  const customerIds = [...new Set(files.map((f) => f.customerId).filter(Boolean))];
+  const customerRows =
+    customerIds.length > 0
+      ? await db.select().from(customer).where(inArray(customer.id, customerIds))
+      : [];
+  const customerMap = new Map(customerRows.map((c) => [c.id, c]));
+
+  const results: GovGroupResult[] = [];
+
+  for (const file of files) {
+    const reviewItems = file.items.map((raw) => buildGovItem(raw, productMap));
+
+    const subtotal = reviewItems.reduce((s, item) => {
+      return s + (Number(item.qty) || 1) * (Number(item.unitPrice) || 0);
+    }, 0);
+
+    const cust = customerMap.get(file.customerId);
+    const customerSnapshot = cust
+      ? {
+          name: cust.name,
+          title: cust.title ?? undefined,
+          position: cust.position ?? undefined,
+          department: cust.department ?? undefined,
+          email: cust.email ?? undefined,
+          contactNo: cust.contactNo ?? undefined,
+          organizationName: cust.organizationName ?? undefined,
+          organizationAddress: cust.organizationAddress ?? undefined,
+        }
+      : null;
+
+    const sharedValues = {
+      mode: "comparison" as const,
+      customerId: file.customerId,
+      customerSnapshot,
+      salesPersonId: null,
+      salesPersonName: null,
+      preparedById: userId,
+      preparedByName: me?.name ?? "",
+      notes: null,
+      subtotal: subtotal.toFixed(2),
+      overallDiscountPct: "0",
+      overallDiscountAmt: "0",
+      sst: "0",
+      sstPct: "0",
+      grandTotal: subtotal.toFixed(2),
+      title: file.title,
+      includeCatalogue: 0,
+      includeMdaCerts: file.includeMdaCerts ? 1 : 0,
+      showUnitPrice: 1,
+      showTotalPrice: 1,
+      showItemizeDiscount: 0,
+      inclMof: file.inclMof ? 1 : 0,
+      inclSsm: file.inclSsm ? 1 : 0,
+      inclTcc: file.inclTcc ? 1 : 0,
+      inclBankStatement: file.inclBankStatement ? 1 : 0,
+      inclMdaEstablishment: file.inclMdaEstablishment ? 1 : 0,
+      inclLampiran12: file.inclLampiran12 ? 1 : 0,
+      inclLampiran13: file.inclLampiran13 ? 1 : 0,
+      status: "draft" as const,
+      createdBy: userId,
+    };
+
+    const groupId = nanoid();
+    const originalDate = new Date();
+    const validDaysNum = file.validityDays || 30;
+
+    // Original org first, then dummies in creation order
+    const orderedOrgs = [
+      ...orgs.filter((o) => o.id === file.originalOrgId),
+      ...orgs.filter((o) => o.id !== file.originalOrgId),
+    ];
+    // Fall back: if originalOrgId not in orgs, treat first org as original
+    if (orderedOrgs[0]?.id !== file.originalOrgId) {
+      // no match — keep creation order, first = original
+    }
+
+    const quotationResults: GovQuotationEntry[] = [];
+    let dummyIndex = 1;
+
+    for (const org of orderedOrgs) {
+      const isOriginal = org.id === file.originalOrgId;
+      const isDummy = !isOriginal;
+      const dummyDate = isDummy ? randomWeekdaysBack(originalDate, 1, 5) : undefined;
+      const qDate = dummyDate ?? originalDate;
+      const validUntil = new Date(qDate);
+      validUntil.setDate(validUntil.getDate() + validDaysNum);
+
+      const quotationNo = await generateQuotationNo(org.id);
+
+      const [q] = await db
+        .insert(quotation)
+        .values({
+          id: nanoid(),
+          organizationId: org.id,
+          quotationNo,
+          groupId,
+          isDummy: isDummy ? 1 : 0,
+          ...(dummyDate ? { createdAt: dummyDate } : {}),
+          validUntil,
+          ...sharedValues,
+        })
+        .returning();
+
+      await db.insert(quotationItem).values(buildItemRows(q.id, reviewItems));
+
+      quotationResults.push({
+        id: q.id,
+        orgId: org.id,
+        orgName: org.name,
+        isDummy,
+        dummyIndex: isDummy ? dummyIndex++ : 0,
+      });
+    }
+
+    const originalQ = quotationResults.find((q) => !q.isDummy) ?? quotationResults[0];
+
+    results.push({
+      title: file.title,
+      groupId,
+      customerOrgName: cust?.organizationName ?? "",
+      originalId: originalQ.id,
+      quotations: quotationResults,
+    });
+  }
+
+  return results;
+}
+
 // In comparison mode, deletes all quotations in the group together.
 export async function deleteQuotation(id: string) {
   const { orgId, userId } = await requireAccess("quotation:delete");

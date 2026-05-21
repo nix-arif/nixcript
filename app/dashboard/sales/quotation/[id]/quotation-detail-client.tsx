@@ -213,7 +213,9 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   };
 
   // Pricing
+  const sets = Number(q.sets ?? 1);
   const subtotal = Number(q.subtotal ?? 0);
+  const subtotalPerSet = sets > 1 ? subtotal / sets : null;
   const overallDiscAmt = Number(q.overallDiscountAmt ?? 0);
   const sstAmt = Number(q.sst ?? 0);
   const grandTotal = Number(q.grandTotal ?? 0);
@@ -690,7 +692,14 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               </span>
             </div>
             <div className="p-3 space-y-2 text-xs">
-              <Row label="Subtotal" value={fmt(subtotal)} mono />
+              {subtotalPerSet !== null ? (
+                <>
+                  <Row label="Subtotal (1 set)" value={fmt(subtotalPerSet)} mono />
+                  <Row label={`× ${sets} sets`} value={fmt(subtotal)} mono />
+                </>
+              ) : (
+                <Row label="Subtotal" value={fmt(subtotal)} mono />
+              )}
               {overallDiscAmt > 0 && (
                 <Row
                   label={`Discount (${q.overallDiscountPct}%)`}

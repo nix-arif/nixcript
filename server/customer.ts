@@ -161,3 +161,29 @@ export async function deleteCustomer(id: string) {
     .delete(customer)
     .where(and(eq(customer.id, id), eq(customer.organizationId, ownerOrgId)));
 }
+
+export async function lookupCustomersByName(names: string[]) {
+  const { orgId, userId } = await requireAccess("customer:read");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  if (!names.length) return [];
+
+  const rows = await db
+    .select({
+      id: customer.id,
+      name: customer.name,
+      department: customer.department,
+      organizationName: customer.organizationName,
+      organizationAddress: customer.organizationAddress,
+      contactNo: customer.contactNo,
+      email: customer.email,
+    })
+    .from(customer)
+    .where(eq(customer.organizationId, ownerOrgId));
+
+  return names.map((name) => {
+    const found = rows.find(
+      (r) => r.name.toLowerCase().trim() === name.toLowerCase().trim(),
+    );
+    return { name, found: !!found, customer: found ?? null };
+  });
+}

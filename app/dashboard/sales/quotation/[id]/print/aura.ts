@@ -11,8 +11,8 @@ const W  = 595.28;
 const H  = 841.89;
 const ML = 32;
 const MR = 32;
-const MT = 30;
-const MB = 30;
+const MT = 22;
+const MB = 0;
 const CW = W - ML - MR;
 
 // ── Palette — clean editorial, accent-driven ───────────────────────────────
@@ -97,7 +97,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const {
     quotation: q, items,
     orgName, orgLogoUrl, orgBrandColor,
-    orgCompanyName, orgCompanyAddress, orgTaxNo, orgPhone,
+    orgCompanyName, orgCompanyAddress, orgTaxNo, orgMofNo, orgPhone,
     orgEmail, orgWebsite, orgOldSsmNo, orgNewSsmNo, orgMdaEstablishmentNo,
     orgBankingInfo,
     orgMofCertUrl, orgSsmCertUrl, orgMdaCertUrl, orgTccCertUrl,
@@ -121,11 +121,16 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const showTP   = !!Number(q.showTotalPrice);
   const coName   = orgCompanyName ?? orgName;
 
-  const subtotal  = Number(q.subtotal  ?? 0);
-  const discAmt   = Number(q.overallDiscountAmt ?? 0);
-  const sstAmt    = Number(q.sst       ?? 0);
-  const grand     = Number(q.grandTotal ?? 0);
-  const afterDisc = subtotal - discAmt;
+  const sets           = Number(q.sets ?? 1);
+  const subtotal       = Number(q.subtotal  ?? 0);
+  const discAmt        = Number(q.overallDiscountAmt ?? 0);
+  const sstAmt         = Number(q.sst       ?? 0);
+  const grand          = Number(q.grandTotal ?? 0);
+  const subtotalPerSet = subtotal / sets;
+  const itemDiscPerSet = items.reduce((s, i) => s + Number(i.discountAmt ?? 0), 0);
+  const itemDiscTotal  = itemDiscPerSet * sets;
+  const rawSubtotalPerSet = subtotalPerSet + itemDiscPerSet;
+  const afterDisc      = subtotal - discAmt;
 
   const pdfDoc = await PDFDocument.create();
   const fontR  = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -178,8 +183,9 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const RH_MIN    = tfs === "small" ? 15   : tfs === "large" ? 21   : 17;
   const MDA_GAP   = 3;
 
-  const hasBanner = (data.orgTitlePosition ?? "stamp") === "table-banner";
+  const hasBanner = true; // Aura always shows the title banner on every page
   const BANNER_H  = 20;
+  const brandText = (data.itemBrands?.length ?? 0) > 0 ? data.itemBrands!.join(", ") : "As per catalogue";
 
   // ── Pre-compute row heights ───────────────────────────────────────────────
   type RowInfo = {
@@ -217,11 +223,11 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const HEADER_BLOCK = estimateHeaderH({
     companyAddress: orgCompanyAddress, phone: orgPhone, email: orgEmail,
     website: orgWebsite, oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
-    mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
+    mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo, mofNo: orgMofNo,
     nameSize, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX, headerLayout: hLayout,
-    logoImg, fontR, docLabelSize: QL_SIZE, docLabelAlign: "center",
-  }) + 6;
-  const DIVIDER_GAP   = 10;
+    logoImg, fontR, docLabelSize: 0, inlineSsmMdaTaxStar: true, inlineContactsStar: true,
+  }) + 2;
+  const DIVIDER_GAP   = 6;
   const TABLE_HDR_H   = 20;
   const INFO_BLOCK = estimateInfoH({
     cust, attentionNameSize: attnNameSz,
@@ -229,43 +235,37 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     preparedByName: q.preparedByName ?? null,
     title: q.title ?? null,
     detailFontSize: detailFSz, fontR,
-  }) + 10;
+  }) + 6;
 
-  const totRowCount  = 1 + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
+  const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
-  const TOTALS_H     = 16 + totRowCount * 13 + 6 + 1.5 + 10 + 22 + 8;
+  const TOTALS_H     = 26 + Math.max(bank ? 52 : 0, (totRowCount + 1) * 16) + 20;
+  const TERMS_H      = 80; // terms box: 3 rows × ~13px + 2×8px padding + gaps
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 30;
   const CLOSING_H    = 38;
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H;
+  const BOTTOM_RESERVE = TOTALS_H + TERMS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H;
 
   // Header repeats on every page — same row availability for all pages
-  const PAGE_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - BOTTOM_RESERVE - MB;
+  const PAGE_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 20;
 
-  // ── Paginate rows ─────────────────────────────────────────────────────────
+  // ── Paginate rows — fixed 10 items per page ──────────────────────────────
+  const ITEMS_PER_PAGE = 10;
   const pageGroups: number[][] = [];
-  let curGroup: number[] = [];
-  let used = 0;
-
-  for (let i = 0; i < rowInfos.length; i++) {
-    const rh = rowInfos[i].rowH;
-    const avail = Math.max(PAGE_ROW_AVAIL, RH_MIN * 3);
-    if (used + rh > avail && curGroup.length > 0) {
-      pageGroups.push(curGroup);
-      curGroup = [i];
-      used = rh;
-    } else {
-      curGroup.push(i);
-      used += rh;
-    }
+  for (let i = 0; i < rowInfos.length; i += ITEMS_PER_PAGE) {
+    pageGroups.push(
+      Array.from({ length: Math.min(ITEMS_PER_PAGE, rowInfos.length - i) }, (_, j) => i + j)
+    );
   }
-  pageGroups.push(curGroup);
-  const totalPages = pageGroups.length;
 
+  const _avail0        = Math.max(PAGE_ROW_AVAIL, RH_MIN * 3);
+  const _allItemsH     = rowInfos.reduce((s, r) => s + r.rowH, 0);
+  const needsSummaryPage = pageGroups.length === 1 && _allItemsH + BOTTOM_RESERVE > _avail0;
+  const totalPages     = pageGroups.length + (needsSummaryPage ? 1 : 0);
   // ── Draw pages ────────────────────────────────────────────────────────────
   for (let pi = 0; pi < pageGroups.length; pi++) {
-    const page   = pdfDoc.addPage([W, H]);
-    const isLast = pi === pageGroups.length - 1;
+    const isLast    = !needsSummaryPage && pi === pageGroups.length - 1;
+    const page      = pdfDoc.addPage([W, H]);
     const pageItems = pageGroups[pi];
 
     // ── Footer ──────────────────────────────────────────────────────────────
@@ -288,12 +288,24 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
       nameSize, nameBold: !!(data.orgNameBold ?? 1),
       nameUppercase: !!(data.orgNameUppercase ?? 0),
-      headerLayout: hLayout, docLabel: QL_TEXT,
+      headerLayout: hLayout, docLabel: "",
       docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
       docLabelAlign: "center",
       logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
+      mofNo: orgMofNo, inlineSsmMdaTaxStar: true, inlineContactsStar: true,
     });
     curY -= HEADER_BLOCK;
+    {
+      const qlFont = !!(data.orgQuotationLabelBold ?? 1) ? fontB : fontR;
+      const qlW    = qlFont.widthOfTextAtSize(QL_TEXT, QL_SIZE);
+      page.drawText(QL_TEXT, {
+        x: W - MR - qlW,
+        y: curY + QL_SIZE + 2,
+        size: QL_SIZE,
+        font: qlFont,
+        color: accent,
+      });
+    }
     hLine(page, curY, ML, W - MR, accent, 1.2);
     curY -= DIVIDER_GAP;
 
@@ -305,19 +317,21 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       textColor: C_DARK,
       quotationNo: q.quotationNo, createdAt: q.createdAt,
       validUntil: q.validUntil, salesPersonName: q.salesPersonName ?? null,
-      preparedByName: q.preparedByName ?? null, title: q.title ?? null,
+      preparedByName: q.preparedByName ?? null, title: hasBanner ? null : (q.title ?? null),
     });
     curY -= INFO_BLOCK + DIVIDER_GAP;
     hLine(page, curY);
-    curY -= 4;
+    curY -= 2;
 
     // ── Table banner (optional) ────────────────────────────────────────────
     let tableTopY = curY;
     if (hasBanner) {
       const bannerY = curY - BANNER_H;
       page.drawRectangle({ x: ML, y: bannerY, width: CW, height: BANNER_H, color: C_LINE });
-      page.drawText(trunc(q.title ?? "Quotation Items", fontB, 8.5, CW - 12), {
-        x: ML + 6, y: bannerY + 6, size: 8.5, font: fontB, color: C_MID,
+      const bannerText = trunc((q.title ?? "Quotation Items").toUpperCase(), fontB, 8.5, CW - 12);
+      const bannerTextW = fontB.widthOfTextAtSize(bannerText, 8.5);
+      page.drawText(bannerText, {
+        x: (W - bannerTextW) / 2, y: bannerY + 6, size: 8.5, font: fontB, color: rgb(0, 0, 0),
       });
       tableTopY = bannerY;
       curY -= BANNER_H;
@@ -448,6 +462,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       curY -= 16;
 
       // Bank info (left)
+      let bankEndY = curY;
       if (bank) {
         let by = curY;
         page.drawText("PAYMENT TO", { x: ML, y: by, size: 7.5, font: fontB, color: accent });
@@ -463,50 +478,108 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
           });
           by -= 13;
         }
+        bankEndY = by;
       }
 
-      // Totals (right-aligned)
-      const totW  = 220;
+      // Totals (card style, right side)
+      const TOT_ROW_H   = 20;
+      const GRAND_ROW_H = 22;
+      const totW  = 260;
       const totX  = W - MR - totW;
-      let ty      = curY;
-      const totItems: [string, string][] = [
-        ["Subtotal", fmtM(subtotal)],
-        ...(discAmt > 0
-          ? [
-              [`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`],
-              ["After Discount", fmtM(afterDisc)],
-            ] as [string,string][]
-          : []),
-        ...(sstAmt > 0 ? [[`SST (${q.sstPct}%)`, fmtM(sstAmt)]] as [string,string][] : []),
-      ];
-
-      for (const [lbl, val] of totItems) {
-        page.drawText(lbl, { x: totX, y: ty, size: 9.5, font: fontR, color: C_MID });
-        const vw = fontR.widthOfTextAtSize(val, 9.5);
-        page.drawText(val, { x: W - MR - vw, y: ty, size: 9.5, font: fontR, color: C_DARK });
-        ty -= 13;
+      const TPADX = 10;
+      let ty = curY;
+      const totItems: [string, string][] = [];
+      if (showDisc && itemDiscPerSet > 0) {
+        totItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
+        totItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
+        totItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
+      } else {
+        totItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
       }
+      if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
+      if (discAmt > 0) {
+        totItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
+        totItems.push(["After Discount", fmtM(afterDisc)]);
+      }
+      if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
 
-      ty -= 6;
-      hLine(page, ty, totX, W - MR, accent, 0.5);
-      ty -= 6;
+      const totalPanelH = totItems.length * TOT_ROW_H + GRAND_ROW_H;
+      page.drawRectangle({ x: totX, y: ty - totalPanelH, width: totW, height: totalPanelH, color: rgb(1, 1, 1) });
+      for (let i = 0; i < totItems.length; i++) {
+        const [lbl, val] = totItems[i];
+        const rowBottom  = ty - TOT_ROW_H;
+        if (i % 2 === 0) {
+          page.drawRectangle({ x: totX, y: rowBottom, width: totW, height: TOT_ROW_H, color: rgb(0.95, 0.95, 0.95) });
+        }
+        const textY = rowBottom + 6;
+        page.drawText(lbl, { x: totX + TPADX, y: textY, size: 9.5, font: fontR, color: C_MID });
+        const vw = fontR.widthOfTextAtSize(val, 9.5);
+        page.drawText(val, { x: totX + totW - TPADX - vw, y: textY, size: 9.5, font: fontR, color: C_DARK });
+        ty -= TOT_ROW_H;
+      }
+      const gtRowBottom = ty - GRAND_ROW_H;
+      page.drawRectangle({ x: totX, y: gtRowBottom, width: totW, height: GRAND_ROW_H, color: accent });
+      const gtTextY = gtRowBottom + 7;
+      page.drawText("GRAND TOTAL", { x: totX + TPADX, y: gtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
+      const gtAmt  = fmtM(grand);
+      const gtAmtW = fontB.widthOfTextAtSize(gtAmt, 9.5);
+      page.drawText(gtAmt, { x: totX + totW - TPADX - gtAmtW, y: gtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
+      ty -= GRAND_ROW_H;
+      page.drawRectangle({ x: totX, y: ty, width: totW, height: totalPanelH, borderColor: accent, borderWidth: 0.6 });
+      curY = Math.min(ty, bankEndY) - 6;
 
-      // Aura: grand total — large typographic treatment
-      const gtLabel = "GRAND TOTAL";
-      const gtLabelW = fontB.widthOfTextAtSize(gtLabel, 7);
-      page.drawText(gtLabel, {
-        x: W - MR - gtLabelW, y: ty, size: 7, font: fontB, color: C_LITE,
-      });
-      ty -= 2;
-      const gtAmt = fmtM(grand);
-      const gtAmtW = fontB.widthOfTextAtSize(gtAmt, 18);
-      page.drawText(gtAmt, {
-        x: W - MR - gtAmtW, y: ty - 18, size: 18, font: fontB, color: accent,
-      });
-      curY = ty - 28;
+      // ── Terms box ────────────────────────────────────────────────────────
+      curY -= 10;
+      {
+        const TFS = 8.5;
+        const TLPAD = 10;
+        const TRPAD = 10;
+        const TVPAD = 8;
+        const ROW_GAP = 4;
+        const TLH = 12;
+        const TLABELW = Math.max(
+          fontB.widthOfTextAtSize("Brand",    TFS),
+          fontB.widthOfTextAtSize("Delivery", TFS),
+          fontB.widthOfTextAtSize("Warranty", TFS),
+        ) + 14;
+        const TVALFITW = CW - TLPAD - TLABELW - TRPAD;
+        const termsData: { label: string; value: string }[] = [
+          { label: "Brand",    value: brandText },
+          { label: "Delivery", value: "Ex-stock subject to availability, otherwise 8 - 12 weeks" },
+          { label: "Warranty", value: "5 Years against material & manufacturing defects" },
+        ];
+        const termsRendered = termsData.map(r => ({
+          label: r.label,
+          valLines: wrap(r.value, fontR, TFS, TVALFITW),
+        }));
+        let termsBoxH = TVPAD + 8;
+        for (let ri = 0; ri < termsRendered.length; ri++) {
+          termsBoxH += termsRendered[ri].valLines.length * TLH;
+          if (ri < termsRendered.length - 1) termsBoxH += ROW_GAP;
+        }
+        termsBoxH += TVPAD;
+        const termsBoxY = curY - termsBoxH;
+        page.drawRectangle({
+          x: ML, y: termsBoxY, width: CW, height: termsBoxH,
+          color: rgb(0.97, 0.97, 0.97), borderColor: accent, borderWidth: 0.8,
+        });
+        let tty = curY - TVPAD - TFS - 1;
+        for (let ri = 0; ri < termsRendered.length; ri++) {
+          const { label, valLines } = termsRendered[ri];
+          page.drawText(label, { x: ML + TLPAD, y: tty, size: TFS, font: fontB, color: accent });
+          for (let li = 0; li < valLines.length; li++) {
+            page.drawText(valLines[li], {
+              x: ML + TLPAD + TLABELW, y: tty - li * TLH,
+              size: TFS, font: fontR, color: C_DARK,
+            });
+          }
+          tty -= valLines.length * TLH + (ri < termsRendered.length - 1 ? ROW_GAP : 0);
+        }
+        curY = termsBoxY - 8;
+      }
 
       // ── Closing message ──────────────────────────────────────────────────
-      curY -= 14;
+      curY -= 10;
       const closeMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order. Should you have any enquiries, please do not hesitate to contact us.";
       for (const cl of wrap(closeMsg, fontR, 8, CW - 40)) {
         const clW = fontR.widthOfTextAtSize(cl, 8);
@@ -528,6 +601,179 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
           page.drawText(line, { x: ML + 8, y: ny, size: 9.5, font: fontR, color: C_DARK });
           ny -= 12;
         }
+      }
+    }
+  }
+
+  // ── Financial summary page (overflow totals when items fill page 1) ───────
+  if (needsSummaryPage) {
+    const sp  = pdfDoc.addPage([W, H]);
+    const spi = pageGroups.length;
+
+    // Footer
+    hLine(sp, MB + 22, ML, W - MR, accent, 0.6);
+    sp.drawText("Computer generated document. No signature required.", {
+      x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_LITE,
+    });
+    const sPgText = `${q.quotationNo}  ·  Page ${spi + 1} of ${totalPages}`;
+    const sPgW    = fontR.widthOfTextAtSize(sPgText, 7.5);
+    sp.drawText(sPgText, { x: W - MR - sPgW, y: MB + 10, size: 7.5, font: fontR, color: C_LITE });
+
+    // Full company header — same as every other page so the summary page
+    // looks like a proper document continuation, not a floating grand total.
+    let curY = H - MT;
+    drawCompanyHeader({
+      page: sp, startY: curY, accent, fontR, fontB, logoImg,
+      companyName: coName, companyAddress: orgCompanyAddress,
+      phone: orgPhone, email: orgEmail, website: orgWebsite,
+      oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
+      mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
+      nameSize, nameBold: !!(data.orgNameBold ?? 1),
+      nameUppercase: !!(data.orgNameUppercase ?? 0),
+      headerLayout: hLayout, docLabel: "",
+      docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
+      docLabelAlign: "center",
+      logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
+      mofNo: orgMofNo, inlineSsmMdaTaxStar: true, inlineContactsStar: true,
+    });
+    curY -= HEADER_BLOCK;
+    {
+      const qlFontSP = !!(data.orgQuotationLabelBold ?? 1) ? fontB : fontR;
+      const qlWSP    = qlFontSP.widthOfTextAtSize(QL_TEXT, QL_SIZE);
+      sp.drawText(QL_TEXT, { x: W - MR - qlWSP, y: curY + QL_SIZE + 2, size: QL_SIZE, font: qlFontSP, color: accent });
+    }
+    hLine(sp, curY, ML, W - MR, accent, 1.2);
+    curY -= DIVIDER_GAP;
+
+    // ── Totals + closing ─────────────────────────────────────────────────
+    curY -= 10;
+    hLine(sp, curY, ML, W - MR, C_LINE, 0.6);
+    curY -= 16;
+
+    let sBankEndY = curY;
+    if (bank) {
+      let by = curY;
+      sp.drawText("PAYMENT TO", { x: ML, y: by, size: 7.5, font: fontB, color: accent });
+      by -= 13;
+      for (const [lbl, val] of [
+        ["Bank", bank.bankName ?? ""],
+        ["Account Name", bank.accountHolder ?? ""],
+        ["Account No.", bank.accountNo ?? ""],
+      ] as [string, string][]) {
+        sp.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_LITE });
+        sp.drawText(trunc(String(val), fontB, 9.5, 170), { x: ML + 76, y: by, size: 9.5, font: fontB, color: C_DARK });
+        by -= 13;
+      }
+      sBankEndY = by;
+    }
+
+    const sTOT_ROW_H   = 20;
+    const sGRAND_ROW_H = 22;
+    const sTotW  = 260;
+    const sTotX  = W - MR - sTotW;
+    const sTPADX = 10;
+    let ty = curY;
+    const sTotItems: [string, string][] = [];
+    if (showDisc && itemDiscPerSet > 0) {
+      sTotItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
+      sTotItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
+      sTotItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
+    } else {
+      sTotItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
+    }
+    if (sets > 1) sTotItems.push([`× ${sets} sets`, fmtM(subtotal)]);
+    if (discAmt > 0) {
+      sTotItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
+      sTotItems.push(["After Discount", fmtM(afterDisc)]);
+    }
+    if (sstAmt > 0) sTotItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
+
+    const sTotalPanelH = sTotItems.length * sTOT_ROW_H + sGRAND_ROW_H;
+    sp.drawRectangle({ x: sTotX, y: ty - sTotalPanelH, width: sTotW, height: sTotalPanelH, color: rgb(1, 1, 1) });
+    for (let i = 0; i < sTotItems.length; i++) {
+      const [lbl, val] = sTotItems[i];
+      const rowBottom  = ty - sTOT_ROW_H;
+      if (i % 2 === 0) {
+        sp.drawRectangle({ x: sTotX, y: rowBottom, width: sTotW, height: sTOT_ROW_H, color: rgb(0.95, 0.95, 0.95) });
+      }
+      const textY = rowBottom + 6;
+      sp.drawText(lbl, { x: sTotX + sTPADX, y: textY, size: 9.5, font: fontR, color: C_MID });
+      const vw = fontR.widthOfTextAtSize(val, 9.5);
+      sp.drawText(val, { x: sTotX + sTotW - sTPADX - vw, y: textY, size: 9.5, font: fontR, color: C_DARK });
+      ty -= sTOT_ROW_H;
+    }
+    const sGtRowBottom = ty - sGRAND_ROW_H;
+    sp.drawRectangle({ x: sTotX, y: sGtRowBottom, width: sTotW, height: sGRAND_ROW_H, color: accent });
+    const sGtTextY = sGtRowBottom + 7;
+    sp.drawText("GRAND TOTAL", { x: sTotX + sTPADX, y: sGtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
+    const sGtAmt  = fmtM(grand);
+    const sGtAmtW = fontB.widthOfTextAtSize(sGtAmt, 9.5);
+    sp.drawText(sGtAmt, { x: sTotX + sTotW - sTPADX - sGtAmtW, y: sGtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
+    ty -= sGRAND_ROW_H;
+    sp.drawRectangle({ x: sTotX, y: ty, width: sTotW, height: sTotalPanelH, borderColor: accent, borderWidth: 0.6 });
+    curY = Math.min(ty, sBankEndY) - 6;
+
+    curY -= 10;
+    {
+      const TFS = 8.5;
+      const TLPAD = 10; const TRPAD = 10; const TVPAD = 8; const ROW_GAP = 4; const TLH = 12;
+      const TLABELW = Math.max(
+        fontB.widthOfTextAtSize("Brand", TFS),
+        fontB.widthOfTextAtSize("Delivery", TFS),
+        fontB.widthOfTextAtSize("Warranty", TFS),
+      ) + 14;
+      const TVALFITW = CW - TLPAD - TLABELW - TRPAD;
+      const termsData: { label: string; value: string }[] = [
+        { label: "Brand",    value: brandText },
+        { label: "Delivery", value: "Ex-stock subject to availability, otherwise 8 - 12 weeks" },
+        { label: "Warranty", value: "5 Years against material & manufacturing defects" },
+      ];
+      const termsRendered = termsData.map(r => ({
+        label: r.label, valLines: wrap(r.value, fontR, TFS, TVALFITW),
+      }));
+      let termsBoxH = TVPAD + 8;
+      for (let ri = 0; ri < termsRendered.length; ri++) {
+        termsBoxH += termsRendered[ri].valLines.length * TLH;
+        if (ri < termsRendered.length - 1) termsBoxH += ROW_GAP;
+      }
+      termsBoxH += TVPAD;
+      const termsBoxY = curY - termsBoxH;
+      sp.drawRectangle({
+        x: ML, y: termsBoxY, width: CW, height: termsBoxH,
+        color: rgb(0.97, 0.97, 0.97), borderColor: accent, borderWidth: 0.8,
+      });
+      let tty = curY - TVPAD - TFS - 1;
+      for (let ri = 0; ri < termsRendered.length; ri++) {
+        const { label, valLines } = termsRendered[ri];
+        sp.drawText(label, { x: ML + TLPAD, y: tty, size: TFS, font: fontB, color: accent });
+        for (let li = 0; li < valLines.length; li++) {
+          sp.drawText(valLines[li], {
+            x: ML + TLPAD + TLABELW, y: tty - li * TLH, size: TFS, font: fontR, color: C_DARK,
+          });
+        }
+        tty -= valLines.length * TLH + (ri < termsRendered.length - 1 ? ROW_GAP : 0);
+      }
+      curY = termsBoxY - 8;
+    }
+
+    curY -= 10;
+    const sCloseMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order. Should you have any enquiries, please do not hesitate to contact us.";
+    for (const cl of wrap(sCloseMsg, fontR, 8, CW - 40)) {
+      const clW = fontR.widthOfTextAtSize(cl, 8);
+      sp.drawText(cl, { x: (W - clW) / 2, y: curY, size: 8, font: fontR, color: C_LITE });
+      curY -= 12;
+    }
+
+    if (q.notes) {
+      curY -= 10;
+      const nl    = wrap(q.notes, fontR, 9.5, CW - 20);
+      const noteH = nl.length * 12 + 20;
+      sp.drawRectangle({ x: ML, y: curY - noteH, width: 3, height: noteH, color: accent });
+      sp.drawText("NOTES", { x: ML + 8, y: curY - 10, size: 7.5, font: fontB, color: accent });
+      let ny = curY - 22;
+      for (const line of nl) {
+        sp.drawText(line, { x: ML + 8, y: ny, size: 9.5, font: fontR, color: C_DARK });
+        ny -= 12;
       }
     }
   }
