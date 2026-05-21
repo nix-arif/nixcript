@@ -206,6 +206,31 @@ export async function getProductDetailsByCodes(codes: string[]) {
   });
 }
 
+export async function getProductPriceDetails(codes: string[]) {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) throw new Error("No active organization");
+  if (!codes.length) return [];
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const rows = await db
+    .select({
+      productCode: product.productCode,
+      description: product.description,
+      unitPrice: product.unitPrice,
+      uom: product.uom,
+      mdaRegistrationNo: product.mdaRegistrationNo,
+    })
+    .from(product)
+    .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, codes)));
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (seen.has(r.productCode)) return false;
+    seen.add(r.productCode);
+    return true;
+  });
+}
+
 export async function getDistinctBrands() {
   const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");

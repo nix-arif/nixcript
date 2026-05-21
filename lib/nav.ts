@@ -120,6 +120,11 @@ export const navConfig: NavGroup[] = [
         url: "/dashboard/products/mda-certificate-generator",
         permission: "product:read",
       },
+      {
+        title: "Items Price Check",
+        url: "/dashboard/products/items-price",
+        permission: "product:read",
+      },
     ],
   },
   {
