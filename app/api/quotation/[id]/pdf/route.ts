@@ -12,11 +12,13 @@ interface Props {
 }
 
 const generators: Record<string, (data: any) => Promise<Uint8Array>> = {
-  affirma: generateQuotationAffirma,
-  nexus:   generateQuotationNexus,
-  slate:   generateQuotationSlate,
-  aura:    generateQuotationAura,
-  zinc:    generateQuotationZinc,
+  affirma:     generateQuotationAffirma,
+  nexus:       generateQuotationNexus,
+  "nexus-ocean": generateQuotationNexus,
+  "nexus-wine":  generateQuotationNexus,
+  slate:       generateQuotationSlate,
+  aura:        generateQuotationAura,
+  zinc:        generateQuotationZinc,
 };
 
 export async function GET(_req: Request, { params }: Props) {

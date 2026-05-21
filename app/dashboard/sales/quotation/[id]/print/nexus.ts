@@ -99,15 +99,23 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
     orgBankStatementUrl, orgLampiran12Url, orgLampiran13Url,
   } = data;
 
-  const accentColor = orgBrandColor
-    ? (() => {
-        const hex = orgBrandColor.replace("#", "");
-        const r = parseInt(hex.slice(0, 2), 16) / 255;
-        const g = parseInt(hex.slice(2, 4), 16) / 255;
-        const b = parseInt(hex.slice(4, 6), 16) / 255;
-        return rgb(r, g, b);
-      })()
-    : rgb(0.06, 0.15, 0.32);
+  // Theme 1 "nexus"       — Navy   #0f2650  (default, respects orgBrandColor)
+  // Theme 2 "nexus-ocean" — Teal   #0a5c70
+  // Theme 3 "nexus-wine"  — Wine   #610d1c
+  const accentColor = (() => {
+    const tpl = data.orgPdfTemplate ?? "nexus";
+    if (tpl === "nexus-ocean") return rgb(0.04, 0.36, 0.44);
+    if (tpl === "nexus-wine")  return rgb(0.38, 0.05, 0.11);
+    return orgBrandColor
+      ? (() => {
+          const hex = orgBrandColor.replace("#", "");
+          const r = parseInt(hex.slice(0, 2), 16) / 255;
+          const g = parseInt(hex.slice(2, 4), 16) / 255;
+          const b = parseInt(hex.slice(4, 6), 16) / 255;
+          return rgb(r, g, b);
+        })()
+      : rgb(0.06, 0.15, 0.32);
+  })();
 
   const cust     = q.customerSnapshot as any;
   const bankList = (orgBankingInfo ?? []) as any[];
