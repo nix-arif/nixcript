@@ -20,14 +20,13 @@ import { ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 import CreateOrganizationForm from "./dialog-forms/create-organization-form";
 import Image from "next/image";
 import { authClient } from "@/lib/auth-client";
-import { Spinner } from "./ui/spinner";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store/use-app-store";
 
 export function OrganizationSwitcher() {
   const { isMobile } = useSidebar();
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false);
-  const [isSwitching, setIsSwitching] = React.useState(false);
+  const [pendingOrgId, setPendingOrgId] = React.useState<string | null>(null);
   const router = useRouter();
   const { clearPermissions } = useAppStore();
 
@@ -126,22 +125,30 @@ export function OrganizationSwitcher() {
     );
   }
 
-  const handleSwitchOrg = async (organizationId: string) => {
+  // Optimistic display — show the selected org immediately while setActive runs
+  const displayOrg = pendingOrgId
+    ? (organizationList?.find(o => o.id === pendingOrgId) ?? activeOrganization)
+    : activeOrganization;
+
+  const handleSwitchOrg = (organizationId: string) => {
     if (organizationId === activeOrganization.id) return;
-    try {
-      setIsSwitching(true);
-      await authClient.organization.setActive({ organizationId });
-      // Clear stale permissions immediately so new org gets fresh ones
-      clearPermissions();
-      // Navigate — server component re-renders with new org context automatically
-      // No need to await refetchActive() or call router.refresh() (redundant)
-      router.push("/dashboard");
+    if (pendingOrgId === organizationId) return;
+
+    // 1. Instant: update sidebar display + navigate
+    setPendingOrgId(organizationId);
+    clearPermissions();
+    router.push("/dashboard");
+
+    // 2. Background: commit the switch, then refresh server components
+    authClient.organization.setActive({ organizationId }).then(() => {
       refetchActive();
-    } catch (err) {
+      router.refresh();
+    }).catch((err) => {
       console.error("Failed to switch organization", err);
-    } finally {
-      setIsSwitching(false);
-    }
+      setPendingOrgId(null);
+    }).finally(() => {
+      setPendingOrgId(null);
+    });
   };
 
   return (
@@ -153,35 +160,26 @@ export function OrganizationSwitcher() {
               <SidebarMenuButton
                 size="lg"
                 className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-                disabled={isSwitching}
               >
-                {isSwitching ? (
-                  <div className="flex items-center justify-center w-full">
-                    <Spinner /> Switching Company
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex aspect-square size-8 items-center justify-center rounded-lg text-sidebar-primary-foreground bg-transparent!">
-                      {activeOrganization.logo ? (
-                        <Image
-                          src={activeOrganization.logo}
-                          alt={activeOrganization.name}
-                          width={32}
-                          height={32}
-                          className="bg-transparent!"
-                        />
-                      ) : (
-                        activeOrganization.name[0]
-                      )}
-                    </div>
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-medium">
-                        {activeOrganization.name}
-                      </span>
-                    </div>
-                    <ChevronsUpDownIcon className="ml-auto" />
-                  </>
-                )}
+                <div className="flex aspect-square size-8 items-center justify-center rounded-lg text-sidebar-primary-foreground bg-transparent!">
+                  {displayOrg?.logo ? (
+                    <Image
+                      src={displayOrg.logo}
+                      alt={displayOrg.name}
+                      width={32}
+                      height={32}
+                      className="bg-transparent!"
+                    />
+                  ) : (
+                    displayOrg?.name[0]
+                  )}
+                </div>
+                <div className="grid flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-medium">
+                    {displayOrg?.name}
+                  </span>
+                </div>
+                <ChevronsUpDownIcon className="ml-auto" />
               </SidebarMenuButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent

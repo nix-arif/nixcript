@@ -44,25 +44,17 @@ export function LoginForm({
   });
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
-    // const { success, message } = await signIn(values.email, values.password);
-    // if (success) {
-    //   toast.success(message);
-    //   router.push("/dashboard");
-    // } else {
-    //   toast.error(message);
-    // }
     const { data, error } = await authClient.signIn.email({
       email: values.email,
       password: values.password,
-      fetchOptions: {
-        onSuccess: () => {
-          router.push("/dashboard");
-        },
-        onError: (ctx) => {
-          toast.error(ctx.error.message ?? "An unknown error occurred");
-        },
-      },
     });
+
+    if (error) {
+      toast.error(error.message ?? "An unknown error occurred");
+      return;
+    }
+
+    router.replace("/dashboard");
   };
 
   return (
