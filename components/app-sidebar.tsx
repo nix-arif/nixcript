@@ -24,7 +24,7 @@ import { useAppStore } from "@/lib/store/use-app-store";
 // ];
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { permissions } = useAppStore();
+  const { permissions, permissionsLoading } = useAppStore();
   const filteredNav = filterNav(navConfig, permissions);
 
   // console.log("app-sidebar.tsx line 30", permissions);
@@ -36,7 +36,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <OrganizationSwitcher />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={filteredNav} />
+        <div className={permissionsLoading ? "pointer-events-none opacity-40 transition-opacity" : "transition-opacity"}>
+          <NavMain items={filteredNav} />
+        </div>
         {/* <NavProjects projects={projects} /> */}
       </SidebarContent>
       <SidebarFooter>

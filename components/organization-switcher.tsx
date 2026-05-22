@@ -142,18 +142,21 @@ export function OrganizationSwitcher() {
     if (organizationId === activeOrganization.id) return;
     if (pendingOrgId === organizationId) return;
 
-    // 1. Instant: update sidebar display + navigate (keep old permissions visible during switch)
+    // 1. Instant: update sidebar display + navigate
     setPendingOrgId(organizationId);
     router.push("/dashboard");
 
-    // 2. Background: commit the switch, then fetch new permissions + refresh server components
+    // 2. Fetch new permissions immediately — runs in parallel with setActive
+    //    because /api/permissions only needs userId (stable), not the active org cookie
+    fetchPermissions(organizationId);
+
+    // 3. Commit the switch in background, then refresh server components
     authClient.organization.setActive({ organizationId }).then(() => {
-      clearPermissions();
-      fetchPermissions(organizationId); // fetch new org permissions directly — no effect-chain delay
       refetchActive();
       router.refresh();
     }).catch((err) => {
       console.error("Failed to switch organization", err);
+      clearPermissions();
       setPendingOrgId(null);
     });
   };
