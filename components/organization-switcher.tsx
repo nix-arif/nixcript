@@ -29,7 +29,7 @@ export function OrganizationSwitcher() {
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false);
   const [pendingOrgId, setPendingOrgId] = React.useState<string | null>(null);
   const router = useRouter();
-  const { clearPermissions } = useAppStore();
+  const { clearPermissions, fetchPermissions } = useAppStore();
 
   const {
     data: activeOrganization,
@@ -75,6 +75,13 @@ export function OrganizationSwitcher() {
         .then(() => refetchActive());
     }
   }, [activeOrganization, organizationList]);
+
+  // Clear optimistic state only once the real activeOrganization has caught up
+  React.useEffect(() => {
+    if (pendingOrgId && activeOrganization?.id === pendingOrgId) {
+      setPendingOrgId(null);
+    }
+  }, [activeOrganization?.id, pendingOrgId]);
 
   // ✅ Conditional returns only after ALL hooks
   if (isListPending || isActivePending) {
@@ -135,19 +142,18 @@ export function OrganizationSwitcher() {
     if (organizationId === activeOrganization.id) return;
     if (pendingOrgId === organizationId) return;
 
-    // 1. Instant: update sidebar display + navigate
+    // 1. Instant: update sidebar display + navigate (keep old permissions visible during switch)
     setPendingOrgId(organizationId);
-    clearPermissions();
     router.push("/dashboard");
 
-    // 2. Background: commit the switch, then refresh server components
+    // 2. Background: commit the switch, then fetch new permissions + refresh server components
     authClient.organization.setActive({ organizationId }).then(() => {
+      clearPermissions();
+      fetchPermissions(organizationId); // fetch new org permissions directly — no effect-chain delay
       refetchActive();
       router.refresh();
     }).catch((err) => {
       console.error("Failed to switch organization", err);
-      setPendingOrgId(null);
-    }).finally(() => {
       setPendingOrgId(null);
     });
   };
