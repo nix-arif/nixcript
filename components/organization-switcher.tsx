@@ -20,6 +20,7 @@ import { ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 import CreateOrganizationForm from "./dialog-forms/create-organization-form";
 import Image from "next/image";
 import { authClient } from "@/lib/auth-client";
+import { Spinner } from "./ui/spinner";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store/use-app-store";
 
