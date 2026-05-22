@@ -4,6 +4,10 @@ const nextConfig: NextConfig = {
   /* config options here */
   experimental: {
     authInterrupts: true,
+    staleTimes: {
+      dynamic: 30,  // keep dynamic pages in router cache for 30s — back button is instant
+      static: 180,
+    },
   },
   serverExternalPackages: ["pdfjs-dist", "pdf-parse"],
   allowedDevOrigins: [

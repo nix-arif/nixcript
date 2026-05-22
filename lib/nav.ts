@@ -251,8 +251,6 @@ export function filterNav(
   if (isOwner) return nav;
 
   const permSet = new Set(userPermissions);
-  console.log("nav.ts line 149", permSet);
-
   return nav
     .map((group) => ({
       ...group,

@@ -22,12 +22,14 @@ import Image from "next/image";
 import { authClient } from "@/lib/auth-client";
 import { Spinner } from "./ui/spinner";
 import { useRouter } from "next/navigation";
+import { useAppStore } from "@/lib/store/use-app-store";
 
 export function OrganizationSwitcher() {
   const { isMobile } = useSidebar();
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false);
   const [isSwitching, setIsSwitching] = React.useState(false);
   const router = useRouter();
+  const { clearPermissions } = useAppStore();
 
   const {
     data: activeOrganization,
@@ -65,6 +67,14 @@ export function OrganizationSwitcher() {
       window.removeEventListener("pageshow", handlePageShow);
     };
   }, [refetchActive, refetchList]);
+
+  React.useEffect(() => {
+    if (!activeOrganization && organizationList && organizationList.length > 0) {
+      authClient.organization
+        .setActive({ organizationId: organizationList[0].id })
+        .then(() => refetchActive());
+    }
+  }, [activeOrganization, organizationList]);
 
   // ✅ Conditional returns only after ALL hooks
   if (isListPending || isActivePending) {
@@ -107,10 +117,6 @@ export function OrganizationSwitcher() {
   }
 
   if (!activeOrganization) {
-    authClient.organization
-      .setActive({ organizationId: organizationList[0].id })
-      .then(() => refetchActive());
-
     return (
       <SidebarMenu>
         <SidebarMenuButton size="lg">
@@ -125,9 +131,12 @@ export function OrganizationSwitcher() {
     try {
       setIsSwitching(true);
       await authClient.organization.setActive({ organizationId });
-      await refetchActive();
+      // Clear stale permissions immediately so new org gets fresh ones
+      clearPermissions();
+      // Navigate — server component re-renders with new org context automatically
+      // No need to await refetchActive() or call router.refresh() (redundant)
       router.push("/dashboard");
-      router.refresh();
+      refetchActive();
     } catch (err) {
       console.error("Failed to switch organization", err);
     } finally {

@@ -368,6 +368,31 @@ export function DocumentSettingsClient({ data }: Props) {
                     </div>
                   ),
                 },
+                {
+                  id: "ember",
+                  label: "Ember",
+                  desc: "Full-bleed band · company & client merged",
+                  preview: (
+                    <div className="w-full h-10 rounded overflow-hidden flex flex-col">
+                      <div className="h-5 w-full px-1.5 flex items-center justify-between" style={{ backgroundColor: brandColor }}>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="h-1.5 w-10 rounded-sm bg-white/80" />
+                          <div className="h-0.5 w-6 rounded-sm bg-white/40" />
+                        </div>
+                        <div className="flex flex-col gap-0.5 items-end">
+                          <div className="h-0.5 w-4 rounded-sm bg-white/30" />
+                          <div className="h-1 w-5 rounded-sm bg-white/60" />
+                        </div>
+                      </div>
+                      <div className="h-px w-full" style={{ backgroundColor: brandColor, opacity: 0.3 }} />
+                      <div className="flex-1 space-y-px px-1 pt-0.5 bg-white">
+                        <div className="h-1 rounded-sm" style={{ backgroundColor: brandColor, opacity: 0.15 }} />
+                        <div className="h-1 rounded-sm bg-gray-50" />
+                        <div className="h-1 rounded-sm bg-white" />
+                      </div>
+                    </div>
+                  ),
+                },
               ] as { id: string; label: string; desc: string; preview: ReactNode }[]).map((t) => {
                 const active = pdfTemplate === t.id;
                 return (

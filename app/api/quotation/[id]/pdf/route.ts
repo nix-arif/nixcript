@@ -4,6 +4,7 @@ import { generateQuotationNexus } from "@/app/dashboard/sales/quotation/[id]/pri
 import { generateQuotationSlate } from "@/app/dashboard/sales/quotation/[id]/print/slate";
 import { generateQuotationAura } from "@/app/dashboard/sales/quotation/[id]/print/aura";
 import { generateQuotationZinc } from "@/app/dashboard/sales/quotation/[id]/print/zinc";
+import { generateQuotationEmber } from "@/app/dashboard/sales/quotation/[id]/print/ember";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -12,13 +13,14 @@ interface Props {
 }
 
 const generators: Record<string, (data: any) => Promise<Uint8Array>> = {
-  affirma:     generateQuotationAffirma,
-  nexus:       generateQuotationNexus,
+  affirma:       generateQuotationAffirma,
+  nexus:         generateQuotationNexus,
   "nexus-ocean": generateQuotationNexus,
   "nexus-wine":  generateQuotationNexus,
-  slate:       generateQuotationSlate,
-  aura:        generateQuotationAura,
-  zinc:        generateQuotationZinc,
+  slate:         generateQuotationSlate,
+  aura:          generateQuotationAura,
+  zinc:          generateQuotationZinc,
+  ember:         generateQuotationEmber,
 };
 
 export async function GET(_req: Request, { params }: Props) {

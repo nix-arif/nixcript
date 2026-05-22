@@ -23,7 +23,5 @@ export async function GET(req: NextRequest) {
 
   // Always use session.user.id — never trust client-passed userId
   const permissions = await getUserPermissions(session.user.id, organizationId);
-  console.log("\x1b[35mThis is permission:\x1b[0m", permissions);
-
   return NextResponse.json({ permissions });
 }
