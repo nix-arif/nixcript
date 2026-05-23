@@ -3,14 +3,20 @@
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useState } from "react";
-import { deleteSalesOrder, updateSalesOrderStatus, type SalesOrderWithItems } from "@/server/sales-order";
+import {
+  deleteSalesOrder,
+  approveSalesOrder,
+  rejectSalesOrder,
+  recallSalesOrder,
+  type SalesOrderWithItems,
+} from "@/server/sales-order";
 import { type QuotationBasic } from "@/server/quotation";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, MapPinIcon,
-  FileTextIcon, PackageIcon,
+  FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +31,7 @@ const SO_STATUS: Record<string, { label: string; className: string }> = {
   confirmed: { label: "Confirmed", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
   fulfilled: { label: "Fulfilled", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
   cancelled: { label: "Cancelled", className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
+  recalled:  { label: "Recalled",  className: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -39,11 +46,21 @@ const QT_STATUS: Record<string, { label: string; className: string }> = {
   published: { label: "Published", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
 };
 
-export function SalesOrderDetailClient({ order, linkedQuotation }: { order: SalesOrderWithItems; linkedQuotation: QuotationBasic | null }) {
+export function SalesOrderDetailClient({
+  order,
+  linkedQuotation,
+  permissions,
+}: {
+  order: SalesOrderWithItems;
+  linkedQuotation: QuotationBasic | null;
+  permissions: string[];
+}) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
-  const [status, setStatus] = useState(order.status);
-  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [status, setStatus] = useState(order.status ?? "draft");
+  const [actioning, setActioning] = useState<"approve" | "reject" | "recall" | null>(null);
+
+  const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
   const snap = order.customerSnapshot as any;
   const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
@@ -61,16 +78,44 @@ export function SalesOrderDetailClient({ order, linkedQuotation }: { order: Sale
     }
   }
 
-  async function handleStatusChange(newStatus: string) {
-    setUpdatingStatus(true);
+  async function handleApprove() {
+    setActioning("approve");
     try {
-      await updateSalesOrderStatus(order.id, newStatus);
-      setStatus(newStatus);
-      toast.success("Status updated");
+      await approveSalesOrder(order.id);
+      setStatus("confirmed");
+      toast.success("Sales order approved");
     } catch (e: any) {
       toast.error(e.message);
     } finally {
-      setUpdatingStatus(false);
+      setActioning(null);
+    }
+  }
+
+  async function handleReject() {
+    if (!confirm(`Reject ${order.soNo}? This will mark it as cancelled.`)) return;
+    setActioning("reject");
+    try {
+      await rejectSalesOrder(order.id);
+      setStatus("cancelled");
+      toast.success("Sales order rejected");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setActioning(null);
+    }
+  }
+
+  async function handleRecall() {
+    if (!confirm(`Recall ${order.soNo}? This will return it to draft.`)) return;
+    setActioning("recall");
+    try {
+      await recallSalesOrder(order.id);
+      setStatus("draft");
+      toast.success("Sales order recalled");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setActioning(null);
     }
   }
 
@@ -182,16 +227,43 @@ export function SalesOrderDetailClient({ order, linkedQuotation }: { order: Sale
           <section className="border border-border rounded-xl p-4">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Status</h2>
             <div className="mb-3"><StatusBadge status={status} /></div>
-            <select
-              value={status}
-              onChange={(e) => handleStatusChange(e.target.value)}
-              disabled={updatingStatus}
-              className="w-full h-8 rounded-md border border-border bg-background px-2.5 text-xs"
-            >
-              {Object.entries(SO_STATUS).map(([k, v]) => (
-                <option key={k} value={k}>{v.label}</option>
-              ))}
-            </select>
+            <div className="flex flex-col gap-2">
+              {status === "draft" && can("sales-order:approve") && (
+                <Button
+                  size="sm"
+                  className="w-full gap-1.5 h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                  onClick={handleApprove}
+                  disabled={actioning !== null}
+                >
+                  <CheckIcon className="w-3.5 h-3.5" />
+                  {actioning === "approve" ? "Approving…" : "Approve"}
+                </Button>
+              )}
+              {status === "draft" && can("sales-order:reject") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full gap-1.5 h-8 text-xs text-destructive hover:text-destructive border-destructive/30 hover:border-destructive/60"
+                  onClick={handleReject}
+                  disabled={actioning !== null}
+                >
+                  <XIcon className="w-3.5 h-3.5" />
+                  {actioning === "reject" ? "Rejecting…" : "Reject"}
+                </Button>
+              )}
+              {status === "confirmed" && can("sales-order:recall") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full gap-1.5 h-8 text-xs"
+                  onClick={handleRecall}
+                  disabled={actioning !== null}
+                >
+                  <RotateCcwIcon className="w-3.5 h-3.5" />
+                  {actioning === "recall" ? "Recalling…" : "Recall"}
+                </Button>
+              )}
+            </div>
           </section>
 
           {/* Pricing */}

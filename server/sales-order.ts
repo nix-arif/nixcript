@@ -419,3 +419,48 @@ export async function updateSalesOrderStatus(id: string, status: string): Promis
     .set({ status })
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 }
+
+export async function approveSalesOrder(id: string): Promise<void> {
+  const { orgId } = await requireAccess("sales-order:approve");
+
+  const result = await db
+    .update(salesOrder)
+    .set({ status: "confirmed" })
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "draft")))
+    .returning({ id: salesOrder.id });
+
+  if (result.length === 0) throw new Error("Order not found or is not in draft status");
+
+  revalidatePath(`/dashboard/sales/order/${id}`);
+  revalidatePath("/dashboard/sales/order");
+}
+
+export async function rejectSalesOrder(id: string): Promise<void> {
+  const { orgId } = await requireAccess("sales-order:reject");
+
+  const result = await db
+    .update(salesOrder)
+    .set({ status: "cancelled" })
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "draft")))
+    .returning({ id: salesOrder.id });
+
+  if (result.length === 0) throw new Error("Order not found or is not in draft status");
+
+  revalidatePath(`/dashboard/sales/order/${id}`);
+  revalidatePath("/dashboard/sales/order");
+}
+
+export async function recallSalesOrder(id: string): Promise<void> {
+  const { orgId } = await requireAccess("sales-order:recall");
+
+  const result = await db
+    .update(salesOrder)
+    .set({ status: "draft" })
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "confirmed")))
+    .returning({ id: salesOrder.id });
+
+  if (result.length === 0) throw new Error("Order not found or is not in confirmed status");
+
+  revalidatePath(`/dashboard/sales/order/${id}`);
+  revalidatePath("/dashboard/sales/order");
+}

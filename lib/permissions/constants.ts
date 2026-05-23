@@ -10,10 +10,13 @@ export const ALL_PERMISSIONS = [
   { key: "quotation:delete", label: "Delete Quotation" },
 
   // Sales Order
-  { key: "sales-order:read",   label: "View Sales Orders" },
-  { key: "sales-order:create", label: "Create Sales Order" },
-  { key: "sales-order:update", label: "Update Sales Order" },
-  { key: "sales-order:delete", label: "Delete Sales Order" },
+  { key: "sales-order:read",    label: "View Sales Orders" },
+  { key: "sales-order:create",  label: "Create Sales Order" },
+  { key: "sales-order:update",  label: "Update Sales Order" },
+  { key: "sales-order:delete",  label: "Delete Sales Order" },
+  { key: "sales-order:approve", label: "Approve Sales Order" },
+  { key: "sales-order:reject",  label: "Reject Sales Order" },
+  { key: "sales-order:recall",  label: "Recall Sales Order" },
 
   // Customer PO
   { key: "customer-po:read",   label: "View Customer POs" },
@@ -144,6 +147,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     manager: [
       "quotation:read", "quotation:create", "quotation:update", "quotation:delete",
       "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
+      "sales-order:approve", "sales-order:reject", "sales-order:recall",
       "customer-po:read", "customer-po:create", "customer-po:update", "customer-po:delete",
       "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
@@ -180,6 +184,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     manager: [
       "quotation:read", "quotation:create", "quotation:update", "quotation:delete",
       "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
+      "sales-order:approve", "sales-order:reject", "sales-order:recall",
       "customer-po:read", "customer-po:create", "customer-po:update", "customer-po:delete",
       "delivery-order:read",
       "invoice:read",
