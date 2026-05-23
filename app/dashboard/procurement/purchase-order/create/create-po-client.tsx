@@ -183,7 +183,7 @@ export function CreatePurchaseOrderClient({ suppliers }: Props) {
   const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <PageHeader
         title="New Purchase Order"
         description="Create a new purchase order to a supplier"

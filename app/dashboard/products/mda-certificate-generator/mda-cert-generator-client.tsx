@@ -137,7 +137,7 @@ export function MdaCertGeneratorClient() {
   const uniqueCodes = new Set(rows.map((r) => r.productCode)).size;
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <PageHeader
         title="MDA Certificate Generator"
         description="Upload a spreadsheet with product codes to generate a merged MDA certificate PDF with highlighted rows"

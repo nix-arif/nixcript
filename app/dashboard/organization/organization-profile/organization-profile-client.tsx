@@ -387,7 +387,7 @@ export function OrganizationProfileClient({ data }: Props) {
     });
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       <PageHeader
         title="Organization profile"
         description="Manage company information, certificates and compliance documents"

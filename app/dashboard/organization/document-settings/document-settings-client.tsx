@@ -4,13 +4,41 @@ import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { upsertOrganizationProfile, FullOrganizationProfile } from "@/server/organization-profile";
+import { upsertDocumentNumberingSettings, type NumberingSetting } from "@/server/document-numbering";
+import { buildDocumentNo, DOC_TYPE_DEFAULTS } from "@/lib/document-numbering";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SaveIcon, PaletteIcon, LayoutTemplateIcon, TableIcon, TypeIcon, HashIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+type ConfigurableDocType = "so" | "po" | "do" | "inv";
+const DOC_TYPES: ConfigurableDocType[] = ["so", "po", "do", "inv"];
+
+interface NumberingState {
+  prefix: string;
+  docCode: string;
+  separator: string;
+  includeYear: boolean;
+  paddingLength: number;
+}
+
+function makeDefaultNumberingState(
+  docType: ConfigurableDocType,
+  existing: NumberingSetting | undefined,
+  orgSlug: string,
+): NumberingState {
+  return {
+    prefix: existing?.prefix ?? orgSlug.toUpperCase(),
+    docCode: existing?.docCode ?? DOC_TYPE_DEFAULTS[docType].docCode,
+    separator: existing?.separator ?? "-",
+    includeYear: existing ? existing.includeYear === 1 : true,
+    paddingLength: existing?.paddingLength ?? 4,
+  };
+}
+
 interface Props {
   data: FullOrganizationProfile;
+  numberingSettings: NumberingSetting[];
 }
 
 function SectionHeader({ icon: Icon, title }: { icon: any; title: string }) {
@@ -22,9 +50,25 @@ function SectionHeader({ icon: Icon, title }: { icon: any; title: string }) {
   );
 }
 
-export function DocumentSettingsClient({ data }: Props) {
+export function DocumentSettingsClient({ data, numberingSettings }: Props) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
+
+  // Document numbering per doc type
+  const orgSlug = (data.slug ?? "ORG").slice(0, 3);
+  const [numbering, setNumbering] = useState<Record<ConfigurableDocType, NumberingState>>(() => {
+    const byType = Object.fromEntries(numberingSettings.map((s) => [s.documentType, s])) as Record<string, NumberingSetting>;
+    return {
+      so:  makeDefaultNumberingState("so",  byType["so"],  orgSlug),
+      po:  makeDefaultNumberingState("po",  byType["po"],  orgSlug),
+      do:  makeDefaultNumberingState("do",  byType["do"],  orgSlug),
+      inv: makeDefaultNumberingState("inv", byType["inv"], orgSlug),
+    };
+  });
+
+  function updateNumbering(docType: ConfigurableDocType, patch: Partial<NumberingState>) {
+    setNumbering((prev) => ({ ...prev, [docType]: { ...prev[docType], ...patch } }));
+  }
 
   // Branding
   const [brandColor, setBrandColor] = useState(data.brandColor ?? "#1a56db");
@@ -74,7 +118,18 @@ export function DocumentSettingsClient({ data }: Props) {
         : pdfTemplate === "slate" ? "bold"
         : "corporate";
 
-      await upsertOrganizationProfile({
+      await Promise.all([
+        upsertDocumentNumberingSettings(
+          DOC_TYPES.map((dt) => ({
+            documentType: dt,
+            prefix: numbering[dt].prefix.trim(),
+            docCode: numbering[dt].docCode.trim().toUpperCase(),
+            separator: numbering[dt].separator || "-",
+            includeYear: numbering[dt].includeYear ? 1 : 0,
+            paddingLength: numbering[dt].paddingLength,
+          })),
+        ),
+        upsertOrganizationProfile({
         brandColor,
         slateTextColor:    slateTextColor    || null,
         slateHeadingColor: slateHeadingColor || null,
@@ -99,7 +154,8 @@ export function DocumentSettingsClient({ data }: Props) {
         detailFontSize,
         detailFontBold: detailFontBold ? 1 : 0,
         detailAlignment,
-      });
+      }),
+      ]);
       toast.success("Document settings saved");
       router.refresh();
     } catch (err: any) {
@@ -131,7 +187,7 @@ export function DocumentSettingsClient({ data }: Props) {
   ];
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-4 space-y-6">
+    <div className="p-6 max-w-3xl space-y-6">
       {/* Save bar */}
       <div className="flex items-center justify-between">
         <div>
@@ -805,6 +861,68 @@ export function DocumentSettingsClient({ data }: Props) {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── Document numbering format ────────────────────────────────────────── */}
+      <div className="bg-background border border-border rounded-xl overflow-hidden">
+        <SectionHeader icon={HashIcon} title="Document numbering" />
+        <div className="p-4 space-y-5">
+          <p className="text-[11px] text-muted-foreground -mt-1">
+            Configure how document numbers are generated for each document type. Changes take effect on the next document created.
+          </p>
+          {DOC_TYPES.map((dt) => {
+            const s = numbering[dt];
+            const previewNo = buildDocumentNo(
+              { prefix: s.prefix.trim(), docCode: s.docCode.trim() || DOC_TYPE_DEFAULTS[dt].docCode, separator: s.separator || "-", includeYear: s.includeYear ? 1 : 0, paddingLength: s.paddingLength },
+              year,
+              1,
+            );
+            return (
+              <div key={dt} className="border border-border rounded-lg p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold">{DOC_TYPE_DEFAULTS[dt].label}</span>
+                  <span className="font-mono text-xs px-2.5 py-1 rounded-md border bg-muted text-foreground border-border">{previewNo}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">Prefix</label>
+                    <Input value={s.prefix} onChange={(e) => updateNumbering(dt, { prefix: e.target.value })} placeholder="e.g. BMS" className="h-7 text-xs font-mono" maxLength={10} />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">Doc code</label>
+                    <Input value={s.docCode} onChange={(e) => updateNumbering(dt, { docCode: e.target.value.toUpperCase() })} placeholder={DOC_TYPE_DEFAULTS[dt].docCode} className="h-7 text-xs font-mono" maxLength={6} />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">Separator</label>
+                    <select value={s.separator} onChange={(e) => updateNumbering(dt, { separator: e.target.value })} className="w-full h-7 rounded-md border border-border bg-background px-2 text-xs font-mono">
+                      <option value="-">- (hyphen)</option>
+                      <option value="/">/  (slash)</option>
+                      <option value=".">. (dot)</option>
+                      <option value="">  (none)</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">Counter digits</label>
+                    <select value={s.paddingLength} onChange={(e) => updateNumbering(dt, { paddingLength: parseInt(e.target.value) })} className="w-full h-7 rounded-md border border-border bg-background px-2 text-xs">
+                      <option value={3}>3 &nbsp;(001)</option>
+                      <option value={4}>4 &nbsp;(0001)</option>
+                      <option value={5}>5 (00001)</option>
+                      <option value={6}>6 (000001)</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-muted-foreground">Include year in number</label>
+                  <button type="button" role="switch" aria-checked={s.includeYear}
+                    onClick={() => updateNumbering(dt, { includeYear: !s.includeYear })}
+                    className={cn("relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors", s.includeYear ? "bg-primary" : "bg-muted")}>
+                    <span className={cn("pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow ring-0 transition-transform", s.includeYear ? "translate-x-4" : "translate-x-0")} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

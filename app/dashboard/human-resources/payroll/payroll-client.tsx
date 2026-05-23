@@ -179,7 +179,7 @@ export function PayrollClient({ initialPeriods }: Props) {
   const years = [currentYear - 1, currentYear, currentYear + 1].map(String);
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       <PageHeader
         title="Payroll"
         description="Manage monthly payroll periods and employee payslips"

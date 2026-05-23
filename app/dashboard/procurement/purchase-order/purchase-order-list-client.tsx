@@ -78,7 +78,7 @@ export function PurchaseOrderListClient({ initialOrders }: Props) {
   }
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       <PageHeader
         title="Purchase Orders"
         description="Track and manage purchase orders to suppliers"

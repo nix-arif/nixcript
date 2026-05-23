@@ -123,7 +123,7 @@ export function SupplierClient({ initialSuppliers }: Props) {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <PageHeader
         title="Suppliers"
         description="Manage your supplier contacts"

@@ -436,7 +436,7 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
   const isReadOnly = !!viewCustomer && !editCustomer;
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       <PageHeader
         title="Customers"
         description="Manage your customer database"

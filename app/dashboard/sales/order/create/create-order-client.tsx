@@ -192,7 +192,7 @@ export function CreateSalesOrderClient() {
   const allCompanies = selectedCustomer?.companies ?? [];
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <PageHeader
         title="New Sales Order"
         description="Create a new sales order"

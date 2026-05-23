@@ -63,6 +63,11 @@ export const navConfig: NavGroup[] = [
         url: "/dashboard/sales/order",
         permission: "sales-order:read",
       },
+      {
+        title: "Customer POs",
+        url: "/dashboard/sales/customer-po",
+        permission: "customer-po:read",
+      },
     ],
   },
   {
@@ -93,19 +98,9 @@ export const navConfig: NavGroup[] = [
         permission: "delivery-order:read",
       },
       {
-        title: "Create Delivery Order",
-        url: "/dashboard/fulfillment/delivery/create",
-        permission: "delivery-order:create",
-      },
-      {
         title: "Invoices",
         url: "/dashboard/fulfillment/invoice",
         permission: "invoice:read",
-      },
-      {
-        title: "Create Invoice",
-        url: "/dashboard/fulfillment/invoice/create",
-        permission: "invoice:create",
       },
     ],
   },

@@ -729,7 +729,7 @@ export function PeriodDetailClient({
   };
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       {/* Breadcrumb */}
       <button
         onClick={() => router.push("/dashboard/human-resources/payroll")}

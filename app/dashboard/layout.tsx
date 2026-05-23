@@ -32,27 +32,21 @@ export default async function DashboardLayout({
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-          <div className="flex items-center gap-2 px-4 flex-1">
-            <SidebarTrigger className="-ml-1" />
+        <header className="sticky top-0 z-10 flex h-13 shrink-0 items-center border-b border-border/60 bg-background/95 backdrop-blur-sm transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+          <div className="flex items-center gap-2 px-4 flex-1 min-w-0">
+            <SidebarTrigger className="-ml-1 text-muted-foreground hover:text-foreground" />
             <Separator
               orientation="vertical"
-              className="mr-2 data-vertical:h-4 data-vertical:self-auto"
+              className="mr-1 data-vertical:h-4 data-vertical:self-auto opacity-50"
             />
             <DashboardBreadcrumb />
-            <div className="ml-auto">
-              <Image src={authLogo} width={80} height={80} alt="logo" />
+            <div className="ml-auto flex items-center">
+              <Image src={authLogo} width={64} height={32} alt="logo" className="opacity-75 dark:opacity-60" />
             </div>
           </div>
         </header>
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+        <div className="flex flex-1 flex-col min-h-0">
           {children}
-          {/* <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-            <div className="aspect-video rounded-xl bg-muted/50" />
-            <div className="aspect-video rounded-xl bg-muted/50" />
-            <div className="aspect-video rounded-xl bg-muted/50" />
-          </div>
-          <div className="min-h-screen flex-1 rounded-xl bg-muted/50 md:min-h-min" /> */}
         </div>
       </SidebarInset>
     </SidebarProvider>

@@ -176,7 +176,7 @@ export function CatalogueGenerator() {
   const canGenerate = rows.length > 0 && title.trim().length > 0;
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       <PageHeader
         title="Catalogue generator"
         description="Upload a product spreadsheet and export a formatted PDF catalogue"

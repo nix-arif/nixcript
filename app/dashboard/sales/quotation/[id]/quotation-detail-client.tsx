@@ -222,7 +222,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   const afterDiscount = subtotal - overallDiscAmt;
 
   return (
-    <div className="p-6 max-w-6xl space-y-4">
+    <div className="p-6 space-y-4">
       {/* ── Finalize Dialog ────────────────────────────────────────────────── */}
       {showFinalizeDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">

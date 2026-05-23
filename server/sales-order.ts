@@ -18,6 +18,8 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { getNumberingConfig } from "@/server/document-numbering";
+import { buildDocumentNo } from "@/lib/document-numbering";
 
 // ── R2 supplier-quotation bucket ───────────────────────────────────────────
 const s3 = new S3Client({
@@ -94,12 +96,7 @@ async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<stri
 // ── Running number ─────────────────────────────────────────────────────────
 
 async function generateSoNo(orgId: string): Promise<string> {
-  const [org] = await db
-    .select({ slug: organization.slug })
-    .from(organization)
-    .where(eq(organization.id, orgId));
-
-  const prefix = (org?.slug ?? "ORG").toUpperCase();
+  const cfg = await getNumberingConfig(orgId, "so");
   const year = new Date().getFullYear();
 
   const existing = await db
@@ -111,12 +108,7 @@ async function generateSoNo(orgId: string): Promise<string> {
   let nextNo: number;
 
   if (existing.length === 0) {
-    await db.insert(salesOrderCounter).values({
-      id: nanoid(),
-      organizationId: orgId,
-      year,
-      lastNumber: 1,
-    });
+    await db.insert(salesOrderCounter).values({ id: nanoid(), organizationId: orgId, year, lastNumber: 1 });
     nextNo = 1;
   } else {
     const counter = existing[0];
@@ -127,7 +119,7 @@ async function generateSoNo(orgId: string): Promise<string> {
       .where(eq(salesOrderCounter.organizationId, orgId));
   }
 
-  return `${prefix}-SO-${year}-${String(nextNo).padStart(4, "0")}`;
+  return buildDocumentNo(cfg, year, nextNo);
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────

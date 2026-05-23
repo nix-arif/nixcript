@@ -132,7 +132,7 @@ export function QuotationListClient({ initialGroups }: Props) {
   const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       <PageHeader
         title="Quotations"
         description="Manage and generate customer quotations"

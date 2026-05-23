@@ -1314,6 +1314,350 @@ export const purchaseOrderItemRelations = relations(purchaseOrderItem, ({ one })
   }),
 }));
 
+/* ============================================================================================================================================================================================================================================
+   CUSTOMER PURCHASE ORDER TABLE  (PO issued by customer to us)
+=============================================================================================================================================================================================================================================== */
+
+export const customerPurchaseOrder = pgTable(
+  "customer_purchase_order",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+
+    customerPoNo: text("customer_po_no").notNull(), // The PO number on customer's document
+
+    customerId: text("customer_id").references(() => customer.id),
+    customerSnapshot: json("customer_snapshot").$type<{
+      title?: string;
+      name: string;
+      organizationName?: string;
+      organizationAddress?: string;
+      email?: string;
+      contactNo?: string;
+    }>(),
+
+    // Links to our documents
+    quotationId: text("quotation_id").references(() => quotation.id),
+    quotationNo: text("quotation_no"),
+    salesOrderId: text("sales_order_id").references(() => salesOrder.id),
+    salesOrderNo: text("sales_order_no"),
+
+    amount: text("amount").notNull().default("0"),
+    currency: text("currency").notNull().default("MYR"),
+
+    // Scanned / PDF copy of customer's PO (R2 private)
+    documentKey: text("document_key"),
+    notes: text("notes"),
+    receivedDate: timestamp("received_date"),
+    status: text("status").notNull().default("received"), // received | acknowledged | fulfilled | cancelled
+
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [index("customer_po_org_idx").on(t.organizationId)],
+);
+
+export const customerPurchaseOrderRelations = relations(customerPurchaseOrder, ({ one }) => ({
+  organization: one(organization, { fields: [customerPurchaseOrder.organizationId], references: [organization.id] }),
+  customer: one(customer, { fields: [customerPurchaseOrder.customerId], references: [customer.id] }),
+  quotation: one(quotation, { fields: [customerPurchaseOrder.quotationId], references: [quotation.id] }),
+  salesOrder: one(salesOrder, { fields: [customerPurchaseOrder.salesOrderId], references: [salesOrder.id] }),
+  createdByUser: one(user, { fields: [customerPurchaseOrder.createdBy], references: [user.id] }),
+}));
+
+/* ============================================================================================================================================================================================================================================
+   DELIVERY ORDER TABLE
+=============================================================================================================================================================================================================================================== */
+
+export const deliveryOrder = pgTable(
+  "delivery_order",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+
+    doNo: text("do_no").notNull(), // e.g. BMS-DO-2025-0001
+
+    salesOrderId: text("sales_order_id").references(() => salesOrder.id),
+    salesOrderNo: text("sales_order_no"),
+
+    customerId: text("customer_id").references(() => customer.id),
+    customerSnapshot: json("customer_snapshot").$type<{
+      title?: string;
+      name: string;
+      organizationName?: string;
+      organizationAddress?: string;
+      email?: string;
+      contactNo?: string;
+    }>(),
+
+    deliveredTo: text("delivered_to"),
+    deliveryAddress: text("delivery_address"),
+    deliveryDate: timestamp("delivery_date"),
+    notes: text("notes"),
+    status: text("status").notNull().default("draft"), // draft | delivered | returned
+
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("delivery_order_no_org_uidx").on(t.organizationId, t.doNo),
+    index("delivery_order_org_idx").on(t.organizationId),
+  ],
+);
+
+export const deliveryOrderItem = pgTable(
+  "delivery_order_item",
+  {
+    id: text("id").primaryKey(),
+    deliveryOrderId: text("delivery_order_id")
+      .notNull()
+      .references(() => deliveryOrder.id, { onDelete: "cascade" }),
+    rowNo: integer("row_no").notNull(),
+    productCode: text("product_code"),
+    description: text("description"),
+    qty: text("qty").notNull().default("1"),
+    uom: text("uom"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("delivery_order_item_do_idx").on(t.deliveryOrderId)],
+);
+
+export const deliveryOrderCounter = pgTable("delivery_order_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const deliveryOrderRelations = relations(deliveryOrder, ({ one, many }) => ({
+  organization: one(organization, { fields: [deliveryOrder.organizationId], references: [organization.id] }),
+  salesOrder: one(salesOrder, { fields: [deliveryOrder.salesOrderId], references: [salesOrder.id] }),
+  customer: one(customer, { fields: [deliveryOrder.customerId], references: [customer.id] }),
+  createdByUser: one(user, { fields: [deliveryOrder.createdBy], references: [user.id] }),
+  items: many(deliveryOrderItem),
+}));
+
+export const deliveryOrderItemRelations = relations(deliveryOrderItem, ({ one }) => ({
+  deliveryOrder: one(deliveryOrder, { fields: [deliveryOrderItem.deliveryOrderId], references: [deliveryOrder.id] }),
+}));
+
+/* ============================================================================================================================================================================================================================================
+   INVOICE TABLE
+=============================================================================================================================================================================================================================================== */
+
+export const invoice = pgTable(
+  "invoice",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+
+    invoiceNo: text("invoice_no").notNull(), // e.g. BMS-INV-2025-0001
+    invoiceDate: timestamp("invoice_date").defaultNow().notNull(),
+
+    // Customer
+    customerId: text("customer_id").references(() => customer.id),
+    customerSnapshot: json("customer_snapshot").$type<{
+      title?: string;
+      name: string;
+      organizationName?: string;
+      organizationAddress?: string;
+      email?: string;
+      contactNo?: string;
+    }>(),
+
+    // Customer's PO (their authorization document)
+    customerPoId: text("customer_po_id").references(() => customerPurchaseOrder.id),
+    customerPoNo: text("customer_po_no"), // manual entry fallback
+
+    // Our reference documents
+    quotationId: text("quotation_id").references(() => quotation.id),
+    quotationNo: text("quotation_no"),
+    salesOrderId: text("sales_order_id").references(() => salesOrder.id),
+    salesOrderNo: text("sales_order_no"),
+    deliveryOrderId: text("delivery_order_id").references(() => deliveryOrder.id),
+    deliveryOrderNo: text("delivery_order_no"),
+
+    // Supplier / cost tracking
+    purchaseOrderId: text("purchase_order_id").references(() => purchaseOrder.id),
+    supplierId: text("supplier_id").references(() => supplier.id),
+    supplierSnapshot: json("supplier_snapshot").$type<{
+      name: string;
+      registrationNo?: string;
+      contactPerson?: string;
+      contactNo?: string;
+      email?: string;
+    }>(),
+
+    // Sales person
+    salesPersonId: text("sales_person_id").references(() => user.id),
+    salesPersonName: text("sales_person_name"),
+
+    // Selling side — what we bill the customer
+    subtotal: text("subtotal").notNull().default("0"),
+    overallDiscountPct: text("overall_discount_pct").default("0"),
+    overallDiscountAmt: text("overall_discount_amt").default("0"),
+    sst: text("sst").default("0"),
+    sstPct: text("sst_pct").default("0"),
+    grandTotal: text("grand_total").notNull().default("0"), // invoice value
+
+    // Cost side — what we paid the supplier
+    costTotal: text("cost_total").default("0"),
+    expensesTotal: text("expenses_total").default("0"),
+    profit: text("profit").default("0"), // grandTotal − costTotal − expensesTotal
+
+    // Payment
+    status: text("status").notNull().default("draft"), // draft | sent | paid | overdue | cancelled
+    paymentTerms: text("payment_terms"), // "Net 30", "COD", etc.
+    dueDate: timestamp("due_date"),
+    paidAt: timestamp("paid_at"),
+    paidAmount: text("paid_amount"),
+
+    notes: text("notes"),
+
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("invoice_no_org_uidx").on(t.organizationId, t.invoiceNo),
+    index("invoice_org_idx").on(t.organizationId),
+    index("invoice_customer_idx").on(t.customerId),
+  ],
+);
+
+export const invoiceItem = pgTable(
+  "invoice_item",
+  {
+    id: text("id").primaryKey(),
+    invoiceId: text("invoice_id")
+      .notNull()
+      .references(() => invoice.id, { onDelete: "cascade" }),
+
+    rowNo: integer("row_no").notNull(),
+    productId: text("product_id"),
+    productCode: text("product_code"),
+    description: text("description"),
+    qty: text("qty").notNull().default("1"),
+    uom: text("uom"),
+
+    // Selling price (what we charge customer)
+    unitPrice: text("unit_price").default("0"),
+    discountPct: text("discount_pct").default("0"),
+    discountAmt: text("discount_amt").default("0"),
+    totalPrice: text("total_price").default("0"),
+
+    // Cost price (from supplier / PO)
+    costUnitPrice: text("cost_unit_price").default("0"),
+    costTotal: text("cost_total").default("0"), // qty × costUnitPrice
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("invoice_item_invoice_idx").on(t.invoiceId)],
+);
+
+// Other expenses related to the invoice (transport, handling, customs, etc.)
+export const invoiceExpense = pgTable(
+  "invoice_expense",
+  {
+    id: text("id").primaryKey(),
+    invoiceId: text("invoice_id")
+      .notNull()
+      .references(() => invoice.id, { onDelete: "cascade" }),
+
+    description: text("description").notNull(),
+    category: text("category").default("other"), // transport | handling | customs | other
+    amount: text("amount").notNull().default("0"),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("invoice_expense_invoice_idx").on(t.invoiceId)],
+);
+
+export const invoiceCounter = pgTable("invoice_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const invoiceRelations = relations(invoice, ({ one, many }) => ({
+  organization: one(organization, { fields: [invoice.organizationId], references: [organization.id] }),
+  customer: one(customer, { fields: [invoice.customerId], references: [customer.id] }),
+  customerPo: one(customerPurchaseOrder, { fields: [invoice.customerPoId], references: [customerPurchaseOrder.id] }),
+  salesOrder: one(salesOrder, { fields: [invoice.salesOrderId], references: [salesOrder.id] }),
+  deliveryOrder: one(deliveryOrder, { fields: [invoice.deliveryOrderId], references: [deliveryOrder.id] }),
+  purchaseOrder: one(purchaseOrder, { fields: [invoice.purchaseOrderId], references: [purchaseOrder.id] }),
+  supplier: one(supplier, { fields: [invoice.supplierId], references: [supplier.id] }),
+  salesPerson: one(user, { fields: [invoice.salesPersonId], references: [user.id] }),
+  createdByUser: one(user, { fields: [invoice.createdBy], references: [user.id] }),
+  items: many(invoiceItem),
+  expenses: many(invoiceExpense),
+}));
+
+export const invoiceItemRelations = relations(invoiceItem, ({ one }) => ({
+  invoice: one(invoice, { fields: [invoiceItem.invoiceId], references: [invoice.id] }),
+}));
+
+export const invoiceExpenseRelations = relations(invoiceExpense, ({ one }) => ({
+  invoice: one(invoice, { fields: [invoiceExpense.invoiceId], references: [invoice.id] }),
+}));
+
+// ── Document numbering settings ───────────────────────────────────────────────
+// One row per document type per org. Falls back to defaults if missing.
+export const documentNumberingSetting = pgTable(
+  "document_numbering_setting",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    documentType: text("document_type").notNull(), // qt | so | po | do | inv
+    prefix: text("prefix").notNull().default(""),
+    docCode: text("doc_code").notNull(), // e.g. "SO", "PO", "DO", "INV", "QT"
+    separator: text("separator").notNull().default("-"),
+    includeYear: integer("include_year").notNull().default(1), // 1 = yes, 0 = no
+    paddingLength: integer("padding_length").notNull().default(4),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("doc_numbering_org_doc_uq").on(t.organizationId, t.documentType),
+  ],
+);
+
 /* =========================
    SCHEMA EXPORT
 ========================= */
@@ -1378,4 +1722,23 @@ export const schema = {
   purchaseOrderCounter,
   purchaseOrderRelations,
   purchaseOrderItemRelations,
+  // customer purchase order
+  customerPurchaseOrder,
+  customerPurchaseOrderRelations,
+  // delivery order
+  deliveryOrder,
+  deliveryOrderItem,
+  deliveryOrderCounter,
+  deliveryOrderRelations,
+  deliveryOrderItemRelations,
+  // invoice
+  invoice,
+  invoiceItem,
+  invoiceExpense,
+  invoiceCounter,
+  invoiceRelations,
+  invoiceItemRelations,
+  invoiceExpenseRelations,
+  // document numbering
+  documentNumberingSetting,
 };

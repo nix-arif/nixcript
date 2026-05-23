@@ -131,7 +131,7 @@ export function ItemsPriceClient() {
   const notFoundCount = rows.length - foundCount;
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       <PageHeader
         title="Items Price Check"
         description="Upload a spreadsheet with product codes to retrieve pricing and product details"

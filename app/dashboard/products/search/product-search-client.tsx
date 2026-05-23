@@ -454,7 +454,7 @@
 
 //   return (
 //     <>
-//       <div className="p-6 max-w-3xl">
+//       <div className="p-6">
 //         {/* Header */}
 //         <div className="mb-6">
 //           <h1 className="text-xl font-semibold tracking-tight">
@@ -1135,7 +1135,7 @@ export function ProductSearch() {
 
   return (
     <>
-      <div className="p-6 max-w-3xl">
+      <div className="p-6">
         <PageHeader
           title="Product search"
           description="Search by product code, description, supplier or brand"

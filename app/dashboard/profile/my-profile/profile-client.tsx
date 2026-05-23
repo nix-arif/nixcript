@@ -803,7 +803,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
   };
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className="p-6">
       <PageHeader title="My Profile" description="Manage your personal information and bank details" />
       <form onSubmit={handleSubmit(onSubmit)}>
         <div className="bg-background border border-border rounded-xl overflow-hidden">

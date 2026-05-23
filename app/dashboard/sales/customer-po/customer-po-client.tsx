@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { getSalesOrders, deleteSalesOrder, updateSalesOrderStatus, type SalesOrderRow } from "@/server/sales-order";
+import {
+  getCustomerPos,
+  deleteCustomerPo,
+  type CustomerPo,
+} from "@/server/customer-purchase-order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
@@ -15,8 +19,9 @@ import {
   FileTextIcon,
   PencilIcon,
   TrashIcon,
-  BuildingIcon,
   UserIcon,
+  BuildingIcon,
+  CalendarIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,52 +31,44 @@ const fmt = (v: string | number | null | undefined) =>
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
-const SO_STATUS: Record<string, { label: string; className: string }> = {
-  draft: { label: "Draft", className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
-  confirmed: { label: "Confirmed", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+const STATUS: Record<string, { label: string; className: string }> = {
+  received: { label: "Received", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  acknowledged: { label: "Acknowledged", className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
   fulfilled: { label: "Fulfilled", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
   cancelled: { label: "Cancelled", className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const cfg = SO_STATUS[status] ?? SO_STATUS.draft;
-  return (
-    <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>
-      {cfg.label}
-    </span>
-  );
+  const cfg = STATUS[status] ?? STATUS.received;
+  return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
-interface Props {
-  initialOrders: SalesOrderRow[];
-}
-
-export function SalesOrderListClient({ initialOrders }: Props) {
+export function CustomerPoClient({ initialPos }: { initialPos: CustomerPo[] }) {
   const router = useRouter();
-  const [orders, setOrders] = useState(initialOrders);
+  const [pos, setPos] = useState(initialPos);
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const filtered = orders.filter((o) => {
+  const filtered = pos.filter((p) => {
     if (!search) return true;
     const s = search.toLowerCase();
-    const snap = o.customerSnapshot as any;
+    const snap = p.customerSnapshot as any;
     return (
-      o.soNo.toLowerCase().includes(s) ||
+      p.customerPoNo.toLowerCase().includes(s) ||
       snap?.name?.toLowerCase().includes(s) ||
       snap?.organizationName?.toLowerCase().includes(s) ||
-      o.salesPersonName?.toLowerCase().includes(s) ||
-      o.status.toLowerCase().includes(s)
+      p.quotationNo?.toLowerCase().includes(s) ||
+      p.salesOrderNo?.toLowerCase().includes(s)
     );
   });
 
-  async function handleDelete(id: string, soNo: string) {
-    if (!confirm(`Delete ${soNo}? This cannot be undone.`)) return;
+  async function handleDelete(id: string, poNo: string) {
+    if (!confirm(`Delete Customer PO "${poNo}"?`)) return;
     setDeleting(id);
     try {
-      await deleteSalesOrder(id);
-      setOrders(await getSalesOrders());
-      toast.success("Sales order deleted");
+      await deleteCustomerPo(id);
+      setPos(await getCustomerPos());
+      toast.success("Customer PO deleted");
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -82,11 +79,11 @@ export function SalesOrderListClient({ initialOrders }: Props) {
   return (
     <div className="p-6">
       <PageHeader
-        title="Sales Orders"
-        description="Track and manage sales orders"
+        title="Customer Purchase Orders"
+        description="Track PO documents received from customers"
         action={
-          <Button onClick={() => router.push("/dashboard/sales/order/create")} className="gap-2">
-            <PlusIcon className="w-4 h-4" /> New SO
+          <Button onClick={() => router.push("/dashboard/sales/customer-po/create")} className="gap-2">
+            <PlusIcon className="w-4 h-4" /> Record customer PO
           </Button>
         }
       />
@@ -96,7 +93,7 @@ export function SalesOrderListClient({ initialOrders }: Props) {
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by SO no., customer, status..."
+          placeholder="Search by PO no., customer, QT no., SO no...."
           className="pl-9 h-9 text-sm"
         />
         {search && (
@@ -107,28 +104,24 @@ export function SalesOrderListClient({ initialOrders }: Props) {
       </div>
 
       <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-        {filtered.length} order{filtered.length !== 1 ? "s" : ""}
+        {filtered.length} record{filtered.length !== 1 ? "s" : ""}
       </div>
 
       {filtered.length === 0 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
           <FileTextIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-          <div className="text-sm font-medium mb-1">No sales orders yet</div>
-          <div className="text-xs mb-4">Create your first sales order to get started</div>
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/sales/order/create")}>
-            <PlusIcon className="w-3.5 h-3.5" /> New SO
+          <div className="text-sm font-medium mb-1">No customer POs recorded</div>
+          <div className="text-xs mb-4">Record the first customer purchase order</div>
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/sales/customer-po/create")}>
+            <PlusIcon className="w-3.5 h-3.5" /> Record customer PO
           </Button>
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.map((o) => {
-            const snap = o.customerSnapshot as any;
-            const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+          {filtered.map((p) => {
+            const snap = p.customerSnapshot as any;
             return (
-              <div
-                key={o.id}
-                className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors"
-              >
+              <div key={p.id} className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors">
                 <div className="flex items-center gap-3 px-4 py-3">
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0">
                     <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground" />
@@ -137,23 +130,28 @@ export function SalesOrderListClient({ initialOrders }: Props) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-sm font-medium">
-                        <Highlight text={o.soNo} query={search} />
+                        <Highlight text={p.customerPoNo} query={search} />
                       </span>
-                      <StatusBadge status={o.status} />
-                      {o.quotationNo && (
-                        <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
-                          QT: {o.quotationNo}
+                      <StatusBadge status={p.status} />
+                      {p.quotationNo && (
+                        <span className="text-[10px] bg-muted/50 text-muted-foreground rounded px-1.5 py-0.5 font-mono">
+                          QT: <Highlight text={p.quotationNo} query={search} />
                         </span>
                       )}
-                      <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 tabular-nums ml-auto">
-                        {fmtDate(o.createdAt)}
+                      {p.salesOrderNo && (
+                        <span className="text-[10px] bg-muted/50 text-muted-foreground rounded px-1.5 py-0.5 font-mono">
+                          SO: <Highlight text={p.salesOrderNo} query={search} />
+                        </span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 ml-auto tabular-nums">
+                        {fmtDate(p.receivedDate ?? p.createdAt)}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                      {custName && (
+                      {snap?.name && (
                         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                           <UserIcon className="w-3 h-3" />
-                          <Highlight text={custName} query={search} />
+                          <Highlight text={snap.name} query={search} />
                         </span>
                       )}
                       {snap?.organizationName && (
@@ -163,26 +161,22 @@ export function SalesOrderListClient({ initialOrders }: Props) {
                         </span>
                       )}
                       <span className="text-[11px] font-semibold text-foreground ml-auto tabular-nums">
-                        {fmt(o.grandTotal)}
+                        {fmt(p.amount)} {p.currency !== "MYR" ? p.currency : ""}
                       </span>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-7 h-7"
-                      onClick={() => router.push(`/dashboard/sales/order/${o.id}/edit`)}
+                      variant="ghost" size="icon" className="w-7 h-7"
+                      onClick={() => router.push(`/dashboard/sales/customer-po/${p.id}/edit`)}
                     >
                       <PencilIcon className="w-3.5 h-3.5" />
                     </Button>
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-7 h-7 text-destructive hover:text-destructive"
-                      disabled={deleting === o.id}
-                      onClick={() => handleDelete(o.id, o.soNo)}
+                      variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
+                      disabled={deleting === p.id}
+                      onClick={() => handleDelete(p.id, p.customerPoNo)}
                     >
                       <TrashIcon className="w-3.5 h-3.5" />
                     </Button>

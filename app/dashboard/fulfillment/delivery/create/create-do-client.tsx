@@ -1,0 +1,172 @@
+"use client";
+
+import { useState, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { createDeliveryOrder, type DeliveryOrderItemInput } from "@/server/delivery-order";
+import { getCustomers } from "@/server/customer";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/page-header";
+import { Highlight } from "@/components/highlight";
+import { ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon, BuildingIcon } from "lucide-react";
+
+type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
+interface LineItem extends DeliveryOrderItemInput { _key: string; }
+
+const newLine = (rowNo: number): LineItem => ({ _key: crypto.randomUUID(), rowNo, productCode: "", description: "", qty: "1", uom: "" });
+
+export function CreateDeliveryOrderClient() {
+  const router = useRouter();
+  const [custSearch, setCustSearch] = useState("");
+  const [custResults, setCustResults] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [salesOrderNo, setSalesOrderNo] = useState("");
+  const [deliveredTo, setDeliveredTo] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [items, setItems] = useState<LineItem[]>([newLine(1)]);
+  const [saving, setSaving] = useState(false);
+
+  const handleCustSearch = useCallback((val: string) => {
+    setCustSearch(val);
+    if (val.length < 2) { setCustResults([]); return; }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      const res = await getCustomers(val);
+      setCustResults(res.slice(0, 8));
+    }, 300);
+  }, []);
+
+  function updateItem(key: string, patch: Partial<LineItem>) {
+    setItems((prev) => prev.map((i) => i._key === key ? { ...i, ...patch } : i));
+  }
+  function addLine() { setItems((prev) => [...prev, newLine(prev.length + 1)]); }
+  function removeLine(key: string) { setItems((prev) => prev.filter((i) => i._key !== key).map((i, idx) => ({ ...i, rowNo: idx + 1 }))); }
+
+  async function handleSave() {
+    if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return; }
+    setSaving(true);
+    try {
+      await createDeliveryOrder({
+        customerId: selectedCustomer?.id,
+        customerCompanyId: custCompanyId,
+        salesOrderNo: salesOrderNo || undefined,
+        deliveredTo: deliveredTo || undefined,
+        deliveryAddress: deliveryAddress || undefined,
+        deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
+        notes: notes || undefined,
+        items: items.map(({ _key, ...rest }) => rest),
+      });
+      toast.success("Delivery order created");
+      router.push("/dashboard/fulfillment/delivery");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const allCompanies = selectedCustomer?.companies ?? [];
+
+  return (
+    <div className="p-6">
+      <PageHeader
+        title="New Delivery Order"
+        description="Create a delivery order for a customer shipment"
+        action={<Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/delivery")} className="gap-2"><ArrowLeftIcon className="w-3.5 h-3.5" /> Back</Button>}
+      />
+
+      <div className="space-y-6">
+        {/* Customer */}
+        <section className="border border-border rounded-xl p-4">
+          <h2 className="text-sm font-semibold mb-3">Customer</h2>
+          {selectedCustomer ? (
+            <div className="flex items-start gap-2">
+              <div className="flex-1">
+                <div className="text-sm font-medium">{[selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")}</div>
+                {allCompanies.length > 1 && (
+                  <select className="mt-2 w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm" value={custCompanyId ?? ""} onChange={(e) => setCustCompanyId(e.target.value || undefined)}>
+                    <option value="">Primary / default</option>
+                    {allCompanies.map((c) => <option key={c.id} value={c.id}>{c.organizationName}{c.isPrimary ? " (primary)" : ""}</option>)}
+                  </select>
+                )}
+                {allCompanies.length === 1 && <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><BuildingIcon className="w-3 h-3" />{allCompanies[0].organizationName}</p>}
+              </div>
+              <button onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); }} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
+            </div>
+          ) : (
+            <div className="relative">
+              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input value={custSearch} onChange={(e) => handleCustSearch(e.target.value)} placeholder="Search customer..." className="pl-9 h-9 text-sm" />
+              {custResults.length > 0 && (
+                <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                  {custResults.map((c) => (
+                    <button key={c.id} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0" onClick={() => { setSelectedCustomer(c); setCustSearch(""); setCustResults([]); }}>
+                      <div className="text-sm font-medium"><Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} /></div>
+                      {c.companies[0]?.organizationName && <div className="text-[11px] text-muted-foreground"><Highlight text={c.companies[0].organizationName} query={custSearch} /></div>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Delivery details */}
+        <section className="border border-border rounded-xl p-4">
+          <h2 className="text-sm font-semibold mb-3">Delivery details</h2>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5"><Label className="text-xs">Linked SO no.</Label><Input value={salesOrderNo} onChange={(e) => setSalesOrderNo(e.target.value)} placeholder="BMS-SO-2025-XXXX" className="h-9 text-sm" /></div>
+            <div className="space-y-1.5"><Label className="text-xs">Delivery date</Label><input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" /></div>
+            <div className="space-y-1.5"><Label className="text-xs">Delivered to (person)</Label><Input value={deliveredTo} onChange={(e) => setDeliveredTo(e.target.value)} placeholder="Recipient name" className="h-9 text-sm" /></div>
+            <div className="space-y-1.5"><Label className="text-xs">Delivery address</Label><Input value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Address" className="h-9 text-sm" /></div>
+          </div>
+          <div className="mt-3 space-y-1.5"><Label className="text-xs">Notes</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="text-sm" /></div>
+        </section>
+
+        {/* Items */}
+        <section className="border border-border rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold">Items</h2>
+            <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={addLine}><PlusIcon className="w-3 h-3" /> Add row</Button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="border-b border-border text-muted-foreground">
+                <th className="text-left pb-2 pr-2 w-8">#</th>
+                <th className="text-left pb-2 pr-2 w-24">Code</th>
+                <th className="text-left pb-2 pr-2">Description</th>
+                <th className="text-right pb-2 pr-2 w-16">Qty</th>
+                <th className="text-left pb-2 pr-2 w-14">UOM</th>
+                <th className="w-6" />
+              </tr></thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item._key} className="border-b border-border/50 last:border-0">
+                    <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
+                    <td className="py-1.5 pr-2"><Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="unit" /></td>
+                    <td className="py-1.5"><button onClick={() => removeLine(item._key)} disabled={items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"><TrashIcon className="w-3.5 h-3.5" /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <div className="flex gap-3 pb-8">
+          <Button onClick={handleSave} disabled={saving}>{saving ? "Creating…" : "Create delivery order"}</Button>
+          <Button variant="outline" onClick={() => router.push("/dashboard/fulfillment/delivery")}>Cancel</Button>
+        </div>
+      </div>
+    </div>
+  );
+}

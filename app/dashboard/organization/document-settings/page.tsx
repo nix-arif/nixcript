@@ -1,4 +1,5 @@
 import { getFullOrganizationProfile } from "@/server/organization-profile";
+import { getDocumentNumberingSettings } from "@/server/document-numbering";
 import { DocumentSettingsClient } from "./document-settings-client";
 import { redirect } from "next/navigation";
 
@@ -10,5 +11,7 @@ export default async function DocumentSettingsPage() {
     redirect("/dashboard");
   }
 
-  return <DocumentSettingsClient data={data} />;
+  const numberingSettings = await getDocumentNumberingSettings().catch(() => []);
+
+  return <DocumentSettingsClient data={data} numberingSettings={numberingSettings} />;
 }

@@ -461,7 +461,7 @@ export function NewQuotationClient({
   const STEPS = ["Setup", "Upload", "Review", "Pricing", "Generate"];
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <PageHeader title="New quotation" description={quotationNo} />
 
       {/* Step indicator */}

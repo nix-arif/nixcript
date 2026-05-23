@@ -242,7 +242,7 @@ export function SeedProductsClient() {
   // ── Success state ──────────────────────────────────────────────────────────
   if (result) {
     return (
-      <div className="p-6 max-w-3xl">
+      <div className="p-6">
         <PageHeader
           title="Seed products"
           description="Upload the MDA matcher output to seed product & certificate data into the database"
@@ -295,7 +295,7 @@ export function SeedProductsClient() {
   }
 
   return (
-    <div className="p-6 max-w-5xl">
+    <div className="p-6">
       <PageHeader
         title="Seed products"
         description="Upload the MDA matcher output to seed product & certificate data into the database"

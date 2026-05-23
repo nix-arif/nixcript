@@ -524,7 +524,7 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
   };
 
   return (
-    <div className="p-6 max-w-6xl">
+    <div className="p-6">
       <PageHeader
         title="Government Project"
         description="Upload spreadsheets (2-sheet format) to bulk-create quotations and download organized PDFs"

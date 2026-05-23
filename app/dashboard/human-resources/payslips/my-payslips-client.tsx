@@ -118,7 +118,7 @@ export function MyPayslipsClient({ payslips }: Props) {
   };
   if (payslips.length === 0) {
     return (
-      <div className="p-6 max-w-4xl">
+      <div className="p-6">
         <PageHeader
           title="My payslips"
           description="View and download your monthly payslips"
@@ -135,7 +135,7 @@ export function MyPayslipsClient({ payslips }: Props) {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <PageHeader
         title="My payslips"
         description="View and download your monthly payslips"
