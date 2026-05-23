@@ -20,6 +20,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } fro
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { revalidatePath } from "next/cache";
 
 // ── R2 supplier-quotation bucket ───────────────────────────────────────────
 const s3 = new S3Client({
@@ -145,8 +146,10 @@ export interface CreateSalesOrderInput {
   customerCompanyId?: string;
   quotationId?: string;
   quotationNo?: string;
+  linkedQuotations?: { id: string; quotationNo: string }[];
   salesPersonId?: string;
   salesPersonName?: string;
+  associateSalesPersons?: { id: string; name: string }[];
   subtotal?: string;
   overallDiscountPct?: string;
   overallDiscountAmt?: string;
@@ -257,13 +260,15 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
       id: nanoid(),
       organizationId: ownerOrgId,
       soNo,
-      quotationId: input.quotationId ?? null,
-      quotationNo: input.quotationNo ?? null,
+      quotationId: input.linkedQuotations?.[0]?.id ?? input.quotationId ?? null,
+      quotationNo: input.linkedQuotations?.[0]?.quotationNo ?? input.quotationNo ?? null,
+      linkedQuotations: input.linkedQuotations ?? null,
       customerId: input.customerId ?? null,
       customerSnapshot: customerSnapshot ?? null,
       supplierQuotationKey: input.supplierQuotationKey ?? null,
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
+      associateSalesPersons: input.associateSalesPersons ?? null,
       subtotal: input.subtotal ?? "0",
       overallDiscountPct: input.overallDiscountPct ?? "0",
       overallDiscountAmt: input.overallDiscountAmt ?? "0",
@@ -297,6 +302,7 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
     );
   }
 
+  revalidatePath("/dashboard/sales/order");
   return row;
 }
 
@@ -320,24 +326,69 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
     await deleteSupplierQuotationFile(existing.supplierQuotationKey);
   }
 
+  // Rebuild customer snapshot if customer changed
+  let customerSnapshot: SalesOrderRow["customerSnapshot"] = existing.customerSnapshot;
+  if (input.customerId !== undefined) {
+    if (!input.customerId) {
+      customerSnapshot = null;
+    } else {
+      const [cust] = await db.select().from(customer).where(eq(customer.id, input.customerId));
+      if (cust) {
+        let company: typeof customerCompany.$inferSelect | undefined;
+        if (input.customerCompanyId) {
+          const [c] = await db.select().from(customerCompany).where(eq(customerCompany.id, input.customerCompanyId));
+          company = c;
+        }
+        if (!company) {
+          const companies = await db
+            .select()
+            .from(customerCompany)
+            .where(eq(customerCompany.customerId, cust.id))
+            .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
+            .limit(1);
+          company = companies[0];
+        }
+        customerSnapshot = {
+          title: cust.title ?? undefined,
+          name: cust.name,
+          email: cust.email ?? undefined,
+          contactNo: cust.contactNo ?? undefined,
+          organizationName: company?.organizationName ?? undefined,
+          organizationAddress: company?.organizationAddress ?? undefined,
+          position: company?.position ?? undefined,
+          department: company?.department ?? undefined,
+        };
+      }
+    }
+  }
+
   const [row] = await db
     .update(salesOrder)
     .set({
-      customerId: input.customerId ?? null,
+      customerId: input.customerId ?? existing.customerId,
+      customerSnapshot,
+      quotationId: input.linkedQuotations !== undefined
+        ? (input.linkedQuotations[0]?.id ?? null)
+        : (input.quotationId !== undefined ? (input.quotationId ?? null) : existing.quotationId),
+      quotationNo: input.linkedQuotations !== undefined
+        ? (input.linkedQuotations[0]?.quotationNo ?? null)
+        : (input.quotationNo !== undefined ? (input.quotationNo ?? null) : existing.quotationNo),
+      linkedQuotations: input.linkedQuotations !== undefined ? (input.linkedQuotations ?? null) : existing.linkedQuotations,
       supplierQuotationKey: input.supplierQuotationKey !== undefined
         ? input.supplierQuotationKey
         : existing.supplierQuotationKey,
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
+      associateSalesPersons: input.associateSalesPersons !== undefined ? (input.associateSalesPersons ?? null) : existing.associateSalesPersons,
       subtotal: input.subtotal ?? existing.subtotal,
       overallDiscountPct: input.overallDiscountPct ?? existing.overallDiscountPct,
       overallDiscountAmt: input.overallDiscountAmt ?? existing.overallDiscountAmt,
       sst: input.sst ?? existing.sst,
       sstPct: input.sstPct ?? existing.sstPct,
       grandTotal: input.grandTotal ?? existing.grandTotal,
-      notes: input.notes ?? null,
-      deliveryDate: input.deliveryDate ?? null,
-      deliveryAddress: input.deliveryAddress ?? null,
+      notes: input.notes !== undefined ? (input.notes ?? null) : existing.notes,
+      deliveryDate: input.deliveryDate !== undefined ? (input.deliveryDate ?? null) : existing.deliveryDate,
+      deliveryAddress: input.deliveryAddress !== undefined ? (input.deliveryAddress ?? null) : existing.deliveryAddress,
       status: input.status ?? existing.status,
     })
     .where(eq(salesOrder.id, input.id))
@@ -365,6 +416,7 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
     );
   }
 
+  revalidatePath("/dashboard/sales/order");
   return row;
 }
 
@@ -382,6 +434,7 @@ export async function deleteSalesOrder(id: string): Promise<void> {
   }
 
   await db.delete(salesOrder).where(eq(salesOrder.id, id));
+  revalidatePath("/dashboard/sales/order");
 }
 
 export async function updateSalesOrderStatus(id: string, status: string): Promise<void> {

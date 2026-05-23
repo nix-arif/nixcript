@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { getSalesOrders, deleteSalesOrder, updateSalesOrderStatus, type SalesOrderRow } from "@/server/sales-order";
+import { deleteSalesOrder, type SalesOrderRow } from "@/server/sales-order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
@@ -48,11 +48,10 @@ interface Props {
 
 export function SalesOrderListClient({ initialOrders }: Props) {
   const router = useRouter();
-  const [orders, setOrders] = useState(initialOrders);
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const filtered = orders.filter((o) => {
+  const filtered = initialOrders.filter((o) => {
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = o.customerSnapshot as any;
@@ -70,8 +69,8 @@ export function SalesOrderListClient({ initialOrders }: Props) {
     setDeleting(id);
     try {
       await deleteSalesOrder(id);
-      setOrders(await getSalesOrders());
       toast.success("Sales order deleted");
+      router.refresh();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -127,7 +126,8 @@ export function SalesOrderListClient({ initialOrders }: Props) {
             return (
               <div
                 key={o.id}
-                className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors"
+                className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                onClick={() => router.push(`/dashboard/sales/order/${o.id}`)}
               >
                 <div className="flex items-center gap-3 px-4 py-3">
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0">
@@ -168,7 +168,7 @@ export function SalesOrderListClient({ initialOrders }: Props) {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"
                       size="icon"

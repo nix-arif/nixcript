@@ -1,7 +1,9 @@
 import { requirePermission } from "@/lib/auth/require-permission";
+import { getOrgMembers } from "@/server/members";
 import { CreateSalesOrderClient } from "./create-order-client";
 
 export default async function CreateSalesOrderPage() {
   await requirePermission("sales-order:create");
-  return <CreateSalesOrderClient />;
+  const members = await getOrgMembers();
+  return <CreateSalesOrderClient members={members} />;
 }

@@ -15,7 +15,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc, inArray, sql } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql, ilike } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -772,6 +772,107 @@ export async function getQuotations() {
 
   return rows;
 }
+
+// ── Lightweight single-row lookup (for cross-doc references) ─────────────
+export async function getQuotationBasic(id: string) {
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
+
+  const [row] = await db
+    .select({
+      id: quotation.id,
+      quotationNo: quotation.quotationNo,
+      status: quotation.status,
+      grandTotal: quotation.grandTotal,
+      validUntil: quotation.validUntil,
+      createdAt: quotation.createdAt,
+      salesPersonName: quotation.salesPersonName,
+    })
+    .from(quotation)
+    .where(and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)))
+    .limit(1);
+
+  return row ?? null;
+}
+
+export type QuotationBasic = NonNullable<Awaited<ReturnType<typeof getQuotationBasic>>>;
+
+// ── Search quotations by number (for SO creation lookup) ─────────────────
+export async function searchQuotationsByNo(query: string) {
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
+
+  return db
+    .select({
+      id: quotation.id,
+      quotationNo: quotation.quotationNo,
+      status: quotation.status,
+      grandTotal: quotation.grandTotal,
+      customerSnapshot: quotation.customerSnapshot,
+      createdAt: quotation.createdAt,
+    })
+    .from(quotation)
+    .where(
+      and(
+        inArray(quotation.organizationId, ownerOrgIds),
+        ilike(quotation.quotationNo, `%${query}%`),
+        eq(quotation.isDummy, 0),
+      ),
+    )
+    .orderBy(desc(quotation.createdAt))
+    .limit(8);
+}
+
+// ── Fetch quotation with items for SO pre-fill ───────────────────────────
+export async function getQuotationForSO(id: string) {
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
+
+  const [q] = await db
+    .select({
+      id: quotation.id,
+      quotationNo: quotation.quotationNo,
+      status: quotation.status,
+      grandTotal: quotation.grandTotal,
+      subtotal: quotation.subtotal,
+      overallDiscountPct: quotation.overallDiscountPct,
+      overallDiscountAmt: quotation.overallDiscountAmt,
+      sstPct: quotation.sstPct,
+      sst: quotation.sst,
+      customerSnapshot: quotation.customerSnapshot,
+      customerId: quotation.customerId,
+      salesPersonName: quotation.salesPersonName,
+      notes: quotation.notes,
+    })
+    .from(quotation)
+    .where(and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)))
+    .limit(1);
+
+  if (!q) return null;
+
+  const items = await db
+    .select({
+      rowNo: quotationItem.rowNo,
+      productCode: quotationItem.productCode,
+      description: quotationItem.description,
+      qty: quotationItem.qty,
+      uom: quotationItem.uom,
+      unitPrice: quotationItem.unitPrice,
+      discountPct: quotationItem.discountPct,
+      discountAmt: quotationItem.discountAmt,
+      totalPrice: quotationItem.totalPrice,
+    })
+    .from(quotationItem)
+    .where(eq(quotationItem.quotationId, id))
+    .orderBy(asc(quotationItem.rowNo));
+
+  return { ...q, items };
+}
+
+export type QuotationForSO = NonNullable<Awaited<ReturnType<typeof getQuotationForSO>>>;
 
 // ── Get single quotation with items + siblings ────────────────────────────
 export async function getQuotationDetail(id: string) {

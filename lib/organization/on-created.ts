@@ -5,21 +5,26 @@ import {
   userPermission,
   permission,
   organizationProfile,
+  department,
 } from "@/db/schema";
-import { ALL_PERMISSIONS, ROLE_PERMISSIONS } from "@/lib/permissions/constants";
+import {
+  ALL_PERMISSIONS,
+  ROLE_PERMISSIONS,
+  DEFAULT_DEPARTMENTS,
+} from "@/lib/permissions/constants";
 import { nanoid } from "nanoid";
 
 export async function onOrganizationCreated(
   organizationId: string,
   ownerId: string,
 ) {
-  // 1. Seed global permissions (safe to re-run, skips existing)
+  // 1. Seed global permission catalogue
   await db
     .insert(permission)
     .values(ALL_PERMISSIONS.map((p) => ({ id: nanoid(), ...p })))
     .onConflictDoNothing();
 
-  // 2. Seed organization roles (admin + member) for this org
+  // 2. Seed flat org roles (stakeholder only — manager/member are dept-aware)
   for (const [role, permissions] of Object.entries(ROLE_PERMISSIONS)) {
     await db
       .insert(organizationRole)
@@ -32,7 +37,7 @@ export async function onOrganizationCreated(
       .onConflictDoNothing();
   }
 
-  // 3. Seed owner permissions (all permissions, allowed: true)
+  // 3. Seed all permissions for the owner
   await db
     .insert(userPermission)
     .values(
@@ -46,6 +51,20 @@ export async function onOrganizationCreated(
     )
     .onConflictDoNothing();
 
+  // 4. Create default departments
+  await db
+    .insert(department)
+    .values(
+      DEFAULT_DEPARTMENTS.map((name) => ({
+        id: nanoid(),
+        organizationId,
+        name,
+        isDefault: true,
+      })),
+    )
+    .onConflictDoNothing();
+
+  // 5. Create org profile
   await db
     .insert(organizationProfile)
     .values({

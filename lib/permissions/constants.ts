@@ -1,134 +1,347 @@
-// /lib/permissions/constants
+// lib/permissions/constants.ts
+
+// ── All permission keys ────────────────────────────────────────────────────
 
 export const ALL_PERMISSIONS = [
-  { key: "quotation:read", label: "View Quotations" },
+  // Quotation
+  { key: "quotation:read",   label: "View Quotations" },
   { key: "quotation:create", label: "Create Quotation" },
   { key: "quotation:update", label: "Update Quotation" },
   { key: "quotation:delete", label: "Delete Quotation" },
 
-  { key: "sales-order:read", label: "View Sales Orders" },
+  // Sales Order
+  { key: "sales-order:read",   label: "View Sales Orders" },
   { key: "sales-order:create", label: "Create Sales Order" },
   { key: "sales-order:update", label: "Update Sales Order" },
   { key: "sales-order:delete", label: "Delete Sales Order" },
 
-  { key: "delivery-order:read", label: "View Delivery Orders" },
+  // Customer PO
+  { key: "customer-po:read",   label: "View Customer POs" },
+  { key: "customer-po:create", label: "Create Customer PO" },
+  { key: "customer-po:update", label: "Update Customer PO" },
+  { key: "customer-po:delete", label: "Delete Customer PO" },
+
+  // Delivery Order
+  { key: "delivery-order:read",   label: "View Delivery Orders" },
   { key: "delivery-order:create", label: "Create Delivery Order" },
   { key: "delivery-order:update", label: "Update Delivery Order" },
   { key: "delivery-order:delete", label: "Delete Delivery Order" },
 
-  { key: "invoice:read", label: "View Invoices" },
+  // Invoice
+  { key: "invoice:read",   label: "View Invoices" },
   { key: "invoice:create", label: "Create Invoice" },
   { key: "invoice:update", label: "Update Invoice" },
   { key: "invoice:delete", label: "Delete Invoice" },
 
+  // Supplier
+  { key: "supplier:read",   label: "View Suppliers" },
+  { key: "supplier:create", label: "Create Supplier" },
+  { key: "supplier:update", label: "Update Supplier" },
+  { key: "supplier:delete", label: "Delete Supplier" },
+
+  // Purchase Order
+  { key: "purchase-order:read",   label: "View Purchase Orders" },
+  { key: "purchase-order:create", label: "Create Purchase Order" },
+  { key: "purchase-order:update", label: "Update Purchase Order" },
+  { key: "purchase-order:delete", label: "Delete Purchase Order" },
+
+  // Customer
+  { key: "customer:read",   label: "View Customers" },
+  { key: "customer:create", label: "Create Customer" },
+  { key: "customer:update", label: "Edit Customer" },
+  { key: "customer:delete", label: "Delete Customer" },
+
+  // Product
+  { key: "product:read", label: "View Products" },
+  { key: "product:seed", label: "Seed Products" },
+
+  // Member management
+  { key: "member:read",   label: "View Members" },
+  { key: "member:invite", label: "Invite Members" },
+  { key: "member:remove", label: "Remove Members" },
+
+  // Department management
+  { key: "department:read",   label: "View Departments" },
+  { key: "department:create", label: "Create Department" },
+  { key: "department:delete", label: "Delete Department" },
+
+  // Profile
+  { key: "profile:read",       label: "View Own Profile" },
+  { key: "profile:update",     label: "Update Own Profile" },
+  { key: "profile:read:all",   label: "View All Employee Profiles" },
+  { key: "profile:update:all", label: "Update Any Employee Profile" },
+  { key: "profile:delete:all", label: "Delete Any Employee Profile" },
+
+  // Payslip
+  { key: "payslip:read:own", label: "View Own Payslip" },
+  { key: "payslip:read:all", label: "View All Payslips" },
+  { key: "payslip:create",   label: "Create Payslip" },
+  { key: "payslip:approve",  label: "Approve Payroll Period" },
+  { key: "payslip:publish",  label: "Publish Payslips" },
+
+  // Organization profile
+  { key: "organization-profile:read",   label: "View Organization Profile" },
+  { key: "organization-profile:create", label: "Setup Organization Profile" },
+  { key: "organization-profile:update", label: "Update Organization Profile" },
+  { key: "organization-profile:delete", label: "Delete Organization Profile" },
+
+  // Organization roles (custom role management)
   { key: "organization-role:create", label: "Create Organization Role" },
   { key: "organization-role:update", label: "Update Organization Role" },
   { key: "organization-role:delete", label: "Delete Organization Role" },
 
-  { key: "member:invite", label: "Invite Members" },
-  { key: "member:read", label: "View Members" },
-  { key: "member:remove", label: "Remove Members" },
-
-  { key: "permission:read", label: "View Permissions" },
+  // Permission management (admin-only)
+  { key: "permission:read",   label: "View Permissions" },
   { key: "permission:create", label: "Create Permission" },
   { key: "permission:delete", label: "Delete Permission" },
-
-  { key: "profile:read", label: "View Own Profile" },
-  { key: "profile:update", label: "Update Own Profile" },
-  { key: "profile:read:all", label: "View All Employee Profiles" },
-  { key: "profile:update:all", label: "Update Any Employee Profile" },
-  { key: "profile:delete:all", label: "Delete Any Employee Profile" },
-
-  { key: "product:seed", label: "Seed Products" },
-  { key: "product:read", label: "View Products" },
-
-  { key: "payslip:read:own", label: "View own payslip" },
-  { key: "payslip:read:all", label: "View all payslips" },
-  { key: "payslip:create", label: "Create payslip" },
-  { key: "payslip:approve", label: "Approve payroll period" },
-  { key: "payslip:publish", label: "Publish payslips" },
-
-  { key: "organization-profile:create", label: "Organization Profile Create" },
-  { key: "organization-profile:update", label: "Organization Profile Update" },
-  { key: "organization-profile:read", label: "Organization Profile Read" },
-  { key: "organization-profile:delete", label: "Organization Profile Delete" },
-
-  { key: "customer:create", label: "Create customer" },
-  { key: "customer:read", label: "View customers" },
-  { key: "customer:update", label: "Edit customer" },
-  { key: "customer:delete", label: "Delete customer" },
 ] as const;
 
 export type PermissionKey = (typeof ALL_PERMISSIONS)[number]["key"];
 
+// ── Default departments ────────────────────────────────────────────────────
+
+export const DEFAULT_DEPARTMENTS = [
+  "management",
+  "accounting",
+  "regulatory",
+  "human-resources",
+  "sales",
+  "marketing",
+  "engineering",
+  "logistic",
+] as const;
+
+export type DepartmentName = (typeof DEFAULT_DEPARTMENTS)[number];
+
+// ── Stakeholder (view-only across everything) ──────────────────────────────
+
+export const STAKEHOLDER_PERMISSIONS: PermissionKey[] = [
+  "quotation:read",
+  "sales-order:read",
+  "customer-po:read",
+  "delivery-order:read",
+  "invoice:read",
+  "supplier:read",
+  "purchase-order:read",
+  "customer:read",
+  "product:read",
+  "member:read",
+  "department:read",
+  "profile:read",
+  "payslip:read:own",
+  "organization-profile:read",
+];
+
+// ── Department-based role permissions ──────────────────────────────────────
+//   Each department has a "manager" set and a "member" set.
+//   Owner bypasses this entirely (returns "*").
+
+export const DEPT_ROLE_PERMISSIONS: Record<
+  string,
+  { manager: PermissionKey[]; member: PermissionKey[] }
+> = {
+  management: {
+    manager: [
+      "quotation:read", "quotation:create", "quotation:update", "quotation:delete",
+      "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
+      "customer-po:read", "customer-po:create", "customer-po:update", "customer-po:delete",
+      "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
+      "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
+      "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
+      "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
+      "customer:read", "customer:create", "customer:update", "customer:delete",
+      "product:read",
+      "member:read", "member:invite", "member:remove",
+      "department:read", "department:create",
+      "profile:read", "profile:update", "profile:read:all",
+      "payslip:read:own", "payslip:read:all",
+      "organization-profile:read", "organization-profile:create", "organization-profile:update",
+      "organization-role:create", "organization-role:update", "organization-role:delete",
+    ],
+    member: [
+      "quotation:read", "quotation:create", "quotation:update",
+      "sales-order:read", "sales-order:create",
+      "customer-po:read",
+      "delivery-order:read",
+      "invoice:read",
+      "supplier:read",
+      "purchase-order:read",
+      "customer:read",
+      "product:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+      "organization-profile:read",
+    ],
+  },
+
+  sales: {
+    manager: [
+      "quotation:read", "quotation:create", "quotation:update", "quotation:delete",
+      "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
+      "customer-po:read", "customer-po:create", "customer-po:update", "customer-po:delete",
+      "delivery-order:read",
+      "invoice:read",
+      "customer:read", "customer:create", "customer:update", "customer:delete",
+      "product:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+    member: [
+      "quotation:read", "quotation:create", "quotation:update",
+      "sales-order:read", "sales-order:create",
+      "customer-po:read",
+      "delivery-order:read",
+      "invoice:read",
+      "customer:read",
+      "product:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+  },
+
+  accounting: {
+    manager: [
+      "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
+      "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
+      "sales-order:read",
+      "delivery-order:read",
+      "customer:read",
+      "supplier:read",
+      "purchase-order:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "organization-profile:read",
+    ],
+    member: [
+      "invoice:read", "invoice:create",
+      "payslip:read:own",
+      "sales-order:read",
+      "delivery-order:read",
+      "customer:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+    ],
+  },
+
+  "human-resources": {
+    manager: [
+      "member:read", "member:invite", "member:remove",
+      "department:read", "department:create",
+      "profile:read", "profile:update", "profile:read:all", "profile:update:all", "profile:delete:all",
+      "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
+      "organization-profile:read",
+    ],
+    member: [
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+  },
+
+  engineering: {
+    manager: [
+      "product:read", "product:seed",
+      "quotation:read",
+      "sales-order:read",
+      "delivery-order:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+    member: [
+      "product:read",
+      "quotation:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+  },
+
+  logistic: {
+    manager: [
+      "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
+      "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
+      "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
+      "sales-order:read",
+      "invoice:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+    member: [
+      "delivery-order:read",
+      "purchase-order:read",
+      "supplier:read",
+      "sales-order:read",
+      "invoice:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+  },
+
+  marketing: {
+    manager: [
+      "customer:read", "customer:create", "customer:update", "customer:delete",
+      "quotation:read",
+      "sales-order:read",
+      "product:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+    member: [
+      "customer:read",
+      "quotation:read",
+      "product:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+  },
+
+  regulatory: {
+    manager: [
+      "quotation:read",
+      "sales-order:read",
+      "invoice:read",
+      "delivery-order:read",
+      "customer:read",
+      "organization-profile:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+    member: [
+      "quotation:read",
+      "sales-order:read",
+      "invoice:read",
+      "delivery-order:read",
+      "member:read",
+      "department:read",
+      "profile:read", "profile:update",
+      "payslip:read:own",
+    ],
+  },
+};
+
+// Kept for backward compat — resolves permissions for flat (non-dept) roles.
 export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
-  admin: [
-    "quotation:read",
-    "quotation:create",
-    "quotation:update",
-    "quotation:delete",
-    "sales-order:read",
-    "sales-order:create",
-    "sales-order:update",
-    "sales-order:delete",
-    "delivery-order:read",
-    "delivery-order:create",
-    "delivery-order:update",
-    "delivery-order:delete",
-    "invoice:read",
-    "invoice:create",
-    "invoice:update",
-    "invoice:delete",
-    "organization-role:create",
-    "organization-role:update",
-    "organization-role:delete",
-    "member:invite",
-    "member:read",
-    "member:remove",
-    "permission:read",
-    "permission:create",
-    "permission:delete",
-    "profile:read",
-    "profile:update",
-    "profile:read:all",
-    "profile:update:all",
-    "product:seed",
-    "product:read",
-    "payslip:read:all",
-    "payslip:create",
-    "payslip:approve",
-    "payslip:publish",
-    "customer:create",
-    "customer:read",
-    "customer:update",
-    "customer:delete",
-  ],
-  member: [
-    "quotation:read",
-    "quotation:create",
-    "quotation:update",
-    "sales-order:read",
-    "delivery-order:read",
-    "invoice:read",
-    "member:read",
-    "profile:read",
-    "profile:update",
-    "product:read",
-    "payslip:read:own",
-    "customer:read",
-  ],
-  hr: [
-    "member:read",
-    "member:invite",
-    "profile:read",
-    "profile:update",
-    "profile:read:all",
-    "profile:update:all",
-    "profile:delete:all",
-    "payslip:read:all",
-    "payslip:create",
-    "payslip:approve",
-    "payslip:publish",
-    "quotation:read",
-  ],
+  stakeholder: STAKEHOLDER_PERMISSIONS,
 };

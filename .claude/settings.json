@@ -5,7 +5,15 @@
       "Bash(git -C /Users/nix_arif/Desktop/learn/programming/rbac/nixcript status --short)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(xargs sed -i '' -E 's/\"p-6 max-w-[a-z0-9]+\\( |\"\\)/\"p-6\\\\1/g')"
+      "Bash(xargs sed -i '' -E 's/\"p-6 max-w-[a-z0-9]+\\( |\"\\)/\"p-6\\\\1/g')",
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/\\\\[id\\\\])",
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/\\\\[id\\\\]/edit)",
+      "Bash(grep -v \"^$\")",
+      "Bash(node -e ' *)"
+    ],
+    "additionalDirectories": [
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order",
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/[id]"
     ]
   }
 }

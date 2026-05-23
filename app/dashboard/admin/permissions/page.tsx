@@ -1,14 +1,8 @@
-// app/dashboard/admin/permissions/page.tsx
-import {
-  getPermissions,
-  getMembersWithPermissions,
-  getUserPermissionsForOrg,
-} from "@/server/permissions";
-// import { PermissionsPageClient } from "./permissions-client";
+import { getMembersWithPermissions } from "@/server/permissions";
+import { PermissionOverridesClient } from "./permissions-client";
+import { requirePermission } from "@/lib/auth/require-permission";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { AllPermissions } from "@/app/dashboard/admin/permissions/permissions-client";
-import { requirePermission } from "@/lib/auth/require-permission";
 
 export default async function PermissionsPage() {
   await requirePermission("permission:read");
@@ -17,32 +11,15 @@ export default async function PermissionsPage() {
 
   if (!activeOrgId) {
     return (
-      <div
-        style={{
-          padding: "1.5rem",
-          color: "var(--color-text-secondary)",
-          fontSize: "14px",
-        }}
-      >
+      <div className="p-6 text-sm text-muted-foreground">
         No active organization selected.
       </div>
     );
   }
 
-  const [permissions, membersPermissions] = await Promise.all([
-    getPermissions(),
-    getMembersWithPermissions(activeOrgId),
-  ]);
-
-  //   console.log(membersPermissions);
+  const members = await getMembersWithPermissions(activeOrgId);
 
   return (
-    <div>
-      <AllPermissions
-        permissions={permissions}
-        organizationId={activeOrgId}
-        members={membersPermissions}
-      />
-    </div>
+    <PermissionOverridesClient members={members} organizationId={activeOrgId} />
   );
 }

@@ -1,8 +1,8 @@
 import { cache } from "react";
 import { db } from "@/db";
-import { member, userPermission } from "@/db/schema";
+import { department, member, memberDepartment, userPermission } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
-import { ROLE_PERMISSIONS } from "@/lib/permissions/constants";
+import { DEPT_ROLE_PERMISSIONS, ROLE_PERMISSIONS } from "@/lib/permissions/constants";
 
 const OWNER_ALL_PERMISSIONS = "*";
 
@@ -14,25 +14,19 @@ export const getUserPermissions = cache(async function getUserPermissions(
   const [memberData] = await db
     .select()
     .from(member)
-    .where(
-      and(eq(member.userId, userId), eq(member.organizationId, organizationId)),
-    )
+    .where(and(eq(member.userId, userId), eq(member.organizationId, organizationId)))
     .limit(1);
 
   if (memberData) {
     if (memberData.role === "owner") return [OWNER_ALL_PERMISSIONS];
-    return resolvePermissions(userId, organizationId, memberData.role);
+    return resolvePermissions(userId, memberData.id, organizationId, memberData.role);
   }
 
   // 2. No direct membership — sibling org fallback.
-  //    Members of any org in an owner's cluster can access sibling orgs
-  //    using their home-org permissions (supports multi-org comparison flows).
   const [ownerMembership] = await db
     .select({ userId: member.userId })
     .from(member)
-    .where(
-      and(eq(member.organizationId, organizationId), eq(member.role, "owner")),
-    )
+    .where(and(eq(member.organizationId, organizationId), eq(member.role, "owner")))
     .limit(1);
 
   if (!ownerMembership) return [];
@@ -41,62 +35,68 @@ export const getUserPermissions = cache(async function getUserPermissions(
     await db
       .select({ organizationId: member.organizationId })
       .from(member)
-      .where(
-        and(
-          eq(member.userId, ownerMembership.userId),
-          eq(member.role, "owner"),
-        ),
-      )
+      .where(and(eq(member.userId, ownerMembership.userId), eq(member.role, "owner")))
   ).map((r) => r.organizationId);
 
   if (siblingOrgIds.length === 0) return [];
 
   const [siblingMembership] = await db
-    .select({ role: member.role, organizationId: member.organizationId })
+    .select({ id: member.id, role: member.role, organizationId: member.organizationId })
     .from(member)
-    .where(
-      and(
-        eq(member.userId, userId),
-        inArray(member.organizationId, siblingOrgIds),
-      ),
-    )
+    .where(and(eq(member.userId, userId), inArray(member.organizationId, siblingOrgIds)))
     .limit(1);
 
   if (!siblingMembership) return [];
   if (siblingMembership.role === "owner") return [OWNER_ALL_PERMISSIONS];
 
-  return resolvePermissions(
-    userId,
-    siblingMembership.organizationId,
-    siblingMembership.role,
-  );
+  return resolvePermissions(userId, siblingMembership.id, siblingMembership.organizationId, siblingMembership.role);
 });
 
-// Returns the effective permission keys for a non-owner member.
-// Uses explicit user_permission rows when they exist; otherwise falls back
-// to the role's default permissions from ROLE_PERMISSIONS.
 async function resolvePermissions(
   userId: string,
+  memberId: string,
   organizationId: string,
   role: string,
 ): Promise<string[]> {
-  // Fetch all rows — both allowed and denied — to detect whether any
-  // explicit configuration exists for this user/org combination.
+  // Explicit user_permission rows take precedence if they exist
   const allRows = await db
     .select({ permissionKey: userPermission.permissionKey, allowed: userPermission.allowed })
     .from(userPermission)
-    .where(
-      and(
-        eq(userPermission.userId, userId),
-        eq(userPermission.organizationId, organizationId),
-      ),
-    );
+    .where(and(eq(userPermission.userId, userId), eq(userPermission.organizationId, organizationId)));
 
   if (allRows.length > 0) {
-    // Explicit rows exist — honour them (only return allowed ones).
     return allRows.filter((r) => r.allowed).map((r) => r.permissionKey);
   }
 
-  // No explicit rows at all — fall back to the role's default permissions.
-  return [...(ROLE_PERMISSIONS[role] ?? [])];
+  // Stakeholder: flat read-only permission set
+  if (role === "stakeholder") {
+    return [...(ROLE_PERMISSIONS["stakeholder"] ?? [])];
+  }
+
+  // For regular members: union permissions from ALL their department assignments
+  const deptAssignments = await db
+    .select({ role: memberDepartment.role, departmentId: memberDepartment.departmentId })
+    .from(memberDepartment)
+    .where(and(eq(memberDepartment.memberId, memberId), eq(memberDepartment.organizationId, organizationId)));
+
+  if (deptAssignments.length === 0) return [];
+
+  const deptIds = deptAssignments.map((a) => a.departmentId);
+  const depts = await db
+    .select({ id: department.id, name: department.name })
+    .from(department)
+    .where(inArray(department.id, deptIds));
+
+  const deptNameById = Object.fromEntries(depts.map((d) => [d.id, d.name]));
+
+  // Union all permissions from all dept+role pairs
+  const permSet = new Set<string>();
+  for (const assignment of deptAssignments) {
+    const deptName = deptNameById[assignment.departmentId];
+    if (!deptName) continue;
+    const perms = DEPT_ROLE_PERMISSIONS[deptName]?.[assignment.role as "manager" | "member"] ?? [];
+    for (const p of perms) permSet.add(p);
+  }
+
+  return [...permSet];
 }

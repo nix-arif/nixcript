@@ -116,6 +116,26 @@ export const verification = pgTable(
 );
 
 /* =========================
+   DEPARTMENT
+========================= */
+export const department = pgTable(
+  "department",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    isDefault: boolean("is_default").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("department_organizationId_idx").on(table.organizationId),
+    uniqueIndex("department_org_name_unique").on(table.organizationId, table.name),
+  ],
+);
+
+/* =========================
    ORGANIZATION
 ========================= */
 export const organization = pgTable(
@@ -164,7 +184,10 @@ export const member = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // "owner" | "stakeholder" | "member"
+    // "member" means the user has dept assignments in member_department
     role: text("role").default("member").notNull(),
+    departmentId: text("department_id"), // kept for compat; member_department is authoritative
     createdAt: timestamp("created_at").notNull(),
   },
   (table) => [
@@ -181,7 +204,12 @@ export const invitation = pgTable(
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
+    // Better Auth role on the member record ("owner" | "stakeholder" | "member")
     role: text("role"),
+    // The initial department assigned on invite
+    departmentId: text("department_id"),
+    // The role within that department ("manager" | "member")
+    departmentRole: text("department_role"),
     status: text("status").default("pending").notNull(),
     expiresAt: timestamp("expires_at").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -197,8 +225,32 @@ export const invitation = pgTable(
 );
 
 /* =========================
-   ROLE PERMISSION
+   MEMBER DEPARTMENT
+   Junction: one member can belong to many departments,
+   each with its own role ("manager" | "member").
 ========================= */
+export const memberDepartment = pgTable(
+  "member_department",
+  {
+    id: text("id").primaryKey(),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => member.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    departmentId: text("department_id")
+      .notNull()
+      .references(() => department.id, { onDelete: "cascade" }),
+    role: text("role").default("member").notNull(), // "manager" | "member"
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("member_department_unique").on(table.memberId, table.departmentId),
+    index("member_department_memberId_idx").on(table.memberId),
+    index("member_department_orgId_idx").on(table.organizationId),
+  ],
+);
 
 /* =========================
    TEAM
@@ -1072,6 +1124,7 @@ export const salesOrder = pgTable(
     // Source quotation (optional — SO can be created independently)
     quotationId: text("quotation_id").references(() => quotation.id),
     quotationNo: text("quotation_no"),
+    linkedQuotations: json("linked_quotations").$type<{ id: string; quotationNo: string }[]>(),
 
     // Customer
     customerId: text("customer_id").references(() => customer.id),
@@ -1092,6 +1145,7 @@ export const salesOrder = pgTable(
     // Sales info
     salesPersonId: text("sales_person_id").references(() => user.id),
     salesPersonName: text("sales_person_name"),
+    associateSalesPersons: json("associate_sales_persons").$type<{ id: string; name: string }[]>(),
 
     // Pricing
     subtotal: text("subtotal").notNull().default("0"),
@@ -1741,4 +1795,8 @@ export const schema = {
   invoiceExpenseRelations,
   // document numbering
   documentNumberingSetting,
+  // department
+  department,
+  // member department assignments (junction)
+  memberDepartment,
 };

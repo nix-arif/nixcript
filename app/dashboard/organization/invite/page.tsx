@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { getInvitations, getMemberCount } from "@/server/invitations";
-import { getRoles } from "@/server/roles";
+import { getDepartments } from "@/server/departments";
 import { InviteClient } from "./invite-client";
 import { requirePermission } from "@/lib/auth/require-permission";
 
@@ -18,21 +18,27 @@ export default async function InvitePage() {
     );
   }
 
-  const [invitations, roles, memberCount] = await Promise.all([
+  const [invitations, departments, memberCount] = await Promise.all([
     getInvitations(activeOrgId),
-    getRoles(activeOrgId),
+    getDepartments(),
     getMemberCount(activeOrgId),
   ]);
 
-  const pendingCount = invitations.filter((i) => i.status === "pending").length;
+  const pendingCount = invitations.filter(
+    (i) => i.status === "pending" && new Date(i.expiresAt) > new Date(),
+  ).length;
   const expiredCount = invitations.filter(
-    (i) => i.status === "expired" || new Date(i.expiresAt) < new Date(),
+    (i) =>
+      i.status !== "accepted" &&
+      i.status !== "cancelled" &&
+      i.status !== "canceled" &&
+      new Date(i.expiresAt) < new Date(),
   ).length;
 
   return (
     <InviteClient
       invitations={invitations}
-      roles={roles}
+      departments={departments}
       organizationId={activeOrgId}
       memberCount={memberCount}
       pendingCount={pendingCount}

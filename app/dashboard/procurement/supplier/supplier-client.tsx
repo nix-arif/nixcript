@@ -85,11 +85,16 @@ export function SupplierClient({ initialSuppliers }: Props) {
     setOpen(true);
   }
 
-  const f = (k: keyof typeof EMPTY_FORM) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    setForm((prev) => ({ ...prev, [k]: e.target.value }));
+  const f =
+    (k: keyof typeof EMPTY_FORM) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      setForm((prev) => ({ ...prev, [k]: e.target.value }));
 
   async function handleSave() {
-    if (!form.name.trim()) { toast.error("Supplier name is required"); return; }
+    if (!form.name.trim()) {
+      toast.error("Supplier name is required");
+      return;
+    }
     setSaving(true);
     try {
       if (editing) {
@@ -160,8 +165,15 @@ export function SupplierClient({ initialSuppliers }: Props) {
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
           <BuildingIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
           <div className="text-sm font-medium mb-1">No suppliers yet</div>
-          <div className="text-xs mb-4">Add your first supplier to get started</div>
-          <Button variant="outline" size="sm" className="gap-2" onClick={openCreate}>
+          <div className="text-xs mb-4">
+            Add your first supplier to get started
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={openCreate}
+          >
             <PlusIcon className="w-3.5 h-3.5" /> Add supplier
           </Button>
         </div>
@@ -206,7 +218,9 @@ export function SupplierClient({ initialSuppliers }: Props) {
                   )}
                 </div>
                 {s.address && (
-                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{s.address}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                    {s.address}
+                  </p>
                 )}
               </div>
 
@@ -235,48 +249,85 @@ export function SupplierClient({ initialSuppliers }: Props) {
       )}
 
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent className="w-full sm:max-w-md overflow-y-auto">
+        <SheetContent className="w-full sm:max-w-md max-w-lg! overflow-y-auto px-10">
           <SheetHeader className="mb-5">
-            <SheetTitle>{editing ? "Edit supplier" : "Add supplier"}</SheetTitle>
+            <SheetTitle>
+              {editing ? "Edit supplier" : "Add supplier"}
+            </SheetTitle>
           </SheetHeader>
 
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label>Company name <span className="text-destructive">*</span></Label>
-              <Input value={form.name} onChange={f("name")} placeholder="e.g. ABC Medical Sdn Bhd" />
+              <Label>
+                Company name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                value={form.name}
+                onChange={f("name")}
+                placeholder="e.g. ABC Medical Sdn Bhd"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Registration no.</Label>
-              <Input value={form.registrationNo} onChange={f("registrationNo")} placeholder="e.g. 202201012345" />
+              <Input
+                value={form.registrationNo}
+                onChange={f("registrationNo")}
+                placeholder="e.g. 202201012345"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Address</Label>
-              <Textarea value={form.address} onChange={f("address")} placeholder="Company address" rows={3} />
+              <Textarea
+                value={form.address}
+                onChange={f("address")}
+                placeholder="Company address"
+                rows={3}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Contact person</Label>
-                <Input value={form.contactPerson} onChange={f("contactPerson")} placeholder="Name" />
+                <Input
+                  value={form.contactPerson}
+                  onChange={f("contactPerson")}
+                  placeholder="Name"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Phone</Label>
-                <Input value={form.contactNo} onChange={f("contactNo")} placeholder="e.g. 012-3456789" />
+                <Input
+                  value={form.contactNo}
+                  onChange={f("contactNo")}
+                  placeholder="e.g. 012-3456789"
+                />
               </div>
             </div>
             <div className="space-y-1.5">
               <Label>Email</Label>
-              <Input type="email" value={form.email} onChange={f("email")} placeholder="supplier@example.com" />
+              <Input
+                type="email"
+                value={form.email}
+                onChange={f("email")}
+                placeholder="supplier@example.com"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Notes</Label>
-              <Textarea value={form.notes} onChange={f("notes")} placeholder="Internal notes..." rows={2} />
+              <Textarea
+                value={form.notes}
+                onChange={f("notes")}
+                placeholder="Internal notes..."
+                rows={2}
+              />
             </div>
 
             <div className="flex gap-2 pt-2">
               <Button className="flex-1" onClick={handleSave} disabled={saving}>
                 {saving ? "Saving…" : editing ? "Save changes" : "Add supplier"}
               </Button>
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
             </div>
           </div>
         </SheetContent>

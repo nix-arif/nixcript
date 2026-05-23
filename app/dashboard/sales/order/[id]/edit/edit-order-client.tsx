@@ -4,8 +4,9 @@ import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  createSalesOrder,
+  updateSalesOrder,
   type SalesOrderItemInput,
+  type SalesOrderWithItems,
 } from "@/server/sales-order";
 import { getCustomers, getCustomer } from "@/server/customer";
 import {
@@ -29,12 +30,20 @@ import {
   BuildingIcon,
   FileTextIcon,
 } from "lucide-react";
-
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
 interface LineItem extends SalesOrderItemInput {
   _key: string;
 }
+
+const SO_STATUS = ["draft", "confirmed", "fulfilled", "cancelled"] as const;
+
+const SO_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  confirmed: "Confirmed",
+  fulfilled: "Fulfilled",
+  cancelled: "Cancelled",
+};
 
 const newLine = (rowNo: number): LineItem => ({
   _key: crypto.randomUUID(),
@@ -68,40 +77,84 @@ function calcTotals(items: LineItem[], sstPct: string, discPct: string) {
 
 const fmt = (n: number) => `RM ${n.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
+function toDateInput(d: Date | string | null | undefined): string {
+  if (!d) return "";
+  const date = new Date(d);
+  return date.toISOString().split("T")[0];
+}
+
 interface Props {
+  order: SalesOrderWithItems;
   members: OrgMember[];
 }
 
-export function CreateSalesOrderClient({ members }: Props) {
+export function EditSalesOrderClient({ order, members }: Props) {
   const router = useRouter();
+  const snap = order.customerSnapshot as any;
 
-  // Quotation search
+  // ── Quotation ───────────────────────────────────────────────────────────────
   const [qtSearch, setQtSearch] = useState("");
   const [qtResults, setQtResults] = useState<Awaited<ReturnType<typeof searchQuotationsByNo>>>([]);
-  const [linkedQuotations, setLinkedQuotations] = useState<{ id: string; quotationNo: string }[]>([]);
+  const [linkedQuotations, setLinkedQuotations] = useState<{ id: string; quotationNo: string }[]>(
+    (order.linkedQuotations as { id: string; quotationNo: string }[] | null) ??
+    (order.quotationId && order.quotationNo ? [{ id: order.quotationId, quotationNo: order.quotationNo }] : []),
+  );
   const [qtLoading, setQtLoading] = useState(false);
   const qtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Customer
+  // ── Customer ────────────────────────────────────────────────────────────────
+  const initialCustomer: Customer | null = order.customerId && snap
+    ? ({
+        id: order.customerId,
+        title: snap.title ?? null,
+        name: snap.name ?? "",
+        contactNo: snap.contactNo ?? null,
+        email: snap.email ?? null,
+        createdAt: new Date(),
+        createdByName: null,
+        companies: snap.organizationName
+          ? [{ id: "__snap__", customerId: order.customerId, organizationName: snap.organizationName, organizationAddress: snap.organizationAddress ?? null, isPrimary: true, createdAt: new Date() }]
+          : [],
+      } as unknown as Customer)
+    : null;
+
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Customer[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(initialCustomer);
+  const [custCompanyId, setCustCompanyId] = useState<string | undefined>(undefined);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Header
-  const [salesPerson, setSalesPerson] = useState("");
-  const [associateSalesPersons, setAssociateSalesPersons] = useState<{ id: string; name: string }[]>([]);
-  const [deliveryDate, setDeliveryDate] = useState("");
-  const [deliveryAddress, setDeliveryAddress] = useState("");
-  const [notes, setNotes] = useState("");
+  // ── Header ──────────────────────────────────────────────────────────────────
+  const [status, setStatus] = useState(order.status ?? "draft");
+  const [salesPerson, setSalesPerson] = useState(order.salesPersonName ?? "");
+  const [associateSalesPersons, setAssociateSalesPersons] = useState<{ id: string; name: string }[]>(
+    (order.associateSalesPersons as { id: string; name: string }[] | null) ?? [],
+  );
+  const [deliveryDate, setDeliveryDate] = useState(toDateInput(order.deliveryDate));
+  const [deliveryAddress, setDeliveryAddress] = useState(order.deliveryAddress ?? "");
+  const [notes, setNotes] = useState(order.notes ?? "");
 
-  // Pricing
-  const [sstPct, setSstPct] = useState("0");
-  const [overallDiscPct, setOverallDiscPct] = useState("0");
+  // ── Pricing ─────────────────────────────────────────────────────────────────
+  const [sstPct, setSstPct] = useState(order.sstPct ?? "0");
+  const [overallDiscPct, setOverallDiscPct] = useState(order.overallDiscountPct ?? "0");
 
-  // Items
-  const [items, setItems] = useState<LineItem[]>([newLine(1)]);
+  // ── Items ───────────────────────────────────────────────────────────────────
+  const [items, setItems] = useState<LineItem[]>(
+    order.items.length > 0
+      ? order.items.map((i) => ({
+          _key: crypto.randomUUID(),
+          rowNo: i.rowNo,
+          productCode: i.productCode ?? "",
+          description: i.description ?? "",
+          qty: String(i.qty ?? "1"),
+          uom: i.uom ?? "",
+          unitPrice: String(i.unitPrice ?? "0"),
+          discountPct: String(i.discountPct ?? "0"),
+          discountAmt: String(i.discountAmt ?? "0"),
+          totalPrice: String(i.totalPrice ?? "0"),
+        }))
+      : [newLine(1)],
+  );
 
   const [saving, setSaving] = useState(false);
 
@@ -117,7 +170,7 @@ export function CreateSalesOrderClient({ members }: Props) {
     }, 300);
   }, []);
 
-  async function selectQuotation(qtId: string, qtNo: string) {
+  async function selectQuotation(qtId: string) {
     if (linkedQuotations.some((q) => q.id === qtId)) {
       setQtSearch(""); setQtResults([]); return;
     }
@@ -127,15 +180,13 @@ export function CreateSalesOrderClient({ members }: Props) {
     try {
       const qt = await getQuotationForSO(qtId);
       if (!qt) return;
-
-      const isFirst = linkedQuotations.length === 0;
       setLinkedQuotations((prev) => [...prev, { id: qt.id, quotationNo: qt.quotationNo }]);
 
-      // Append items (renumber after existing)
+      // Append items
       const newItems = qt.items.map((item) =>
         calcLine({
           _key: crypto.randomUUID(),
-          rowNo: 0, // renumbered below
+          rowNo: 0,
           productCode: item.productCode ?? "",
           description: item.description ?? "",
           qty: String(item.qty ?? "1"),
@@ -147,26 +198,9 @@ export function CreateSalesOrderClient({ members }: Props) {
         }),
       );
       setItems((prev) => {
-        const base = isFirst ? [] : prev.filter((i) => i.description || i.productCode);
-        const combined = [...base, ...newItems];
+        const combined = [...prev, ...newItems];
         return combined.map((i, idx) => ({ ...i, rowNo: idx + 1 }));
       });
-
-      // Only auto-fill header fields from the first quotation
-      if (isFirst) {
-        setSstPct(qt.sstPct ?? "0");
-        setOverallDiscPct(qt.overallDiscountPct ?? "0");
-        if (qt.salesPersonName) setSalesPerson(qt.salesPersonName);
-        if (qt.customerId) {
-          const cust = await getCustomer(qt.customerId);
-          if (cust) {
-            setSelectedCustomer(cust as unknown as Customer);
-            const primary = cust.companies.find((c) => c.isPrimary);
-            if (primary) setCustCompanyId(primary.id);
-            else if (cust.companies.length === 1) setCustCompanyId(cust.companies[0].id);
-          }
-        }
-      }
     } catch {
       toast.error("Failed to load quotation");
     } finally {
@@ -226,10 +260,12 @@ export function CreateSalesOrderClient({ members }: Props) {
     setSaving(true);
     try {
       const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
-      await createSalesOrder({
+      await updateSalesOrder({
+        id: order.id,
         customerId: selectedCustomer.id,
         customerCompanyId: custCompanyId,
         linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
+        status,
         salesPersonName: salesPerson || undefined,
         associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
         deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
@@ -243,8 +279,8 @@ export function CreateSalesOrderClient({ members }: Props) {
         grandTotal: grand.toFixed(2),
         items: items.map(({ _key, ...rest }) => rest),
       });
-      toast.success("Sales order created");
-      router.push("/dashboard/sales/order");
+      toast.success("Sales order updated");
+      router.push(`/dashboard/sales/order/${order.id}`);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -258,12 +294,14 @@ export function CreateSalesOrderClient({ members }: Props) {
   return (
     <div className="p-6">
       <PageHeader
-        title="New Sales Order"
-        description="Create a new sales order"
+        title={order.soNo}
+        description="Edit sales order"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/sales/order")} className="gap-2">
-            <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/order/${order.id}`)} className="gap-2">
+              <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+            </Button>
+          </div>
         }
       />
 
@@ -288,7 +326,7 @@ export function CreateSalesOrderClient({ members }: Props) {
             <Input
               value={qtSearch}
               onChange={(e) => handleQtSearch(e.target.value)}
-              placeholder={linkedQuotations.length === 0 ? "Search quotation no. to auto-fill…" : "Add another quotation…"}
+              placeholder="Add quotation…"
               className="pl-9 h-9 text-sm"
               disabled={qtLoading}
             />
@@ -298,15 +336,15 @@ export function CreateSalesOrderClient({ members }: Props) {
             {qtResults.length > 0 && (
               <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
                 {qtResults.map((qt) => {
-                  const snap = qt.customerSnapshot as any;
-                  const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                  const s = qt.customerSnapshot as any;
+                  const custName = s ? [s.title, s.name].filter(Boolean).join(" ") : null;
                   const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
                   return (
                     <button
                       key={qt.id}
                       disabled={alreadyLinked}
                       className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40"
-                      onClick={() => selectQuotation(qt.id, qt.quotationNo)}
+                      onClick={() => selectQuotation(qt.id)}
                     >
                       <div className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</div>
                       {custName && <div className="text-[11px] text-muted-foreground">{custName}</div>}
@@ -316,17 +354,11 @@ export function CreateSalesOrderClient({ members }: Props) {
               </div>
             )}
           </div>
-          {linkedQuotations.length === 0 && (
-            <p className="text-[11px] text-muted-foreground mt-2">
-              First quotation auto-fills customer, pricing, and items. Additional quotations append their items.
-            </p>
-          )}
         </section>
 
         {/* ── 2. Customer ── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Customer</h2>
-
           {selectedCustomer ? (
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
@@ -341,7 +373,6 @@ export function CreateSalesOrderClient({ members }: Props) {
                     <XIcon className="w-3.5 h-3.5" />
                   </button>
                 </div>
-
                 {allCompanies.length > 0 && (
                   <div className="mt-2">
                     {allCompanies.length === 1 ? (
@@ -409,6 +440,27 @@ export function CreateSalesOrderClient({ members }: Props) {
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Order details</h2>
           <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Status</Label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-background px-2.5 text-sm"
+              >
+                {SO_STATUS.map((s) => (
+                  <option key={s} value={s}>{SO_STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Due delivery date</Label>
+              <input
+                type="date"
+                value={deliveryDate}
+                onChange={(e) => setDeliveryDate(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
             <div className="col-span-2 space-y-1.5">
               <Label className="text-xs">Sales person</Label>
               <div className="flex items-center gap-2 flex-wrap">
@@ -452,16 +504,7 @@ export function CreateSalesOrderClient({ members }: Props) {
                 </select>
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Due delivery date</Label>
-              <input
-                type="date"
-                value={deliveryDate}
-                onChange={(e) => setDeliveryDate(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-            </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 col-span-2">
               <Label className="text-xs">Delivery address</Label>
               <Input
                 value={deliveryAddress}
@@ -491,7 +534,6 @@ export function CreateSalesOrderClient({ members }: Props) {
               <PlusIcon className="w-3 h-3" /> Add row
             </Button>
           </div>
-
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -512,47 +554,22 @@ export function CreateSalesOrderClient({ members }: Props) {
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
                     <td className="py-1.5 pr-2">
-                      <Input
-                        value={item.productCode ?? ""}
-                        onChange={(e) => updateItem(item._key, { productCode: e.target.value })}
-                        className="h-7 text-xs"
-                      />
+                      <Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} className="h-7 text-xs" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input
-                        value={item.description ?? ""}
-                        onChange={(e) => updateItem(item._key, { description: e.target.value })}
-                        className="h-7 text-xs"
-                      />
+                      <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} className="h-7 text-xs" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input
-                        value={item.qty}
-                        onChange={(e) => updateItem(item._key, { qty: e.target.value })}
-                        className="h-7 text-xs text-right"
-                      />
+                      <Input value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input
-                        value={item.uom ?? ""}
-                        onChange={(e) => updateItem(item._key, { uom: e.target.value })}
-                        className="h-7 text-xs"
-                        placeholder="unit"
-                      />
+                      <Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="unit" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input
-                        value={item.unitPrice ?? "0"}
-                        onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })}
-                        className="h-7 text-xs text-right"
-                      />
+                      <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs text-right" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input
-                        value={item.discountPct ?? "0"}
-                        onChange={(e) => updateItem(item._key, { discountPct: e.target.value })}
-                        className="h-7 text-xs text-right"
-                      />
+                      <Input value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} className="h-7 text-xs text-right" />
                     </td>
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
                       {fmt(parseFloat(item.totalPrice ?? "0"))}
@@ -585,11 +602,7 @@ export function CreateSalesOrderClient({ members }: Props) {
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground shrink-0">Overall disc.</span>
                 <div className="flex items-center gap-1">
-                  <Input
-                    value={overallDiscPct}
-                    onChange={(e) => setOverallDiscPct(e.target.value)}
-                    className="h-7 w-16 text-xs text-right"
-                  />
+                  <Input value={overallDiscPct} onChange={(e) => setOverallDiscPct(e.target.value)} className="h-7 w-16 text-xs text-right" />
                   <span className="text-muted-foreground text-xs">%</span>
                 </div>
                 <span className="tabular-nums font-mono text-muted-foreground">−{fmt(overallDiscAmt)}</span>
@@ -597,11 +610,7 @@ export function CreateSalesOrderClient({ members }: Props) {
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground shrink-0">SST</span>
                 <div className="flex items-center gap-1">
-                  <Input
-                    value={sstPct}
-                    onChange={(e) => setSstPct(e.target.value)}
-                    className="h-7 w-16 text-xs text-right"
-                  />
+                  <Input value={sstPct} onChange={(e) => setSstPct(e.target.value)} className="h-7 w-16 text-xs text-right" />
                   <span className="text-muted-foreground text-xs">%</span>
                 </div>
                 <span className="tabular-nums font-mono text-muted-foreground">{fmt(sstAmt)}</span>
@@ -617,9 +626,9 @@ export function CreateSalesOrderClient({ members }: Props) {
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
           <Button onClick={handleSave} disabled={saving} className="gap-2">
-            {saving ? "Creating…" : "Create sales order"}
+            {saving ? "Saving…" : "Save changes"}
           </Button>
-          <Button variant="outline" onClick={() => router.push("/dashboard/sales/order")}>
+          <Button variant="outline" onClick={() => router.push(`/dashboard/sales/order/${order.id}`)}>
             Cancel
           </Button>
         </div>
