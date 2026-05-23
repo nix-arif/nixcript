@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import {
   FileSpreadsheetIcon,
   XIcon,
@@ -442,11 +443,20 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
     try {
       const newCust = await createCustomer({
         name: customerForm.name.trim(),
-        department: customerForm.department.trim() || undefined,
-        organizationName: customerForm.organizationName.trim() || undefined,
-        organizationAddress: customerForm.organizationAddress.trim() || undefined,
         contactNo: customerForm.contactNo.trim() || undefined,
         email: customerForm.email.trim() || undefined,
+        companies:
+          customerForm.organizationName.trim()
+            ? [
+                {
+                  organizationName: customerForm.organizationName.trim(),
+                  organizationAddress:
+                    customerForm.organizationAddress.trim() || undefined,
+                  department: customerForm.department.trim() || undefined,
+                  isPrimary: true,
+                },
+              ]
+            : [],
       });
       const lowerName = activeResolver.toLowerCase().trim();
       setFiles((prev) =>
@@ -515,13 +525,10 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
 
   return (
     <div className="p-6 max-w-6xl">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">Government Project</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Upload spreadsheets (2-sheet format) to bulk-create quotations and download
-          organized PDFs.
-        </p>
-      </div>
+      <PageHeader
+        title="Government Project"
+        description="Upload spreadsheets (2-sheet format) to bulk-create quotations and download organized PDFs"
+      />
 
       {/* Upload zone */}
       <div
@@ -794,9 +801,14 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
                                 className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/40 border-b border-border last:border-0 transition-colors"
                               >
                                 <div className="font-medium">{cust.name}</div>
-                                {(cust.organizationName || cust.department) && (
+                                {cust.companies.length > 0 && (
                                   <div className="text-xs text-muted-foreground mt-0.5">
-                                    {[cust.organizationName, cust.department].filter(Boolean).join(" · ")}
+                                    {[
+                                      cust.companies[0].organizationName,
+                                      cust.companies[0].department,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ")}
                                   </div>
                                 )}
                               </button>

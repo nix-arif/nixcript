@@ -7,6 +7,7 @@ import { z } from "zod";
 import { toast } from "sonner";
 import { upsertProfile, uploadBankBook } from "@/server/profile";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -803,7 +804,7 @@ export function ProfileClient({ user, initialProfile }: Props) {
 
   return (
     <div className="p-6 max-w-3xl">
-      <h1 className="text-xl font-medium mb-6">Profile</h1>
+      <PageHeader title="My Profile" description="Manage your personal information and bank details" />
       <form onSubmit={handleSubmit(onSubmit)}>
         <div className="bg-background border border-border rounded-xl overflow-hidden">
           {/* ── Avatar header ──────────────────────────────────────────── */}

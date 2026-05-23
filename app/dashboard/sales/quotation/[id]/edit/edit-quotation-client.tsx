@@ -330,12 +330,20 @@ export function EditQuotationClient({ data, customers, members }: Props) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="_none">No customer</SelectItem>
-                    {customers.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                        {c.organizationName ? ` · ${c.organizationName}` : ""}
-                      </SelectItem>
-                    ))}
+                    {customers.map((c) => {
+                      const primary =
+                        c.companies.find((co) => co.isPrimary) ??
+                        c.companies[0] ??
+                        null;
+                      return (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                          {primary?.organizationName
+                            ? ` · ${primary.organizationName}`
+                            : ""}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </Field>

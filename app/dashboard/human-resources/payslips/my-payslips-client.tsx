@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { getMyPayslips } from "@/server/payroll";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import { DownloadIcon, EyeIcon, FileTextIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { generatePayslipPdf } from "./generate-payslip-pdf";
@@ -118,12 +119,10 @@ export function MyPayslipsClient({ payslips }: Props) {
   if (payslips.length === 0) {
     return (
       <div className="p-6 max-w-4xl">
-        <div className="mb-6">
-          <h1 className="text-xl font-semibold tracking-tight">My payslips</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            View and download your monthly payslips
-          </p>
-        </div>
+        <PageHeader
+          title="My payslips"
+          description="View and download your monthly payslips"
+        />
         <div className="py-20 text-center text-muted-foreground border border-border rounded-xl">
           <FileTextIcon className="w-8 h-8 mx-auto mb-3 opacity-20" />
           <div className="text-sm font-medium">No payslips yet</div>
@@ -137,13 +136,10 @@ export function MyPayslipsClient({ payslips }: Props) {
 
   return (
     <div className="p-6 max-w-4xl">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">My payslips</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          View and download your monthly payslips
-        </p>
-      </div>
+      <PageHeader
+        title="My payslips"
+        description="View and download your monthly payslips"
+      />
 
       {/* Stat cards */}
       <div className="grid grid-cols-3 gap-3 mb-5">

@@ -13,6 +13,7 @@ import {
 import { FullOrganizationProfile } from "@/server/organization-profile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/page-header";
 import {
   Select,
   SelectContent,
@@ -387,25 +388,20 @@ export function OrganizationProfileClient({ data }: Props) {
 
   return (
     <div className="p-6 max-w-5xl">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Organization profile
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage company information, certificates and compliance documents
-          </p>
-        </div>
-        <Button onClick={handleSave} disabled={saving} className="gap-2">
-          {saving ? (
-            <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <SaveIcon className="w-3.5 h-3.5" />
-          )}
-          Save changes
-        </Button>
-      </div>
+      <PageHeader
+        title="Organization profile"
+        description="Manage company information, certificates and compliance documents"
+        action={
+          <Button onClick={handleSave} disabled={saving} className="gap-2">
+            {saving ? (
+              <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <SaveIcon className="w-3.5 h-3.5" />
+            )}
+            Save changes
+          </Button>
+        }
+      />
 
       <div className="grid grid-cols-2 gap-4">
         {/* ── Company identity ─────────────────────────────────────────── */}

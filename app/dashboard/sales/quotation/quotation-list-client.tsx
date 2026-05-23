@@ -23,6 +23,8 @@ import {
   CalendarIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/page-header";
+import { Highlight } from "@/components/highlight";
 
 const PAGE_SIZE = 10;
 
@@ -131,21 +133,15 @@ export function QuotationListClient({ initialGroups }: Props) {
 
   return (
     <div className="p-6 max-w-5xl">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Quotations</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage and generate customer quotations
-          </p>
-        </div>
-        <Button
-          onClick={() => router.push("/dashboard/sales/quotation/new")}
-          className="gap-2"
-        >
-          <PlusIcon className="w-4 h-4" /> New quotation
-        </Button>
-      </div>
+      <PageHeader
+        title="Quotations"
+        description="Manage and generate customer quotations"
+        action={
+          <Button onClick={() => router.push("/dashboard/sales/quotation/new")} className="gap-2">
+            <PlusIcon className="w-4 h-4" /> New quotation
+          </Button>
+        }
+      />
 
       {/* Search */}
       <div className="flex items-center gap-3 mb-3">
@@ -244,7 +240,7 @@ export function QuotationListClient({ initialGroups }: Props) {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-medium">
-                          {m.quotationNo}
+                          <Highlight text={m.quotationNo} query={search} />
                         </span>
                         <span className="text-[10px] font-medium bg-muted/60 rounded px-1.5 py-0.5 text-muted-foreground tabular-nums">
                           {fmtDate(group.createdAt)}
@@ -252,9 +248,9 @@ export function QuotationListClient({ initialGroups }: Props) {
                       </div>
                       {(custName || m.orgName) && (
                         <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
-                          {custName && <span>{custName}</span>}
+                          {custName && <span><Highlight text={custName} query={search} /></span>}
                           {custName && m.orgName && <span>·</span>}
-                          {m.orgName && <span>{m.orgName}</span>}
+                          {m.orgName && <span><Highlight text={m.orgName} query={search} /></span>}
                         </div>
                       )}
                       {(group.title || group.salesPersonName || group.preparedByName) && (
@@ -262,19 +258,19 @@ export function QuotationListClient({ initialGroups }: Props) {
                           {group.title && group.title !== "Loose Items" && (
                             <span>
                               <span className="text-muted-foreground/50">Title:</span>{" "}
-                              {group.title}
+                              <Highlight text={group.title} query={search} />
                             </span>
                           )}
                           {group.salesPersonName && (
                             <span>
                               <span className="text-muted-foreground/50">Sales:</span>{" "}
-                              {group.salesPersonName}
+                              <Highlight text={group.salesPersonName} query={search} />
                             </span>
                           )}
                           {group.preparedByName && (
                             <span>
                               <span className="text-muted-foreground/50">By:</span>{" "}
-                              {group.preparedByName}
+                              <Highlight text={group.preparedByName} query={search} />
                             </span>
                           )}
                         </div>
@@ -341,7 +337,9 @@ export function QuotationListClient({ initialGroups }: Props) {
                         Compare · {group.members.length}
                       </span>
                       {custName && (
-                        <span className="text-sm font-medium">{custName}</span>
+                        <span className="text-sm font-medium">
+                          <Highlight text={custName} query={search} />
+                        </span>
                       )}
                       <span className="text-[10px] font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded px-1.5 py-0.5 tabular-nums">
                         {fmtDate(group.createdAt)}
@@ -352,19 +350,19 @@ export function QuotationListClient({ initialGroups }: Props) {
                         {group.title && group.title !== "Loose Items" && (
                           <span>
                             <span className="text-muted-foreground/50">Title:</span>{" "}
-                            {group.title}
+                            <Highlight text={group.title} query={search} />
                           </span>
                         )}
                         {group.salesPersonName && (
                           <span>
                             <span className="text-muted-foreground/50">Sales:</span>{" "}
-                            {group.salesPersonName}
+                            <Highlight text={group.salesPersonName} query={search} />
                           </span>
                         )}
                         {group.preparedByName && (
                           <span>
                             <span className="text-muted-foreground/50">By:</span>{" "}
-                            {group.preparedByName}
+                            <Highlight text={group.preparedByName} query={search} />
                           </span>
                         )}
                       </div>

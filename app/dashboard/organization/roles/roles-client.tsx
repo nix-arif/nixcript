@@ -3,6 +3,7 @@
 import React from "react";
 import { toast } from "sonner";
 import { createRole, updateRole, deleteRole } from "@/server/roles";
+import { PageHeader } from "@/components/page-header";
 import { ALL_PERMISSIONS } from "@/lib/permissions/constants";
 import {
   Table,
@@ -166,14 +167,16 @@ export function RolesClient({
 
   return (
     <div className="p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-medium">Organization roles</h1>
-        <Button size="sm" onClick={openCreate}>
-          <PlusIcon className="w-3.5 h-3.5 mr-1" />
-          Create role
-        </Button>
-      </div>
+      <PageHeader
+        title="Organization roles"
+        description="Define roles and manage what each role can access"
+        action={
+          <Button size="sm" onClick={openCreate}>
+            <PlusIcon className="w-3.5 h-3.5 mr-1" />
+            Create role
+          </Button>
+        }
+      />
 
       {/* Role cards */}
       <div className="grid grid-cols-3 gap-3 mb-6">

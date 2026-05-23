@@ -6,6 +6,7 @@ import {
   quotationItem,
   quotationCounter,
   customer,
+  customerCompany,
   user,
   member,
   product,
@@ -400,6 +401,7 @@ export type CreateQuotationInput = {
   title?: string;
   sets?: number;
   customerId?: string;
+  customerCompanyId?: string;
   salesPersonId?: string;
   salesPersonName?: string;
   validDays?: number;
@@ -464,7 +466,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     .where(eq(user.id, userId))
     .limit(1);
 
-  // Get customer snapshot
+  // Get customer snapshot — personal info from customer, company info from customerCompany
   let customerSnapshot = null;
   if (input.customerId) {
     const [cust] = await db
@@ -473,15 +475,41 @@ export async function createQuotation(input: CreateQuotationInput) {
       .where(eq(customer.id, input.customerId))
       .limit(1);
     if (cust) {
+      // Resolve which company to use for the snapshot
+      let company: typeof customerCompany.$inferSelect | null = null;
+      if (input.customerCompanyId) {
+        const [c] = await db
+          .select()
+          .from(customerCompany)
+          .where(
+            and(
+              eq(customerCompany.id, input.customerCompanyId),
+              eq(customerCompany.customerId, input.customerId),
+            ),
+          )
+          .limit(1);
+        company = c ?? null;
+      }
+      if (!company) {
+        // Fall back to primary, then first company
+        const [c] = await db
+          .select()
+          .from(customerCompany)
+          .where(eq(customerCompany.customerId, input.customerId))
+          .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
+          .limit(1);
+        company = c ?? null;
+      }
+
       customerSnapshot = {
         title: cust.title ?? undefined,
         name: cust.name,
-        position: cust.position ?? undefined,
-        department: cust.department ?? undefined,
         email: cust.email ?? undefined,
         contactNo: cust.contactNo ?? undefined,
-        organizationName: cust.organizationName ?? undefined,
-        organizationAddress: cust.organizationAddress ?? undefined,
+        position: company?.position ?? undefined,
+        department: company?.department ?? undefined,
+        organizationName: company?.organizationName ?? undefined,
+        organizationAddress: company?.organizationAddress ?? undefined,
       };
     }
   }
@@ -839,17 +867,29 @@ export async function getQuotationDetail(id: string) {
       .select({
         title: customer.title,
         name: customer.name,
-        position: customer.position,
-        department: customer.department,
         email: customer.email,
         contactNo: customer.contactNo,
-        organizationName: customer.organizationName,
-        organizationAddress: customer.organizationAddress,
       })
       .from(customer)
       .where(eq(customer.id, q.customerId))
       .limit(1);
-    if (cust) customerData = cust;
+    if (cust) {
+      // Prefer company data from the snapshot's org (matched by name) or primary company
+      const [comp] = await db
+        .select()
+        .from(customerCompany)
+        .where(eq(customerCompany.customerId, q.customerId))
+        .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
+        .limit(1);
+
+      customerData = {
+        ...cust,
+        position: comp?.position ?? null,
+        department: comp?.department ?? null,
+        organizationName: comp?.organizationName ?? null,
+        organizationAddress: comp?.organizationAddress ?? null,
+      };
+    }
   }
 
   // Merge: live data wins; fall back to snapshot for deleted customers

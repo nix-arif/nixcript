@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { seedProducts } from "@/server/products";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import {
   UploadIcon,
   FileSpreadsheetIcon,
@@ -242,15 +243,10 @@ export function SeedProductsClient() {
   if (result) {
     return (
       <div className="p-6 max-w-3xl">
-        <div className="mb-6">
-          <h1 className="text-xl font-semibold tracking-tight">
-            Seed products
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Upload the MDA matcher output to seed product & certificate data
-            into the database.
-          </p>
-        </div>
+        <PageHeader
+          title="Seed products"
+          description="Upload the MDA matcher output to seed product & certificate data into the database"
+        />
 
         <div className="bg-background border border-border rounded-xl overflow-hidden">
           <div className="p-6 flex items-start gap-4 border-b border-border">
@@ -300,14 +296,10 @@ export function SeedProductsClient() {
 
   return (
     <div className="p-6 max-w-5xl">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">Seed products</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Upload the MDA matcher output to seed product & certificate data into
-          the database.
-        </p>
-      </div>
+      <PageHeader
+        title="Seed products"
+        description="Upload the MDA matcher output to seed product & certificate data into the database"
+      />
 
       {/* Error */}
       {error && (

@@ -11,6 +11,7 @@ import {
   getPayrollPeriods,
 } from "@/server/payroll";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import {
   Dialog,
   DialogContent,
@@ -179,18 +180,15 @@ export function PayrollClient({ initialPeriods }: Props) {
 
   return (
     <div className="p-6 max-w-5xl">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Payroll</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage monthly payroll periods and employee payslips
-          </p>
-        </div>
-        <Button onClick={() => setShowCreate(true)} className="gap-2">
-          <PlusIcon className="w-4 h-4" /> New period
-        </Button>
-      </div>
+      <PageHeader
+        title="Payroll"
+        description="Manage monthly payroll periods and employee payslips"
+        action={
+          <Button onClick={() => setShowCreate(true)} className="gap-2">
+            <PlusIcon className="w-4 h-4" /> New period
+          </Button>
+        }
+      />
 
       {/* Stat cards */}
       <div className="grid grid-cols-3 gap-3 mb-5">

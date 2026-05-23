@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { generateCataloguePdf } from "./generate-pdf";
+import { PageHeader } from "@/components/page-header";
 
 type SpreadsheetRow = {
   no: number;
@@ -176,14 +177,10 @@ export function CatalogueGenerator() {
 
   return (
     <div className="p-6 max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">
-          Catalogue generator
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Upload a product spreadsheet and export a formatted PDF catalogue
-        </p>
-      </div>
+      <PageHeader
+        title="Catalogue generator"
+        description="Upload a product spreadsheet and export a formatted PDF catalogue"
+      />
 
       <div className="grid grid-cols-[280px_1fr] gap-5 items-start">
         {/* Config panel */}

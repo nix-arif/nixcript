@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import {
   UploadIcon,
   FileSpreadsheetIcon,
@@ -137,12 +138,10 @@ export function MdaCertGeneratorClient() {
 
   return (
     <div className="p-6 max-w-4xl">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">MDA Certificate Generator</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Upload a spreadsheet with product codes to generate a merged MDA certificate PDF with highlighted rows.
-        </p>
-      </div>
+      <PageHeader
+        title="MDA Certificate Generator"
+        description="Upload a spreadsheet with product codes to generate a merged MDA certificate PDF with highlighted rows"
+      />
 
       {error && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive mb-4">

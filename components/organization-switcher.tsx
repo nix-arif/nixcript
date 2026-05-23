@@ -45,35 +45,49 @@ export function OrganizationSwitcher() {
 
   // ✅ ALL hooks before any conditional return
   React.useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        refetchActive();
-        refetchList();
-      }
+    const refetchAll = () => {
+      refetchActive();
+      refetchList();
     };
 
-    const handlePageShow = (e: PageTransitionEvent) => {
-      if (e.persisted) {
-        refetchActive();
-        refetchList();
-      }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refetchAll();
     };
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) refetchAll();
+    };
+    // popstate fires on all back/forward navigation (SPA + non-bfcache).
+    // This covers the 404 → back case where pageshow and visibilitychange don't fire.
+    const handlePopState = () => refetchAll();
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("popstate", handlePopState);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("popstate", handlePopState);
     };
   }, [refetchActive, refetchList]);
 
+  // Ref guard prevents calling setActive concurrently or re-entering while in-flight.
+  const autoSettingRef = React.useRef(false);
   React.useEffect(() => {
-    if (!activeOrganization && organizationList && organizationList.length > 0) {
-      authClient.organization
-        .setActive({ organizationId: organizationList[0].id })
-        .then(() => refetchActive());
+    if (activeOrganization) {
+      autoSettingRef.current = false;
+      return;
     }
+    if (!organizationList || organizationList.length === 0) return;
+    if (autoSettingRef.current) return;
+
+    autoSettingRef.current = true;
+    authClient.organization
+      .setActive({ organizationId: organizationList[0].id })
+      .then(() => refetchActive())
+      .catch(() => {
+        autoSettingRef.current = false;
+      });
   }, [activeOrganization, organizationList]);
 
   // Clear optimistic state only once the real activeOrganization has caught up

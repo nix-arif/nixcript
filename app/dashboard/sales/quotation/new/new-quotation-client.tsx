@@ -33,6 +33,7 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/page-header";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 type Member = Awaited<ReturnType<typeof getOrgMembersForQuotation>>[number];
@@ -119,6 +120,7 @@ export function NewQuotationClient({
   const [title, setTitle] = useState("Loose Items");
   const [sets, setSets] = useState(1);
   const [customerId, setCustomerId] = useState("");
+  const [customerCompanyId, setCustomerCompanyId] = useState("");
   const [salesPersonId, setSalesPersonId] = useState("");
   const [salesPersonName, setSalesPersonName] = useState("");
   const [validDays, setValidDays] = useState("30");
@@ -407,6 +409,7 @@ export function NewQuotationClient({
         title: sets > 1 ? `${title || "Loose Items"} X ${sets} SETS` : (title || "Loose Items"),
         sets,
         customerId: customerId || undefined,
+        customerCompanyId: customerCompanyId || undefined,
         salesPersonId: salesPersonId || undefined,
         salesPersonName,
         validDays: Number(validDays),
@@ -438,6 +441,11 @@ export function NewQuotationClient({
   };
 
   const selectedCustomer = customers.find((c) => c.id === customerId);
+  const selectedCompany =
+    selectedCustomer?.companies.find((co) => co.id === customerCompanyId) ??
+    selectedCustomer?.companies.find((co) => co.isPrimary) ??
+    selectedCustomer?.companies[0] ??
+    null;
   const okCount = reviewItems.filter((i) => i.status === "ok").length;
   const noPriceCount = reviewItems.filter(
     (i) => i.status === "no_price" || i.status === "no_price_no_cert",
@@ -454,11 +462,7 @@ export function NewQuotationClient({
 
   return (
     <div className="p-6 max-w-4xl">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">New quotation</h1>
-        <p className="text-sm text-muted-foreground mt-1">{quotationNo}</p>
-      </div>
+      <PageHeader title="New quotation" description={quotationNo} />
 
       {/* Step indicator */}
       <div className="flex items-center mb-6">
@@ -625,30 +629,66 @@ export function NewQuotationClient({
             </div>
             <div className="p-4 space-y-4">
               <Field label="Customer">
-                <Select onValueChange={setCustomerId} value={customerId}>
+                <Select
+                  onValueChange={(v) => {
+                    setCustomerId(v);
+                    setCustomerCompanyId(""); // reset company when customer changes
+                  }}
+                  value={customerId}
+                >
                   <SelectTrigger className="h-9 text-sm">
                     <SelectValue placeholder="Select customer" />
                   </SelectTrigger>
                   <SelectContent>
-                    {customers.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {[c.title, c.name].filter(Boolean).join(" ")} —{" "}
-                        {c.organizationName}
-                      </SelectItem>
-                    ))}
+                    {customers.map((c) => {
+                      const primary =
+                        c.companies.find((co) => co.isPrimary) ??
+                        c.companies[0] ??
+                        null;
+                      return (
+                        <SelectItem key={c.id} value={c.id}>
+                          {[c.title, c.name].filter(Boolean).join(" ")}
+                          {primary?.organizationName
+                            ? ` — ${primary.organizationName}`
+                            : ""}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </Field>
 
-              {selectedCustomer && (
+              {/* Company selector — shown when customer has multiple companies */}
+              {selectedCustomer && selectedCustomer.companies.length > 1 && (
+                <Field label="Company affiliation">
+                  <Select
+                    onValueChange={setCustomerCompanyId}
+                    value={customerCompanyId || (selectedCompany?.id ?? "")}
+                  >
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="Select company" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedCustomer.companies.map((co) => (
+                        <SelectItem key={co.id} value={co.id}>
+                          {co.organizationName ?? "—"}
+                          {co.isPrimary ? " (primary)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+
+              {selectedCustomer && selectedCompany && (
                 <div className="p-3 bg-muted/30 rounded-lg text-xs text-muted-foreground space-y-1">
                   <div>
-                    {selectedCustomer.position}
-                    {selectedCustomer.department
-                      ? ` · ${selectedCustomer.department}`
+                    {selectedCompany.position}
+                    {selectedCompany.department
+                      ? ` · ${selectedCompany.department}`
                       : ""}
                   </div>
-                  <div>{selectedCustomer.organizationAddress}</div>
+                  <div>{selectedCompany.organizationAddress}</div>
                   <div>
                     {selectedCustomer.email}
                     {selectedCustomer.contactNo

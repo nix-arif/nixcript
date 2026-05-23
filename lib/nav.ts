@@ -12,6 +12,7 @@ import {
   PackageOpen,
   HardHat,
   FolderOpenIcon,
+  BuildingIcon,
 } from "lucide-react";
 import React from "react";
 
@@ -58,19 +59,26 @@ export const navConfig: NavGroup[] = [
         permission: "quotation:read",
       },
       {
-        title: "Create Quotation",
-        url: "/dashboard/sales/quotation/create",
-        permission: "quotation:create",
-      },
-      {
         title: "Sales Orders",
         url: "/dashboard/sales/order",
         permission: "sales-order:read",
       },
+    ],
+  },
+  {
+    title: "Procurement",
+    url: "#",
+    icon: React.createElement(BuildingIcon),
+    items: [
       {
-        title: "Create Sales Order",
-        url: "/dashboard/sales/order/create",
-        permission: "sales-order:create",
+        title: "Suppliers",
+        url: "/dashboard/procurement/supplier",
+        permission: "supplier:read",
+      },
+      {
+        title: "Purchase Orders",
+        url: "/dashboard/procurement/purchase-order",
+        permission: "purchase-order:read",
       },
     ],
   },

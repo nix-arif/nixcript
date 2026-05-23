@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import {
   UploadIcon,
   FileSpreadsheetIcon,
@@ -131,12 +132,10 @@ export function ItemsPriceClient() {
 
   return (
     <div className="p-6 max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">Items Price Check</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Upload a spreadsheet with product codes to retrieve pricing and product details.
-        </p>
-      </div>
+      <PageHeader
+        title="Items Price Check"
+        description="Upload a spreadsheet with product codes to retrieve pricing and product details"
+      />
 
       {error && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive mb-4">

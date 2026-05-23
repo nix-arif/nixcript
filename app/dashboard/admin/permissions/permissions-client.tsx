@@ -3,6 +3,7 @@
 
 import React from "react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/page-header";
 import {
   createPermission,
   deletePermission,
@@ -207,36 +208,38 @@ export function AllPermissions({
 
   return (
     <div className="p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-medium">Permissions</h1>
-        {tab === "permissions" && (
-          <div className="flex gap-2">
-            <Input
-              placeholder="permission:key"
-              value={newKey}
-              onChange={(e) => setNewKey(e.target.value)}
-              className="w-44 h-8 text-sm"
-              onKeyDown={(e) => e.key === "Enter" && handleCreatePermission()}
-            />
-            <Input
-              placeholder="Label"
-              value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
-              className="w-36 h-8 text-sm"
-              onKeyDown={(e) => e.key === "Enter" && handleCreatePermission()}
-            />
-            <Button
-              size="sm"
-              onClick={handleCreatePermission}
-              disabled={creating || !newKey.trim()}
-            >
-              <PlusIcon className="w-3.5 h-3.5 mr-1" />
-              {creating ? "Adding..." : "Add"}
-            </Button>
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title="Permissions"
+        description="Manage system permissions and user access levels"
+        action={
+          tab === "permissions" ? (
+            <div className="flex gap-2">
+              <Input
+                placeholder="permission:key"
+                value={newKey}
+                onChange={(e) => setNewKey(e.target.value)}
+                className="w-44 h-8 text-sm"
+                onKeyDown={(e) => e.key === "Enter" && handleCreatePermission()}
+              />
+              <Input
+                placeholder="Label"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                className="w-36 h-8 text-sm"
+                onKeyDown={(e) => e.key === "Enter" && handleCreatePermission()}
+              />
+              <Button
+                size="sm"
+                onClick={handleCreatePermission}
+                disabled={creating || !newKey.trim()}
+              >
+                <PlusIcon className="w-3.5 h-3.5 mr-1" />
+                {creating ? "Adding..." : "Add"}
+              </Button>
+            </div>
+          ) : undefined
+        }
+      />
 
       {/* Tabs */}
       <div className="flex border-b border-border mb-6">

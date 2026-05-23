@@ -676,7 +676,7 @@ export const customer = pgTable(
   (t) => [index("customer_org_idx").on(t.organizationId)],
 );
 
-export const customerRelations = relations(customer, ({ one }) => ({
+export const customerRelations = relations(customer, ({ one, many }) => ({
   organization: one(organization, {
     fields: [customer.organizationId],
     references: [organization.id],
@@ -684,6 +684,31 @@ export const customerRelations = relations(customer, ({ one }) => ({
   createdByUser: one(user, {
     fields: [customer.createdBy],
     references: [user.id],
+  }),
+  companies: many(customerCompany),
+}));
+
+export const customerCompany = pgTable(
+  "customer_company",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customer.id, { onDelete: "cascade" }),
+    organizationName: text("organization_name"),
+    organizationAddress: text("organization_address"),
+    position: text("position"),
+    department: text("department"),
+    isPrimary: boolean("is_primary").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("customer_company_customer_idx").on(t.customerId)],
+);
+
+export const customerCompanyRelations = relations(customerCompany, ({ one }) => ({
+  customer: one(customer, {
+    fields: [customerCompany.customerId],
+    references: [customer.id],
   }),
 }));
 
@@ -989,6 +1014,306 @@ export const payslipRelations = relations(payslip, ({ one }) => ({
   user: one(user, { fields: [payslip.userId], references: [user.id] }),
 }));
 
+/* ============================================================================================================================================================================================================================================
+   SUPPLIER TABLE
+=============================================================================================================================================================================================================================================== */
+
+export const supplier = pgTable(
+  "supplier",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    registrationNo: text("registration_no"),
+    address: text("address"),
+    contactPerson: text("contact_person"),
+    contactNo: text("contact_no"),
+    email: text("email"),
+    notes: text("notes"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [index("supplier_org_idx").on(t.organizationId)],
+);
+
+export const supplierRelations = relations(supplier, ({ one }) => ({
+  organization: one(organization, {
+    fields: [supplier.organizationId],
+    references: [organization.id],
+  }),
+  createdByUser: one(user, {
+    fields: [supplier.createdBy],
+    references: [user.id],
+  }),
+}));
+
+/* ============================================================================================================================================================================================================================================
+   SALES ORDER TABLE
+=============================================================================================================================================================================================================================================== */
+
+export const salesOrder = pgTable(
+  "sales_order",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+
+    soNo: text("so_no").notNull(), // e.g. BMS-SO-2025-0001
+
+    // Source quotation (optional — SO can be created independently)
+    quotationId: text("quotation_id").references(() => quotation.id),
+    quotationNo: text("quotation_no"),
+
+    // Customer
+    customerId: text("customer_id").references(() => customer.id),
+    customerSnapshot: json("customer_snapshot").$type<{
+      title?: string;
+      name: string;
+      organizationName?: string;
+      organizationAddress?: string;
+      position?: string;
+      department?: string;
+      email?: string;
+      contactNo?: string;
+    }>(),
+
+    // Supplier PDF quotation (stored in R2 private bucket supplier-quotation)
+    supplierQuotationKey: text("supplier_quotation_key"),
+
+    // Sales info
+    salesPersonId: text("sales_person_id").references(() => user.id),
+    salesPersonName: text("sales_person_name"),
+
+    // Pricing
+    subtotal: text("subtotal").notNull().default("0"),
+    overallDiscountPct: text("overall_discount_pct").default("0"),
+    overallDiscountAmt: text("overall_discount_amt").default("0"),
+    sst: text("sst").default("0"),
+    sstPct: text("sst_pct").default("0"),
+    grandTotal: text("grand_total").notNull().default("0"),
+
+    notes: text("notes"),
+    status: text("status").notNull().default("draft"), // draft | confirmed | fulfilled | cancelled
+
+    deliveryDate: timestamp("delivery_date"),
+    deliveryAddress: text("delivery_address"),
+
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("sales_order_no_org_uidx").on(t.organizationId, t.soNo),
+    index("sales_order_org_idx").on(t.organizationId),
+  ],
+);
+
+export const salesOrderItem = pgTable(
+  "sales_order_item",
+  {
+    id: text("id").primaryKey(),
+    salesOrderId: text("sales_order_id")
+      .notNull()
+      .references(() => salesOrder.id, { onDelete: "cascade" }),
+
+    rowNo: integer("row_no").notNull(),
+    productId: text("product_id"),
+    productCode: text("product_code"),
+    description: text("description"),
+    qty: text("qty").notNull().default("1"),
+    uom: text("uom"),
+    unitPrice: text("unit_price").default("0"),
+    discountPct: text("discount_pct").default("0"),
+    discountAmt: text("discount_amt").default("0"),
+    totalPrice: text("total_price").default("0"),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("sales_order_item_so_idx").on(t.salesOrderId)],
+);
+
+export const salesOrderCounter = pgTable("sales_order_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const salesOrderRelations = relations(salesOrder, ({ one, many }) => ({
+  organization: one(organization, {
+    fields: [salesOrder.organizationId],
+    references: [organization.id],
+  }),
+  quotation: one(quotation, {
+    fields: [salesOrder.quotationId],
+    references: [quotation.id],
+  }),
+  customer: one(customer, {
+    fields: [salesOrder.customerId],
+    references: [customer.id],
+  }),
+  salesPerson: one(user, {
+    fields: [salesOrder.salesPersonId],
+    references: [user.id],
+  }),
+  createdByUser: one(user, {
+    fields: [salesOrder.createdBy],
+    references: [user.id],
+  }),
+  items: many(salesOrderItem),
+}));
+
+export const salesOrderItemRelations = relations(salesOrderItem, ({ one }) => ({
+  salesOrder: one(salesOrder, {
+    fields: [salesOrderItem.salesOrderId],
+    references: [salesOrder.id],
+  }),
+}));
+
+/* ============================================================================================================================================================================================================================================
+   PURCHASE ORDER TABLE
+=============================================================================================================================================================================================================================================== */
+
+export const purchaseOrder = pgTable(
+  "purchase_order",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+
+    poNo: text("po_no").notNull(), // e.g. BMS-PO-2025-0001
+
+    // Linked SO (optional)
+    salesOrderId: text("sales_order_id").references(() => salesOrder.id),
+
+    // Supplier
+    supplierId: text("supplier_id").references(() => supplier.id),
+    supplierSnapshot: json("supplier_snapshot").$type<{
+      name: string;
+      registrationNo?: string;
+      address?: string;
+      contactPerson?: string;
+      contactNo?: string;
+      email?: string;
+    }>(),
+
+    // Supplier PDF quotation (stored in R2 private bucket supplier-quotation)
+    supplierQuotationKey: text("supplier_quotation_key"),
+
+    // Pricing
+    subtotal: text("subtotal").notNull().default("0"),
+    sst: text("sst").default("0"),
+    sstPct: text("sst_pct").default("0"),
+    grandTotal: text("grand_total").notNull().default("0"),
+
+    notes: text("notes"),
+    status: text("status").notNull().default("draft"), // draft | sent | acknowledged | received | cancelled
+
+    expectedDeliveryDate: timestamp("expected_delivery_date"),
+    deliveryAddress: text("delivery_address"),
+
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("purchase_order_no_org_uidx").on(t.organizationId, t.poNo),
+    index("purchase_order_org_idx").on(t.organizationId),
+  ],
+);
+
+export const purchaseOrderItem = pgTable(
+  "purchase_order_item",
+  {
+    id: text("id").primaryKey(),
+    purchaseOrderId: text("purchase_order_id")
+      .notNull()
+      .references(() => purchaseOrder.id, { onDelete: "cascade" }),
+
+    rowNo: integer("row_no").notNull(),
+    productId: text("product_id"),
+    productCode: text("product_code"),
+    description: text("description"),
+    qty: text("qty").notNull().default("1"),
+    uom: text("uom"),
+    unitPrice: text("unit_price").default("0"),
+    totalPrice: text("total_price").default("0"),
+
+    imageKey: text("image_key"), // optional R2 key for product image
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("purchase_order_item_po_idx").on(t.purchaseOrderId)],
+);
+
+export const purchaseOrderCounter = pgTable("purchase_order_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const purchaseOrderRelations = relations(purchaseOrder, ({ one, many }) => ({
+  organization: one(organization, {
+    fields: [purchaseOrder.organizationId],
+    references: [organization.id],
+  }),
+  salesOrder: one(salesOrder, {
+    fields: [purchaseOrder.salesOrderId],
+    references: [salesOrder.id],
+  }),
+  supplier: one(supplier, {
+    fields: [purchaseOrder.supplierId],
+    references: [supplier.id],
+  }),
+  createdByUser: one(user, {
+    fields: [purchaseOrder.createdBy],
+    references: [user.id],
+  }),
+  items: many(purchaseOrderItem),
+}));
+
+export const purchaseOrderItemRelations = relations(purchaseOrderItem, ({ one }) => ({
+  purchaseOrder: one(purchaseOrder, {
+    fields: [purchaseOrderItem.purchaseOrderId],
+    references: [purchaseOrder.id],
+  }),
+}));
+
 /* =========================
    SCHEMA EXPORT
 ========================= */
@@ -1031,9 +1356,26 @@ export const schema = {
   organizationProfileRelations,
   customer,
   customerRelations,
+  customerCompany,
+  customerCompanyRelations,
   quotation,
   quotationItem,
   quotationCounter,
   quotationRelations,
   quotationItemRelations,
+  // supplier
+  supplier,
+  supplierRelations,
+  // sales order
+  salesOrder,
+  salesOrderItem,
+  salesOrderCounter,
+  salesOrderRelations,
+  salesOrderItemRelations,
+  // purchase order
+  purchaseOrder,
+  purchaseOrderItem,
+  purchaseOrderCounter,
+  purchaseOrderRelations,
+  purchaseOrderItemRelations,
 };

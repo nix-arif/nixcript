@@ -687,6 +687,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { PageHeader } from "@/components/page-header";
 
 type Product = Awaited<ReturnType<typeof searchProducts>>[number];
 
@@ -1135,15 +1136,10 @@ export function ProductSearch() {
   return (
     <>
       <div className="p-6 max-w-3xl">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-xl font-semibold tracking-tight">
-            Product search
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Search by product code, description, supplier or brand
-          </p>
-        </div>
+        <PageHeader
+          title="Product search"
+          description="Search by product code, description, supplier or brand"
+        />
 
         {/* Search input */}
         <div className="relative mb-3">

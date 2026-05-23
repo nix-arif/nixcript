@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { PageHeader } from "@/components/page-header";
 import { toast } from "sonner";
 import {
   sendInvitations,
@@ -266,14 +267,10 @@ export function InviteClient({
         minHeight: "100vh",
       }}
     >
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">Invite members</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Grow your team — invitations are sent via email and expire after 7
-          days
-        </p>
-      </div>
+      <PageHeader
+        title="Invite members"
+        description="Grow your team — invitations are sent via email and expire after 7 days"
+      />
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-2.5 mb-6">
