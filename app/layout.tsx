@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 import { Toaster } from "sonner";
 import { Providers } from "./providers";
+import NextTopLoader from "nextjs-toploader";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,6 +30,12 @@ export default function RootLayout({
     <html lang="en" className={`${geistSans.className} h-full antialiased`}>
       <body className="font-sans min-h-full flex flex-col">
         <Providers>
+          <NextTopLoader
+            color="hsl(var(--foreground))"
+            shadow={false}
+            showSpinner={false}
+            height={2}
+          />
           <TooltipProvider>
             {children}
             <Toaster richColors />
