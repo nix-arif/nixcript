@@ -22,7 +22,7 @@ import CreateOrganizationForm from "./dialog-forms/create-organization-form";
 import Image from "next/image";
 import { authClient } from "@/lib/auth-client";
 import { Spinner } from "./ui/spinner";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store/use-app-store";
 
 export function OrganizationSwitcher() {
@@ -30,7 +30,6 @@ export function OrganizationSwitcher() {
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false);
   const [pendingOrgId, setPendingOrgId] = React.useState<string | null>(null);
   const router = useRouter();
-  const pathname = usePathname();
   const { clearPermissions, fetchPermissions } = useAppStore();
 
   const {
@@ -112,13 +111,13 @@ export function OrganizationSwitcher() {
     // page will redirect to /dashboard?error=forbidden if access is denied.
     authClient.organization.setActive({ organizationId }).then(() => {
       refetchActive();
-      router.push(pathname);
+      router.refresh();
     }).catch((err) => {
       console.error("Failed to switch organization", err);
       clearPermissions();
       setPendingOrgId(null);
     });
-  }, [activeOrganization, pendingOrgId, pathname, router, fetchPermissions, clearPermissions, refetchActive]);
+  }, [activeOrganization, pendingOrgId, router, fetchPermissions, clearPermissions, refetchActive]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
