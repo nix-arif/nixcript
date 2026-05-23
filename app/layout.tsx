@@ -31,7 +31,7 @@ export default function RootLayout({
       <body className="font-sans min-h-full flex flex-col">
         <Providers>
           <NextTopLoader
-            color="hsl(var(--foreground))"
+            color="var(--foreground)"
             shadow={false}
             showSpinner={false}
             height={2}
