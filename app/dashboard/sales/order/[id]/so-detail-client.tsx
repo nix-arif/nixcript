@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useState } from "react";
 import {
   deleteSalesOrder,
+  submitSalesOrder,
   approveSalesOrder,
   rejectSalesOrder,
   recallSalesOrder,
@@ -16,7 +17,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, MapPinIcon,
-  FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon,
+  FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon, SendIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,11 +28,11 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const SO_STATUS: Record<string, { label: string; className: string }> = {
-  draft:     { label: "Draft",     className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
-  confirmed: { label: "Confirmed", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
-  fulfilled: { label: "Fulfilled", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
-  cancelled: { label: "Cancelled", className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
-  recalled:  { label: "Recalled",  className: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400" },
+  draft:     { label: "Draft",      className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  submitted: { label: "Submitted",  className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
+  confirmed: { label: "Confirmed",  className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  fulfilled: { label: "Fulfilled",  className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
+  cancelled: { label: "Cancelled",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -58,7 +59,7 @@ export function SalesOrderDetailClient({
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState(order.status ?? "draft");
-  const [actioning, setActioning] = useState<"approve" | "reject" | "recall" | null>(null);
+  const [actioning, setActioning] = useState<"submit" | "approve" | "reject" | "recall" | null>(null);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
@@ -78,6 +79,19 @@ export function SalesOrderDetailClient({
     }
   }
 
+  async function handleSubmit() {
+    setActioning("submit");
+    try {
+      await submitSalesOrder(order.id);
+      setStatus("submitted");
+      toast.success("Sales order submitted for approval");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setActioning(null);
+    }
+  }
+
   async function handleApprove() {
     setActioning("approve");
     try {
@@ -92,7 +106,7 @@ export function SalesOrderDetailClient({
   }
 
   async function handleReject() {
-    if (!confirm(`Reject ${order.soNo}? This will mark it as cancelled.`)) return;
+    if (!confirm(`Reject ${order.soNo}? This will return it to draft for revision.`)) return;
     setActioning("reject");
     try {
       await rejectSalesOrder(order.id);
@@ -129,12 +143,31 @@ export function SalesOrderDetailClient({
             <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/sales/order")} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
-            <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/order/${order.id}/edit`)} className="gap-1.5">
-              <PencilIcon className="w-3.5 h-3.5" /> Edit
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
-              <TrashIcon className="w-3.5 h-3.5" /> Delete
-            </Button>
+            {status === "draft" ? (
+              <>
+                {can("sales-order:update") && (
+                  <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/order/${order.id}/edit`)} className="gap-1.5">
+                    <PencilIcon className="w-3.5 h-3.5" /> Edit
+                  </Button>
+                )}
+                {can("sales-order:delete") && (
+                  <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
+                    <TrashIcon className="w-3.5 h-3.5" /> Delete
+                  </Button>
+                )}
+              </>
+            ) : status === "cancelled" ? (
+              <>
+                <StatusBadge status={status} />
+                {can("sales-order:delete") && (
+                  <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
+                    <TrashIcon className="w-3.5 h-3.5" /> Delete
+                  </Button>
+                )}
+              </>
+            ) : (
+              <StatusBadge status={status} />
+            )}
           </div>
         }
       />
@@ -228,7 +261,20 @@ export function SalesOrderDetailClient({
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Status</h2>
             <div className="mb-3"><StatusBadge status={status} /></div>
             <div className="flex flex-col gap-2">
-              {status === "draft" && can("sales-order:approve") && (
+              {/* Creator: submit for approval */}
+              {status === "draft" && can("sales-order:create") && (
+                <Button
+                  size="sm"
+                  className="w-full gap-1.5 h-8 text-xs"
+                  onClick={handleSubmit}
+                  disabled={actioning !== null}
+                >
+                  <SendIcon className="w-3.5 h-3.5" />
+                  {actioning === "submit" ? "Submitting…" : "Submit for approval"}
+                </Button>
+              )}
+              {/* Manager: approve submitted */}
+              {status === "submitted" && can("sales-order:approve") && (
                 <Button
                   size="sm"
                   className="w-full gap-1.5 h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white"
@@ -239,7 +285,8 @@ export function SalesOrderDetailClient({
                   {actioning === "approve" ? "Approving…" : "Approve"}
                 </Button>
               )}
-              {status === "draft" && can("sales-order:reject") && (
+              {/* Manager: reject submitted → back to draft */}
+              {status === "submitted" && can("sales-order:reject") && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -248,9 +295,10 @@ export function SalesOrderDetailClient({
                   disabled={actioning !== null}
                 >
                   <XIcon className="w-3.5 h-3.5" />
-                  {actioning === "reject" ? "Rejecting…" : "Reject"}
+                  {actioning === "reject" ? "Returning…" : "Return for revision"}
                 </Button>
               )}
+              {/* Manager: recall confirmed → back to draft */}
               {status === "confirmed" && can("sales-order:recall") && (
                 <Button
                   size="sm"

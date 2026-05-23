@@ -8,6 +8,7 @@ import {
   customer,
   customerCompany,
   quotation,
+  user,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -19,6 +20,14 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
+import { Resend } from "resend";
+import { createNotification, getSoApprovers } from "@/server/notifications";
+import SoNotificationEmail from "@/components/emails/so-notification";
+
+const resend = new Resend(process.env.RESEND_API_KEY as string);
+const baseUrl = process.env.NODE_ENV === "production"
+  ? process.env.APP_DOMAIN!
+  : (process.env.BETTER_AUTH_URL ?? "http://localhost:3000");
 
 // ── R2 supplier-quotation bucket ───────────────────────────────────────────
 const s3 = new S3Client({
@@ -291,6 +300,8 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
     .where(and(eq(salesOrder.id, input.id), eq(salesOrder.organizationId, orgId)));
 
   if (!existing) throw new Error("Sales order not found");
+  if (existing.status === "submitted" || existing.status === "confirmed")
+    throw new Error("Cannot edit a submitted or confirmed sales order");
 
   // Delete old R2 file if key changed
   if (
@@ -403,7 +414,11 @@ export async function deleteSalesOrder(id: string): Promise<void> {
     .from(salesOrder)
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
-  if (existing?.supplierQuotationKey) {
+  if (!existing) throw new Error("Sales order not found");
+  if (existing.status === "submitted" || existing.status === "confirmed" || existing.status === "fulfilled")
+    throw new Error("Only draft or cancelled orders can be deleted");
+
+  if (existing.supplierQuotationKey) {
     await deleteSupplierQuotationFile(existing.supplierQuotationKey);
   }
 
@@ -420,47 +435,221 @@ export async function updateSalesOrderStatus(id: string, status: string): Promis
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 }
 
-export async function approveSalesOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("sales-order:approve");
+// ── Notification helper ────────────────────────────────────────────────────
 
-  const result = await db
+async function notifyAndEmail(params: {
+  orgId: string;
+  recipientUserIds: string[];
+  type: "so:submitted" | "so:approved" | "so:rejected" | "so:recalled";
+  emailType: "submitted" | "approved" | "rejected" | "recalled";
+  title: string;
+  body: string;
+  soNo: string;
+  soId: string;
+  customerName?: string;
+  grandTotal?: string;
+  actorName?: string;
+}) {
+  const link = `${baseUrl}/dashboard/sales/order/${params.soId}`;
+
+  // Fetch recipient emails in parallel with notification creation
+  const recipients = await db
+    .select({ id: user.id, email: user.email, name: user.name })
+    .from(user)
+    .where(inArray(user.id, params.recipientUserIds));
+
+  await Promise.all([
+    // In-app notifications
+    ...params.recipientUserIds.map((userId) =>
+      createNotification({
+        organizationId: params.orgId,
+        userId,
+        type: params.type,
+        title: params.title,
+        body: params.body,
+        link: `/dashboard/sales/order/${params.soId}`,
+      }),
+    ),
+    // Emails
+    ...recipients.map((r) =>
+      resend.emails.send({
+        from: `${process.env.EMAIL_SENDER_NAME} <${process.env.EMAIL_SENDER_ADDRESS}>`,
+        to: r.email,
+        subject: params.title,
+        react: SoNotificationEmail({
+          type: params.emailType,
+          soNo: params.soNo,
+          customerName: params.customerName,
+          grandTotal: params.grandTotal,
+          recipientName: r.name,
+          actorName: params.actorName,
+          link,
+        }),
+      }),
+    ),
+  ]);
+}
+
+// ── Submit (draft → submitted) ─────────────────────────────────────────────
+
+export async function submitSalesOrder(id: string): Promise<void> {
+  const { orgId, userId, session } = await requireAccess("sales-order:create");
+
+  const [so] = await db
+    .select({
+      id: salesOrder.id,
+      soNo: salesOrder.soNo,
+      status: salesOrder.status,
+      customerSnapshot: salesOrder.customerSnapshot,
+      grandTotal: salesOrder.grandTotal,
+      createdBy: salesOrder.createdBy,
+    })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
+
+  if (!so) throw new Error("Sales order not found");
+  if (so.status !== "draft") throw new Error("Only draft orders can be submitted");
+
+  await db
     .update(salesOrder)
-    .set({ status: "confirmed" })
-    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "draft")))
-    .returning({ id: salesOrder.id });
-
-  if (result.length === 0) throw new Error("Order not found or is not in draft status");
+    .set({ status: "submitted" })
+    .where(eq(salesOrder.id, id));
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
+
+  // Notify approvers (fire-and-forget — don't block the response)
+  const snap = so.customerSnapshot as any;
+  const customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : undefined;
+  const actorName = session.user.name;
+
+  getSoApprovers(orgId).then((approverIds) => {
+    // Don't notify the submitter if they are also an approver
+    const targets = approverIds.filter((uid) => uid !== userId);
+    if (targets.length === 0) return;
+    notifyAndEmail({
+      orgId,
+      recipientUserIds: targets,
+      type: "so:submitted",
+      emailType: "submitted",
+      title: `SO ${so.soNo} pending approval`,
+      body: `${actorName} submitted ${so.soNo} for approval.`,
+      soNo: so.soNo,
+      soId: so.id,
+      customerName,
+      grandTotal: so.grandTotal ?? undefined,
+      actorName,
+    });
+  }).catch(console.error);
 }
+
+// ── Approve (submitted → confirmed) ───────────────────────────────────────
+
+export async function approveSalesOrder(id: string): Promise<void> {
+  const { orgId, session } = await requireAccess("sales-order:approve");
+
+  const [so] = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
+
+  if (!so) throw new Error("Sales order not found");
+  if (so.status !== "submitted") throw new Error("Only submitted orders can be approved");
+
+  await db.update(salesOrder).set({ status: "confirmed" }).where(eq(salesOrder.id, id));
+
+  revalidatePath(`/dashboard/sales/order/${id}`);
+  revalidatePath("/dashboard/sales/order");
+
+  const snap = so.customerSnapshot as any;
+  const customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : undefined;
+  const actorName = session.user.name;
+
+  notifyAndEmail({
+    orgId,
+    recipientUserIds: [so.createdBy],
+    type: "so:approved",
+    emailType: "approved",
+    title: `SO ${so.soNo} approved`,
+    body: `Your sales order ${so.soNo} has been approved by ${actorName}.`,
+    soNo: so.soNo,
+    soId: so.id,
+    customerName,
+    grandTotal: so.grandTotal ?? undefined,
+    actorName,
+  }).catch(console.error);
+}
+
+// ── Reject (submitted → draft) ────────────────────────────────────────────
 
 export async function rejectSalesOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("sales-order:reject");
+  const { orgId, session } = await requireAccess("sales-order:reject");
 
-  const result = await db
-    .update(salesOrder)
-    .set({ status: "cancelled" })
-    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "draft")))
-    .returning({ id: salesOrder.id });
+  const [so] = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
-  if (result.length === 0) throw new Error("Order not found or is not in draft status");
+  if (!so) throw new Error("Sales order not found");
+  if (so.status !== "submitted") throw new Error("Only submitted orders can be rejected");
+
+  await db.update(salesOrder).set({ status: "draft" }).where(eq(salesOrder.id, id));
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
+
+  const snap = so.customerSnapshot as any;
+  const customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : undefined;
+  const actorName = session.user.name;
+
+  notifyAndEmail({
+    orgId,
+    recipientUserIds: [so.createdBy],
+    type: "so:rejected",
+    emailType: "rejected",
+    title: `SO ${so.soNo} returned for revision`,
+    body: `Your sales order ${so.soNo} was returned for revision by ${actorName}.`,
+    soNo: so.soNo,
+    soId: so.id,
+    customerName,
+    grandTotal: so.grandTotal ?? undefined,
+    actorName,
+  }).catch(console.error);
 }
 
+// ── Recall (confirmed → draft) ────────────────────────────────────────────
+
 export async function recallSalesOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("sales-order:recall");
+  const { orgId, session } = await requireAccess("sales-order:recall");
 
-  const result = await db
-    .update(salesOrder)
-    .set({ status: "draft" })
-    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "confirmed")))
-    .returning({ id: salesOrder.id });
+  const [so] = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
-  if (result.length === 0) throw new Error("Order not found or is not in confirmed status");
+  if (!so) throw new Error("Sales order not found");
+  if (so.status !== "confirmed") throw new Error("Only confirmed orders can be recalled");
+
+  await db.update(salesOrder).set({ status: "draft" }).where(eq(salesOrder.id, id));
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
+
+  const snap = so.customerSnapshot as any;
+  const customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : undefined;
+  const actorName = session.user.name;
+
+  notifyAndEmail({
+    orgId,
+    recipientUserIds: [so.createdBy],
+    type: "so:recalled",
+    emailType: "recalled",
+    title: `SO ${so.soNo} recalled`,
+    body: `Sales order ${so.soNo} has been recalled by ${actorName}.`,
+    soNo: so.soNo,
+    soId: so.id,
+    customerName,
+    grandTotal: so.grandTotal ?? undefined,
+    actorName,
+  }).catch(console.error);
 }

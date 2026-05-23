@@ -1,7 +1,7 @@
 import { requirePermission } from "@/lib/auth/require-permission";
 import { getSalesOrderDetail } from "@/server/sales-order";
 import { getOrgMembers } from "@/server/members";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { EditSalesOrderClient } from "./edit-order-client";
 
 export default async function EditSalesOrderPage({ params }: { params: Promise<{ id: string }> }) {
@@ -12,6 +12,9 @@ export default async function EditSalesOrderPage({ params }: { params: Promise<{
     getOrgMembers(),
   ]);
   if (!order) notFound();
+  if (order.status === "submitted" || order.status === "confirmed") {
+    redirect(`/dashboard/sales/order/${id}`);
+  }
 
   return <EditSalesOrderClient order={order} members={members} />;
 }

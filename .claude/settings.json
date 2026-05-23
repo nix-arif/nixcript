@@ -10,7 +10,8 @@
       "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/\\\\[id\\\\]/edit)",
       "Bash(grep -v \"^$\")",
       "Bash(node -e ' *)",
-      "Bash(pnpm add *)"
+      "Bash(pnpm add *)",
+      "Bash(pnpm drizzle-kit *)"
     ],
     "additionalDirectories": [
       "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order",

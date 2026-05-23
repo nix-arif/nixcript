@@ -1,5 +1,6 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { DashboardBreadcrumb } from "@/components/dashboard-breadcrumb";
+import { NotificationCenter } from "@/components/notification-center";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
@@ -40,7 +41,8 @@ export default async function DashboardLayout({
               className="mr-1 data-vertical:h-4 data-vertical:self-auto opacity-50"
             />
             <DashboardBreadcrumb />
-            <div className="ml-auto flex items-center">
+            <div className="ml-auto flex items-center gap-2">
+              <NotificationCenter />
               <Image src={authLogo} width={64} height={32} alt="logo" className="opacity-75 dark:opacity-60" />
             </div>
           </div>

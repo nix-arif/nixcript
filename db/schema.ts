@@ -1713,6 +1713,39 @@ export const documentNumberingSetting = pgTable(
 );
 
 /* =========================
+   NOTIFICATION
+========================= */
+
+export const notification = pgTable(
+  "notification",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    type: text("type").notNull(), // "so:submitted" | "so:approved" | "so:rejected" | "so:recalled"
+    title: text("title").notNull(),
+    body: text("body"),
+    link: text("link"),
+    isRead: integer("is_read").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("notification_user_idx").on(t.userId),
+    index("notification_org_idx").on(t.organizationId),
+    index("notification_unread_idx").on(t.userId, t.isRead),
+  ],
+);
+
+export const notificationRelations = relations(notification, ({ one }) => ({
+  user: one(user, { fields: [notification.userId], references: [user.id] }),
+  organization: one(organization, { fields: [notification.organizationId], references: [organization.id] }),
+}));
+
+/* =========================
    SCHEMA EXPORT
 ========================= */
 
@@ -1799,4 +1832,7 @@ export const schema = {
   department,
   // member department assignments (junction)
   memberDepartment,
+  // notifications
+  notification,
+  notificationRelations,
 };
