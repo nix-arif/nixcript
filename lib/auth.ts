@@ -7,6 +7,7 @@ import { profile, schema, session } from "@/db/schema";
 import { nextCookies } from "better-auth/next-js";
 import { getActiveOrganization } from "@/server/organizations";
 import OrganizationInvitationEmail from "@/components/emails/organization-invitation";
+import ResetPasswordEmail from "@/components/emails/reset-password";
 import { Resend } from "resend";
 import { onOrganizationCreated } from "./organization/on-created";
 import { nanoid } from "nanoid";
@@ -62,6 +63,14 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 3,
+    async sendResetPasswordEmail({ user, url }) {
+      await resend.emails.send({
+        from: `${process.env.EMAIL_SENDER_NAME} <${process.env.EMAIL_SENDER_ADDRESS}>`,
+        to: user.email,
+        subject: "Reset your password",
+        react: ResetPasswordEmail({ email: user.email, resetLink: url }),
+      });
+    },
   },
 
   plugins: [

@@ -815,6 +815,7 @@ export async function searchQuotationsByNo(query: string) {
         eq(quotation.organizationId, orgId),
         ilike(quotation.quotationNo, `%${query}%`),
         eq(quotation.isDummy, 0),
+        eq(quotation.status, "final"),
       ),
     )
     .orderBy(desc(quotation.createdAt))
@@ -846,6 +847,7 @@ export async function getQuotationForSO(id: string) {
     .limit(1);
 
   if (!q) return null;
+  if (q.status !== "final") throw new Error("Only finalized quotations can be linked to a sales order");
 
   const items = await db
     .select({
