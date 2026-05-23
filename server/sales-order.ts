@@ -8,8 +8,6 @@ import {
   customer,
   customerCompany,
   quotation,
-  member,
-  organization,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -73,25 +71,6 @@ async function requireAccess(permission: string) {
   const perms = await getUserPermissions(userId, orgId);
   if (!hasAccess(perms, permission)) throw new Error("Forbidden");
   return { session, orgId, userId };
-}
-
-async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<string> {
-  const [ownerMember] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
-    .limit(1);
-
-  if (!ownerMember) return currentOrgId;
-
-  const [primaryOrg] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
-    .orderBy(asc(member.createdAt))
-    .limit(1);
-
-  return primaryOrg?.organizationId ?? currentOrgId;
 }
 
 // ── Running number ─────────────────────────────────────────────────────────
@@ -174,24 +153,22 @@ export type SalesOrderWithItems = SalesOrderRow & { items: SalesOrderItem[] };
 // ── Queries ────────────────────────────────────────────────────────────────
 
 export async function getSalesOrders(): Promise<SalesOrderRow[]> {
-  const { orgId, userId } = await requireAccess("sales-order:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const { orgId } = await requireAccess("sales-order:read");
 
   return db
     .select()
     .from(salesOrder)
-    .where(eq(salesOrder.organizationId, ownerOrgId))
+    .where(eq(salesOrder.organizationId, orgId))
     .orderBy(desc(salesOrder.createdAt));
 }
 
 export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithItems | null> {
-  const { orgId, userId } = await requireAccess("sales-order:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const { orgId } = await requireAccess("sales-order:read");
 
   const [so] = await db
     .select()
     .from(salesOrder)
-    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, ownerOrgId)));
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
   if (!so) return null;
 
@@ -208,7 +185,6 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
 
 export async function createSalesOrder(input: CreateSalesOrderInput): Promise<SalesOrderRow> {
   const { orgId, userId, session } = await requireAccess("sales-order:create");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
 
   // Build customer snapshot
   let customerSnapshot: SalesOrderRow["customerSnapshot"] = null;
@@ -252,13 +228,13 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
     }
   }
 
-  const soNo = await generateSoNo(ownerOrgId);
+  const soNo = await generateSoNo(orgId);
 
   const [row] = await db
     .insert(salesOrder)
     .values({
       id: nanoid(),
-      organizationId: ownerOrgId,
+      organizationId: orgId,
       soNo,
       quotationId: input.linkedQuotations?.[0]?.id ?? input.quotationId ?? null,
       quotationNo: input.linkedQuotations?.[0]?.quotationNo ?? input.quotationNo ?? null,
@@ -307,13 +283,12 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
 }
 
 export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<SalesOrderRow> {
-  const { orgId, userId } = await requireAccess("sales-order:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const { orgId } = await requireAccess("sales-order:update");
 
   const [existing] = await db
     .select()
     .from(salesOrder)
-    .where(and(eq(salesOrder.id, input.id), eq(salesOrder.organizationId, ownerOrgId)));
+    .where(and(eq(salesOrder.id, input.id), eq(salesOrder.organizationId, orgId)));
 
   if (!existing) throw new Error("Sales order not found");
 
@@ -421,13 +396,12 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
 }
 
 export async function deleteSalesOrder(id: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("sales-order:delete");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const { orgId } = await requireAccess("sales-order:delete");
 
   const [existing] = await db
     .select()
     .from(salesOrder)
-    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, ownerOrgId)));
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
   if (existing?.supplierQuotationKey) {
     await deleteSupplierQuotationFile(existing.supplierQuotationKey);
@@ -438,11 +412,10 @@ export async function deleteSalesOrder(id: string): Promise<void> {
 }
 
 export async function updateSalesOrderStatus(id: string, status: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("sales-order:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const { orgId } = await requireAccess("sales-order:update");
 
   await db
     .update(salesOrder)
     .set({ status })
-    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, ownerOrgId)));
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 }

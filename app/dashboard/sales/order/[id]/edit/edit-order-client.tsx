@@ -100,6 +100,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
     (order.quotationId && order.quotationNo ? [{ id: order.quotationId, quotationNo: order.quotationNo }] : []),
   );
   const [qtLoading, setQtLoading] = useState(false);
+  const [qtHighlight, setQtHighlight] = useState(-1);
   const qtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Customer ────────────────────────────────────────────────────────────────
@@ -157,18 +158,39 @@ export function EditSalesOrderClient({ order, members }: Props) {
   );
 
   const [saving, setSaving] = useState(false);
+  const tableRef = useRef<HTMLDivElement>(null);
 
   // ── Quotation search ────────────────────────────────────────────────────────
 
   const handleQtSearch = useCallback((val: string) => {
     setQtSearch(val);
+    setQtHighlight(-1);
     if (val.length < 2) { setQtResults([]); return; }
     if (qtTimer.current) clearTimeout(qtTimer.current);
     qtTimer.current = setTimeout(async () => {
       const res = await searchQuotationsByNo(val);
       setQtResults(res);
+      setQtHighlight(-1);
     }, 300);
   }, []);
+
+  function handleQtKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (qtResults.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setQtHighlight((i) => Math.min(i + 1, qtResults.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setQtHighlight((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const target = qtHighlight >= 0 ? qtResults[qtHighlight] : qtResults[0];
+      if (target) selectQuotation(target.id);
+    } else if (e.key === "Escape") {
+      setQtResults([]);
+      setQtHighlight(-1);
+    }
+  }
 
   async function selectQuotation(qtId: string) {
     if (linkedQuotations.some((q) => q.id === qtId)) {
@@ -251,6 +273,58 @@ export function EditSalesOrderClient({ order, members }: Props) {
     setItems((prev) => prev.filter((i) => i._key !== key).map((i, idx) => ({ ...i, rowNo: idx + 1 })));
   }
 
+  // ── Cell keyboard navigation ────────────────────────────────────────────────
+
+  function handleCellKeyDown(
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowIdx: number,
+    colIdx: number,
+  ) {
+    const el = e.currentTarget;
+    const COLS = 6;
+
+    const focus = (r: number, c: number) => {
+      const target = tableRef.current?.querySelector<HTMLInputElement>(
+        `[data-row="${r}"][data-col="${c}"]`,
+      );
+      if (target) { target.focus(); target.select(); }
+    };
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        focus(rowIdx + 1, colIdx);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        if (rowIdx > 0) focus(rowIdx - 1, colIdx);
+        break;
+      case "Enter":
+        e.preventDefault();
+        if (rowIdx < items.length - 1) {
+          focus(rowIdx + 1, colIdx);
+        } else {
+          addLine();
+          setTimeout(() => focus(rowIdx + 1, colIdx), 0);
+        }
+        break;
+      case "ArrowRight":
+        if (el.selectionStart === el.value.length) {
+          e.preventDefault();
+          if (colIdx < COLS - 1) focus(rowIdx, colIdx + 1);
+          else focus(rowIdx + 1, 0);
+        }
+        break;
+      case "ArrowLeft":
+        if (el.selectionStart === 0) {
+          e.preventDefault();
+          if (colIdx > 0) focus(rowIdx, colIdx - 1);
+          else if (rowIdx > 0) focus(rowIdx - 1, COLS - 1);
+        }
+        break;
+    }
+  }
+
   // ── Save ────────────────────────────────────────────────────────────────────
 
   async function handleSave() {
@@ -326,6 +400,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
             <Input
               value={qtSearch}
               onChange={(e) => handleQtSearch(e.target.value)}
+              onKeyDown={handleQtKeyDown}
               placeholder="Add quotation…"
               className="pl-9 h-9 text-sm"
               disabled={qtLoading}
@@ -335,15 +410,16 @@ export function EditSalesOrderClient({ order, members }: Props) {
             )}
             {qtResults.length > 0 && (
               <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
-                {qtResults.map((qt) => {
+                {qtResults.map((qt, idx) => {
                   const s = qt.customerSnapshot as any;
                   const custName = s ? [s.title, s.name].filter(Boolean).join(" ") : null;
                   const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
+                  const isHighlighted = idx === qtHighlight;
                   return (
                     <button
                       key={qt.id}
                       disabled={alreadyLinked}
-                      className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40"
+                      className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${isHighlighted ? "bg-muted" : "hover:bg-muted/50"}`}
                       onClick={() => selectQuotation(qt.id)}
                     >
                       <div className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</div>
@@ -534,7 +610,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
               <PlusIcon className="w-3 h-3" /> Add row
             </Button>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" ref={tableRef}>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-muted-foreground">
@@ -550,26 +626,26 @@ export function EditSalesOrderClient({ order, members }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
+                {items.map((item, rowIdx) => (
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
                     <td className="py-1.5 pr-2">
-                      <Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} className="h-7 text-xs" />
+                      <Input data-row={rowIdx} data-col={0} value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 0)} className="h-7 text-xs" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} className="h-7 text-xs" />
+                      <Input data-row={rowIdx} data-col={1} value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)} className="h-7 text-xs" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" />
+                      <Input data-row={rowIdx} data-col={2} value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)} className="h-7 text-xs text-right" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="unit" />
+                      <Input data-row={rowIdx} data-col={3} value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 3)} className="h-7 text-xs" placeholder="unit" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs text-right" />
+                      <Input data-row={rowIdx} data-col={4} value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 4)} className="h-7 text-xs text-right" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} className="h-7 text-xs text-right" />
+                      <Input data-row={rowIdx} data-col={5} value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 5)} className="h-7 text-xs text-right" />
                     </td>
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
                       {fmt(parseFloat(item.totalPrice ?? "0"))}

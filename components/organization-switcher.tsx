@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useCallback, useEffect } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +22,7 @@ import CreateOrganizationForm from "./dialog-forms/create-organization-form";
 import Image from "next/image";
 import { authClient } from "@/lib/auth-client";
 import { Spinner } from "./ui/spinner";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAppStore } from "@/lib/store/use-app-store";
 
 export function OrganizationSwitcher() {
@@ -29,6 +30,7 @@ export function OrganizationSwitcher() {
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false);
   const [pendingOrgId, setPendingOrgId] = React.useState<string | null>(null);
   const router = useRouter();
+  const pathname = usePathname();
   const { clearPermissions, fetchPermissions } = useAppStore();
 
   const {
@@ -97,6 +99,41 @@ export function OrganizationSwitcher() {
     }
   }, [activeOrganization?.id, pendingOrgId]);
 
+  const handleSwitchOrg = useCallback((organizationId: string) => {
+    if (!activeOrganization) return;
+    if (organizationId === activeOrganization.id) return;
+    if (pendingOrgId === organizationId) return;
+
+    setPendingOrgId(organizationId);
+    fetchPermissions(organizationId);
+
+    // Wait for the session cookie to be updated before navigating so the
+    // server renders with the correct org. requirePermission() on the target
+    // page will redirect to /dashboard?error=forbidden if access is denied.
+    authClient.organization.setActive({ organizationId }).then(() => {
+      refetchActive();
+      router.push(pathname);
+    }).catch((err) => {
+      console.error("Failed to switch organization", err);
+      clearPermissions();
+      setPendingOrgId(null);
+    });
+  }, [activeOrganization, pendingOrgId, pathname, router, fetchPermissions, clearPermissions, refetchActive]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const num = parseInt(e.key, 10);
+      if (isNaN(num) || num < 1 || num > 9) return;
+      const org = organizationList?.[num - 1];
+      if (!org) return;
+      e.preventDefault();
+      handleSwitchOrg(org.id);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [organizationList, handleSwitchOrg]);
+
   // ✅ Conditional returns only after ALL hooks
   if (isListPending || isActivePending) {
     return (
@@ -151,29 +188,6 @@ export function OrganizationSwitcher() {
   const displayOrg = pendingOrgId
     ? (organizationList?.find(o => o.id === pendingOrgId) ?? activeOrganization)
     : activeOrganization;
-
-  const handleSwitchOrg = (organizationId: string) => {
-    if (organizationId === activeOrganization.id) return;
-    if (pendingOrgId === organizationId) return;
-
-    // 1. Instant: update sidebar display + navigate
-    setPendingOrgId(organizationId);
-    router.push("/dashboard");
-
-    // 2. Fetch new permissions immediately — runs in parallel with setActive
-    //    because /api/permissions only needs userId (stable), not the active org cookie
-    fetchPermissions(organizationId);
-
-    // 3. Commit the switch in background, then refresh server components
-    authClient.organization.setActive({ organizationId }).then(() => {
-      refetchActive();
-      router.refresh();
-    }).catch((err) => {
-      console.error("Failed to switch organization", err);
-      clearPermissions();
-      setPendingOrgId(null);
-    });
-  };
 
   return (
     <>
