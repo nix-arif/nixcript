@@ -5,12 +5,20 @@ import {
   purchaseOrder,
   purchaseOrderItem,
   purchaseOrderCounter,
+  purchaseOrderCustomerPo,
+  customerPurchaseOrder,
+  salesOrder,
+  salesOrderItem,
+  product,
   supplier,
   member,
+  user,
+  organization,
+  organizationProfile,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, inArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -158,9 +166,10 @@ export interface PurchaseOrderItemInput {
 }
 
 export interface CreatePurchaseOrderInput {
-  salesOrderId?: string;
-  supplierId?: string;
+  salesOrderId: string;
+  supplierId: string;
   supplierQuotationKey?: string;
+  customerPoIds?: string[];
   sst?: string;
   sstPct?: string;
   subtotal?: string;
@@ -177,19 +186,120 @@ export interface UpdatePurchaseOrderInput extends Omit<CreatePurchaseOrderInput,
   items: PurchaseOrderItemInput[];
 }
 
-export type PurchaseOrderWithItems = PurchaseOrderRow & { items: PurchaseOrderItem[] };
+// ── Reference data fetchers for PO forms ──────────────────────────────────
+
+export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: string; customerName: string | null }[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  const rows = await db
+    .select({
+      id: salesOrder.id,
+      soNo: salesOrder.soNo,
+      customerSnapshot: salesOrder.customerSnapshot,
+    })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "confirmed")))
+    .orderBy(desc(salesOrder.createdAt));
+  return rows.map((r) => {
+    const snap = r.customerSnapshot as any;
+    return { id: r.id, soNo: r.soNo, customerName: snap?.name ?? null };
+  });
+}
+
+export async function getActiveCustomerPos(): Promise<{ id: string; customerPoNo: string; customerName: string | null; amount: string }[]> {
+  const { orgId, userId } = await requireAccess("purchase-order:read");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const rows = await db
+    .select({
+      id: customerPurchaseOrder.id,
+      customerPoNo: customerPurchaseOrder.customerPoNo,
+      customerSnapshot: customerPurchaseOrder.customerSnapshot,
+      amount: customerPurchaseOrder.amount,
+    })
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.organizationId, ownerOrgId), inArray(customerPurchaseOrder.status, ["received", "acknowledged"])))
+    .orderBy(desc(customerPurchaseOrder.createdAt));
+  return rows.map((r) => {
+    const snap = r.customerSnapshot as any;
+    return { id: r.id, customerPoNo: r.customerPoNo, customerName: snap?.name ?? null, amount: r.amount };
+  });
+}
+
+export interface SoItemForPo {
+  rowNo: number;
+  productId: string | null;
+  productCode: string | null;
+  description: string | null;
+  qty: string;
+  uom: string | null;
+  unitPrice: string | null;
+  totalPrice: string | null;
+  imageKey: string | null;
+}
+
+export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemForPo[]> {
+  await requireAccess("purchase-order:read");
+  const items = await db
+    .select()
+    .from(salesOrderItem)
+    .where(eq(salesOrderItem.salesOrderId, soId))
+    .orderBy(asc(salesOrderItem.rowNo));
+
+  if (items.length === 0) return [];
+
+  const codes = items.map((i) => i.productCode).filter((c): c is string => !!c);
+  const imageMap: Record<string, string | null> = {};
+  if (codes.length > 0) {
+    const prods = await db
+      .select({ productCode: product.productCode, imageKey: product.imageKey })
+      .from(product)
+      .where(inArray(product.productCode, codes));
+    for (const p of prods) imageMap[p.productCode] = p.imageKey ?? null;
+  }
+
+  return items.map((i) => ({
+    rowNo: i.rowNo,
+    productId: i.productId ?? null,
+    productCode: i.productCode ?? null,
+    description: i.description ?? null,
+    qty: i.qty ?? "1",
+    uom: i.uom ?? null,
+    unitPrice: i.unitPrice ?? "0",
+    totalPrice: i.totalPrice ?? "0",
+    imageKey: i.productCode ? (imageMap[i.productCode] ?? null) : null,
+  }));
+}
+
+export type PurchaseOrderCustomerPoRow = typeof purchaseOrderCustomerPo.$inferSelect;
+export type PurchaseOrderWithItems = PurchaseOrderRow & {
+  items: PurchaseOrderItem[];
+  createdByName: string | null;
+  salesOrderNo: string | null;
+  customerPos: PurchaseOrderCustomerPoRow[];
+};
+export type PurchaseOrderListRow = PurchaseOrderRow & { createdByName: string | null };
+
+const EDITABLE_STATUSES = new Set(["draft"]);
+const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
-export async function getPurchaseOrders(): Promise<PurchaseOrderRow[]> {
+export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
   const { orgId, userId } = await requireAccess("purchase-order:read");
   const ownerOrgId = await getOwnerOrgId(userId, orgId);
 
-  return db
+  const rows = await db
     .select()
     .from(purchaseOrder)
     .where(eq(purchaseOrder.organizationId, ownerOrgId))
     .orderBy(desc(purchaseOrder.createdAt));
+
+  if (rows.length === 0) return [];
+
+  const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
+  const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds));
+  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+
+  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy) }));
 }
 
 export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderWithItems | null> {
@@ -203,13 +313,86 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
 
   if (!po) return null;
 
-  const items = await db
-    .select()
-    .from(purchaseOrderItem)
-    .where(eq(purchaseOrderItem.purchaseOrderId, id))
-    .orderBy(asc(purchaseOrderItem.rowNo));
+  const [items, users, customerPos, soRows] = await Promise.all([
+    db.select().from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, id)).orderBy(asc(purchaseOrderItem.rowNo)),
+    db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, po.createdBy)),
+    db.select().from(purchaseOrderCustomerPo).where(eq(purchaseOrderCustomerPo.purchaseOrderId, id)),
+    po.salesOrderId
+      ? db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.id, po.salesOrderId))
+      : Promise.resolve([]),
+  ]);
 
-  return { ...po, items };
+  return {
+    ...po,
+    items,
+    createdByName: users[0]?.name ?? null,
+    salesOrderNo: soRows[0]?.soNo ?? null,
+    customerPos,
+  };
+}
+
+export async function getPoForPrint(id: string) {
+  const { orgId, userId } = await requireAccess("purchase-order:read");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+
+  const [po] = await db
+    .select()
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
+
+  if (!po) return null;
+
+  const [items, userRows, orgRows, soRows] = await Promise.all([
+    db.select().from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, id)).orderBy(asc(purchaseOrderItem.rowNo)),
+    db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, po.createdBy)),
+    db.select({
+      name: organization.name,
+      logo: organization.logo,
+      logoKey: organizationProfile.logoKey,
+      brandColor: organizationProfile.brandColor,
+      companyName: organizationProfile.companyName,
+      companyAddress: organizationProfile.companyAddress,
+      taxNo: organizationProfile.taxNo,
+      phone: organizationProfile.phone,
+      email: organizationProfile.email,
+      website: organizationProfile.website,
+      oldSsmNo: organizationProfile.oldSsmNo,
+      newSsmNo: organizationProfile.newSsmNo,
+      mdaEstablishmentNo: organizationProfile.mdaEstablishmentNo,
+      bankingInfo: organizationProfile.bankingInfo,
+    })
+    .from(organization)
+    .leftJoin(organizationProfile, eq(organizationProfile.organizationId, organization.id))
+    .where(eq(organization.id, ownerOrgId))
+    .limit(1),
+    po.salesOrderId
+      ? db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.id, po.salesOrderId))
+      : Promise.resolve([]),
+  ]);
+
+  const r2Public = process.env.R2_PUBLIC_URL ?? "";
+  const org = orgRows[0];
+  const orgLogoUrl = org?.logoKey ? `${r2Public}/${org.logoKey}` : (org?.logo ?? null);
+
+  return {
+    order: po,
+    items,
+    createdByName: userRows[0]?.name ?? null,
+    salesOrderNo: soRows[0]?.soNo ?? null,
+    orgName: org?.name ?? "",
+    orgLogoUrl,
+    orgBrandColor: org?.brandColor ?? null,
+    orgCompanyName: org?.companyName ?? null,
+    orgCompanyAddress: org?.companyAddress ?? null,
+    orgTaxNo: org?.taxNo ?? null,
+    orgPhone: org?.phone ?? null,
+    orgEmail: org?.email ?? null,
+    orgWebsite: org?.website ?? null,
+    orgOldSsmNo: org?.oldSsmNo ?? null,
+    orgNewSsmNo: org?.newSsmNo ?? null,
+    orgMdaEstablishmentNo: org?.mdaEstablishmentNo ?? null,
+    orgBankingInfo: (org?.bankingInfo ?? []) as any[],
+  };
 }
 
 // ── Mutations ──────────────────────────────────────────────────────────────
@@ -218,24 +401,21 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
   const { orgId, userId } = await requireAccess("purchase-order:create");
   const ownerOrgId = await getOwnerOrgId(userId, orgId);
 
+  if (!input.salesOrderId) throw new Error("A linked sales order is required");
+  if (!input.supplierId) throw new Error("Supplier is required");
+
   // Build supplier snapshot
   let supplierSnapshot: PurchaseOrderRow["supplierSnapshot"] = null;
-  if (input.supplierId) {
-    const [sup] = await db
-      .select()
-      .from(supplier)
-      .where(eq(supplier.id, input.supplierId));
-
-    if (sup) {
-      supplierSnapshot = {
-        name: sup.name,
-        registrationNo: sup.registrationNo ?? undefined,
-        address: sup.address ?? undefined,
-        contactPerson: sup.contactPerson ?? undefined,
-        contactNo: sup.contactNo ?? undefined,
-        email: sup.email ?? undefined,
-      };
-    }
+  const [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
+  if (sup) {
+    supplierSnapshot = {
+      name: sup.name,
+      registrationNo: sup.registrationNo ?? undefined,
+      address: sup.address ?? undefined,
+      contactPerson: sup.contactPerson ?? undefined,
+      contactNo: sup.contactNo ?? undefined,
+      email: sup.email ?? undefined,
+    };
   }
 
   const poNo = await generatePoNo(ownerOrgId);
@@ -247,7 +427,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
       organizationId: ownerOrgId,
       poNo,
       salesOrderId: input.salesOrderId ?? null,
-      supplierId: input.supplierId ?? null,
+      supplierId: input.supplierId,
       supplierSnapshot: supplierSnapshot ?? null,
       supplierQuotationKey: input.supplierQuotationKey ?? null,
       subtotal: input.subtotal ?? "0",
@@ -280,6 +460,23 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
     );
   }
 
+  if (input.customerPoIds && input.customerPoIds.length > 0) {
+    const cpoRows = await db
+      .select({ id: customerPurchaseOrder.id, customerPoNo: customerPurchaseOrder.customerPoNo })
+      .from(customerPurchaseOrder)
+      .where(inArray(customerPurchaseOrder.id, input.customerPoIds));
+    if (cpoRows.length > 0) {
+      await db.insert(purchaseOrderCustomerPo).values(
+        cpoRows.map((cpo) => ({
+          id: nanoid(),
+          purchaseOrderId: row.id,
+          customerPoId: cpo.id,
+          customerPoNo: cpo.customerPoNo,
+        })),
+      );
+    }
+  }
+
   return row;
 }
 
@@ -293,6 +490,7 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
     .where(and(eq(purchaseOrder.id, input.id), eq(purchaseOrder.organizationId, ownerOrgId)));
 
   if (!existing) throw new Error("Purchase order not found");
+  if (!EDITABLE_STATUSES.has(existing.status)) throw new Error("Only draft purchase orders can be edited");
 
   if (
     input.supplierQuotationKey !== undefined &&
@@ -302,10 +500,28 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
     await deleteFile(SUPPLIER_QUOTATION_BUCKET, existing.supplierQuotationKey);
   }
 
+  // Rebuild supplier snapshot if supplier changed
+  let supplierSnapshot = existing.supplierSnapshot;
+  if (input.supplierId && input.supplierId !== existing.supplierId) {
+    const [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
+    if (sup) {
+      supplierSnapshot = {
+        name: sup.name,
+        registrationNo: sup.registrationNo ?? undefined,
+        address: sup.address ?? undefined,
+        contactPerson: sup.contactPerson ?? undefined,
+        contactNo: sup.contactNo ?? undefined,
+        email: sup.email ?? undefined,
+      };
+    }
+  }
+
   const [row] = await db
     .update(purchaseOrder)
     .set({
-      supplierId: input.supplierId ?? null,
+      salesOrderId: input.salesOrderId ?? null,
+      supplierId: input.supplierId,
+      supplierSnapshot,
       supplierQuotationKey: input.supplierQuotationKey !== undefined
         ? input.supplierQuotationKey
         : existing.supplierQuotationKey,
@@ -354,6 +570,25 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
     );
   }
 
+  // Sync customer PO junction
+  await db.delete(purchaseOrderCustomerPo).where(eq(purchaseOrderCustomerPo.purchaseOrderId, input.id));
+  if (input.customerPoIds && input.customerPoIds.length > 0) {
+    const cpoRows = await db
+      .select({ id: customerPurchaseOrder.id, customerPoNo: customerPurchaseOrder.customerPoNo })
+      .from(customerPurchaseOrder)
+      .where(inArray(customerPurchaseOrder.id, input.customerPoIds));
+    if (cpoRows.length > 0) {
+      await db.insert(purchaseOrderCustomerPo).values(
+        cpoRows.map((cpo) => ({
+          id: nanoid(),
+          purchaseOrderId: input.id,
+          customerPoId: cpo.id,
+          customerPoNo: cpo.customerPoNo,
+        })),
+      );
+    }
+  }
+
   return row;
 }
 
@@ -366,7 +601,8 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
     .from(purchaseOrder)
     .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
 
-  if (!existing) return;
+  if (!existing) throw new Error("Purchase order not found");
+  if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled purchase orders can be deleted");
 
   if (existing.supplierQuotationKey) {
     await deleteFile(SUPPLIER_QUOTATION_BUCKET, existing.supplierQuotationKey);
@@ -393,4 +629,47 @@ export async function updatePurchaseOrderStatus(id: string, status: string): Pro
     .update(purchaseOrder)
     .set({ status })
     .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
+}
+
+// ── Workflow actions ───────────────────────────────────────────────────────
+
+async function getPoForWorkflow(id: string, ownerOrgId: string) {
+  const [po] = await db
+    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, status: purchaseOrder.status, createdBy: purchaseOrder.createdBy })
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
+  if (!po) throw new Error("Purchase order not found");
+  return po;
+}
+
+export async function sendPurchaseOrder(id: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("purchase-order:update");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const po = await getPoForWorkflow(id, ownerOrgId);
+  if (po.status !== "draft") throw new Error("Only draft purchase orders can be sent");
+  await db.update(purchaseOrder).set({ status: "sent" }).where(eq(purchaseOrder.id, id));
+}
+
+export async function acknowledgePurchaseOrder(id: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("purchase-order:update");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const po = await getPoForWorkflow(id, ownerOrgId);
+  if (po.status !== "sent") throw new Error("Only sent purchase orders can be acknowledged");
+  await db.update(purchaseOrder).set({ status: "acknowledged" }).where(eq(purchaseOrder.id, id));
+}
+
+export async function receivePurchaseOrder(id: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("purchase-order:update");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const po = await getPoForWorkflow(id, ownerOrgId);
+  if (po.status !== "acknowledged" && po.status !== "sent") throw new Error("Purchase order must be sent or acknowledged before receiving");
+  await db.update(purchaseOrder).set({ status: "received" }).where(eq(purchaseOrder.id, id));
+}
+
+export async function cancelPurchaseOrder(id: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("purchase-order:update");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const po = await getPoForWorkflow(id, ownerOrgId);
+  if (po.status === "received" || po.status === "cancelled") throw new Error("Cannot cancel a received or already cancelled purchase order");
+  await db.update(purchaseOrder).set({ status: "cancelled" }).where(eq(purchaseOrder.id, id));
 }

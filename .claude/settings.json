@@ -12,11 +12,35 @@
       "Bash(node -e ' *)",
       "Bash(pnpm add *)",
       "Bash(pnpm drizzle-kit *)",
-      "Bash(pnpm tsc *)"
+      "Bash(pnpm tsc *)",
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/procurement/purchase-order/\\\\[id\\\\])",
+      "Bash(mkdir -p \"/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/procurement/purchase-order/[id]/edit\")",
+      "Bash(rm -rf ~/Library/Caches/Homebrew)",
+      "Bash(brew cleanup *)",
+      "Bash(rm -rf ~/Library/Caches/ms-playwright)",
+      "Bash(rm -rf ~/Library/Caches/node-gyp)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(pkill -f \"next-server\")",
+      "Bash(lsof -ti:3000)",
+      "Bash(xargs kill -9)",
+      "Bash(lsof -ti:3001)",
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/[id]/print)",
+      "Bash(mkdir -p \"/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/[id]/print\")",
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/api/sales-order/\\\\[id\\\\]/pdf)",
+      "Bash(rm /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/\\\\[id\\\\]/print/so-print-client.tsx /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/\\\\[id\\\\]/print/page.tsx)",
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/procurement/purchase-order/\\\\[id\\\\]/print)",
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/api/purchase-order/\\\\[id\\\\]/pdf)",
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/customer-po/\\\\[id\\\\])"
     ],
     "additionalDirectories": [
       "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order",
-      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/[id]"
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/[id]",
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/procurement/purchase-order",
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/procurement/purchase-order/[id]",
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/api/sales-order/[id]",
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/[id]/print",
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/api/purchase-order/[id]",
+      "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/customer-po"
     ]
   }
 }

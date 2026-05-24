@@ -21,7 +21,7 @@ import {
   TrashIcon,
   UserIcon,
   BuildingIcon,
-  CalendarIcon,
+  LayoutListIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -82,9 +82,15 @@ export function CustomerPoClient({ initialPos }: { initialPos: CustomerPo[] }) {
         title="Customer Purchase Orders"
         description="Track PO documents received from customers"
         action={
-          <Button onClick={() => router.push("/dashboard/sales/customer-po/create")} className="gap-2">
-            <PlusIcon className="w-4 h-4" /> Record customer PO
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5"
+              onClick={() => router.push("/dashboard/sales/customer-po/summary")}>
+              <LayoutListIcon className="w-3.5 h-3.5" /> Summary table
+            </Button>
+            <Button onClick={() => router.push("/dashboard/sales/customer-po/create")} className="gap-2">
+              <PlusIcon className="w-4 h-4" /> Record customer PO
+            </Button>
+          </div>
         }
       />
 
@@ -121,7 +127,11 @@ export function CustomerPoClient({ initialPos }: { initialPos: CustomerPo[] }) {
           {filtered.map((p) => {
             const snap = p.customerSnapshot as any;
             return (
-              <div key={p.id} className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors">
+              <div
+                key={p.id}
+                className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                onClick={() => router.push(`/dashboard/sales/customer-po/${p.id}`)}
+              >
                 <div className="flex items-center gap-3 px-4 py-3">
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0">
                     <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground" />
@@ -166,7 +176,7 @@ export function CustomerPoClient({ initialPos }: { initialPos: CustomerPo[] }) {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost" size="icon" className="w-7 h-7"
                       onClick={() => router.push(`/dashboard/sales/customer-po/${p.id}/edit`)}

@@ -1378,6 +1378,7 @@ export const purchaseOrderRelations = relations(purchaseOrder, ({ one, many }) =
     references: [user.id],
   }),
   items: many(purchaseOrderItem),
+  customerPos: many(purchaseOrderCustomerPo),
 }));
 
 export const purchaseOrderItemRelations = relations(purchaseOrderItem, ({ one }) => ({
@@ -1385,6 +1386,30 @@ export const purchaseOrderItemRelations = relations(purchaseOrderItem, ({ one })
     fields: [purchaseOrderItem.purchaseOrderId],
     references: [purchaseOrder.id],
   }),
+}));
+
+export const purchaseOrderCustomerPo = pgTable(
+  "purchase_order_customer_po",
+  {
+    id: text("id").primaryKey(),
+    purchaseOrderId: text("purchase_order_id")
+      .notNull()
+      .references(() => purchaseOrder.id, { onDelete: "cascade" }),
+    customerPoId: text("customer_po_id")
+      .notNull()
+      .references(() => customerPurchaseOrder.id, { onDelete: "cascade" }),
+    customerPoNo: text("customer_po_no").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("po_customer_po_po_idx").on(t.purchaseOrderId),
+    index("po_customer_po_cpo_idx").on(t.customerPoId),
+  ],
+);
+
+export const purchaseOrderCustomerPoRelations = relations(purchaseOrderCustomerPo, ({ one }) => ({
+  purchaseOrder: one(purchaseOrder, { fields: [purchaseOrderCustomerPo.purchaseOrderId], references: [purchaseOrder.id] }),
+  customerPo: one(customerPurchaseOrder, { fields: [purchaseOrderCustomerPo.customerPoId], references: [customerPurchaseOrder.id] }),
 }));
 
 /* ============================================================================================================================================================================================================================================
@@ -1826,8 +1851,10 @@ export const schema = {
   purchaseOrder,
   purchaseOrderItem,
   purchaseOrderCounter,
+  purchaseOrderCustomerPo,
   purchaseOrderRelations,
   purchaseOrderItemRelations,
+  purchaseOrderCustomerPoRelations,
   // customer purchase order
   customerPurchaseOrder,
   customerPurchaseOrderRelations,

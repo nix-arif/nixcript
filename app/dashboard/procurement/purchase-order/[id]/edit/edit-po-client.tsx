@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  createPurchaseOrder,
+  updatePurchaseOrder,
   getSalesOrderItemsForPo,
   getPoSupplierQuotationUploadUrl,
   getPoItemImageUploadUrl,
   type PurchaseOrderItemInput,
+  type PurchaseOrderWithItems,
 } from "@/server/purchase-order";
 import type { Supplier } from "@/server/supplier";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
+import { Highlight } from "@/components/highlight";
 import {
   ArrowLeftIcon,
   PlusIcon,
@@ -25,16 +27,15 @@ import {
   ImageIcon,
   SearchIcon,
 } from "lucide-react";
-import { Highlight } from "@/components/highlight";
 
 interface ApprovedSo { id: string; soNo: string; customerName: string | null }
 interface CustomerPoOption { id: string; customerPoNo: string; customerName: string | null; amount: string }
 
 interface Props {
+  order: PurchaseOrderWithItems;
   suppliers: Supplier[];
   approvedSos: ApprovedSo[];
   customerPos: CustomerPoOption[];
-  initialSoId?: string;
 }
 
 interface LineItem extends PurchaseOrderItemInput {
@@ -42,18 +43,6 @@ interface LineItem extends PurchaseOrderItemInput {
   _imageFile?: File;
   _imageUploading?: boolean;
 }
-
-const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(),
-  rowNo,
-  productCode: "",
-  description: "",
-  qty: "1",
-  uom: "",
-  unitPrice: "0",
-  totalPrice: "0",
-  imageKey: undefined,
-});
 
 function calcLine(item: LineItem): LineItem {
   const qty = parseFloat(item.qty || "0") || 0;
@@ -69,62 +58,65 @@ function calcTotals(items: LineItem[], sstPct: string) {
 
 const fmt = (n: number) => `RM ${n.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
-export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos, initialSoId }: Props) {
+function toDateInput(d: Date | string | null | undefined): string {
+  if (!d) return "";
+  return new Date(d).toISOString().split("T")[0];
+}
+
+export function EditPurchaseOrderClient({ order, suppliers, approvedSos, customerPos }: Props) {
   const router = useRouter();
+  const backUrl = `/dashboard/procurement/purchase-order/${order.id}`;
 
   // Supplier (required)
-  const [supplierId, setSupplierId] = useState("");
+  const [supplierId, setSupplierId] = useState(order.supplierId ?? "");
 
-  // Linked SO (single, required)
-  const [selectedSo, setSelectedSo] = useState<ApprovedSo | null>(() =>
-    initialSoId ? (approvedSos.find((s) => s.id === initialSoId) ?? null) : null,
-  );
+  // Linked SO
+  const existingSo = order.salesOrderId
+    ? approvedSos.find((s) => s.id === order.salesOrderId) ?? null
+    : null;
+  const [selectedSo, setSelectedSo] = useState<ApprovedSo | null>(existingSo);
   const [soSearch, setSoSearch] = useState("");
 
-  // Linked Customer POs (multi, optional)
-  const [selectedCpos, setSelectedCpos] = useState<CustomerPoOption[]>([]);
+  // Linked Customer POs
+  const [selectedCpos, setSelectedCpos] = useState<CustomerPoOption[]>(() =>
+    order.customerPos.map((cp) => {
+      const found = customerPos.find((c) => c.id === cp.customerPoId);
+      return found ?? { id: cp.customerPoId, customerPoNo: cp.customerPoNo, customerName: null, amount: "0" };
+    }),
+  );
   const [cpoSearch, setCpoSearch] = useState("");
 
   // Header
-  const [deliveryDate, setDeliveryDate] = useState("");
-  const [deliveryAddress, setDeliveryAddress] = useState("");
-  const [notes, setNotes] = useState("");
-  const [sstPct, setSstPct] = useState("0");
+  const [deliveryDate, setDeliveryDate] = useState(toDateInput(order.expectedDeliveryDate));
+  const [deliveryAddress, setDeliveryAddress] = useState(order.deliveryAddress ?? "");
+  const [notes, setNotes] = useState(order.notes ?? "");
+  const [sstPct, setSstPct] = useState(order.sstPct ?? "0");
 
   // Items
-  const [items, setItems] = useState<LineItem[]>([newLine(1)]);
-  const [loadingSoItems, setLoadingSoItems] = useState(false);
-
-  // Auto-load items when arriving from "Convert to PO"
-  useEffect(() => {
-    if (!initialSoId || !selectedSo) return;
-    setLoadingSoItems(true);
-    getSalesOrderItemsForPo(initialSoId).then((soItems) => {
-      if (soItems.length > 0) {
-        setItems(soItems.map((si) => ({
+  const [items, setItems] = useState<LineItem[]>(
+    order.items.length > 0
+      ? order.items.map((i) => ({
           _key: crypto.randomUUID(),
-          rowNo: si.rowNo,
-          productId: si.productId ?? undefined,
-          productCode: si.productCode ?? "",
-          description: si.description ?? "",
-          qty: si.qty,
-          uom: si.uom ?? "",
-          unitPrice: si.unitPrice ?? "0",
-          totalPrice: si.totalPrice ?? "0",
-          imageKey: si.imageKey ?? undefined,
-        })));
-      }
-    }).catch(() => toast.error("Failed to load SO items")).finally(() => setLoadingSoItems(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+          rowNo: i.rowNo,
+          productCode: i.productCode ?? "",
+          description: i.description ?? "",
+          qty: i.qty ?? "1",
+          uom: i.uom ?? "",
+          unitPrice: i.unitPrice ?? "0",
+          totalPrice: i.totalPrice ?? "0",
+          imageKey: i.imageKey ?? undefined,
+        }))
+      : [{ _key: crypto.randomUUID(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", totalPrice: "0" }],
+  );
 
-  // Supplier quotation PDF
+  // PDF
   const [pdfFile, setPdfFile] = useState<File | null>(null);
-  const [pdfKey, setPdfKey] = useState<string | undefined>();
+  const [pdfKey, setPdfKey] = useState<string | undefined>(order.supplierQuotationKey ?? undefined);
   const [pdfUploading, setPdfUploading] = useState(false);
   const pdfRef = useRef<HTMLInputElement>(null);
 
   const [saving, setSaving] = useState(false);
+  const [loadingSoItems, setLoadingSoItems] = useState(false);
 
   // SO search filter
   const filteredSos = approvedSos.filter((s) => {
@@ -162,7 +154,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
   }
 
   function addLine() {
-    setItems((prev) => [...prev, newLine(prev.length + 1)]);
+    setItems((prev) => [...prev, { _key: crypto.randomUUID(), rowNo: prev.length + 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", totalPrice: "0" }]);
   }
 
   function removeLine(key: string) {
@@ -226,7 +218,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
     setSaving(true);
     try {
       const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
-      await createPurchaseOrder({
+      await updatePurchaseOrder({
+        id: order.id,
         supplierId,
         salesOrderId: selectedSo!.id,
         customerPoIds: selectedCpos.map((c) => c.id),
@@ -240,8 +233,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
         deliveryAddress: deliveryAddress || undefined,
         items: items.map(({ _key, _imageFile, _imageUploading, ...rest }) => rest),
       });
-      toast.success("Purchase order created");
-      router.push("/dashboard/procurement/purchase-order");
+      toast.success("Purchase order updated");
+      router.push(backUrl);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -249,15 +242,16 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
     }
   }
 
+  const existingPdfName = pdfKey?.split("/").pop();
   const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
 
   return (
     <div className="p-6">
       <PageHeader
-        title="New Purchase Order"
-        description="Create a new purchase order to a supplier"
+        title={`Edit ${order.poNo}`}
+        description="Update draft purchase order"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/procurement/purchase-order")} className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => router.push(backUrl)} className="gap-2">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }
@@ -307,7 +301,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
                   <span className="text-xs text-muted-foreground ml-2">— {selectedSo.customerName}</span>
                 )}
               </div>
-              <button onClick={() => { setSelectedSo(null); setItems([newLine(1)]); }} className="text-muted-foreground hover:text-foreground shrink-0">
+              <button onClick={() => { setSelectedSo(null); setItems([{ _key: crypto.randomUUID(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", totalPrice: "0" }]); }} className="text-muted-foreground hover:text-foreground shrink-0">
                 <XIcon className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -437,23 +431,12 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Delivery address</Label>
-              <Input
-                value={deliveryAddress}
-                onChange={(e) => setDeliveryAddress(e.target.value)}
-                placeholder="Address"
-                className="h-9 text-sm"
-              />
+              <Input value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Address" className="h-9 text-sm" />
             </div>
           </div>
           <div className="mt-3 space-y-1.5">
             <Label className="text-xs">Notes</Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Internal notes or delivery instructions..."
-              rows={2}
-              className="text-sm"
-            />
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal notes or delivery instructions..." rows={2} className="text-sm" />
           </div>
         </section>
 
@@ -466,9 +449,14 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
               <span className="flex-1 truncate text-[13px]">{pdfFile.name}</span>
               {pdfUploading && <span className="text-xs text-muted-foreground">Uploading…</span>}
               {!pdfUploading && pdfKey && <span className="text-xs text-green-600">Uploaded</span>}
-              <button onClick={removePdf} className="text-muted-foreground hover:text-foreground">
-                <XIcon className="w-3.5 h-3.5" />
-              </button>
+              <button onClick={removePdf} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
+            </div>
+          ) : pdfKey && existingPdfName ? (
+            <div className="flex items-center gap-2 text-sm">
+              <PaperclipIcon className="w-4 h-4 text-muted-foreground" />
+              <span className="flex-1 truncate text-[13px] text-muted-foreground">{existingPdfName}</span>
+              <span className="text-xs text-green-600">Attached</span>
+              <button onClick={removePdf} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
             </div>
           ) : (
             <label className="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -572,9 +560,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
           <Button onClick={handleSave} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
-            {saving ? "Creating…" : "Create purchase order"}
+            {saving ? "Saving…" : "Save changes"}
           </Button>
-          <Button variant="outline" onClick={() => router.push("/dashboard/procurement/purchase-order")}>Cancel</Button>
+          <Button variant="outline" onClick={() => router.push(backUrl)}>Cancel</Button>
         </div>
       </div>
     </div>

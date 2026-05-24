@@ -18,6 +18,7 @@ import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, MapPinIcon,
   FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon, SendIcon, ClockIcon,
+  PrinterIcon, ShoppingCartIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -151,6 +152,14 @@ export function SalesOrderDetailClient({
             <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/sales/order")} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.open(`/api/sales-order/${order.id}/pdf`, "_blank")}>
+              <PrinterIcon className="w-3.5 h-3.5" /> PDF
+            </Button>
+            {status === "confirmed" && can("purchase-order:create") && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/purchase-order/create?soId=${order.id}`)}>
+                <ShoppingCartIcon className="w-3.5 h-3.5" /> Convert to PO
+              </Button>
+            )}
             {status === "draft" ? (
               <>
                 {isOwner && can("sales-order:update") && (

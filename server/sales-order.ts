@@ -8,6 +8,8 @@ import {
   customer,
   customerCompany,
   quotation,
+  organization,
+  organizationProfile,
   user,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -226,6 +228,70 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
     submittedByName: nameOf(so.submittedBy ?? null),
     approvedByName: nameOf(so.approvedBy ?? null),
     items,
+  };
+}
+
+export async function getSalesOrderForPrint(id: string) {
+  const { orgId } = await requireAccess("sales-order:read");
+
+  const [so] = await db
+    .select()
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
+
+  if (!so) return null;
+
+  const [items, userRows, orgRows] = await Promise.all([
+    db.select().from(salesOrderItem).where(eq(salesOrderItem.salesOrderId, id)).orderBy(asc(salesOrderItem.rowNo)),
+    db.select({ id: user.id, name: user.name }).from(user).where(
+      inArray(user.id, [so.createdBy, so.submittedBy, so.approvedBy].filter((x): x is string => !!x)),
+    ),
+    db.select({
+      name: organization.name,
+      logo: organization.logo,
+      logoKey: organizationProfile.logoKey,
+      brandColor: organizationProfile.brandColor,
+      companyName: organizationProfile.companyName,
+      companyAddress: organizationProfile.companyAddress,
+      taxNo: organizationProfile.taxNo,
+      phone: organizationProfile.phone,
+      email: organizationProfile.email,
+      website: organizationProfile.website,
+      oldSsmNo: organizationProfile.oldSsmNo,
+      newSsmNo: organizationProfile.newSsmNo,
+      mdaEstablishmentNo: organizationProfile.mdaEstablishmentNo,
+      bankingInfo: organizationProfile.bankingInfo,
+    })
+    .from(organization)
+    .leftJoin(organizationProfile, eq(organizationProfile.organizationId, organization.id))
+    .where(eq(organization.id, orgId))
+    .limit(1),
+  ]);
+
+  const r2Public = process.env.R2_PUBLIC_URL ?? "";
+  const org = orgRows[0];
+  const orgLogoUrl = org?.logoKey ? `${r2Public}/${org.logoKey}` : (org?.logo ?? null);
+  const nameOf = (uid: string | null) => userRows.find((u) => u.id === uid)?.name ?? null;
+
+  return {
+    order: so,
+    items,
+    createdByName: nameOf(so.createdBy),
+    submittedByName: nameOf(so.submittedBy ?? null),
+    approvedByName: nameOf(so.approvedBy ?? null),
+    orgName: org?.name ?? "",
+    orgLogoUrl,
+    orgBrandColor: org?.brandColor ?? null,
+    orgCompanyName: org?.companyName ?? null,
+    orgCompanyAddress: org?.companyAddress ?? null,
+    orgTaxNo: org?.taxNo ?? null,
+    orgPhone: org?.phone ?? null,
+    orgEmail: org?.email ?? null,
+    orgWebsite: org?.website ?? null,
+    orgOldSsmNo: org?.oldSsmNo ?? null,
+    orgNewSsmNo: org?.newSsmNo ?? null,
+    orgMdaEstablishmentNo: org?.mdaEstablishmentNo ?? null,
+    orgBankingInfo: (org?.bankingInfo ?? []) as any[],
   };
 }
 

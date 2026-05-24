@@ -8,10 +8,11 @@ import {
   customer,
   customerCompany,
   member,
+  user,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, inArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -70,7 +71,11 @@ async function generateDoNo(orgId: string): Promise<string> {
 
 export type DeliveryOrderRow = typeof deliveryOrder.$inferSelect;
 export type DeliveryOrderItem = typeof deliveryOrderItem.$inferSelect;
-export type DeliveryOrderWithItems = DeliveryOrderRow & { items: DeliveryOrderItem[] };
+export type DeliveryOrderWithItems = DeliveryOrderRow & { items: DeliveryOrderItem[]; createdByName: string | null };
+export type DeliveryOrderListRow = DeliveryOrderRow & { createdByName: string | null };
+
+const EDITABLE_STATUSES = new Set(["draft"]);
+const DELETABLE_STATUSES = new Set(["draft"]);
 
 export interface DeliveryOrderItemInput {
   rowNo: number;
@@ -98,14 +103,22 @@ export interface UpdateDeliveryOrderInput extends Omit<CreateDeliveryOrderInput,
   items: DeliveryOrderItemInput[];
 }
 
-export async function getDeliveryOrders(): Promise<DeliveryOrderRow[]> {
+export async function getDeliveryOrders(): Promise<DeliveryOrderListRow[]> {
   const { orgId, userId } = await requireAccess("delivery-order:read");
   const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  return db
+  const rows = await db
     .select()
     .from(deliveryOrder)
     .where(eq(deliveryOrder.organizationId, ownerOrgId))
     .orderBy(desc(deliveryOrder.createdAt));
+
+  if (rows.length === 0) return [];
+
+  const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
+  const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds));
+  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+
+  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy) }));
 }
 
 export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderWithItems | null> {
@@ -116,12 +129,12 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, ownerOrgId)));
   if (!do_) return null;
-  const items = await db
-    .select()
-    .from(deliveryOrderItem)
-    .where(eq(deliveryOrderItem.deliveryOrderId, id))
-    .orderBy(asc(deliveryOrderItem.rowNo));
-  return { ...do_, items };
+  const [items, users] = await Promise.all([
+    db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderItem.rowNo)),
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [do_.createdBy])),
+  ]);
+  const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
+  return { ...do_, items, createdByName: nameOf(do_.createdBy) };
 }
 
 export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Promise<DeliveryOrderRow> {
@@ -201,6 +214,7 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, input.id), eq(deliveryOrder.organizationId, ownerOrgId)));
   if (!existing) throw new Error("Delivery order not found");
+  if (!EDITABLE_STATUSES.has(existing.status)) throw new Error("Only draft delivery orders can be edited");
 
   const [row] = await db
     .update(deliveryOrder)
@@ -237,6 +251,9 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
 export async function deleteDeliveryOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("delivery-order:delete");
   const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, ownerOrgId)));
+  if (!existing) throw new Error("Delivery order not found");
+  if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft delivery orders can be deleted");
   await db.delete(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, ownerOrgId)));
 }
 
@@ -247,4 +264,22 @@ export async function updateDeliveryOrderStatus(id: string, status: string): Pro
     .update(deliveryOrder)
     .set({ status })
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, ownerOrgId)));
+}
+
+export async function deliverDeliveryOrder(id: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("delivery-order:update");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, ownerOrgId)));
+  if (!existing) throw new Error("Delivery order not found");
+  if (existing.status !== "draft") throw new Error("Only draft delivery orders can be marked as delivered");
+  await db.update(deliveryOrder).set({ status: "delivered" }).where(eq(deliveryOrder.id, id));
+}
+
+export async function returnDeliveryOrder(id: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("delivery-order:update");
+  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, ownerOrgId)));
+  if (!existing) throw new Error("Delivery order not found");
+  if (existing.status !== "delivered") throw new Error("Only delivered orders can be marked as returned");
+  await db.update(deliveryOrder).set({ status: "returned" }).where(eq(deliveryOrder.id, id));
 }
