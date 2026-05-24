@@ -138,14 +138,10 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
             </div>
           ))}
         </div>
-      ) : null}
-
-      {!isSwitchingOrg && <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-        {filtered.length} order{filtered.length !== 1 ? "s" : ""}
-      </div>}
-
-      {!isSwitchingOrg && filtered.length === 0 ? (
-        <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
+      ) : filtered.length === 0 ? (
+        <>
+          <div className="text-xs text-muted-foreground mb-3 tabular-nums">0 orders</div>
+          <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
           <FileTextIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
           <div className="text-sm font-medium mb-1">No sales orders yet</div>
           <div className="text-xs mb-4">Create your first sales order to get started</div>
@@ -153,8 +149,13 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
             <PlusIcon className="w-3.5 h-3.5" /> New SO
           </Button>
         </div>
+        </>
       ) : (
-        <div className="space-y-2">
+        <>
+          <div className="text-xs text-muted-foreground mb-3 tabular-nums">
+            {filtered.length} order{filtered.length !== 1 ? "s" : ""}
+          </div>
+          <div className="space-y-2">
           {filtered.map((o) => {
             const snap = o.customerSnapshot as any;
             const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
@@ -242,6 +243,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
             );
           })}
         </div>
+        </>
       )}
     </div>
   );
