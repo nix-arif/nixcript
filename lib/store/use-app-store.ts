@@ -65,9 +65,11 @@ type AppState = {
   permissionsLoading: boolean;
   permissionsFetched: boolean;
   currentOrgId: string | null;
+  isSwitchingOrg: boolean;
 
   fetchPermissions: (organizationId: string) => Promise<void>;
   clearPermissions: () => void;
+  setOrgSwitching: (val: boolean) => void;
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -75,6 +77,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   permissionsLoading: false,
   permissionsFetched: false,
   currentOrgId: null,
+  isSwitchingOrg: false,
 
   fetchPermissions: async (organizationId: string) => {
     const s = get();
@@ -98,4 +101,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearPermissions: () => {
     set({ permissions: [], currentOrgId: null, permissionsLoading: false, permissionsFetched: false });
   },
+
+  setOrgSwitching: (val: boolean) => set({ isSwitchingOrg: val }),
 }));

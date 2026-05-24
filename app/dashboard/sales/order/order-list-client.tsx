@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAppStore } from "@/lib/store/use-app-store";
 import { toast } from "sonner";
 import { deleteSalesOrder, type SalesOrderListRow } from "@/server/sales-order";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,12 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const { isSwitchingOrg, setOrgSwitching } = useAppStore();
+
+  // Clear the switching flag once the server has delivered fresh data for the new org
+  useEffect(() => {
+    setOrgSwitching(false);
+  }, [initialOrders]);
 
   const filtered = initialOrders.filter((o) => {
     if (!search) return true;
@@ -113,11 +120,31 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
         )}
       </div>
 
-      <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-        {filtered.length} order{filtered.length !== 1 ? "s" : ""}
-      </div>
+      {isSwitchingOrg ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="border border-border rounded-xl px-4 py-3 animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-muted shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-3.5 w-28 bg-muted rounded" />
+                    <div className="h-3.5 w-16 bg-muted rounded" />
+                  </div>
+                  <div className="h-3 w-48 bg-muted rounded" />
+                  <div className="h-3 w-36 bg-muted rounded" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
-      {filtered.length === 0 ? (
+      {!isSwitchingOrg && <div className="text-xs text-muted-foreground mb-3 tabular-nums">
+        {filtered.length} order{filtered.length !== 1 ? "s" : ""}
+      </div>}
+
+      {!isSwitchingOrg && filtered.length === 0 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
           <FileTextIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
           <div className="text-sm font-medium mb-1">No sales orders yet</div>

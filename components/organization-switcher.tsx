@@ -30,7 +30,7 @@ export function OrganizationSwitcher() {
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false);
   const [pendingOrgId, setPendingOrgId] = React.useState<string | null>(null);
   const router = useRouter();
-  const { clearPermissions, fetchPermissions } = useAppStore();
+  const { clearPermissions, fetchPermissions, setOrgSwitching } = useAppStore();
 
   const {
     data: activeOrganization,
@@ -72,13 +72,18 @@ export function OrganizationSwitcher() {
     };
   }, [refetchActive, refetchList]);
 
-  // Ref guard prevents calling setActive concurrently or re-entering while in-flight.
+  // Only auto-set once — when the user has NEVER had an active org this session.
+  // hasEverHadOrgRef prevents re-firing when activeOrganization briefly goes null
+  // during a refetch (e.g. after router.refresh() or switching orgs).
+  const hasEverHadOrgRef = React.useRef(false);
   const autoSettingRef = React.useRef(false);
   React.useEffect(() => {
     if (activeOrganization) {
+      hasEverHadOrgRef.current = true;
       autoSettingRef.current = false;
       return;
     }
+    if (hasEverHadOrgRef.current) return; // transient null during refetch — ignore
     if (!organizationList || organizationList.length === 0) return;
     if (autoSettingRef.current) return;
 
@@ -105,10 +110,8 @@ export function OrganizationSwitcher() {
 
     setPendingOrgId(organizationId);
     fetchPermissions(organizationId);
+    setOrgSwitching(true);
 
-    // Wait for the session cookie to be updated before navigating so the
-    // server renders with the correct org. requirePermission() on the target
-    // page will redirect to /dashboard?error=forbidden if access is denied.
     authClient.organization.setActive({ organizationId }).then(() => {
       refetchActive();
       router.refresh();
@@ -116,12 +119,16 @@ export function OrganizationSwitcher() {
       console.error("Failed to switch organization", err);
       clearPermissions();
       setPendingOrgId(null);
+      setOrgSwitching(false);
     });
   }, [activeOrganization, pendingOrgId, router, fetchPermissions, clearPermissions, refetchActive]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if ((e.target as HTMLElement)?.isContentEditable) return;
       const num = parseInt(e.key, 10);
       if (isNaN(num) || num < 1 || num > 9) return;
       const org = organizationList?.[num - 1];
