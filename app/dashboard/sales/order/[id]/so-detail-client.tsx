@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   deleteSalesOrder,
   submitSalesOrder,
@@ -17,7 +17,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, MapPinIcon,
-  FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon, SendIcon,
+  FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon, SendIcon, ClockIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -61,6 +61,11 @@ export function SalesOrderDetailClient({
   const [status, setStatus] = useState(order.status ?? "draft");
   const [actioning, setActioning] = useState<"submit" | "approve" | "reject" | "recall" | null>(null);
 
+  // Sync with server-refreshed prop
+  useEffect(() => {
+    setStatus(order.status ?? "draft");
+  }, [order.status]);
+
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
   const snap = order.customerSnapshot as any;
@@ -83,8 +88,8 @@ export function SalesOrderDetailClient({
     setActioning("submit");
     try {
       await submitSalesOrder(order.id);
-      setStatus("submitted");
       toast.success("Sales order submitted for approval");
+      router.refresh();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -96,8 +101,8 @@ export function SalesOrderDetailClient({
     setActioning("approve");
     try {
       await approveSalesOrder(order.id);
-      setStatus("confirmed");
       toast.success("Sales order approved");
+      router.refresh();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -110,8 +115,8 @@ export function SalesOrderDetailClient({
     setActioning("reject");
     try {
       await rejectSalesOrder(order.id);
-      setStatus("cancelled");
-      toast.success("Sales order rejected");
+      toast.success("Sales order returned for revision");
+      router.refresh();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -124,8 +129,8 @@ export function SalesOrderDetailClient({
     setActioning("recall");
     try {
       await recallSalesOrder(order.id);
-      setStatus("draft");
       toast.success("Sales order recalled");
+      router.refresh();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -425,6 +430,44 @@ export function SalesOrderDetailClient({
                 <p className="text-[10px] text-muted-foreground">Items</p>
                 <p className="text-xs">{order.items.length} line{order.items.length !== 1 ? "s" : ""}</p>
               </div>
+            </div>
+
+            {/* Audit trail */}
+            <div className="border-t border-border/50 pt-2.5 space-y-2">
+              <div className="flex items-start gap-2">
+                <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground">Created</p>
+                  <p className="text-xs">{fmtDate(order.createdAt)}</p>
+                </div>
+              </div>
+              {order.createdByName && (
+                <div className="flex items-start gap-2">
+                  <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Prepared by</p>
+                    <p className="text-xs">{order.createdByName}</p>
+                  </div>
+                </div>
+              )}
+              {order.submittedAt && (
+                <div className="flex items-start gap-2">
+                  <ClockIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Submitted</p>
+                    <p className="text-xs">{fmtDate(order.submittedAt)}{order.submittedByName ? ` · ${order.submittedByName}` : ""}</p>
+                  </div>
+                </div>
+              )}
+              {order.approvedAt && (
+                <div className="flex items-start gap-2">
+                  <CheckIcon className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Approved</p>
+                    <p className="text-xs">{fmtDate(order.approvedAt)}{order.approvedByName ? ` · ${order.approvedByName}` : ""}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
         </div>

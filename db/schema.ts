@@ -1165,6 +1165,13 @@ export const salesOrder = pgTable(
       .notNull()
       .references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+
+    submittedBy: text("submitted_by").references(() => user.id),
+    submittedAt: timestamp("submitted_at"),
+
+    approvedBy: text("approved_by").references(() => user.id),
+    approvedAt: timestamp("approved_at"),
+
     updatedAt: timestamp("updated_at")
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -1230,10 +1237,22 @@ export const salesOrderRelations = relations(salesOrder, ({ one, many }) => ({
   salesPerson: one(user, {
     fields: [salesOrder.salesPersonId],
     references: [user.id],
+    relationName: "so_salesPerson",
   }),
   createdByUser: one(user, {
     fields: [salesOrder.createdBy],
     references: [user.id],
+    relationName: "so_createdBy",
+  }),
+  submittedByUser: one(user, {
+    fields: [salesOrder.submittedBy],
+    references: [user.id],
+    relationName: "so_submittedBy",
+  }),
+  approvedByUser: one(user, {
+    fields: [salesOrder.approvedBy],
+    references: [user.id],
+    relationName: "so_approvedBy",
   }),
   items: many(salesOrderItem),
 }));

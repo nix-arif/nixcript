@@ -11,7 +11,8 @@
       "Bash(grep -v \"^$\")",
       "Bash(node -e ' *)",
       "Bash(pnpm add *)",
-      "Bash(pnpm drizzle-kit *)"
+      "Bash(pnpm drizzle-kit *)",
+      "Bash(pnpm tsc *)"
     ],
     "additionalDirectories": [
       "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order",

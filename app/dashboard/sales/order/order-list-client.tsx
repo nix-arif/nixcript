@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { deleteSalesOrder, type SalesOrderRow } from "@/server/sales-order";
+import { deleteSalesOrder, type SalesOrderListRow } from "@/server/sales-order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
@@ -17,6 +17,7 @@ import {
   TrashIcon,
   BuildingIcon,
   UserIcon,
+  CalendarIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,11 +28,15 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const SO_STATUS: Record<string, { label: string; className: string }> = {
-  draft: { label: "Draft", className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
-  confirmed: { label: "Confirmed", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
-  fulfilled: { label: "Fulfilled", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
-  cancelled: { label: "Cancelled", className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
+  draft:     { label: "Draft",      className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  submitted: { label: "Submitted",  className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
+  confirmed: { label: "Confirmed",  className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  fulfilled: { label: "Fulfilled",  className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
+  cancelled: { label: "Cancelled",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
+
+const EDITABLE_STATUSES = new Set(["draft"]);
+const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = SO_STATUS[status] ?? SO_STATUS.draft;
@@ -43,10 +48,12 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 interface Props {
-  initialOrders: SalesOrderRow[];
+  initialOrders: SalesOrderListRow[];
+  permissions: string[];
 }
 
-export function SalesOrderListClient({ initialOrders }: Props) {
+export function SalesOrderListClient({ initialOrders, permissions }: Props) {
+  const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -145,9 +152,6 @@ export function SalesOrderListClient({ initialOrders }: Props) {
                           QT: {o.quotationNo}
                         </span>
                       )}
-                      <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 tabular-nums ml-auto">
-                        {fmtDate(o.createdAt)}
-                      </span>
                     </div>
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                       {custName && (
@@ -166,26 +170,44 @@ export function SalesOrderListClient({ initialOrders }: Props) {
                         {fmt(o.grandTotal)}
                       </span>
                     </div>
+                    <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                      {o.createdByName && (
+                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <CalendarIcon className="w-3 h-3" />
+                          {fmtDate(o.createdAt)} · {o.createdByName}
+                        </span>
+                      )}
+                      {o.salesPersonName && (
+                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <UserIcon className="w-3 h-3" />
+                          {o.salesPersonName}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-7 h-7"
-                      onClick={() => router.push(`/dashboard/sales/order/${o.id}/edit`)}
-                    >
-                      <PencilIcon className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-7 h-7 text-destructive hover:text-destructive"
-                      disabled={deleting === o.id}
-                      onClick={() => handleDelete(o.id, o.soNo)}
-                    >
-                      <TrashIcon className="w-3.5 h-3.5" />
-                    </Button>
+                    {can("sales-order:update") && EDITABLE_STATUSES.has(o.status) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7"
+                        onClick={() => router.push(`/dashboard/sales/order/${o.id}/edit`)}
+                      >
+                        <PencilIcon className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
+                    {can("sales-order:delete") && DELETABLE_STATUSES.has(o.status) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 text-destructive hover:text-destructive"
+                        disabled={deleting === o.id}
+                        onClick={() => handleDelete(o.id, o.soNo)}
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>

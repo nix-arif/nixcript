@@ -116,6 +116,14 @@ async function generateSoNo(orgId: string): Promise<string> {
 export type SalesOrderRow = typeof salesOrder.$inferSelect;
 export type SalesOrderItem = typeof salesOrderItem.$inferSelect;
 
+export type SalesOrderMeta = {
+  createdByName: string | null;
+  submittedByName: string | null;
+  approvedByName: string | null;
+};
+
+export type SalesOrderListRow = SalesOrderRow & { createdByName: string | null };
+
 export interface SalesOrderItemInput {
   rowNo: number;
   productId?: string;
@@ -157,18 +165,30 @@ export interface UpdateSalesOrderInput extends Omit<CreateSalesOrderInput, "item
   items: SalesOrderItemInput[];
 }
 
-export type SalesOrderWithItems = SalesOrderRow & { items: SalesOrderItem[] };
+export type SalesOrderWithItems = SalesOrderRow & SalesOrderMeta & { items: SalesOrderItem[] };
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
-export async function getSalesOrders(): Promise<SalesOrderRow[]> {
+export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
   const { orgId } = await requireAccess("sales-order:read");
 
-  return db
+  const rows = await db
     .select()
     .from(salesOrder)
     .where(eq(salesOrder.organizationId, orgId))
     .orderBy(desc(salesOrder.createdAt));
+
+  if (rows.length === 0) return [];
+
+  const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
+  const users = await db
+    .select({ id: user.id, name: user.name })
+    .from(user)
+    .where(inArray(user.id, creatorIds));
+
+  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+
+  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy) }));
 }
 
 export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithItems | null> {
@@ -181,13 +201,32 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
 
   if (!so) return null;
 
-  const items = await db
-    .select()
-    .from(salesOrderItem)
-    .where(eq(salesOrderItem.salesOrderId, id))
-    .orderBy(asc(salesOrderItem.rowNo));
+  const [items, users] = await Promise.all([
+    db
+      .select()
+      .from(salesOrderItem)
+      .where(eq(salesOrderItem.salesOrderId, id))
+      .orderBy(asc(salesOrderItem.rowNo)),
+    db
+      .select({ id: user.id, name: user.name })
+      .from(user)
+      .where(
+        inArray(
+          user.id,
+          [so.createdBy, so.submittedBy, so.approvedBy].filter((x): x is string => !!x),
+        ),
+      ),
+  ]);
 
-  return { ...so, items };
+  const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
+
+  return {
+    ...so,
+    createdByName: nameOf(so.createdBy),
+    submittedByName: nameOf(so.submittedBy ?? null),
+    approvedByName: nameOf(so.approvedBy ?? null),
+    items,
+  };
 }
 
 // ── Mutations ──────────────────────────────────────────────────────────────
@@ -512,7 +551,7 @@ export async function submitSalesOrder(id: string): Promise<void> {
 
   await db
     .update(salesOrder)
-    .set({ status: "submitted" })
+    .set({ status: "submitted", submittedBy: userId, submittedAt: new Date() })
     .where(eq(salesOrder.id, id));
 
   revalidatePath(`/dashboard/sales/order/${id}`);
@@ -546,7 +585,7 @@ export async function submitSalesOrder(id: string): Promise<void> {
 // ── Approve (submitted → confirmed) ───────────────────────────────────────
 
 export async function approveSalesOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("sales-order:approve");
+  const { orgId, userId, session } = await requireAccess("sales-order:approve");
 
   const [so] = await db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
@@ -556,7 +595,7 @@ export async function approveSalesOrder(id: string): Promise<void> {
   if (!so) throw new Error("Sales order not found");
   if (so.status !== "submitted") throw new Error("Only submitted orders can be approved");
 
-  await db.update(salesOrder).set({ status: "confirmed" }).where(eq(salesOrder.id, id));
+  await db.update(salesOrder).set({ status: "confirmed", approvedBy: userId, approvedAt: new Date() }).where(eq(salesOrder.id, id));
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
@@ -630,7 +669,7 @@ export async function recallSalesOrder(id: string): Promise<void> {
   if (!so) throw new Error("Sales order not found");
   if (so.status !== "confirmed") throw new Error("Only confirmed orders can be recalled");
 
-  await db.update(salesOrder).set({ status: "draft" }).where(eq(salesOrder.id, id));
+  await db.update(salesOrder).set({ status: "draft", approvedBy: null, approvedAt: null }).where(eq(salesOrder.id, id));
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
