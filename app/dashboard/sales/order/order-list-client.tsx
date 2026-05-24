@@ -50,9 +50,10 @@ function StatusBadge({ status }: { status: string }) {
 interface Props {
   initialOrders: SalesOrderListRow[];
   permissions: string[];
+  currentUserId: string;
 }
 
-export function SalesOrderListClient({ initialOrders, permissions }: Props) {
+export function SalesOrderListClient({ initialOrders, permissions, currentUserId }: Props) {
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -187,7 +188,7 @@ export function SalesOrderListClient({ initialOrders, permissions }: Props) {
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    {can("sales-order:update") && EDITABLE_STATUSES.has(o.status) && (
+                    {can("sales-order:update") && EDITABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -197,7 +198,7 @@ export function SalesOrderListClient({ initialOrders, permissions }: Props) {
                         <PencilIcon className="w-3.5 h-3.5" />
                       </Button>
                     )}
-                    {can("sales-order:delete") && DELETABLE_STATUSES.has(o.status) && (
+                    {can("sales-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
                       <Button
                         variant="ghost"
                         size="icon"

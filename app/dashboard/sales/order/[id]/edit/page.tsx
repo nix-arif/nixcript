@@ -5,13 +5,14 @@ import { notFound, redirect } from "next/navigation";
 import { EditSalesOrderClient } from "./edit-order-client";
 
 export default async function EditSalesOrderPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission("sales-order:update");
+  const session = await requirePermission("sales-order:update");
   const { id } = await params;
   const [order, members] = await Promise.all([
     getSalesOrderDetail(id),
     getOrgMembers(),
   ]);
   if (!order) notFound();
+  if (order.createdBy !== session.user.id) redirect(`/dashboard/sales/order/${id}`);
   if (order.status === "submitted" || order.status === "confirmed") {
     redirect(`/dashboard/sales/order/${id}`);
   }

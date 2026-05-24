@@ -9,5 +9,5 @@ export default async function SalesOrderPage() {
     getSalesOrders(),
     getUserPermissions(session.user.id, session.session.activeOrganizationId!),
   ]);
-  return <SalesOrderListClient initialOrders={orders} permissions={permissions} />;
+  return <SalesOrderListClient initialOrders={orders} permissions={permissions} currentUserId={session.user.id} />;
 }

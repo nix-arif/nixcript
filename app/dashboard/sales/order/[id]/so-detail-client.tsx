@@ -51,10 +51,12 @@ export function SalesOrderDetailClient({
   order,
   linkedQuotation,
   permissions,
+  currentUserId,
 }: {
   order: SalesOrderWithItems;
   linkedQuotation: QuotationBasic | null;
   permissions: string[];
+  currentUserId: string;
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -67,6 +69,7 @@ export function SalesOrderDetailClient({
   }, [order.status]);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+  const isOwner = order.createdBy === currentUserId;
 
   const snap = order.customerSnapshot as any;
   const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
@@ -150,12 +153,12 @@ export function SalesOrderDetailClient({
             </Button>
             {status === "draft" ? (
               <>
-                {can("sales-order:update") && (
+                {isOwner && can("sales-order:update") && (
                   <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/order/${order.id}/edit`)} className="gap-1.5">
                     <PencilIcon className="w-3.5 h-3.5" /> Edit
                   </Button>
                 )}
-                {can("sales-order:delete") && (
+                {isOwner && can("sales-order:delete") && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                     <TrashIcon className="w-3.5 h-3.5" /> Delete
                   </Button>
@@ -164,7 +167,7 @@ export function SalesOrderDetailClient({
             ) : status === "cancelled" ? (
               <>
                 <StatusBadge status={status} />
-                {can("sales-order:delete") && (
+                {isOwner && can("sales-order:delete") && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                     <TrashIcon className="w-3.5 h-3.5" /> Delete
                   </Button>

@@ -21,5 +21,5 @@ export default async function SalesOrderDetailPage({ params }: { params: Promise
     ? await getQuotationBasic(order.quotationId).catch(() => null)
     : null;
 
-  return <SalesOrderDetailClient order={order} linkedQuotation={linkedQuotation} permissions={permissions} />;
+  return <SalesOrderDetailClient order={order} linkedQuotation={linkedQuotation} permissions={permissions} currentUserId={session.user.id} />;
 }
