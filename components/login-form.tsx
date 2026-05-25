@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Spinner } from "./ui/spinner";
+import { useState } from "react";
 
 const formSchema = z.object({
   email: z.email("Please enter a valid email"),
@@ -34,6 +35,7 @@ export function LoginForm({
   ...props
 }: React.ComponentProps<"div">) {
   const router = useRouter();
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -54,8 +56,17 @@ export function LoginForm({
       return;
     }
 
+    setIsRedirecting(true);
     router.replace("/dashboard");
   };
+
+  if (isRedirecting) {
+    return (
+      <div className="flex min-h-svh items-center justify-center">
+        <Spinner className="size-8" />
+      </div>
+    );
+  }
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
