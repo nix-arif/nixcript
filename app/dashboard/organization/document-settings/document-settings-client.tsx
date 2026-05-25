@@ -116,6 +116,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
       const templateStyle =
         pdfTemplate === "nexus" || pdfTemplate === "zinc" ? "modern"
         : pdfTemplate === "slate" ? "bold"
+        : pdfTemplate === "mono" ? "mono"
         : "corporate";
 
       await Promise.all([
@@ -445,6 +446,37 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
                         <div className="h-1 rounded-sm" style={{ backgroundColor: brandColor, opacity: 0.15 }} />
                         <div className="h-1 rounded-sm bg-gray-50" />
                         <div className="h-1 rounded-sm bg-white" />
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  id: "mono",
+                  label: "Mono",
+                  desc: "Plain black & white · fully bordered table",
+                  preview: (
+                    <div className="w-full h-10 rounded overflow-hidden flex flex-col bg-white border border-black">
+                      <div className="flex justify-between items-start px-1.5 pt-1 pb-0.5">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="h-1.5 w-10 rounded-sm bg-black" />
+                          <div className="h-0.5 w-6 rounded-sm bg-gray-400" />
+                        </div>
+                        <div className="flex flex-col items-end gap-0.5">
+                          <div className="h-0.5 w-5 rounded-sm bg-gray-400" />
+                          <div className="h-1 w-8 rounded-sm bg-black" />
+                        </div>
+                      </div>
+                      <div className="h-px w-full bg-black" />
+                      <div className="flex-1 px-0">
+                        <div className="h-1.5 bg-black w-full" />
+                        <div className="flex gap-px mt-px px-0">
+                          <div className="h-1 flex-1 border-b border-gray-300" />
+                          <div className="h-1 flex-1 border-b border-gray-300" />
+                        </div>
+                        <div className="flex gap-px">
+                          <div className="h-1 flex-1 border-b border-gray-200" />
+                          <div className="h-1 flex-1 border-b border-gray-200" />
+                        </div>
                       </div>
                     </div>
                   ),

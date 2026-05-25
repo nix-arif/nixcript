@@ -5,6 +5,7 @@ import { generateQuotationSlate } from "@/app/dashboard/sales/quotation/[id]/pri
 import { generateQuotationAura } from "@/app/dashboard/sales/quotation/[id]/print/aura";
 import { generateQuotationZinc } from "@/app/dashboard/sales/quotation/[id]/print/zinc";
 import { generateQuotationEmber } from "@/app/dashboard/sales/quotation/[id]/print/ember";
+import { generateQuotationMono } from "@/app/dashboard/sales/quotation/[id]/print/mono";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -21,6 +22,7 @@ const generators: Record<string, (data: any) => Promise<Uint8Array>> = {
   aura:          generateQuotationAura,
   zinc:          generateQuotationZinc,
   ember:         generateQuotationEmber,
+  mono:          generateQuotationMono,
 };
 
 export async function GET(_req: Request, { params }: Props) {

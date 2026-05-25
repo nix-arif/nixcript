@@ -189,6 +189,9 @@ export const member = pgTable(
     role: text("role").default("member").notNull(),
     departmentId: text("department_id"), // kept for compat; member_department is authoritative
     createdAt: timestamp("created_at").notNull(),
+    // Soft-delete: set when member is removed, null when active
+    deletedAt: timestamp("deleted_at"),
+    deletedBy: text("deleted_by").references(() => user.id),
   },
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),

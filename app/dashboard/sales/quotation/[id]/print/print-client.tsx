@@ -617,6 +617,172 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
   );
 }
 
+// ── Template: Mono ────────────────────────────────────────────────────────
+// Plain black & white. No coloured backgrounds. Fully bordered table.
+function TemplateMono({ entry }: { entry: GroupItem }) {
+  const { quotation: q, items, orgName, orgLogoUrl,
+    orgCompanyName, orgCompanyAddress, orgTaxNo, orgPhone, orgBankingInfo } = entry;
+  const cust = q.customerSnapshot as any;
+
+  const showTP  = !!Number(q.showTotalPrice);
+  const subtotal = Number(q.subtotal ?? 0);
+  const discAmt  = Number(q.overallDiscountAmt ?? 0);
+  const sstAmt   = Number(q.sst ?? 0);
+  const grand    = Number(q.grandTotal ?? 0);
+  const afterDisc = subtotal - discAmt;
+  const bank = (orgBankingInfo as any[]).find(b => b.isPrimary) ?? (orgBankingInfo as any[])[0] ?? null;
+
+  const border = "1px solid #000";
+  const borderLight = "1px solid #ccc";
+
+  return (
+    <div style={{ background: "white", width: "100%", fontFamily: "Arial, sans-serif", fontSize: "12px", color: "#111" }}>
+
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 28px 14px" }}>
+        <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
+          {orgLogoUrl
+            ? <img src={orgLogoUrl} alt="" style={{ height: "44px", width: "auto", objectFit: "contain", flexShrink: 0 }} />
+            : null}
+          <div>
+            <div style={{ fontWeight: "700", fontSize: "15px", color: "#000" }}>{orgCompanyName ?? orgName}</div>
+            {orgCompanyAddress && <div style={{ color: "#555", fontSize: "10.5px", marginTop: "2px", maxWidth: "300px" }}>{orgCompanyAddress}</div>}
+            {(orgTaxNo || orgPhone) && (
+              <div style={{ color: "#777", fontSize: "10px", marginTop: "1px" }}>
+                {[orgTaxNo && `Tax: ${orgTaxNo}`, orgPhone].filter(Boolean).join("  ·  ")}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontWeight: "700", fontSize: "11px", letterSpacing: "1.5px", color: "#000", textTransform: "uppercase" }}>Quotation</div>
+          <div style={{ fontWeight: "700", fontSize: "17px", fontFamily: "monospace", color: "#000", marginTop: "2px" }}>{q.quotationNo}</div>
+          <div style={{ fontSize: "10.5px", color: "#555", marginTop: "5px" }}>
+            <div>Date: {fmtDate(q.createdAt)}</div>
+            <div>Valid: {fmtDate(q.validUntil)}</div>
+            {q.title && <div style={{ color: "#333", fontWeight: "500", marginTop: "1px" }}>{q.title}</div>}
+          </div>
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div style={{ borderTop: "1.5px solid #000", margin: "0 28px" }} />
+
+      {/* Info row */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", margin: "0 28px", padding: "12px 0 14px" }}>
+        <div style={{ paddingRight: "16px" }}>
+          <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", marginBottom: "5px" }}>Attention To</div>
+          {cust ? (
+            <div style={{ lineHeight: "1.6" }}>
+              <div style={{ fontWeight: "600" }}>{[cust.title, cust.name].filter(Boolean).join(" ")}</div>
+              {cust.position && <div style={{ color: "#444" }}>{cust.position}{cust.department ? `, ${cust.department}` : ""}</div>}
+              {cust.organizationName && <div style={{ color: "#444" }}>{cust.organizationName}</div>}
+              {cust.organizationAddress && <div style={{ color: "#666", fontSize: "10.5px" }}>{cust.organizationAddress}</div>}
+              {(cust.email || cust.contactNo) && <div style={{ color: "#666", fontSize: "10.5px" }}>{[cust.email, cust.contactNo].filter(Boolean).join("  ·  ")}</div>}
+            </div>
+          ) : <div style={{ color: "#999" }}>—</div>}
+        </div>
+        <div>
+          <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", marginBottom: "5px" }}>Details</div>
+          <table style={{ fontSize: "10.5px", borderCollapse: "collapse", width: "100%" }}>
+            <tbody>
+              {([
+                ["Sales Person", q.salesPersonName ?? "—"],
+                ["Prepared By",  q.preparedByName  ?? "—"],
+              ] as [string, string][]).map(([l, v]) => (
+                <tr key={l}>
+                  <td style={{ color: "#666", paddingRight: "10px", paddingBottom: "2px", whiteSpace: "nowrap" }}>{l}</td>
+                  <td style={{ fontWeight: "500" }}>{v}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Items — bordered table */}
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", border }}>
+        <thead>
+          <tr style={{ background: "#000" }}>
+            {["#", "Code", "Description / MDA", "Qty", "UOM", "Unit Price", "Disc%", ...(showTP ? ["Total"] : [])].map((h, i) => (
+              <th
+                key={h}
+                style={{
+                  padding: "7px 8px",
+                  color: "white",
+                  fontWeight: "700",
+                  fontSize: "9.5px",
+                  textAlign: ["Unit Price","Total"].includes(h) ? "right" : h === "#" ? "center" : "left",
+                  borderRight: i < (showTP ? 7 : 6) ? "1px solid #444" : "none",
+                }}
+              >{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, i) => (
+            <tr key={item.id} style={{ borderBottom: borderLight }}>
+              <td style={{ padding: "6px 8px", textAlign: "center", color: "#999", borderRight: borderLight }}>{item.rowNo}</td>
+              <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: "9.5px", color: "#555", borderRight: borderLight, whiteSpace: "nowrap" }}>{item.productCode ?? "—"}</td>
+              <td style={{ padding: "6px 8px", borderRight: borderLight }}>
+                <div style={{ fontWeight: "500" }}>{item.description ?? "—"}</div>
+                {item.hasCert && item.mdaRegNo && <div style={{ fontSize: "9px", color: "#166534", marginTop: "1px" }}>MDA: {item.mdaRegNo}{item.mdaValidity ? ` · Exp: ${fmtDate(item.mdaValidity, true)}` : ""}</div>}
+                {!item.hasCert && <div style={{ fontSize: "9px", color: "#92400e", marginTop: "1px" }}>No MDA certificate</div>}
+              </td>
+              <td style={{ padding: "6px 8px", textAlign: "center", borderRight: borderLight }}>{item.qty}</td>
+              <td style={{ padding: "6px 8px", textAlign: "center", color: "#666", borderRight: borderLight }}>{item.uom || "—"}</td>
+              <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", borderRight: borderLight }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</td>
+              <td style={{ padding: "6px 8px", textAlign: "center", color: "#666", borderRight: showTP ? borderLight : "none" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</td>
+              {showTP && <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Totals + bank */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "14px 28px 0" }}>
+        {bank ? (
+          <div style={{ fontSize: "11px" }}>
+            <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", marginBottom: "5px" }}>Payment To</div>
+            {[["Bank", bank.bankName], ["Account Name", bank.accountHolder], ["Account No.", bank.accountNo]].map(([l, v]) => (
+              <div key={l} style={{ marginBottom: "2px" }}><span style={{ color: "#777", marginRight: "6px" }}>{l}:</span><span style={{ fontWeight: "500" }}>{v}</span></div>
+            ))}
+          </div>
+        ) : <div />}
+
+        <div style={{ minWidth: "210px" }}>
+          {[
+            ["Subtotal", fmtMoney(subtotal)],
+            ...(discAmt > 0 ? [[`Discount (${q.overallDiscountPct}%)`, `- ${fmtMoney(discAmt)}`], ["After Discount", fmtMoney(afterDisc)]] : []),
+            ...(sstAmt > 0 ? [[`SST (${q.sstPct}%)`, fmtMoney(sstAmt)]] : []),
+          ].map(([l, v]) => (
+            <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: "16px", fontSize: "11px", color: "#555", marginBottom: "3px" }}>
+              <span>{l}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{v}</span>
+            </div>
+          ))}
+          <div style={{ borderTop: "1.5px solid #000", marginTop: "6px", paddingTop: "6px", display: "flex", justifyContent: "space-between", gap: "16px" }}>
+            <span style={{ fontWeight: "700", fontSize: "12px" }}>Grand Total</span>
+            <span style={{ fontWeight: "700", fontSize: "14px", fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grand)}</span>
+          </div>
+          <div style={{ borderTop: "1.5px solid #000", marginTop: "4px" }} />
+        </div>
+      </div>
+
+      {q.notes && (
+        <div style={{ margin: "14px 28px 0", padding: "10px 12px", border: "1px solid #000", fontSize: "11px", color: "#333" }}>
+          <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", marginBottom: "4px" }}>Notes</div>
+          {q.notes}
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 28px 16px", marginTop: "10px", borderTop: "1px solid #ccc", fontSize: "10px", color: "#aaa" }}>
+        <span><span style={{ color: "#555", fontWeight: "500" }}>Computer generated document.</span> No signature required.</span>
+        <span style={{ fontFamily: "monospace" }}>{q.quotationNo} · {new Date().toLocaleDateString("en-MY")}</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Router — driven by pdfTemplate so preview matches the downloaded PDF ──
 function QuotationPage({ entry }: { entry: GroupItem }) {
   const t = entry.orgPdfTemplate ?? "affirma";
@@ -624,6 +790,7 @@ function QuotationPage({ entry }: { entry: GroupItem }) {
   if (t === "slate")  return <TemplateBold    entry={entry} />;
   if (t === "aura")   return <TemplateAffirma entry={entry} />;
   if (t === "zinc")   return <TemplateModern  entry={entry} />;
+  if (t === "mono")   return <TemplateMono    entry={entry} />;
   return <TemplateAffirma entry={entry} />;
 }
 
