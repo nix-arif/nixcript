@@ -3,7 +3,6 @@
 import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { searchProducts } from "@/server/products";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -15,7 +14,6 @@ import {
   CheckCircleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { generateCataloguePdf } from "./generate-pdf";
 import { PageHeader } from "@/components/page-header";
 
 type SpreadsheetRow = {
@@ -115,49 +113,42 @@ export function CatalogueGenerator() {
 
     setGenerating(true);
     try {
-      // Fetch product data from DB for each product code
-      const productCodes = [...new Set(rows.map((r) => r.productCode))];
+      const res = await fetch("/api/products/catalogue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: rows.map((r, i) => ({
+            no: r.no || i + 1,
+            productCode: r.productCode,
+            description: r.description,
+            qty: r.qty != null ? String(r.qty) : undefined,
+            uom: r.uom,
+          })),
+          title: title.trim(),
+          subtitle: subtitle.trim() || undefined,
+          companyName: showCompany ? companyName.trim() || undefined : undefined,
+          options: {
+            showProductCode,
+            showRegNo,
+            showValidity,
+          },
+        }),
+      });
 
-      // Search each unique product code
-      const productMap: Record<string, any> = {};
-      for (const code of productCodes) {
-        try {
-          const results = await searchProducts(code);
-          const match = results.find(
-            (p) => p.productCode.toLowerCase() === code.toLowerCase(),
-          );
-          if (match) productMap[code] = match;
-        } catch {}
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || `Server error ${res.status}`);
       }
 
-      // Enrich rows with DB data
-      const enrichedRows = rows.map((row) => {
-        const dbProduct = productMap[row.productCode];
-        return {
-          ...row,
-          description:
-            row.description || dbProduct?.description || row.productCode,
-          registrationNo: dbProduct?.registrationNo,
-          validFrom: dbProduct?.validFrom,
-          expiredOn: dbProduct?.expiredOn,
-          imageUrl: dbProduct?.productCode
-            ? `${process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL}/${encodeURIComponent(dbProduct.productCode)}.jpg`
-            : undefined,
-        };
-      });
-
-      await generateCataloguePdf({
-        title: title.trim(),
-        subtitle: subtitle.trim() || undefined,
-        companyName: showCompany ? companyName.trim() || undefined : undefined,
-        rows: enrichedRows,
-        options: {
-          showSku: showSku && hasSku,
-          showProductCode,
-          showRegNo,
-          showValidity,
-        },
-      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `catalogue_${Date.now()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
 
       toast.success("PDF generated successfully");
     } catch (e: any) {
