@@ -147,7 +147,18 @@ export async function POST(req: NextRequest) {
     const brandHex = orgProfile?.brandColor ?? "#141414";
     const accent = (() => {
       const hex = brandHex.replace("#", "");
-      return rgb(parseInt(hex.slice(0, 2), 16) / 255, parseInt(hex.slice(2, 4), 16) / 255, parseInt(hex.slice(4, 6), 16) / 255);
+      const r = parseInt(hex.slice(0, 2), 16) / 255;
+      const g = parseInt(hex.slice(2, 4), 16) / 255;
+      const b = parseInt(hex.slice(4, 6), 16) / 255;
+      return rgb(r, g, b);
+    })();
+    // Darkened accent for the header band so white text is always legible
+    const accentDark = (() => {
+      const hex = brandHex.replace("#", "");
+      const r = parseInt(hex.slice(0, 2), 16) / 255;
+      const g = parseInt(hex.slice(2, 4), 16) / 255;
+      const b = parseInt(hex.slice(4, 6), 16) / 255;
+      return rgb(Math.max(0, r * 0.55), Math.max(0, g * 0.55), Math.max(0, b * 0.55));
     })();
 
     const effectiveCompanyName = companyName?.trim() || orgProfile?.companyName || null;
@@ -225,9 +236,10 @@ export async function POST(req: NextRequest) {
       const catPage  = pdfDoc.addPage([W, H]);
       const pageRows = enrichedItems.slice(pi * ROWS_PER_PG, (pi + 1) * ROWS_PER_PG);
 
-      // ── Header band ──────────────────────────────────────────────────────
-      catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H, color: C_BLACK });
-      catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: 4, height: CAT_HDR_H, color: accent });
+      // ── Header band — full-width accent colour ───────────────────────────
+      catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H, color: accentDark });
+      // Bottom accent bar (brighter) to create a two-tone effect
+      catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: 3, color: accent });
 
       // Title (left)
       catPage.drawText(trunc(title, fontB, 13, CW * 0.65), {
@@ -260,9 +272,9 @@ export async function POST(req: NextRequest) {
         y: H - 45, size: 7, font: fontR, color: rgb(0.45, 0.45, 0.50),
       });
 
-      // ── Column header ─────────────────────────────────────────────────────
+      // ── Column header — brand accent colour ───────────────────────────────
       const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
-      catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: rgb(0.14, 0.14, 0.14) });
+      catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: accent });
 
       for (const col of [
         { label: "#",               x: ML + 4                                },
@@ -394,7 +406,7 @@ export async function POST(req: NextRequest) {
       });
 
       // ── Footer ────────────────────────────────────────────────────────────
-      catPage.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.4, color: C_LINE });
+      catPage.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.6, color: accent });
       const footLeft = effectiveCompanyName ? `${effectiveCompanyName.toUpperCase()}  ·  ${title}` : title;
       catPage.drawText(trunc(footLeft, fontR, 7, CW * 0.7), {
         x: ML, y: MB + 8, size: 7, font: fontR, color: C_LITE,
