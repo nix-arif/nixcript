@@ -1646,6 +1646,7 @@ export type UpdateQuotationInput = {
   title?: string;
   sets?: number;
   customerId?: string | null;
+  customerCompanyId?: string | null;
   salesPersonId?: string | null;
   salesPersonName?: string | null;
   validDays?: number;
@@ -1702,7 +1703,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
   if (!q) throw new Error("Quotation not found");
   if (q.status !== "draft") throw new Error("Cannot edit a finalized quotation");
 
-  // Snapshot customer
+  // Snapshot customer — same company-aware logic as createQuotation
   let customerSnapshot = null;
   if (input.customerId) {
     const [cust] = await db
@@ -1711,15 +1712,38 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       .where(eq(customer.id, input.customerId))
       .limit(1);
     if (cust) {
+      let company: typeof customerCompany.$inferSelect | null = null;
+      if (input.customerCompanyId) {
+        const [c] = await db
+          .select()
+          .from(customerCompany)
+          .where(
+            and(
+              eq(customerCompany.id, input.customerCompanyId),
+              eq(customerCompany.customerId, input.customerId),
+            ),
+          )
+          .limit(1);
+        company = c ?? null;
+      }
+      if (!company) {
+        const [c] = await db
+          .select()
+          .from(customerCompany)
+          .where(eq(customerCompany.customerId, input.customerId))
+          .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
+          .limit(1);
+        company = c ?? null;
+      }
       customerSnapshot = {
         title: cust.title ?? undefined,
         name: cust.name,
-        position: cust.position ?? undefined,
-        department: cust.department ?? undefined,
         email: cust.email ?? undefined,
         contactNo: cust.contactNo ?? undefined,
-        organizationName: cust.organizationName ?? undefined,
-        organizationAddress: cust.organizationAddress ?? undefined,
+        position: company?.position ?? undefined,
+        department: company?.department ?? undefined,
+        organizationName: company?.organizationName ?? undefined,
+        organizationAddress: company?.organizationAddress ?? undefined,
       };
     }
   }

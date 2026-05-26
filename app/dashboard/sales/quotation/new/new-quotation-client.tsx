@@ -632,7 +632,12 @@ export function NewQuotationClient({
                 <Select
                   onValueChange={(v) => {
                     setCustomerId(v);
-                    setCustomerCompanyId(""); // reset company when customer changes
+                    // Pre-select the primary hospital for this customer
+                    const cust = customers.find((c) => c.id === v);
+                    const primary =
+                      cust?.companies.find((co) => co.isPrimary) ??
+                      cust?.companies[0];
+                    setCustomerCompanyId(primary?.id ?? "");
                   }}
                   value={customerId}
                 >
@@ -640,39 +645,30 @@ export function NewQuotationClient({
                     <SelectValue placeholder="Select customer" />
                   </SelectTrigger>
                   <SelectContent>
-                    {customers.map((c) => {
-                      const primary =
-                        c.companies.find((co) => co.isPrimary) ??
-                        c.companies[0] ??
-                        null;
-                      return (
-                        <SelectItem key={c.id} value={c.id}>
-                          {[c.title, c.name].filter(Boolean).join(" ")}
-                          {primary?.organizationName
-                            ? ` — ${primary.organizationName}`
-                            : ""}
-                        </SelectItem>
-                      );
-                    })}
+                    {customers.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {[c.title, c.name].filter(Boolean).join(" ")}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </Field>
 
-              {/* Company selector — shown when customer has multiple companies */}
-              {selectedCustomer && selectedCustomer.companies.length > 1 && (
-                <Field label="Company affiliation">
+              {/* Hospital / organization selector — always shown when a customer is selected */}
+              {selectedCustomer && selectedCustomer.companies.length >= 1 && (
+                <Field label="Hospital / organization">
                   <Select
                     onValueChange={setCustomerCompanyId}
                     value={customerCompanyId || (selectedCompany?.id ?? "")}
                   >
                     <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="Select company" />
+                      <SelectValue placeholder="Select hospital" />
                     </SelectTrigger>
                     <SelectContent>
                       {selectedCustomer.companies.map((co) => (
                         <SelectItem key={co.id} value={co.id}>
                           {co.organizationName ?? "—"}
-                          {co.isPrimary ? " (primary)" : ""}
+                          {co.isPrimary ? " ★" : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>

@@ -2,21 +2,25 @@
  * Step 1 — Seed customers (surgeons) + their hospital affiliations
  *
  * customer table:
- *   - name            = normalized surgeon name (without title)
- *   - title           = Dr / Mr / Ms / etc.
- *   - organizationName = PRIMARY hospital (highest invoice count)
- *   - contactNo       = first non-empty CONTACT NO found
+ *   - name     = normalized surgeon name (without title)
+ *   - title    = Dr / Mr / Ms / etc.
+ *   - organizationId = org with the MOST invoice rows for this surgeon
+ *                      (cross-org surgeons → one record, one canonical org)
+ *   - contactNo = first non-empty CONTACT NO found
  *
- * customerCompany table (one row per hospital per surgeon):
+ * customerCompany table (one row per hospital per surgeon, across ALL orgs):
  *   - isPrimary = true  for the hospital with the most invoices
  *   - isPrimary = false for all secondary hospitals
  *
+ * Deduplication key: name only (NOT orgId|name)
+ *   → A surgeon appearing in both Affirma AND Innosys rows becomes ONE customer.
+ *
  * Idempotent:
- *   - Skips customer insert if already exists (orgId + name match)
+ *   - Skips customer insert if already exists (name match, org-agnostic)
  *   - Deletes + re-inserts customerCompany rows to stay in sync
  *
  * Run:
- *   DATABASE_URL="<prod_url>" npx tsx scripts/seed-customers.ts
+ *   npx dotenv-cli -e .env -- npx tsx scripts/seed-customers.ts
  */
 
 import * as XLSX from "xlsx";
@@ -46,12 +50,13 @@ const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, {
 });
 
 // ─── Build customer map ───────────────────────────────────────────────────────
-// Key: "orgId|normalizedName"
+// Key: normalized surgeon NAME only (cross-org surgeons → one entry)
 
 type HospitalEntry = { name: string; count: number };
 
 type CustomerEntry = {
-  orgId:     string;
+  /** orgId → row count — we pick the org with the highest count as the canonical org */
+  orgCounts: Map<string, number>;
   title:     string | null;
   name:      string;
   hospitals: Map<string, HospitalEntry>; // hospital name → { name, count }
@@ -71,12 +76,12 @@ for (const r of rows) {
   if (!surgeonRaw || !hospitalRaw || !orgId) continue;
 
   const { title, name } = normalizeSurgeon(surgeonRaw);
-  const hospital        = normalizeHospital(hospitalRaw);
-  const key             = `${orgId}|${name}`;
+  const hospital         = normalizeHospital(hospitalRaw);
 
-  if (!customerMap.has(key)) {
-    customerMap.set(key, {
-      orgId,
+  // Key by name only — cross-org surgeons merge into one entry
+  if (!customerMap.has(name)) {
+    customerMap.set(name, {
+      orgCounts: new Map(),
       title,
       name,
       hospitals: new Map(),
@@ -84,7 +89,10 @@ for (const r of rows) {
     });
   }
 
-  const entry = customerMap.get(key)!;
+  const entry = customerMap.get(name)!;
+
+  // Track per-org row count (to pick canonical org later)
+  entry.orgCounts.set(orgId, (entry.orgCounts.get(orgId) ?? 0) + 1);
 
   // Accumulate hospital counts
   const h = entry.hospitals.get(hospital);
@@ -98,7 +106,17 @@ for (const r of rows) {
   if (!entry.contactNo && contactRaw) entry.contactNo = contactRaw;
 }
 
-// ─── Derive primary hospital (highest invoice count) ─────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Pick the org with the most rows; fall back to Affirma if tied */
+function primaryOrgId(entry: CustomerEntry): string {
+  let max = 0;
+  let best = ORG.affirma;
+  for (const [orgId, count] of entry.orgCounts) {
+    if (count > max) { max = count; best = orgId; }
+  }
+  return best;
+}
 
 function primaryHospital(entry: CustomerEntry): string {
   let max = 0;
@@ -109,15 +127,28 @@ function primaryHospital(entry: CustomerEntry): string {
   return primary;
 }
 
+// ─── Stats ───────────────────────────────────────────────────────────────────
+
+const affirmaOnly = [...customerMap.values()].filter(c => c.orgCounts.size === 1 && c.orgCounts.has(ORG.affirma));
+const innosysOnly = [...customerMap.values()].filter(c => c.orgCounts.size === 1 && c.orgCounts.has(ORG.innosys));
+const crossOrg    = [...customerMap.values()].filter(c => c.orgCounts.size > 1);
+
 console.log(`Customers to seed: ${customerMap.size}`);
-console.log(`  Affirma : ${[...customerMap.values()].filter(c => c.orgId === ORG.affirma).length}`);
-console.log(`  Innosys : ${[...customerMap.values()].filter(c => c.orgId === ORG.innosys).length}`);
+console.log(`  Affirma only  : ${affirmaOnly.length}`);
+console.log(`  Innosys only  : ${innosysOnly.length}`);
+console.log(`  Cross-org     : ${crossOrg.length}`);
+crossOrg.forEach(c => {
+  const orgs = [...c.orgCounts.entries()].map(([id, n]) =>
+    `${id === ORG.affirma ? "Affirma" : "Innosys"}(${n})`
+  ).join(" + ");
+  console.log(`    "${c.name}" — ${orgs} → canonical: ${primaryOrgId(c) === ORG.affirma ? "Affirma" : "Innosys"}`);
+});
 
 const multiHospital = [...customerMap.values()].filter(c => c.hospitals.size > 1);
-console.log(`  Multi-hospital surgeons: ${multiHospital.length}`);
+console.log(`\nMulti-hospital surgeons: ${multiHospital.length}`);
 multiHospital.forEach(c => {
-  const hosp = [...c.hospitals.values()].sort((a,b) => b.count - a.count);
-  console.log(`    ${c.name}: ${hosp.map(h => `${h.name}(${h.count})`).join(", ")}`);
+  const hosp = [...c.hospitals.values()].sort((a, b) => b.count - a.count);
+  console.log(`  ${c.name}: ${hosp.map(h => `${h.name}(${h.count})`).join(", ")}`);
 });
 
 // ─── Seed ─────────────────────────────────────────────────────────────────────
@@ -125,19 +156,19 @@ multiHospital.forEach(c => {
 async function seed() {
   const db = drizzle({ client: neon(process.env.DATABASE_URL!) });
 
-  // ── Step 1: fetch existing customers ────────────────────────────────────────
+  // ── Step 1: fetch existing customers across all our orgs ──────────────────
   const existing = await db
-    .select({ id: customer.id, organizationId: customer.organizationId, name: customer.name })
+    .select({ id: customer.id, name: customer.name })
     .from(customer)
     .where(inArray(customer.organizationId, [...ALL_ORG_IDS]));
 
-  // "orgId|name" → customerId
-  const existingMap = new Map(existing.map(c => [`${c.organizationId}|${c.name}`, c.id]));
+  // name → customerId  (name-only key now)
+  const existingMap = new Map(existing.map(c => [c.name, c.id]));
   console.log(`\nExisting customers: ${existing.length}`);
 
-  // ── Step 2: insert missing customers ────────────────────────────────────────
+  // ── Step 2: insert missing customers ────────────────────────────────────
   const toInsert = [...customerMap.values()].filter(
-    c => !existingMap.has(`${c.orgId}|${c.name}`)
+    c => !existingMap.has(c.name)
   );
 
   if (toInsert.length > 0) {
@@ -145,7 +176,7 @@ async function seed() {
 
     const newRows = toInsert.map(c => ({
       id:               nanoid(),
-      organizationId:   c.orgId,
+      organizationId:   primaryOrgId(c),
       title:            c.title,
       name:             c.name,
       organizationName: primaryHospital(c),
@@ -158,24 +189,22 @@ async function seed() {
       await db.insert(customer).values(newRows.slice(i, i + BATCH));
     }
 
-    // Merge into lookup map
     for (const r of newRows) {
-      existingMap.set(`${r.organizationId}|${r.name}`, r.id);
+      existingMap.set(r.name, r.id);
     }
     console.log(`  ✓ inserted ${toInsert.length}`);
   } else {
     console.log("All customers already exist.");
   }
 
-  // ── Step 3: collect all customer IDs we own ──────────────────────────────────
+  // ── Step 3: collect all customer IDs we manage ────────────────────────────
   const ourCustomerIds = [...customerMap.values()]
-    .map(c => existingMap.get(`${c.orgId}|${c.name}`))
+    .map(c => existingMap.get(c.name))
     .filter((id): id is string => !!id);
 
-  // ── Step 4: wipe + re-insert customerCompany rows (idempotent) ────────────────
+  // ── Step 4: wipe + re-insert customerCompany rows (idempotent) ────────────
   console.log(`\nRebuilding hospital affiliations for ${ourCustomerIds.length} customers…`);
 
-  // Delete existing affiliations in batches
   const BATCH = 50;
   for (let i = 0; i < ourCustomerIds.length; i += BATCH) {
     await db
@@ -183,7 +212,6 @@ async function seed() {
       .where(inArray(customerCompany.customerId, ourCustomerIds.slice(i, i + BATCH)));
   }
 
-  // Build fresh customerCompany rows
   const companyRows: {
     id: string;
     customerId: string;
@@ -192,12 +220,10 @@ async function seed() {
   }[] = [];
 
   for (const entry of customerMap.values()) {
-    const customerId = existingMap.get(`${entry.orgId}|${entry.name}`);
+    const customerId = existingMap.get(entry.name);
     if (!customerId) continue;
 
-    // Sort hospitals by count desc — highest count = primary
     const sorted = [...entry.hospitals.values()].sort((a, b) => b.count - a.count);
-
     sorted.forEach((h, idx) => {
       companyRows.push({
         id:               nanoid(),
@@ -208,30 +234,21 @@ async function seed() {
     });
   }
 
-  // Insert in batches
   for (let i = 0; i < companyRows.length; i += BATCH) {
     await db.insert(customerCompany).values(companyRows.slice(i, i + BATCH));
   }
 
   console.log(`  ✓ inserted ${companyRows.length} hospital affiliation rows`);
 
-  // ── Summary ──────────────────────────────────────────────────────────────────
+  // ── Summary ────────────────────────────────────────────────────────────────
   const totalCustomers = await db
     .select({ id: customer.id })
     .from(customer)
     .where(inArray(customer.organizationId, [...ALL_ORG_IDS]));
 
-  const totalAffiliations = await db
-    .select({ id: customerCompany.id })
-    .from(customerCompany)
-    .where(inArray(
-      customerCompany.customerId,
-      ourCustomerIds,
-    ));
-
   console.log(`\n✓ Customers   : ${totalCustomers.length}`);
-  console.log(`✓ Affiliations: ${totalAffiliations.length}  (${totalAffiliations.length - ourCustomerIds.length} secondary hospitals)`);
-  console.log("\nDone! Run seed-invoices.ts next.");
+  console.log(`✓ Affiliations: ${companyRows.length}  (${companyRows.length - ourCustomerIds.length} secondary hospitals)`);
+  console.log("\nDone!");
   process.exit(0);
 }
 

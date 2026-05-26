@@ -110,6 +110,19 @@ export function EditQuotationClient({ data, customers, members }: Props) {
   // ── Header state ────────────────────────────────────────────────────────
   const [title, setTitle] = useState(q.title ?? "Loose Items");
   const [customerId, setCustomerId] = useState(q.customerId ?? "");
+  // Restore the previously selected company by matching the snapshot's organizationName
+  const [customerCompanyId, setCustomerCompanyId] = useState(() => {
+    if (!q.customerId) return "";
+    const cust = customers.find((c) => c.id === q.customerId);
+    if (!cust) return "";
+    const snapshotOrg = (q.customerSnapshot as { organizationName?: string } | null)
+      ?.organizationName;
+    if (snapshotOrg) {
+      const match = cust.companies.find((co) => co.organizationName === snapshotOrg);
+      if (match) return match.id;
+    }
+    return cust.companies.find((co) => co.isPrimary)?.id ?? cust.companies[0]?.id ?? "";
+  });
   const [salesPersonId, setSalesPersonId] = useState(q.salesPersonId ?? "");
   const [salesPersonName, setSalesPersonName] = useState(q.salesPersonName ?? "");
   const [validDays, setValidDays] = useState(() => {
@@ -225,6 +238,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
       const payload: UpdateQuotationInput = {
         title,
         customerId: customerId || null,
+        customerCompanyId: customerCompanyId || null,
         salesPersonId: salesPersonId || null,
         salesPersonName: salesPersonName || null,
         validDays: Number(validDays) || 30,
@@ -321,32 +335,64 @@ export function EditQuotationClient({ data, customers, members }: Props) {
               <Field label="Customer">
                 <Select
                   value={customerId || "_none"}
-                  onValueChange={(v) =>
-                    setCustomerId(v === "_none" ? "" : v)
-                  }
+                  onValueChange={(v) => {
+                    const id = v === "_none" ? "" : v;
+                    setCustomerId(id);
+                    // Pre-select the primary hospital for this customer
+                    if (id) {
+                      const cust = customers.find((c) => c.id === id);
+                      const primary =
+                        cust?.companies.find((co) => co.isPrimary) ??
+                        cust?.companies[0];
+                      setCustomerCompanyId(primary?.id ?? "");
+                    } else {
+                      setCustomerCompanyId("");
+                    }
+                  }}
                 >
                   <SelectTrigger className="h-9 text-sm">
                     <SelectValue placeholder="Select customer" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="_none">No customer</SelectItem>
-                    {customers.map((c) => {
-                      const primary =
-                        c.companies.find((co) => co.isPrimary) ??
-                        c.companies[0] ??
-                        null;
-                      return (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                          {primary?.organizationName
-                            ? ` · ${primary.organizationName}`
-                            : ""}
-                        </SelectItem>
-                      );
-                    })}
+                    {customers.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {[c.title, c.name].filter(Boolean).join(" ")}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </Field>
+
+              {/* Hospital / organization selector */}
+              {(() => {
+                const selectedCustomer = customers.find((c) => c.id === customerId);
+                if (!selectedCustomer || selectedCustomer.companies.length === 0) return null;
+                const selectedCompany =
+                  selectedCustomer.companies.find((co) => co.id === customerCompanyId) ??
+                  selectedCustomer.companies.find((co) => co.isPrimary) ??
+                  selectedCustomer.companies[0];
+                return (
+                  <Field label="Hospital / organization">
+                    <Select
+                      onValueChange={setCustomerCompanyId}
+                      value={customerCompanyId || (selectedCompany?.id ?? "")}
+                    >
+                      <SelectTrigger className="h-9 text-sm">
+                        <SelectValue placeholder="Select hospital" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectedCustomer.companies.map((co) => (
+                          <SelectItem key={co.id} value={co.id}>
+                            {co.organizationName ?? "—"}
+                            {co.isPrimary ? " ★" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                );
+              })()}
 
               <Field label="Sales person">
                 <Select
