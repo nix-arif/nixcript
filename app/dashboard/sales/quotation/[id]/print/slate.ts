@@ -405,7 +405,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         nameSize, nameBold: !!(data.orgNameBold ?? 1),
         nameUppercase: !!(data.orgNameUppercase ?? 0),
         headerLayout: hLayout, docLabel: "",  // label drawn separately below
-        docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
+        docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1), docLabelAlign: (data.orgQuotationLabelAlign ?? "right") as "left" | "center" | "right",
         nameColor: accentH, labelColor: accentH,
         logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
         inlineSsmMdaTax: true,

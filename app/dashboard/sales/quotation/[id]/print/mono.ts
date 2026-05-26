@@ -1,9 +1,7 @@
 import { getQuotationDetail } from "@/server/quotation";
 import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, StandardFonts } from "pdf-lib";
 import {
-  drawCompanyHeader, drawInfoSection, estimateHeaderH, estimateInfoH,
-  wrap, trunc, fmtD, fmtM, hLine, sanitizeText,
-  C_DARK, C_MID, C_LITE, C_LINE, C_WHITE,
+  wrap, trunc, fmtD, fmtM, hLine, sanitizeText, C_WHITE,
 } from "./_pdf-header";
 
 type Data = NonNullable<Awaited<ReturnType<typeof getQuotationDetail>>>;
@@ -19,9 +17,8 @@ const CW = W - ML - MR;
 
 // ── Pure black/white palette ───────────────────────────────────────────────
 const C_BLACK  = rgb(0, 0, 0);
-const C_BORDER = rgb(0, 0, 0);          // table borders
-const C_HDR_BG = rgb(0, 0, 0);          // table header background
-const C_ROW_BG = rgb(1, 1, 1);          // row background (plain white)
+const C_BORDER = rgb(0, 0, 0);
+const C_HDR_BG = rgb(0, 0, 0);
 const C_TEXT   = rgb(0.10, 0.10, 0.10);
 const C_MUTED  = rgb(0.40, 0.40, 0.40);
 const C_FAINT  = rgb(0.60, 0.60, 0.60);
@@ -30,20 +27,318 @@ const C_AMBER  = rgb(0.57, 0.25, 0.05);
 
 const TABLE_PAD = 6;
 
+// ── Mono header height estimator ───────────────────────────────────────────
+function estimateMonoHeaderH(opts: {
+  companyAddress: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  nameSize: number;
+  logoHMax: number;
+  logoWMax: number;
+  headerLayout: string;
+  logoImg: PDFImage | null;
+  fontR: PDFFont;
+}): number {
+  const { companyAddress, phone, email, website, nameSize, logoHMax, logoWMax, headerLayout, logoImg, fontR } = opts;
+
+  let logoLw = 0, logoLh = 0;
+  if (logoImg) {
+    const scale = Math.min(logoHMax / logoImg.height, logoWMax / logoImg.width);
+    logoLw = logoImg.width * scale;
+    logoLh = logoImg.height * scale;
+  }
+
+  let h = 0;
+  if (logoImg && (headerLayout === "logo-top" || headerLayout === "centered")) h += logoLh + 4;
+
+  h += nameSize + 8; // name + 8pt gap (SSM/MDA/Tax are inline at 4pt — no extra lines)
+
+  const textZoneW = (headerLayout === "logo-right" && logoImg) ? CW - logoLw - 8
+    : (headerLayout === "standard" && logoImg) ? CW - logoLw - 8
+    : CW;
+
+  const addrLines = companyAddress ? Math.min(wrap(companyAddress, fontR, 8, textZoneW).length, 3) : 0;
+  h += addrLines * 10;
+
+  if ([email, website, phone].some(Boolean)) h += 10; // all contacts on one line
+
+  return Math.max(h, logoImg ? logoHMax : 40) + 12;
+}
+
+// ── Mono custom header drawing ─────────────────────────────────────────────
+function drawMonoHeader(opts: {
+  page: PDFPage;
+  startY: number;
+  fontR: PDFFont;
+  fontB: PDFFont;
+  logoImg: PDFImage | null;
+  companyName: string;
+  companyAddress: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  oldSsmNo: string | null;
+  newSsmNo: string | null;
+  mdaEstablishmentNo: string | null;
+  taxNo: string | null;
+  nameSize: number;
+  nameBold: boolean;
+  nameUppercase: boolean;
+  headerLayout: string;
+  logoHMax: number;
+  logoWMax: number;
+  docLabelSize: number;
+}): void {
+  const {
+    page, startY, fontR, fontB, logoImg, companyName, companyAddress,
+    phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo,
+    nameSize, nameBold, nameUppercase, headerLayout, logoHMax, logoWMax, docLabelSize,
+  } = opts;
+
+  const nameFont = nameBold ? fontB : fontR;
+  const dispName = nameUppercase ? companyName.toUpperCase() : companyName;
+
+  // "QUOTATION" label — top right
+  const qlW = fontB.widthOfTextAtSize("QUOTATION", docLabelSize);
+  page.drawText("QUOTATION", {
+    x: W - MR - qlW, y: startY - docLabelSize,
+    size: docLabelSize, font: fontB, color: C_BLACK,
+  });
+
+  let cy    = startY;
+  let textX = ML;
+  let logoLw = 0;
+
+  if (logoImg) {
+    const scale = Math.min(logoHMax / logoImg.height, logoWMax / logoImg.width);
+    const logoLh = logoImg.height * scale;
+    logoLw = logoImg.width * scale;
+
+    if (headerLayout === "standard") {
+      page.drawImage(logoImg, { x: ML, y: cy - logoLh, width: logoLw, height: logoLh });
+      textX = ML + logoLw + 8;
+    } else if (headerLayout === "logo-top" || headerLayout === "centered") {
+      page.drawImage(logoImg, { x: ML, y: cy - logoLh, width: logoLw, height: logoLh });
+      cy -= logoLh + 4;
+    } else if (headerLayout === "logo-right") {
+      page.drawImage(logoImg, { x: W - MR - logoLw, y: cy - logoLh, width: logoLw, height: logoLh });
+    }
+  }
+
+  const textZoneW = (headerLayout === "logo-right" && logoImg) ? CW - logoLw - 8
+    : CW - (textX - ML);
+
+  // Company name — left portion (~65% of text zone so reg numbers fit right)
+  const nameY = cy - nameSize;
+  page.drawText(trunc(dispName, nameFont, nameSize, textZoneW * 0.65), {
+    x: textX, y: nameY, size: nameSize, font: nameFont, color: C_BLACK,
+  });
+
+  // SSM / MDA Est / Tax No — 4pt, right-aligned, same baseline as company name
+  const regParts: string[] = [];
+  if (newSsmNo || oldSsmNo) regParts.push(newSsmNo && oldSsmNo ? `SSM: ${newSsmNo} (${oldSsmNo})` : `SSM: ${newSsmNo ?? oldSsmNo}`);
+  if (mdaEstablishmentNo) regParts.push(`MDA Est: ${mdaEstablishmentNo}`);
+  if (taxNo) regParts.push(`Tax No: ${taxNo}`);
+
+  if (regParts.length > 0) {
+    const regSz  = 4;
+    const regText = regParts.join("   ·   ");
+    const maxRegW = textZoneW * 0.42;
+    const regStr  = fontR.widthOfTextAtSize(regText, regSz) <= maxRegW
+      ? regText
+      : trunc(regText, fontR, regSz, maxRegW);
+    page.drawText(regStr, {
+      x: W - MR - fontR.widthOfTextAtSize(regStr, regSz),
+      y: nameY,
+      size: regSz, font: fontR, color: C_MUTED,
+    });
+  }
+
+  cy -= nameSize + 8;
+
+  // Address
+  if (companyAddress) {
+    for (const line of wrap(companyAddress, fontR, 8, textZoneW).slice(0, 3)) {
+      page.drawText(line, { x: textX, y: cy, size: 8, font: fontR, color: C_MUTED });
+      cy -= 10;
+    }
+  }
+
+  // Contacts — single compact line
+  const contactParts = [
+    email   ? sanitizeText(email)   : null,
+    website ? sanitizeText(website) : null,
+    phone   ? sanitizeText(phone)   : null,
+  ].filter(Boolean) as string[];
+
+  if (contactParts.length > 0) {
+    page.drawText(trunc(contactParts.join("  ·  "), fontR, 7.5, textZoneW), {
+      x: textX, y: cy, size: 7.5, font: fontR, color: C_MUTED,
+    });
+  }
+}
+
+// ── Mono info box height estimator ─────────────────────────────────────────
+const INFO_BOX_HDR_H = 22; // height of the column-header row inside the box
+const INFO_BOX_PAD   = 8;  // top + bottom inner padding
+
+function estimateMonoInfoBoxH(opts: {
+  cust: any;
+  attentionNameSize: number;
+  title: string | null;
+  detailFontSize: number;
+}): number {
+  const { cust, attentionNameSize, title, detailFontSize } = opts;
+
+  let leftH = attentionNameSize + 4;
+  if (cust) {
+    if (cust.position || cust.department) leftH += 12;
+    if (cust.organizationName)            leftH += 12;
+    if (cust.organizationAddress)         leftH += 22;
+    if (cust.email || cust.contactNo)     leftH += 11;
+  }
+
+  const rows   = 3 + (title ? 1 : 0);
+  const rightH = rows * (detailFontSize + 4);
+
+  return INFO_BOX_HDR_H + Math.max(leftH, rightH) + INFO_BOX_PAD + 4;
+}
+
+// ── Mono 2-column bordered info box ───────────────────────────────────────
+function drawMonoInfoBox(opts: {
+  page: PDFPage;
+  startY: number;
+  boxH: number;
+  fontR: PDFFont;
+  fontB: PDFFont;
+  cust: any;
+  attentionNameSize: number;
+  attentionNameBold: boolean;
+  detailFontSize: number;
+  detailFontBold: boolean;
+  quotationNo: string;
+  createdAt: Date | string | null;
+  validUntil: Date | string | null;
+  title: string | null;
+}): void {
+  const {
+    page, startY, boxH, fontR, fontB, cust,
+    attentionNameSize, attentionNameBold,
+    detailFontSize, detailFontBold,
+    quotationNo, createdAt, validUntil, title,
+  } = opts;
+
+  const nameFont   = attentionNameBold ? fontB : fontR;
+  const detailFont = detailFontBold    ? fontB : fontR;
+  const DIVX       = ML + CW * 0.5;
+  const PAD        = 8;
+
+  // Outer box
+  page.drawRectangle({
+    x: ML, y: startY - boxH, width: CW, height: boxH,
+    borderColor: C_BLACK, borderWidth: 0.8,
+  });
+
+  // Vertical centre divider
+  page.drawLine({
+    start: { x: DIVX, y: startY - boxH },
+    end:   { x: DIVX, y: startY },
+    thickness: 0.6, color: C_BLACK,
+  });
+
+  // Horizontal separator beneath column headers
+  page.drawLine({
+    start: { x: ML,  y: startY - INFO_BOX_HDR_H },
+    end:   { x: ML + CW, y: startY - INFO_BOX_HDR_H },
+    thickness: 0.5, color: C_BLACK,
+  });
+
+  // Column header labels (vertically centred in header row)
+  const lblY = startY - INFO_BOX_HDR_H / 2 - 3.5; // 7pt/2 baseline offset
+  page.drawText("CUSTOMER DETAIL", {
+    x: ML + PAD, y: lblY, size: 7, font: fontB, color: C_BLACK,
+  });
+  page.drawText("QUOTATION DETAIL", {
+    x: DIVX + PAD, y: lblY, size: 7, font: fontB, color: C_BLACK,
+  });
+
+  // ── LEFT: customer detail ────────────────────────────────────────────────
+  const leftW = DIVX - ML - PAD * 2;
+  let ly = startY - INFO_BOX_HDR_H - PAD;
+
+  if (cust) {
+    const custName = [cust.title, cust.name].filter(Boolean).join(" ");
+    if (custName) {
+      page.drawText(trunc(custName, nameFont, attentionNameSize, leftW), {
+        x: ML + PAD, y: ly, size: attentionNameSize, font: nameFont, color: C_BLACK,
+      });
+      ly -= attentionNameSize + 4;
+    }
+    if (cust.position || cust.department) {
+      const pos = [cust.position, cust.department].filter(Boolean).join(", ");
+      page.drawText(trunc(pos, fontR, 9, leftW), {
+        x: ML + PAD, y: ly, size: 9, font: fontR, color: C_BLACK,
+      });
+      ly -= 12;
+    }
+    if (cust.organizationName) {
+      page.drawText(trunc(cust.organizationName, fontR, 9, leftW), {
+        x: ML + PAD, y: ly, size: 9, font: fontR, color: C_BLACK,
+      });
+      ly -= 12;
+    }
+    if (cust.organizationAddress) {
+      for (const l of wrap(cust.organizationAddress, fontR, 8.5, leftW).slice(0, 2)) {
+        page.drawText(l, { x: ML + PAD, y: ly, size: 8.5, font: fontR, color: C_BLACK });
+        ly -= 11;
+      }
+    }
+    if (cust.email || cust.contactNo) {
+      const contact = [cust.email, cust.contactNo].filter(Boolean).join("  ·  ");
+      page.drawText(trunc(contact, fontR, 8, leftW), {
+        x: ML + PAD, y: ly, size: 8, font: fontR, color: C_BLACK,
+      });
+    }
+  } else {
+    page.drawText("—", { x: ML + PAD, y: ly, size: 9, font: fontR, color: C_BLACK });
+  }
+
+  // ── RIGHT: quotation detail ──────────────────────────────────────────────
+  const rightW = W - MR - DIVX - PAD * 2;
+  let ry = startY - INFO_BOX_HDR_H - PAD;
+
+  const detailRows: [string, string][] = [
+    ["Quotation No", quotationNo],
+    ["Date",         fmtD(createdAt)],
+    ["Valid Until",  fmtD(validUntil)],
+    ...(title ? [["Subject", title]] as [string, string][] : []),
+  ];
+
+  for (const [lbl, val] of detailRows) {
+    const lblStr = `${lbl}:`;
+    const lblW   = fontR.widthOfTextAtSize(lblStr + " ", detailFontSize);
+    page.drawText(lblStr, {
+      x: DIVX + PAD, y: ry, size: detailFontSize, font: fontR, color: C_BLACK,
+    });
+    page.drawText(trunc(val, detailFont, detailFontSize, rightW - lblW), {
+      x: DIVX + PAD + lblW, y: ry, size: detailFontSize, font: detailFont, color: C_BLACK,
+    });
+    ry -= detailFontSize + 4;
+  }
+}
+
 // ── Main export ────────────────────────────────────────────────────────────
 export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const {
     quotation: q, items,
-    orgName, orgLogoUrl, orgBrandColor,
+    orgName, orgLogoUrl,
     orgCompanyName, orgCompanyAddress, orgTaxNo, orgPhone,
     orgEmail, orgWebsite, orgOldSsmNo, orgNewSsmNo, orgMdaEstablishmentNo,
     orgBankingInfo,
     orgMofCertUrl, orgSsmCertUrl, orgMdaCertUrl, orgTccCertUrl,
     orgBankStatementUrl, orgLampiran12Url, orgLampiran13Url,
   } = data;
-
-  // Mono ignores brand colour — everything is black
-  const accent = C_BLACK;
 
   const cust     = q.customerSnapshot as any;
   const bankList = (orgBankingInfo ?? []) as any[];
@@ -115,8 +410,6 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   // ── Org name style ────────────────────────────────────────────────────────
   const nameSize  = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string,number>)[data.orgNameSize ?? "medium"] ?? 13;
-  const nameFont  = !!(data.orgNameBold ?? 1) ? fontB : fontR;
-  const dispName  = !!(data.orgNameUppercase ?? 0) ? coName.toUpperCase() : coName;
   const hLayout   = data.orgHeaderLayout ?? "standard";
   const QL_SIZE   = ({ small: 5.5, normal: 7, large: 10 } as Record<string,number>)[data.orgQuotationLabelSize ?? "normal"] ?? 7;
   const attnNameSz = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string,number>)[data.orgAttentionNameSize ?? "medium"] ?? 13;
@@ -147,22 +440,18 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   });
 
   // ── Height estimates ──────────────────────────────────────────────────────
-  const HEADER_BLOCK = estimateHeaderH({
+  const HEADER_BLOCK = estimateMonoHeaderH({
     companyAddress: orgCompanyAddress, phone: orgPhone, email: orgEmail,
-    website: orgWebsite, oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
-    mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
-    nameSize, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX, headerLayout: hLayout,
-    logoImg, fontR,
+    website: orgWebsite, nameSize, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
+    headerLayout: hLayout, logoImg, fontR,
   }) + 6;
+
   const DIVIDER_GAP   = 10;
   const TABLE_HDR_H   = 20;
-  const INFO_BLOCK = estimateInfoH({
+  const INFO_BLOCK    = estimateMonoInfoBoxH({
     cust, attentionNameSize: attnNameSz,
-    salesPersonName: q.salesPersonName ?? null,
-    preparedByName: q.preparedByName ?? null,
-    title: q.title ?? null,
-    detailFontSize: detailFSz, fontR,
-  }) + 10;
+    title: q.title ?? null, detailFontSize: detailFSz,
+  });
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
@@ -236,39 +525,32 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
     let curY = H - MT;
 
-    // ── Page 1: header + info ────────────────────────────────────────────────
+    // ── Page 1: header + info box ────────────────────────────────────────────
     if (isFirst) {
-      // Mono: plain header, black text, no accent fill
-      drawCompanyHeader({
-        page, startY: curY, accent: C_BLACK, fontR, fontB, logoImg,
+      drawMonoHeader({
+        page, startY: curY, fontR, fontB, logoImg,
         companyName: coName, companyAddress: orgCompanyAddress,
         phone: orgPhone, email: orgEmail, website: orgWebsite,
         oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
         mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
         nameSize, nameBold: !!(data.orgNameBold ?? 1),
         nameUppercase: !!(data.orgNameUppercase ?? 0),
-        headerLayout: hLayout, docLabel: "QUOTATION",
-        docLabelSize: QL_SIZE, docLabelBold: true,
-        nameColor: C_BLACK, labelColor: C_BLACK,
-        logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
+        headerLayout: hLayout, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
+        docLabelSize: QL_SIZE,
       });
       curY -= HEADER_BLOCK;
       hLine(page, curY, ML, W - MR, C_BLACK, 1.0);
       curY -= DIVIDER_GAP;
 
-      drawInfoSection({
-        page, startY: curY, accent: C_BLACK, fontR, fontB, cust,
+      // 2-column bordered info box
+      drawMonoInfoBox({
+        page, startY: curY, boxH: INFO_BLOCK, fontR, fontB, cust,
         attentionNameSize: attnNameSz, attentionNameBold: !!(data.orgAttentionNameBold ?? 1),
         detailFontSize: detailFSz, detailFontBold: !!(data.orgDetailFontBold ?? 0),
-        detailAlignment: (data.orgDetailAlignment ?? "right") as "left" | "right",
-        textColor: C_MUTED,
         quotationNo: q.quotationNo, createdAt: q.createdAt,
-        validUntil: q.validUntil, salesPersonName: q.salesPersonName ?? null,
-        preparedByName: q.preparedByName ?? null, title: q.title ?? null,
+        validUntil: q.validUntil, title: q.title ?? null,
       });
-      curY -= INFO_BLOCK + DIVIDER_GAP;
-      hLine(page, curY, ML, W - MR, C_BLACK, 0.5);
-      curY -= 4;
+      curY -= INFO_BLOCK + DIVIDER_GAP + 4;
 
     } else {
       // ── Continuation header ──────────────────────────────────────────────
@@ -283,7 +565,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       curY -= 28;
     }
 
-    // ── Table header — black fill with white text ──────────────────────────
+    // ── Table header — black fill, white text ─────────────────────────────
     const thdrs: { label: string; x: number; w: number }[] = [
       { label: "No",          x: X_NO,   w: C_NO   },
       ...(showCode ? [{ label: "Code",       x: X_CODE, w: C_CODE  }] : []),
@@ -296,18 +578,15 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     ];
 
     const tHdrY = curY - TABLE_HDR_H;
-    // Outer border around table header
     page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: TABLE_HDR_H, color: C_HDR_BG });
 
     for (const col of thdrs) {
       const tw = fontB.widthOfTextAtSize(col.label.toUpperCase(), 7.5);
-      const tx = col.x + (col.w - tw) / 2;
       page.drawText(col.label.toUpperCase(), {
-        x: tx, y: tHdrY + 6, size: 7.5, font: fontB, color: C_WHITE,
+        x: col.x + (col.w - tw) / 2, y: tHdrY + 6, size: 7.5, font: fontB, color: C_WHITE,
       });
     }
 
-    // Vertical separator lines inside header
     for (const col of thdrs.slice(1)) {
       page.drawLine({
         start: { x: col.x, y: tHdrY },
@@ -318,31 +597,24 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
     curY = tHdrY;
 
-    // Draw top outer border line
     page.drawLine({
       start: { x: ML, y: curY + TABLE_HDR_H },
       end:   { x: W - MR, y: curY + TABLE_HDR_H },
       thickness: 0.8, color: C_BORDER,
     });
-    // Left border
-    page.drawLine({ start: { x: ML, y: curY + TABLE_HDR_H }, end: { x: ML, y: curY }, thickness: 0.8, color: C_BORDER });
-    // Right border
+    page.drawLine({ start: { x: ML,     y: curY + TABLE_HDR_H }, end: { x: ML,     y: curY }, thickness: 0.8, color: C_BORDER });
     page.drawLine({ start: { x: W - MR, y: curY + TABLE_HDR_H }, end: { x: W - MR, y: curY }, thickness: 0.8, color: C_BORDER });
 
     // ── Item rows ────────────────────────────────────────────────────────────
     for (const rowIdx of pageItems) {
       const { item, descLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
       const rowY = curY - rowH;
-
       const textBaseline = curY - 11;
 
-      // Bottom border for each row
-      page.drawLine({ start: { x: ML, y: rowY }, end: { x: W - MR, y: rowY }, thickness: 0.3, color: C_BORDER });
-      // Left / right outer borders
-      page.drawLine({ start: { x: ML, y: rowY }, end: { x: ML, y: curY }, thickness: 0.8, color: C_BORDER });
+      page.drawLine({ start: { x: ML,     y: rowY }, end: { x: W - MR, y: rowY }, thickness: 0.3, color: C_BORDER });
+      page.drawLine({ start: { x: ML,     y: rowY }, end: { x: ML,     y: curY }, thickness: 0.8, color: C_BORDER });
       page.drawLine({ start: { x: W - MR, y: rowY }, end: { x: W - MR, y: curY }, thickness: 0.8, color: C_BORDER });
 
-      // Vertical separators between columns
       for (const col of thdrs.slice(1)) {
         page.drawLine({
           start: { x: col.x, y: rowY },
@@ -358,7 +630,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         size: FS_NUM, font: fontR, color: C_FAINT,
       });
 
-      // Code column or code prefix
+      // Code column or inline code
       let dy = textBaseline;
       if (showCode) {
         page.drawText(trunc(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2), {
@@ -425,7 +697,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       curY = rowY;
     }
 
-    // Close bottom border of table
+    // Close table bottom border
     page.drawLine({ start: { x: ML, y: curY }, end: { x: W - MR, y: curY }, thickness: 0.8, color: C_BORDER });
 
     // ── Last page: totals + notes ──────────────────────────────────────────
@@ -441,7 +713,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
           ["Bank", bank.bankName ?? ""],
           ["Account Name", bank.accountHolder ?? ""],
           ["Account No.", bank.accountNo ?? ""],
-        ] as [string,string][]) {
+        ] as [string, string][]) {
           page.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_FAINT });
           page.drawText(trunc(String(val), fontB, 9.5, 170), {
             x: ML + 76, y: by, size: 9.5, font: fontB, color: C_TEXT,
@@ -476,7 +748,6 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         ty -= 13;
       }
 
-      // Separator before grand total
       ty -= 4;
       page.drawLine({ start: { x: totX - 8, y: ty }, end: { x: W - MR, y: ty }, thickness: 1.2, color: C_BLACK });
       ty -= 14;
@@ -489,7 +760,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
       curY = ty - 20;
 
-      // ── Closing message ──────────────────────────────────────────────────
+      // Closing message
       curY -= 10;
       const closeMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order.";
       for (const cl of wrap(closeMsg, fontR, 8, CW - 40)) {
@@ -503,14 +774,11 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         curY -= 6;
         const nl    = wrap(q.notes, fontR, 9.5, CW - 20);
         const noteH = nl.length * 12 + 24;
-        // Plain border box, no fill
         page.drawRectangle({
           x: ML, y: curY - noteH, width: CW, height: noteH,
           borderColor: C_BORDER, borderWidth: 0.8,
         });
-        page.drawText("NOTES", {
-          x: ML + 8, y: curY - 12, size: 7.5, font: fontB, color: C_TEXT,
-        });
+        page.drawText("NOTES", { x: ML + 8, y: curY - 12, size: 7.5, font: fontB, color: C_TEXT });
         let ny = curY - 24;
         for (const line of nl) {
           page.drawText(line, { x: ML + 8, y: ny, size: 9.5, font: fontR, color: C_TEXT });
@@ -539,7 +807,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       const srcPdf = await PDFDocument.load(buf);
       const pages  = await pdfDoc.copyPages(srcPdf, srcPdf.getPageIndices());
       pages.forEach((p) => pdfDoc.addPage(p));
-    } catch { /* skip unavailable documents */ }
+    } catch { /* skip */ }
   }
 
   return pdfDoc.save();

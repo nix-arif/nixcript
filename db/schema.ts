@@ -636,6 +636,7 @@ export const organizationProfile = pgTable("organization_profile", {
   quotationLabelSize: text("quotation_label_size").default("normal"), // small | normal | large
   quotationLabelBold: integer("quotation_label_bold").default(1),
   quotationLabelUppercase: integer("quotation_label_uppercase").default(1),
+  quotationLabelAlign: text("quotation_label_align").default("right"), // left | center | right
 
   // Table style
   tableRowStyle: text("table_row_style").default("default"), // default | simple | rounded
@@ -1627,12 +1628,22 @@ export const invoice = pgTable(
     expensesTotal: text("expenses_total").default("0"),
     profit: text("profit").default("0"), // grandTotal − costTotal − expensesTotal
 
+    // Surgical case details (from field tracking)
+    caseDate: timestamp("case_date"),             // date the procedure was performed
+    caseType: text("case_type"),                  // e.g. "EVLT", "MILH", "OTACL"
+    caseTime: text("case_time"),                  // e.g. "8am-5pm", "Petang & Malam"
+    mrnNo: text("mrn_no"),                        // hospital medical record number
+
     // Payment
     status: text("status").notNull().default("draft"), // draft | sent | paid | overdue | cancelled
     paymentTerms: text("payment_terms"), // "Net 30", "COD", etc.
     dueDate: timestamp("due_date"),
     paidAt: timestamp("paid_at"),
     paidAmount: text("paid_amount"),
+    paymentRef: text("payment_ref"),              // cheque / bank transfer reference
+
+    // Statement of Account
+    soaVerified: boolean("soa_verified").default(false).notNull(),
 
     notes: text("notes"),
 
@@ -1724,6 +1735,7 @@ export const invoiceRelations = relations(invoice, ({ one, many }) => ({
   createdByUser: one(user, { fields: [invoice.createdBy], references: [user.id] }),
   items: many(invoiceItem),
   expenses: many(invoiceExpense),
+  commission: one(caseCommission, { fields: [invoice.id], references: [caseCommission.invoiceId] }),
 }));
 
 export const invoiceItemRelations = relations(invoiceItem, ({ one }) => ({
@@ -1732,6 +1744,63 @@ export const invoiceItemRelations = relations(invoiceItem, ({ one }) => ({
 
 export const invoiceExpenseRelations = relations(invoiceExpense, ({ one }) => ({
   invoice: one(invoice, { fields: [invoiceExpense.invoiceId], references: [invoice.id] }),
+}));
+
+// ── Case commission ────────────────────────────────────────────────────────────
+// Tracks attendance fees and surgeon commissions linked to an invoice.
+// Kept separate from the invoice so not every invoice needs a commission record.
+export const caseCommission = pgTable(
+  "case_commission",
+  {
+    id: text("id").primaryKey(),
+    invoiceId: text("invoice_id")
+      .notNull()
+      .unique() // one commission record per invoice
+      .references(() => invoice.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+
+    // Attendance commission — paid to the staff member who attended the case
+    claimedBy: text("claimed_by"),               // name of attendee e.g. "Taufik"
+    claimedByUserId: text("claimed_by_user_id")  // FK if attendee is a system user
+      .references(() => user.id),
+    docs: text("docs"),                          // claim document ref e.g. "ACA-0324-Taufik"
+    attendAmount: text("attend_amount").default("0"), // attendance fee amount
+
+    // Surgeon commission — paid to the surgeon
+    surgeonAmount: text("surgeon_amount").default("0"),
+    surgeonPaidAt: timestamp("surgeon_paid_at"),
+
+    // Additional incentive tracking
+    incentive: text("incentive").default("0"),
+    actualAmount: text("actual_amount").default("0"), // actual amount collected vs invoiced
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    index("case_commission_invoice_idx").on(t.invoiceId),
+    index("case_commission_org_idx").on(t.organizationId),
+  ],
+);
+
+export const caseCommissionRelations = relations(caseCommission, ({ one }) => ({
+  invoice: one(invoice, {
+    fields: [caseCommission.invoiceId],
+    references: [invoice.id],
+  }),
+  organization: one(organization, {
+    fields: [caseCommission.organizationId],
+    references: [organization.id],
+  }),
+  claimedByUser: one(user, {
+    fields: [caseCommission.claimedByUserId],
+    references: [user.id],
+  }),
 }));
 
 // ── Document numbering settings ───────────────────────────────────────────────
@@ -1875,6 +1944,9 @@ export const schema = {
   invoiceRelations,
   invoiceItemRelations,
   invoiceExpenseRelations,
+  // case commission
+  caseCommission,
+  caseCommissionRelations,
   // document numbering
   documentNumberingSetting,
   // department

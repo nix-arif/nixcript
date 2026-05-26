@@ -328,7 +328,7 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
         nameSize, nameBold: !!(data.orgNameBold ?? 1),
         nameUppercase: !!(data.orgNameUppercase ?? 0),
         headerLayout: hLayout, docLabel: QL_TEXT,
-        docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
+        docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1), docLabelAlign: (data.orgQuotationLabelAlign ?? "right") as "left" | "center" | "right",
         logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
       });
       curY -= HEADER_BLOCK;

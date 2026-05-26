@@ -120,6 +120,7 @@ export function CatalogueGenerator() {
           items: rows.map((r, i) => ({
             no: r.no || i + 1,
             productCode: r.productCode,
+            sku: r.sku,
             description: r.description,
             qty: r.qty != null ? String(r.qty) : undefined,
             uom: r.uom,
@@ -128,6 +129,7 @@ export function CatalogueGenerator() {
           subtitle: subtitle.trim() || undefined,
           companyName: showCompany ? companyName.trim() || undefined : undefined,
           options: {
+            showSku: showSku && hasSku,
             showProductCode,
             showRegNo,
             showValidity,

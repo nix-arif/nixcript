@@ -87,11 +87,12 @@ async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<
 
 export type CatalogueRequestBody = {
   /** Ordered list from the spreadsheet (de-duped by caller, but API de-dupes again) */
-  items: Array<{ no: number; productCode: string; description?: string; qty?: string; uom?: string }>;
+  items: Array<{ no: number; productCode: string; sku?: string; description?: string; qty?: string; uom?: string }>;
   title: string;
   subtitle?: string;
   companyName?: string;
   options: {
+    showSku: boolean;
     showProductCode: boolean;
     showRegNo: boolean;
     showValidity: boolean;
@@ -167,6 +168,7 @@ export async function POST(req: NextRequest) {
     type EnrichedItem = {
       no: number;
       productCode: string;
+      sku?: string;
       description: string;
       uom: string | null;
       mdaRegNo: string | null;
@@ -180,6 +182,7 @@ export async function POST(req: NextRequest) {
       return {
         no: item.no || idx + 1,
         productCode: item.productCode,
+        sku: item.sku,
         description: item.description || db?.description || item.productCode,
         uom: item.uom || db?.uom || null,
         mdaRegNo: db?.mdaRegistrationNo ?? null,
@@ -350,6 +353,14 @@ export async function POST(req: NextRequest) {
         const detX    = ML + CAT_COL_NO + CAT_COL_IMG + 8;
         const detMaxW = CAT_COL_DET - 16;
         let   detY    = rowY + CAT_ROW_H - 14;
+
+        // SKU (if enabled and present)
+        if (options.showSku && item.sku) {
+          catPage.drawText(trunc(`SKU: ${item.sku}`, fontR, 7.5, detMaxW), {
+            x: detX, y: detY, size: 7.5, font: fontR, color: C_MID,
+          });
+          detY -= 10;
+        }
 
         // Code (if enabled)
         if (options.showProductCode) {

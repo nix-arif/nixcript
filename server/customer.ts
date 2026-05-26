@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { customer, customerCompany, user, member } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, ilike, or, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, ilike, or, desc, asc, inArray, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
@@ -23,29 +23,45 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
-// ── Get the owner's primary org — all orgs under same owner share data ────
+// ── Get the owner's primary org — used for mutations (create / update / delete) ──
 async function getOwnerOrgId(
   userId: string,
   currentOrgId: string,
 ): Promise<string> {
-  const [ownerMember] = await db
-    .select()
+  const [primaryOrg] = await db
+    .select({ organizationId: member.organizationId })
     .from(member)
     .where(
-      and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")),
+      and(
+        eq(member.userId, userId),
+        eq(member.role, "owner"),
+        isNull(member.deletedAt),
+      ),
     )
-    .limit(1);
-
-  if (!ownerMember) return currentOrgId;
-
-  const [primaryOrg] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
     .orderBy(asc(member.createdAt))
     .limit(1);
 
   return primaryOrg?.organizationId ?? currentOrgId;
+}
+
+// ── Get ALL org IDs the owner controls — used for list / read queries ─────────
+async function getOwnerOrgIds(
+  userId: string,
+  currentOrgId: string,
+): Promise<string[]> {
+  const owned = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(
+      and(
+        eq(member.userId, userId),
+        eq(member.role, "owner"),
+        isNull(member.deletedAt),
+      ),
+    );
+
+  const ids = owned.map((m) => m.organizationId);
+  return ids.length > 0 ? ids : [currentOrgId];
 }
 
 export type CustomerCompany = {
@@ -59,9 +75,9 @@ export type CustomerCompany = {
 
 export async function getCustomers(search?: string) {
   const { orgId, userId } = await requireAccess("customer:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
-  const conditions = [eq(customer.organizationId, ownerOrgId)];
+  const conditions = [inArray(customer.organizationId, ownerOrgIds)];
 
   if (search && search.trim().length > 0) {
     const q = `%${search.trim()}%`;
@@ -79,6 +95,7 @@ export async function getCustomers(search?: string) {
       id: customer.id,
       title: customer.title,
       name: customer.name,
+      organizationId: customer.organizationId,
       contactNo: customer.contactNo,
       email: customer.email,
       createdAt: customer.createdAt,
@@ -110,12 +127,12 @@ export async function getCustomers(search?: string) {
 
 export async function getCustomer(id: string) {
   const { orgId, userId } = await requireAccess("customer:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const [row] = await db
     .select()
     .from(customer)
-    .where(and(eq(customer.id, id), eq(customer.organizationId, ownerOrgId)))
+    .where(and(eq(customer.id, id), inArray(customer.organizationId, ownerOrgIds)))
     .limit(1);
 
   if (!row) return null;
@@ -189,21 +206,21 @@ export async function updateCustomer(
   },
 ) {
   const { orgId, userId } = await requireAccess("customer:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   await db
     .update(customer)
     .set({ ...data, ...(data.name ? { name: data.name.trim() } : {}), updatedAt: new Date() })
-    .where(and(eq(customer.id, id), eq(customer.organizationId, ownerOrgId)));
+    .where(and(eq(customer.id, id), inArray(customer.organizationId, ownerOrgIds)));
 }
 
 export async function deleteCustomer(id: string) {
   const { orgId, userId } = await requireAccess("customer:delete");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   await db
     .delete(customer)
-    .where(and(eq(customer.id, id), eq(customer.organizationId, ownerOrgId)));
+    .where(and(eq(customer.id, id), inArray(customer.organizationId, ownerOrgIds)));
 }
 
 // ── Company affiliation management ────────────────────────────────────────
@@ -219,13 +236,13 @@ export async function addCustomerCompany(
   },
 ) {
   const { orgId, userId } = await requireAccess("customer:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
-  // Verify this customer belongs to the owner's pool
+  // Verify this customer belongs to any of the owner's orgs
   const [exists] = await db
     .select({ id: customer.id })
     .from(customer)
-    .where(and(eq(customer.id, customerId), eq(customer.organizationId, ownerOrgId)))
+    .where(and(eq(customer.id, customerId), inArray(customer.organizationId, ownerOrgIds)))
     .limit(1);
   if (!exists) throw new Error("Customer not found");
 
@@ -264,7 +281,7 @@ export async function updateCustomerCompany(
   },
 ) {
   const { orgId, userId } = await requireAccess("customer:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   // Verify ownership via the parent customer
   const [comp] = await db
@@ -277,7 +294,7 @@ export async function updateCustomerCompany(
   const [owns] = await db
     .select({ id: customer.id })
     .from(customer)
-    .where(and(eq(customer.id, comp.customerId), eq(customer.organizationId, ownerOrgId)))
+    .where(and(eq(customer.id, comp.customerId), inArray(customer.organizationId, ownerOrgIds)))
     .limit(1);
   if (!owns) throw new Error("Forbidden");
 
@@ -296,7 +313,7 @@ export async function updateCustomerCompany(
 
 export async function deleteCustomerCompany(companyId: string) {
   const { orgId, userId } = await requireAccess("customer:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const [comp] = await db
     .select({ customerId: customerCompany.customerId })
@@ -308,7 +325,7 @@ export async function deleteCustomerCompany(companyId: string) {
   const [owns] = await db
     .select({ id: customer.id })
     .from(customer)
-    .where(and(eq(customer.id, comp.customerId), eq(customer.organizationId, ownerOrgId)))
+    .where(and(eq(customer.id, comp.customerId), inArray(customer.organizationId, ownerOrgIds)))
     .limit(1);
   if (!owns) throw new Error("Forbidden");
 
@@ -317,7 +334,7 @@ export async function deleteCustomerCompany(companyId: string) {
 
 export async function lookupCustomersByName(names: string[]) {
   const { orgId, userId } = await requireAccess("customer:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   if (!names.length) return [];
 
   const rows = await db
@@ -326,7 +343,7 @@ export async function lookupCustomersByName(names: string[]) {
       name: customer.name,
     })
     .from(customer)
-    .where(eq(customer.organizationId, ownerOrgId));
+    .where(inArray(customer.organizationId, ownerOrgIds));
 
   if (rows.length === 0) return names.map((name) => ({ name, found: false, customer: null }));
 

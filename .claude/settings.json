@@ -30,7 +30,9 @@
       "Bash(rm /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/\\\\[id\\\\]/print/so-print-client.tsx /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order/\\\\[id\\\\]/print/page.tsx)",
       "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/procurement/purchase-order/\\\\[id\\\\]/print)",
       "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/api/purchase-order/\\\\[id\\\\]/pdf)",
-      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/customer-po/\\\\[id\\\\])"
+      "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/customer-po/\\\\[id\\\\])",
+      "Bash(sed -i '' 's/orgQuotationLabelUppercase: orgRow?.quotationLabelUppercase ?? 1,/orgQuotationLabelUppercase: orgRow?.quotationLabelUppercase ?? 1,\\\\n    orgQuotationLabelAlign:     orgRow?.quotationLabelAlign     ?? \"right\",/' /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/server/quotation.ts)",
+      "Bash(sed -i '' 's/orgQuotationLabelUppercase: org?.quotationLabelUppercase ?? 1,/orgQuotationLabelUppercase: org?.quotationLabelUppercase ?? 1,\\\\n      orgQuotationLabelAlign:     org?.quotationLabelAlign     ?? \"right\",/' /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/server/quotation.ts)"
     ],
     "additionalDirectories": [
       "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order",

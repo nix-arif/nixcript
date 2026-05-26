@@ -382,9 +382,13 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
 
       // Right column — quotation label + number (company section)
-      const qlW = QL_FONT.widthOfTextAtSize(QL_TEXT, QL_SIZE);
+      const qlW   = QL_FONT.widthOfTextAtSize(QL_TEXT, QL_SIZE);
+      const qlAlign = (data.orgQuotationLabelAlign ?? "right") as "left" | "center" | "right";
+      const qlX   = qlAlign === "left"   ? ML
+                  : qlAlign === "center" ? ML + (W - ML - MR - qlW) / 2
+                  :                        W - MR - qlW;
       page.drawText(QL_TEXT, {
-        x: W - MR - qlW, y: H - B_PADT - QL_SIZE,
+        x: qlX, y: H - B_PADT - QL_SIZE,
         size: QL_SIZE, font: QL_FONT, color: C_BAND_MUTE,
       });
       const qNoSize = 12;

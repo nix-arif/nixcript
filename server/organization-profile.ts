@@ -276,6 +276,7 @@ export async function getFullOrganizationProfile() {
     quotationLabelSize:      profile.quotationLabelSize      ?? "normal",
     quotationLabelBold:      profile.quotationLabelBold      ?? 1,
     quotationLabelUppercase: profile.quotationLabelUppercase ?? 1,
+    quotationLabelAlign:     profile.quotationLabelAlign     ?? "right",
     tableRowStyle:           profile.tableRowStyle           ?? "default",
     showCodeColumn:          profile.showCodeColumn          ?? 1,
     brandColor: profile.brandColor ?? "#1a56db",
