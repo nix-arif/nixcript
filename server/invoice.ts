@@ -16,7 +16,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -37,20 +37,25 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
+// Primary org for writes (create) — oldest owned org
 async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<string> {
-  const [ownerMember] = await db
-    .select()
+  const [primary] = await db
+    .select({ organizationId: member.organizationId })
     .from(member)
-    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
-    .limit(1);
-  if (!ownerMember) return currentOrgId;
-  const [primaryOrg] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
+    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)))
     .orderBy(asc(member.createdAt))
     .limit(1);
-  return primaryOrg?.organizationId ?? currentOrgId;
+  return primary?.organizationId ?? currentOrgId;
+}
+
+// All owned org IDs for reads — covers every org the user owns
+async function getOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
+  const owned = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)));
+  const ids = owned.map((m) => m.organizationId);
+  return ids.length > 0 ? ids : [currentOrgId];
 }
 
 async function generateInvoiceNo(orgId: string): Promise<string> {
@@ -178,11 +183,11 @@ function calcProfit(grandTotal: string, costTotal: string, expensesTotal: string
 
 export async function getInvoices(): Promise<InvoiceListRow[]> {
   const { orgId, userId } = await requireAccess("invoice:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   const rows = await db
     .select()
     .from(invoice)
-    .where(eq(invoice.organizationId, ownerOrgId))
+    .where(inArray(invoice.organizationId, ownerOrgIds))
     .orderBy(desc(invoice.createdAt));
 
   if (rows.length === 0) return [];
@@ -196,11 +201,11 @@ export async function getInvoices(): Promise<InvoiceListRow[]> {
 
 export async function getInvoiceDetail(id: string): Promise<InvoiceWithDetails | null> {
   const { orgId, userId } = await requireAccess("invoice:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   const [inv] = await db
     .select()
     .from(invoice)
-    .where(and(eq(invoice.id, id), eq(invoice.organizationId, ownerOrgId)));
+    .where(and(eq(invoice.id, id), inArray(invoice.organizationId, ownerOrgIds)));
   if (!inv) return null;
   const [items, expenses, users] = await Promise.all([
     db.select().from(invoiceItem).where(eq(invoiceItem.invoiceId, id)).orderBy(asc(invoiceItem.rowNo)),
@@ -356,11 +361,11 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
 
 export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceRow> {
   const { orgId, userId } = await requireAccess("invoice:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   const [existing] = await db
     .select()
     .from(invoice)
-    .where(and(eq(invoice.id, input.id), eq(invoice.organizationId, ownerOrgId)));
+    .where(and(eq(invoice.id, input.id), inArray(invoice.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Invoice not found");
   if (!EDITABLE_STATUSES.has(existing.status)) throw new Error("Only draft invoices can be edited");
 
@@ -445,26 +450,28 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
 
 export async function deleteInvoice(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("invoice:delete");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), eq(invoice.organizationId, ownerOrgId)));
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), inArray(invoice.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Invoice not found");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled invoices can be deleted");
-  await db.delete(invoice).where(and(eq(invoice.id, id), eq(invoice.organizationId, ownerOrgId)));
+  await db.delete(invoice).where(eq(invoice.id, id));
 }
 
 export async function updateInvoiceStatus(id: string, status: string, paidAt?: Date, paidAmount?: string): Promise<void> {
   const { orgId, userId } = await requireAccess("invoice:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const [existing] = await db.select({ id: invoice.id }).from(invoice).where(and(eq(invoice.id, id), inArray(invoice.organizationId, ownerOrgIds)));
+  if (!existing) throw new Error("Invoice not found");
   await db
     .update(invoice)
     .set({ status, ...(paidAt ? { paidAt, paidAmount: paidAmount ?? null } : {}) })
-    .where(and(eq(invoice.id, id), eq(invoice.organizationId, ownerOrgId)));
+    .where(eq(invoice.id, id));
 }
 
 export async function sendInvoice(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("invoice:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), eq(invoice.organizationId, ownerOrgId)));
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), inArray(invoice.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Invoice not found");
   if (existing.status !== "draft") throw new Error("Only draft invoices can be sent");
   await db.update(invoice).set({ status: "sent" }).where(eq(invoice.id, id));
@@ -472,8 +479,8 @@ export async function sendInvoice(id: string): Promise<void> {
 
 export async function markInvoicePaid(id: string, paidAmount?: string): Promise<void> {
   const { orgId, userId } = await requireAccess("invoice:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), eq(invoice.organizationId, ownerOrgId)));
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), inArray(invoice.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Invoice not found");
   if (!["sent", "overdue"].includes(existing.status)) throw new Error("Only sent or overdue invoices can be marked as paid");
   await db.update(invoice).set({ status: "paid", paidAt: new Date(), paidAmount: paidAmount ?? existing.grandTotal }).where(eq(invoice.id, id));
@@ -481,8 +488,8 @@ export async function markInvoicePaid(id: string, paidAmount?: string): Promise<
 
 export async function markInvoiceOverdue(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("invoice:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), eq(invoice.organizationId, ownerOrgId)));
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), inArray(invoice.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Invoice not found");
   if (existing.status !== "sent") throw new Error("Only sent invoices can be marked as overdue");
   await db.update(invoice).set({ status: "overdue" }).where(eq(invoice.id, id));
@@ -490,8 +497,8 @@ export async function markInvoiceOverdue(id: string): Promise<void> {
 
 export async function cancelInvoice(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("invoice:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), eq(invoice.organizationId, ownerOrgId)));
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), inArray(invoice.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Invoice not found");
   if (["paid", "cancelled"].includes(existing.status)) throw new Error("Cannot cancel a paid or already cancelled invoice");
   await db.update(invoice).set({ status: "cancelled" }).where(eq(invoice.id, id));

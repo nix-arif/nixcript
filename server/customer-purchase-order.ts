@@ -15,7 +15,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, inArray, or } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, inArray, or, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -66,19 +66,22 @@ async function requireAccess(permission: string) {
 }
 
 async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<string> {
-  const [ownerMember] = await db
-    .select()
+  const [primary] = await db
+    .select({ organizationId: member.organizationId })
     .from(member)
-    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
-    .limit(1);
-  if (!ownerMember) return currentOrgId;
-  const [primaryOrg] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
+    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)))
     .orderBy(asc(member.createdAt))
     .limit(1);
-  return primaryOrg?.organizationId ?? currentOrgId;
+  return primary?.organizationId ?? currentOrgId;
+}
+
+async function getOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
+  const owned = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)));
+  const ids = owned.map((m) => m.organizationId);
+  return ids.length > 0 ? ids : [currentOrgId];
 }
 
 export type CustomerPo = typeof customerPurchaseOrder.$inferSelect;
@@ -105,33 +108,33 @@ export interface UpdateCustomerPoInput extends CreateCustomerPoInput {
 
 export async function getCustomerPos(): Promise<CustomerPo[]> {
   const { orgId, userId } = await requireAccess("customer-po:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   return db
     .select()
     .from(customerPurchaseOrder)
-    .where(eq(customerPurchaseOrder.organizationId, ownerOrgId))
+    .where(inArray(customerPurchaseOrder.organizationId, ownerOrgIds))
     .orderBy(desc(customerPurchaseOrder.createdAt));
 }
 
 export async function getCustomerPoDetail(id: string): Promise<CustomerPo | null> {
   const { orgId, userId } = await requireAccess("customer-po:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   const [row] = await db
     .select()
     .from(customerPurchaseOrder)
-    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
   return row ?? null;
 }
 
 export async function getCustomerPosByCustomer(customerId: string): Promise<CustomerPo[]> {
   const { orgId, userId } = await requireAccess("customer-po:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   return db
     .select()
     .from(customerPurchaseOrder)
     .where(
       and(
-        eq(customerPurchaseOrder.organizationId, ownerOrgId),
+        inArray(customerPurchaseOrder.organizationId, ownerOrgIds),
         eq(customerPurchaseOrder.customerId, customerId),
       ),
     )
@@ -140,7 +143,7 @@ export async function getCustomerPosByCustomer(customerId: string): Promise<Cust
 
 export async function createCustomerPo(input: CreateCustomerPoInput): Promise<CustomerPo> {
   const { orgId, userId } = await requireAccess("customer-po:create");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   let customerSnapshot: CustomerPo["customerSnapshot"] = null;
   if (input.customerId) {
@@ -175,7 +178,7 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
     .insert(customerPurchaseOrder)
     .values({
       id: nanoid(),
-      organizationId: ownerOrgId,
+      organizationId: ownerOrgIds[0],
       customerPoNo: input.customerPoNo,
       customerId: input.customerId ?? null,
       customerSnapshot,
@@ -197,12 +200,12 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
 
 export async function updateCustomerPo(input: UpdateCustomerPoInput): Promise<CustomerPo> {
   const { orgId, userId } = await requireAccess("customer-po:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const [existing] = await db
     .select()
     .from(customerPurchaseOrder)
-    .where(and(eq(customerPurchaseOrder.id, input.id), eq(customerPurchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(customerPurchaseOrder.id, input.id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Customer PO not found");
 
   if (input.documentKey !== undefined && existing.documentKey && existing.documentKey !== input.documentKey) {
@@ -248,12 +251,12 @@ export interface CustomerPoTrackingData {
 
 export async function getCustomerPoForTracking(id: string): Promise<CustomerPoTrackingData | null> {
   const { orgId, userId } = await requireAccess("customer-po:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const [cpo] = await db
     .select()
     .from(customerPurchaseOrder)
-    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
 
   if (!cpo) return null;
 
@@ -334,12 +337,12 @@ export interface CustomerPoSummaryRow {
 
 export async function getCustomerPoSummary(): Promise<CustomerPoSummaryRow[]> {
   const { orgId, userId } = await requireAccess("customer-po:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const cpos = await db
     .select()
     .from(customerPurchaseOrder)
-    .where(eq(customerPurchaseOrder.organizationId, ownerOrgId))
+    .where(inArray(customerPurchaseOrder.organizationId, ownerOrgIds))
     .orderBy(desc(customerPurchaseOrder.createdAt));
 
   if (cpos.length === 0) return [];
@@ -453,11 +456,11 @@ export async function getCustomerPoSummary(): Promise<CustomerPoSummaryRow[]> {
 
 export async function deleteCustomerPo(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("customer-po:delete");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   const [existing] = await db
     .select()
     .from(customerPurchaseOrder)
-    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
   if (existing?.documentKey) await deleteDocument(existing.documentKey);
   await db.delete(customerPurchaseOrder).where(eq(customerPurchaseOrder.id, id));
 }

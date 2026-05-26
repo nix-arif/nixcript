@@ -18,7 +18,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, isNull, } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -101,22 +101,22 @@ async function requireAccess(permission: string) {
 }
 
 async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<string> {
-  const [ownerMember] = await db
-    .select()
+  const [primary] = await db
+    .select({ organizationId: member.organizationId })
     .from(member)
-    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
-    .limit(1);
-
-  if (!ownerMember) return currentOrgId;
-
-  const [primaryOrg] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
+    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)))
     .orderBy(asc(member.createdAt))
     .limit(1);
+  return primary?.organizationId ?? currentOrgId;
+}
 
-  return primaryOrg?.organizationId ?? currentOrgId;
+async function getOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
+  const owned = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)));
+  const ids = owned.map((m) => m.organizationId);
+  return ids.length > 0 ? ids : [currentOrgId];
 }
 
 // ── Running number ─────────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: stri
 
 export async function getActiveCustomerPos(): Promise<{ id: string; customerPoNo: string; customerName: string | null; amount: string }[]> {
   const { orgId, userId } = await requireAccess("purchase-order:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
   const rows = await db
     .select({
       id: customerPurchaseOrder.id,
@@ -216,7 +216,7 @@ export async function getActiveCustomerPos(): Promise<{ id: string; customerPoNo
       amount: customerPurchaseOrder.amount,
     })
     .from(customerPurchaseOrder)
-    .where(and(eq(customerPurchaseOrder.organizationId, ownerOrgId), inArray(customerPurchaseOrder.status, ["received", "acknowledged"])))
+    .where(and(inArray(customerPurchaseOrder.organizationId, ownerOrgIds), inArray(customerPurchaseOrder.status, ["received", "acknowledged"])))
     .orderBy(desc(customerPurchaseOrder.createdAt));
   return rows.map((r) => {
     const snap = r.customerSnapshot as any;
@@ -285,12 +285,12 @@ const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
 export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
   const { orgId, userId } = await requireAccess("purchase-order:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const rows = await db
     .select()
     .from(purchaseOrder)
-    .where(eq(purchaseOrder.organizationId, ownerOrgId))
+    .where(inArray(purchaseOrder.organizationId, ownerOrgIds))
     .orderBy(desc(purchaseOrder.createdAt));
 
   if (rows.length === 0) return [];
@@ -304,12 +304,12 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
 
 export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderWithItems | null> {
   const { orgId, userId } = await requireAccess("purchase-order:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const [po] = await db
     .select()
     .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(purchaseOrder.id, id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
 
   if (!po) return null;
 
@@ -333,12 +333,12 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
 
 export async function getPoForPrint(id: string) {
   const { orgId, userId } = await requireAccess("purchase-order:read");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const [po] = await db
     .select()
     .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(purchaseOrder.id, id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
 
   if (!po) return null;
 
@@ -363,7 +363,7 @@ export async function getPoForPrint(id: string) {
     })
     .from(organization)
     .leftJoin(organizationProfile, eq(organizationProfile.organizationId, organization.id))
-    .where(eq(organization.id, ownerOrgId))
+    .where(inArray(organization.id, ownerOrgIds))
     .limit(1),
     po.salesOrderId
       ? db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.id, po.salesOrderId))
@@ -399,7 +399,7 @@ export async function getPoForPrint(id: string) {
 
 export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Promise<PurchaseOrderRow> {
   const { orgId, userId } = await requireAccess("purchase-order:create");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   if (!input.salesOrderId) throw new Error("A linked sales order is required");
   if (!input.supplierId) throw new Error("Supplier is required");
@@ -418,13 +418,13 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
     };
   }
 
-  const poNo = await generatePoNo(ownerOrgId);
+  const poNo = await generatePoNo(ownerOrgIds[0]);
 
   const [row] = await db
     .insert(purchaseOrder)
     .values({
       id: nanoid(),
-      organizationId: ownerOrgId,
+      organizationId: ownerOrgIds[0],
       poNo,
       salesOrderId: input.salesOrderId ?? null,
       supplierId: input.supplierId,
@@ -482,12 +482,12 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
 
 export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Promise<PurchaseOrderRow> {
   const { orgId, userId } = await requireAccess("purchase-order:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const [existing] = await db
     .select()
     .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.id, input.id), eq(purchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(purchaseOrder.id, input.id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
 
   if (!existing) throw new Error("Purchase order not found");
   if (!EDITABLE_STATUSES.has(existing.status)) throw new Error("Only draft purchase orders can be edited");
@@ -594,12 +594,12 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
 
 export async function deletePurchaseOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("purchase-order:delete");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   const [existing] = await db
     .select()
     .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(purchaseOrder.id, id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
 
   if (!existing) throw new Error("Purchase order not found");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled purchase orders can be deleted");
@@ -623,53 +623,53 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
 
 export async function updatePurchaseOrderStatus(id: string, status: string): Promise<void> {
   const { orgId, userId } = await requireAccess("purchase-order:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   await db
     .update(purchaseOrder)
     .set({ status })
-    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(purchaseOrder.id, id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
 }
 
 // ── Workflow actions ───────────────────────────────────────────────────────
 
-async function getPoForWorkflow(id: string, ownerOrgId: string) {
+async function getPoForWorkflow(id: string, ownerOrgIds: string[]) {
   const [po] = await db
     .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, status: purchaseOrder.status, createdBy: purchaseOrder.createdBy })
     .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, ownerOrgId)));
+    .where(and(eq(purchaseOrder.id, id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
   if (!po) throw new Error("Purchase order not found");
   return po;
 }
 
 export async function sendPurchaseOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("purchase-order:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const po = await getPoForWorkflow(id, ownerOrgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const po = await getPoForWorkflow(id, ownerOrgIds);
   if (po.status !== "draft") throw new Error("Only draft purchase orders can be sent");
   await db.update(purchaseOrder).set({ status: "sent" }).where(eq(purchaseOrder.id, id));
 }
 
 export async function acknowledgePurchaseOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("purchase-order:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const po = await getPoForWorkflow(id, ownerOrgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const po = await getPoForWorkflow(id, ownerOrgIds);
   if (po.status !== "sent") throw new Error("Only sent purchase orders can be acknowledged");
   await db.update(purchaseOrder).set({ status: "acknowledged" }).where(eq(purchaseOrder.id, id));
 }
 
 export async function receivePurchaseOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("purchase-order:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const po = await getPoForWorkflow(id, ownerOrgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const po = await getPoForWorkflow(id, ownerOrgIds);
   if (po.status !== "acknowledged" && po.status !== "sent") throw new Error("Purchase order must be sent or acknowledged before receiving");
   await db.update(purchaseOrder).set({ status: "received" }).where(eq(purchaseOrder.id, id));
 }
 
 export async function cancelPurchaseOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("purchase-order:update");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
-  const po = await getPoForWorkflow(id, ownerOrgId);
+  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const po = await getPoForWorkflow(id, ownerOrgIds);
   if (po.status === "received" || po.status === "cancelled") throw new Error("Cannot cancel a received or already cancelled purchase order");
   await db.update(purchaseOrder).set({ status: "cancelled" }).where(eq(purchaseOrder.id, id));
 }
