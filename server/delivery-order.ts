@@ -7,12 +7,11 @@ import {
   deliveryOrderCounter,
   customer,
   customerCompany,
-  member,
   user,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, isNull, } from "drizzle-orm";
+import { eq, and, desc, asc, inArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -33,24 +32,6 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
-async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<string> {
-  const [primary] = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)))
-    .orderBy(asc(member.createdAt))
-    .limit(1);
-  return primary?.organizationId ?? currentOrgId;
-}
-
-async function getOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
-  const owned = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)));
-  const ids = owned.map((m) => m.organizationId);
-  return ids.length > 0 ? ids : [currentOrgId];
-}
 
 async function generateDoNo(orgId: string): Promise<string> {
   const cfg = await getNumberingConfig(orgId, "do");
@@ -107,12 +88,11 @@ export interface UpdateDeliveryOrderInput extends Omit<CreateDeliveryOrderInput,
 }
 
 export async function getDeliveryOrders(): Promise<DeliveryOrderListRow[]> {
-  const { orgId, userId } = await requireAccess("delivery-order:read");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const { orgId } = await requireAccess("delivery-order:read");
   const rows = await db
     .select()
     .from(deliveryOrder)
-    .where(inArray(deliveryOrder.organizationId, ownerOrgIds))
+    .where(eq(deliveryOrder.organizationId, orgId))
     .orderBy(desc(deliveryOrder.createdAt));
 
   if (rows.length === 0) return [];
@@ -125,12 +105,11 @@ export async function getDeliveryOrders(): Promise<DeliveryOrderListRow[]> {
 }
 
 export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderWithItems | null> {
-  const { orgId, userId } = await requireAccess("delivery-order:read");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const { orgId } = await requireAccess("delivery-order:read");
   const [do_] = await db
     .select()
     .from(deliveryOrder)
-    .where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
+    .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!do_) return null;
   const [items, users] = await Promise.all([
     db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderItem.rowNo)),
@@ -142,7 +121,6 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
 
 export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Promise<DeliveryOrderRow> {
   const { orgId, userId } = await requireAccess("delivery-order:create");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
 
   let customerSnapshot: DeliveryOrderRow["customerSnapshot"] = null;
   if (input.customerId) {
@@ -173,12 +151,12 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
     }
   }
 
-  const doNo = await generateDoNo(ownerOrgIds[0]);
+  const doNo = await generateDoNo(orgId);
   const [row] = await db
     .insert(deliveryOrder)
     .values({
       id: nanoid(),
-      organizationId: ownerOrgIds[0],
+      organizationId: orgId,
       doNo,
       salesOrderId: input.salesOrderId ?? null,
       salesOrderNo: input.salesOrderNo ?? null,
@@ -210,12 +188,11 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
 }
 
 export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Promise<DeliveryOrderRow> {
-  const { orgId, userId } = await requireAccess("delivery-order:update");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const { orgId } = await requireAccess("delivery-order:update");
   const [existing] = await db
     .select()
     .from(deliveryOrder)
-    .where(and(eq(deliveryOrder.id, input.id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
+    .where(and(eq(deliveryOrder.id, input.id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (!EDITABLE_STATUSES.has(existing.status)) throw new Error("Only draft delivery orders can be edited");
 
@@ -252,36 +229,32 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
 }
 
 export async function deleteDeliveryOrder(id: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("delivery-order:delete");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
-  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
+  const { orgId } = await requireAccess("delivery-order:delete");
+  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft delivery orders can be deleted");
-  await db.delete(deliveryOrder).where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
+  await db.delete(deliveryOrder).where(eq(deliveryOrder.id, id));
 }
 
 export async function updateDeliveryOrderStatus(id: string, status: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("delivery-order:update");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const { orgId } = await requireAccess("delivery-order:update");
   await db
     .update(deliveryOrder)
     .set({ status })
-    .where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
+    .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
 }
 
 export async function deliverDeliveryOrder(id: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("delivery-order:update");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
-  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
+  const { orgId } = await requireAccess("delivery-order:update");
+  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (existing.status !== "draft") throw new Error("Only draft delivery orders can be marked as delivered");
   await db.update(deliveryOrder).set({ status: "delivered" }).where(eq(deliveryOrder.id, id));
 }
 
 export async function returnDeliveryOrder(id: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("delivery-order:update");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
-  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
+  const { orgId } = await requireAccess("delivery-order:update");
+  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (existing.status !== "delivered") throw new Error("Only delivered orders can be marked as returned");
   await db.update(deliveryOrder).set({ status: "returned" }).where(eq(deliveryOrder.id, id));

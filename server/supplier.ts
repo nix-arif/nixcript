@@ -1,10 +1,10 @@
 "use server";
 
 import { db } from "@/db";
-import { supplier, member } from "@/db/schema";
+import { supplier } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, ilike, desc, asc, inArray, isNull } from "drizzle-orm";
+import { eq, and, ilike, asc } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
@@ -23,24 +23,6 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
-async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<string> {
-  const [primary] = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)))
-    .orderBy(asc(member.createdAt))
-    .limit(1);
-  return primary?.organizationId ?? currentOrgId;
-}
-
-async function getOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
-  const owned = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)));
-  const ids = owned.map((m) => m.organizationId);
-  return ids.length > 0 ? ids : [currentOrgId];
-}
 
 export type Supplier = typeof supplier.$inferSelect;
 
@@ -59,19 +41,18 @@ export interface UpdateSupplierInput extends CreateSupplierInput {
 }
 
 export async function getSuppliers(search?: string): Promise<Supplier[]> {
-  const { orgId, userId } = await requireAccess("supplier:read");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const { orgId } = await requireAccess("supplier:read");
 
   let query = db
     .select()
     .from(supplier)
-    .where(inArray(supplier.organizationId, ownerOrgIds))
+    .where(eq(supplier.organizationId, orgId))
     .$dynamic();
 
   if (search) {
     query = query.where(
       and(
-        inArray(supplier.organizationId, ownerOrgIds),
+        eq(supplier.organizationId, orgId),
         ilike(supplier.name, `%${search}%`),
       ),
     );
@@ -82,13 +63,12 @@ export async function getSuppliers(search?: string): Promise<Supplier[]> {
 
 export async function createSupplier(input: CreateSupplierInput): Promise<Supplier> {
   const { orgId, userId } = await requireAccess("supplier:create");
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
 
   const [row] = await db
     .insert(supplier)
     .values({
       id: nanoid(),
-      organizationId: ownerOrgId,
+      organizationId: orgId,
       name: input.name,
       registrationNo: input.registrationNo ?? null,
       address: input.address ?? null,
@@ -104,10 +84,9 @@ export async function createSupplier(input: CreateSupplierInput): Promise<Suppli
 }
 
 export async function updateSupplier(input: UpdateSupplierInput): Promise<Supplier> {
-  const { orgId, userId } = await requireAccess("supplier:update");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const { orgId } = await requireAccess("supplier:update");
   const [check] = await db.select({ id: supplier.id }).from(supplier)
-    .where(and(eq(supplier.id, input.id), inArray(supplier.organizationId, ownerOrgIds)));
+    .where(and(eq(supplier.id, input.id), eq(supplier.organizationId, orgId)));
   if (!check) throw new Error("Supplier not found");
 
   const [row] = await db
@@ -128,10 +107,9 @@ export async function updateSupplier(input: UpdateSupplierInput): Promise<Suppli
 }
 
 export async function deleteSupplier(id: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("supplier:delete");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const { orgId } = await requireAccess("supplier:delete");
   const [check] = await db.select({ id: supplier.id }).from(supplier)
-    .where(and(eq(supplier.id, id), inArray(supplier.organizationId, ownerOrgIds)));
+    .where(and(eq(supplier.id, id), eq(supplier.organizationId, orgId)));
   if (!check) throw new Error("Supplier not found");
   await db.delete(supplier).where(eq(supplier.id, id));
 }
@@ -139,8 +117,7 @@ export async function deleteSupplier(id: string): Promise<void> {
 export async function lookupSuppliersByName(
   name: string,
 ): Promise<Pick<Supplier, "id" | "name" | "contactPerson" | "contactNo" | "email">[]> {
-  const { orgId, userId } = await requireAccess("supplier:read");
-  const ownerOrgIds = await getOwnerOrgIds(userId, orgId);
+  const { orgId } = await requireAccess("supplier:read");
 
   return db
     .select({
@@ -151,7 +128,7 @@ export async function lookupSuppliersByName(
       email: supplier.email,
     })
     .from(supplier)
-    .where(and(inArray(supplier.organizationId, ownerOrgIds), ilike(supplier.name, `%${name}%`)))
+    .where(and(eq(supplier.organizationId, orgId), ilike(supplier.name, `%${name}%`)))
     .orderBy(asc(supplier.name))
     .limit(20);
 }
