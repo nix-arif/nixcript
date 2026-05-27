@@ -75,9 +75,17 @@ export function OrganizationSwitcher() {
   // Only auto-set once — when the user has NEVER had an active org this session.
   // hasEverHadOrgRef prevents re-firing when activeOrganization briefly goes null
   // during a refetch (e.g. after router.refresh() or switching orgs).
+  //
+  // IMPORTANT: wait for both pending states to resolve first.
+  // On hard reload, organizationList can finish before useActiveOrganization —
+  // without the pending guard the effect fires while activeOrganization is still
+  // loading (null) and resets the active org to organizationList[0].
   const hasEverHadOrgRef = React.useRef(false);
   const autoSettingRef = React.useRef(false);
   React.useEffect(() => {
+    // Still loading — don't make any decisions yet
+    if (isActivePending || isListPending) return;
+
     if (activeOrganization) {
       hasEverHadOrgRef.current = true;
       autoSettingRef.current = false;
@@ -94,7 +102,7 @@ export function OrganizationSwitcher() {
       .catch(() => {
         autoSettingRef.current = false;
       });
-  }, [activeOrganization, organizationList]);
+  }, [activeOrganization, organizationList, isActivePending, isListPending]);
 
   // Clear optimistic state only once the real activeOrganization has caught up
   React.useEffect(() => {
