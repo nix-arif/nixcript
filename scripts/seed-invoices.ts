@@ -18,7 +18,7 @@
  * Col R  STATUS               → status        (Paid→paid, Outstanding→sent, CANCELLED→cancelled)
  * Col S  PAYMENT DATE         → paidAt        (DD/MM/YY, receive payment date)
  * Col T  PAYMENT REF          → paymentRef
- * Col U  ATTEND COMMISSION CLAIM BY → salesPersonName + applicationSpecialistName
+ * Col H  Sales Person          → salesPersonName + applicationSpecialistName
  * Col AD SOA Status           → soaVerified   (✔ = true)
  *
  * caseCommission (created when at least one field is non-null):
@@ -188,9 +188,9 @@ async function seed() {
       invoiceNo,
       // Column C = DATE = invoice date per spreadsheet
       invoiceDate:      toDate(r["DATE"]) ?? new Date(),
-      // Column U = ATTEND COMMISSION CLAIM BY = sales person & application specialist
-      salesPersonName:              str(r["ATTEND COMMISSION CLAIM BY"]),
-      applicationSpecialistName:    str(r["ATTEND COMMISSION CLAIM BY"]),
+      // Column H = Sales Person = sales person & application specialist
+      salesPersonName:              str(r["Sales Person"]),
+      applicationSpecialistName:    str(r["Sales Person"]),
       customerId,
       customerSnapshot,
       customerPoNo:     str(r["LPO"]),
