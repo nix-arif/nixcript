@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { type SoaOrganization } from "@/server/invoice";
 import { markSoaVerified } from "@/server/invoice";
 import { type FullOrganizationProfile } from "@/server/organization-profile";
-import { generateSoaPdf } from "./_pdf-soa";
+import { generateSoaPdf, generateSoaPdfForOrg } from "./_pdf-soa";
 import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -93,29 +93,51 @@ export function SoaClient({ soa, permissions, orgProfile }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadingOrg, setDownloadingOrg] = useState<string | null>(null);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
-  // ── PDF download ───────────────────────────────────────────────────────────
+  // ── Shared PDF trigger ─────────────────────────────────────────────────────
+  async function triggerPdfDownload(bytes: Uint8Array, filename: string) {
+    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // ── All-hospital PDF ────────────────────────────────────────────────────────
   const handleDownloadPdf = async () => {
     if (isDownloading) return;
     setIsDownloading(true);
     try {
       const bytes = await generateSoaPdf(soa, orgProfile);
-      const blob = new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
       const today = new Date().toISOString().slice(0, 10);
-      a.href = url;
-      a.download = `SOA-${today}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await triggerPdfDownload(bytes, `SOA-${today}.pdf`);
     } catch (e: any) {
       toast.error(`PDF failed: ${e.message}`);
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  // ── Per-org PDF ─────────────────────────────────────────────────────────────
+  const handleDownloadOrgPdf = async (org: SoaOrganization) => {
+    if (downloadingOrg) return;
+    setDownloadingOrg(org.organizationName);
+    try {
+      const bytes = await generateSoaPdfForOrg(org, orgProfile);
+      const today = new Date().toISOString().slice(0, 10);
+      const slug  = org.organizationName.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-").slice(0, 40);
+      await triggerPdfDownload(bytes, `SOA-${slug}-${today}.pdf`);
+    } catch (e: any) {
+      toast.error(`PDF failed: ${e.message}`);
+    } finally {
+      setDownloadingOrg(null);
     }
   };
 
@@ -327,6 +349,22 @@ export function SoaClient({ soa, permissions, orgProfile }: Props) {
                         MYR {fmtMoney(org.outstanding)}
                       </p>
                     </div>
+                  </div>
+
+                  {/* Per-org PDF download */}
+                  <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                      disabled={downloadingOrg === org.organizationName}
+                      onClick={() => handleDownloadOrgPdf(org)}
+                      title="Download SOA PDF for this hospital"
+                    >
+                      {downloadingOrg === org.organizationName
+                        ? <span className="text-[10px]">…</span>
+                        : <DownloadIcon className="w-3.5 h-3.5" />}
+                    </Button>
                   </div>
 
                   {/* Mark SOA verified action */}
