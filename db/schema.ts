@@ -1866,6 +1866,144 @@ export const notificationRelations = relations(notification, ({ one }) => ({
   organization: one(organization, { fields: [notification.organizationId], references: [organization.id] }),
 }));
 
+// LEDGER ─────────────────────────────────────────────────────────────────────
+
+export const ledgerAccount = pgTable(
+  "ledger_account",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    // ASSET | LIABILITY | EQUITY | REVENUE | EXPENSE
+    type: text("type").notNull(),
+    // e.g. CASH | BANK | ACCOUNTS_RECEIVABLE | ACCOUNTS_PAYABLE | SHARE_CAPITAL | RETAINED_EARNINGS | SALARY_EXPENSE
+    subtype: text("subtype"),
+    // DEBIT | CREDIT  (Assets + Expenses = DEBIT normal; Liabilities + Equity + Revenue = CREDIT normal)
+    normalBalance: text("normal_balance").notNull(),
+    description: text("description"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("ledger_account_org_code_uidx").on(t.organizationId, t.code),
+    index("ledger_account_org_idx").on(t.organizationId),
+  ],
+);
+
+export const ledgerEntry = pgTable(
+  "ledger_entry",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    entryNo: text("entry_no").notNull(),
+    date: text("date").notNull(),          // ISO "YYYY-MM-DD"
+    description: text("description").notNull(),
+    // CAPITAL_INVESTMENT | SUPPLIER_PAYMENT | CUSTOMER_PAYMENT |
+    // REVENUE_RECOGNITION | PURCHASE | PAYROLL | GENERAL_EXPENSE | JOURNAL_ADJUSTMENT
+    transactionType: text("transaction_type").notNull(),
+    // Polymorphic reference to source doc
+    // INVOICE | PURCHASE_ORDER | PAYROLL_PERIOD | NONE
+    referenceType: text("reference_type").notNull().default("NONE"),
+    referenceId: text("reference_id"),
+    referenceNo: text("reference_no"),     // snapshot e.g. "INV-2025-0001"
+    // Stakeholder link: CUSTOMER | SUPPLIER | MEMBER | NONE
+    stakeholderType: text("stakeholder_type").notNull().default("NONE"),
+    stakeholderId: text("stakeholder_id"),
+    stakeholderName: text("stakeholder_name"), // snapshot
+    totalAmount: text("total_amount").notNull().default("0"),
+    // DRAFT | POSTED | VOID
+    status: text("status").notNull().default("DRAFT"),
+    voidReason: text("void_reason"),
+    postedAt: timestamp("posted_at"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("ledger_entry_no_org_uidx").on(t.organizationId, t.entryNo),
+    index("ledger_entry_org_idx").on(t.organizationId),
+    index("ledger_entry_date_idx").on(t.date),
+    index("ledger_entry_type_idx").on(t.transactionType),
+  ],
+);
+
+export const ledgerLine = pgTable(
+  "ledger_line",
+  {
+    id: text("id").primaryKey(),
+    entryId: text("entry_id")
+      .notNull()
+      .references(() => ledgerEntry.id, { onDelete: "cascade" }),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => ledgerAccount.id),
+    accountCode: text("account_code").notNull(),   // snapshot
+    accountName: text("account_name").notNull(),   // snapshot
+    debit: text("debit").notNull().default("0"),
+    credit: text("credit").notNull().default("0"),
+    description: text("description"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("ledger_line_entry_idx").on(t.entryId),
+    index("ledger_line_account_idx").on(t.accountId),
+  ],
+);
+
+export const ledgerDocument = pgTable(
+  "ledger_document",
+  {
+    id: text("id").primaryKey(),
+    entryId: text("entry_id")
+      .notNull()
+      .references(() => ledgerEntry.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    // R2 key pattern: "{orgId}/{entryId}/{nanoid}.{ext}"
+    fileKey: text("file_key").notNull(),
+    fileSize: integer("file_size").notNull(),
+    mimeType: text("mime_type").notNull(),
+    uploadedBy: text("uploaded_by").notNull().references(() => user.id),
+    uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("ledger_document_entry_idx").on(t.entryId),
+    index("ledger_document_org_idx").on(t.organizationId),
+  ],
+);
+
+// Relations
+export const ledgerAccountRelations = relations(ledgerAccount, ({ one, many }) => ({
+  organization: one(organization, { fields: [ledgerAccount.organizationId], references: [organization.id] }),
+  lines: many(ledgerLine),
+}));
+
+export const ledgerEntryRelations = relations(ledgerEntry, ({ one, many }) => ({
+  organization: one(organization, { fields: [ledgerEntry.organizationId], references: [organization.id] }),
+  createdByUser: one(user, { fields: [ledgerEntry.createdBy], references: [user.id] }),
+  lines: many(ledgerLine),
+  documents: many(ledgerDocument),
+}));
+
+export const ledgerLineRelations = relations(ledgerLine, ({ one }) => ({
+  entry: one(ledgerEntry, { fields: [ledgerLine.entryId], references: [ledgerEntry.id] }),
+  account: one(ledgerAccount, { fields: [ledgerLine.accountId], references: [ledgerAccount.id] }),
+}));
+
+export const ledgerDocumentRelations = relations(ledgerDocument, ({ one }) => ({
+  entry: one(ledgerEntry, { fields: [ledgerDocument.entryId], references: [ledgerEntry.id] }),
+  organization: one(organization, { fields: [ledgerDocument.organizationId], references: [organization.id] }),
+  uploadedByUser: one(user, { fields: [ledgerDocument.uploadedBy], references: [user.id] }),
+}));
+
 /* =========================
    SCHEMA EXPORT
 ========================= */
@@ -1961,4 +2099,13 @@ export const schema = {
   // notifications
   notification,
   notificationRelations,
+  // ledger
+  ledgerAccount,
+  ledgerEntry,
+  ledgerLine,
+  ledgerDocument,
+  ledgerAccountRelations,
+  ledgerEntryRelations,
+  ledgerLineRelations,
+  ledgerDocumentRelations,
 };

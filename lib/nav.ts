@@ -13,6 +13,7 @@ import {
   FolderOpenIcon,
   BuildingIcon,
   BuildingIcon as ProcurementIcon,
+  BookOpenIcon,
 } from "lucide-react";
 import React from "react";
 
@@ -67,6 +68,16 @@ export const navConfig: NavGroup[] = [
       { title: "Delivery Orders",     url: "/dashboard/fulfillment/delivery", permission: "delivery-order:read" },
       { title: "Invoices",            url: "/dashboard/fulfillment/invoice",  permission: "invoice:read"         },
       { title: "Statement of Account", url: "/dashboard/fulfillment/soa",     permission: "invoice:read"         },
+    ],
+  },
+  {
+    title: "Ledger",
+    url: "#",
+    icon: React.createElement(BookOpenIcon),
+    items: [
+      { title: "Journal Entries",   url: "/dashboard/ledger/entries",       permission: "account:read" },
+      { title: "Chart of Accounts", url: "/dashboard/ledger/accounts",      permission: "account:read" },
+      { title: "Trial Balance",     url: "/dashboard/ledger/trial-balance",  permission: "account:read" },
     ],
   },
   {
