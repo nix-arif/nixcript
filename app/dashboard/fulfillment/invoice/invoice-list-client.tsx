@@ -300,6 +300,11 @@ export function InvoiceListClient({
   const stats = useMemo(() => {
     const all = initialInvoices;
     const totalBilled = all.reduce((s, i) => s + parseMoney(i.grandTotal), 0);
+    // For "paid" invoices the full grandTotal is collected; for others use paidAmount
+    const totalCollected = all.reduce((s, i) => {
+      if (i.status === "paid") return s + parseMoney(i.grandTotal);
+      return s + parseMoney(i.paidAmount);
+    }, 0);
     const outstanding = all.reduce((s, i) => {
       if (i.status === "paid" || i.status === "cancelled") return s;
       return s + Math.max(0, parseMoney(i.grandTotal) - parseMoney(i.paidAmount));
@@ -308,7 +313,7 @@ export function InvoiceListClient({
     const soaPendingCount = all.filter(
       (i) => !i.soaVerified && i.status !== "draft" && i.status !== "cancelled",
     ).length;
-    return { total: all.length, totalBilled, outstanding, overdueCount, soaPendingCount };
+    return { total: all.length, totalBilled, totalCollected, outstanding, overdueCount, soaPendingCount };
   }, [initialInvoices]);
 
   // Footer totals for visible rows
@@ -406,7 +411,7 @@ export function InvoiceListClient({
         />
         <Stat
           label="Collected"
-          value={`MYR ${fmtMoney(stats.totalPaid.toFixed(2))}`}
+          value={`MYR ${fmtMoney(stats.totalCollected.toFixed(2))}`}
           color="text-green-600 dark:text-green-400"
         />
         <Stat
