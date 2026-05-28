@@ -672,6 +672,11 @@ export function InvoiceListClient({
                       {/* Status */}
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <StatusBadge status={inv.status} />
+                        {inv.paidAt && (
+                          <div className="text-[10px] text-muted-foreground mt-0.5">
+                            {fmtDate(inv.paidAt)}
+                          </div>
+                        )}
                       </td>
 
                       {/* Billed */}
