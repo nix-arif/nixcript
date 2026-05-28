@@ -207,7 +207,7 @@ export function InvoiceListClient({
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("invoiceDate");
+  const [sortKey, setSortKey] = useState<SortKey>("customerPoNo");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [deleting, setDeleting] = useState<string | null>(null);
   const { isSwitchingOrg, setOrgSwitching } = useAppStore();
@@ -237,6 +237,8 @@ export function InvoiceListClient({
         inv.status.toLowerCase().includes(q) ||
         inv.caseType?.toLowerCase().includes(q) ||
         inv.mrnNo?.toLowerCase().includes(q) ||
+        inv.salesPersonName?.toLowerCase().includes(q) ||
+        inv.applicationSpecialistName?.toLowerCase().includes(q) ||
         inv.createdByName?.toLowerCase().includes(q)
       );
     });
@@ -527,6 +529,12 @@ export function InvoiceListClient({
                   <Th k="caseDate" className="hidden xl:table-cell">
                     Case
                   </Th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap hidden xl:table-cell">
+                    Sales Person
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap hidden xl:table-cell">
+                    App. Specialist
+                  </th>
                   <Th k="status">Status</Th>
                   <Th k="grandTotal" className="text-right">
                     Billed
@@ -669,6 +677,28 @@ export function InvoiceListClient({
                         )}
                       </td>
 
+                      {/* Sales Person */}
+                      <td className="px-3 py-2.5 hidden xl:table-cell">
+                        {inv.salesPersonName ? (
+                          <span className="text-xs">
+                            <Highlight text={inv.salesPersonName} query={search} />
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/40">—</span>
+                        )}
+                      </td>
+
+                      {/* Application Specialist */}
+                      <td className="px-3 py-2.5 hidden xl:table-cell">
+                        {inv.applicationSpecialistName ? (
+                          <span className="text-xs">
+                            <Highlight text={inv.applicationSpecialistName} query={search} />
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/40">—</span>
+                        )}
+                      </td>
+
                       {/* Status */}
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <StatusBadge status={inv.status} />
@@ -788,7 +818,7 @@ export function InvoiceListClient({
               <tfoot>
                 <tr className="bg-muted/20 border-t border-border">
                   <td
-                    colSpan={7}
+                    colSpan={9}
                     className="px-3 py-2.5 text-xs font-medium text-muted-foreground"
                   >
                     {sorted.length} invoice{sorted.length !== 1 ? "s" : ""}

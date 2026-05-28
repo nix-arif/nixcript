@@ -1615,6 +1615,10 @@ export const invoice = pgTable(
     salesPersonId: text("sales_person_id").references(() => user.id),
     salesPersonName: text("sales_person_name"),
 
+    // Application specialist (field support / case attendance)
+    applicationSpecialistId: text("application_specialist_id").references(() => user.id),
+    applicationSpecialistName: text("application_specialist_name"),
+
     // Selling side — what we bill the customer
     subtotal: text("subtotal").notNull().default("0"),
     overallDiscountPct: text("overall_discount_pct").default("0"),
