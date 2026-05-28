@@ -98,10 +98,9 @@ function StatusBadge({ status }: { status: string }) {
 
 type SortKey =
   | "invoiceNo"
-  | "invoiceDate"
+  | "customerPoNo"
   | "customer"
   | "hospital"
-  | "customerPoNo"
   | "status"
   | "grandTotal"
   | "outstanding"
@@ -253,12 +252,6 @@ export function InvoiceListClient({
       switch (sortKey) {
         case "invoiceNo":
           return dir * a.invoiceNo.localeCompare(b.invoiceNo);
-        case "invoiceDate":
-          return (
-            dir *
-            (new Date(a.invoiceDate).getTime() -
-              new Date(b.invoiceDate).getTime())
-          );
         case "customer":
           return dir * (snapA?.name ?? "").localeCompare(snapB?.name ?? "");
         case "hospital":
@@ -528,10 +521,7 @@ export function InvoiceListClient({
                     #
                   </th>
                   <Th k="invoiceNo">Invoice No.</Th>
-                  <Th k="invoiceDate">Date</Th>
-                  <Th k="customerPoNo" className="hidden md:table-cell">
-                    Customer PO
-                  </Th>
+                  <Th k="customerPoNo">Customer PO</Th>
                   <Th k="customer">Customer</Th>
                   <Th k="hospital">Hospital</Th>
                   <Th k="caseDate" className="hidden xl:table-cell">
@@ -605,20 +595,18 @@ export function InvoiceListClient({
                         )}
                       </td>
 
-                      {/* Customer PO */}
-                      <td className="px-3 py-2.5 hidden md:table-cell">
+                      {/* Customer PO + Invoice Date */}
+                      <td className="px-3 py-2.5">
                         {inv.customerPoNo ? (
-                          <span className="font-mono text-xs text-muted-foreground">
+                          <span className="font-mono text-xs font-medium text-foreground">
                             <Highlight text={inv.customerPoNo} query={search} />
                           </span>
                         ) : (
                           <span className="text-xs text-muted-foreground/40">—</span>
                         )}
-                      </td>
-
-                      {/* Date */}
-                      <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                        {fmtDate(inv.invoiceDate)}
+                        <div className="text-[10px] text-muted-foreground whitespace-nowrap mt-0.5">
+                          {fmtDate(inv.invoiceDate)}
+                        </div>
                       </td>
 
                       {/* Customer */}
@@ -795,7 +783,7 @@ export function InvoiceListClient({
               <tfoot>
                 <tr className="bg-muted/20 border-t border-border">
                   <td
-                    colSpan={8}
+                    colSpan={7}
                     className="px-3 py-2.5 text-xs font-medium text-muted-foreground"
                   >
                     {sorted.length} invoice{sorted.length !== 1 ? "s" : ""}

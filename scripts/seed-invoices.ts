@@ -3,23 +3,22 @@
  *
  * Column mapping
  * ─────────────────────────────────────────────────────────────────────────────
- * INVOICE NO                 → invoiceNo
- * INVOICE DATE               → invoiceDate   (DD/MM/YY)
- * STATUS                     → status        (Paid→paid, Outstanding→sent, CANCELLED→cancelled)
- * PAYMENT DATE               → paidAt        (DD/MM/YY, only when paid)
- * PAYMENT REF                → paymentRef
- * TOTAL SO                   → grandTotal    (strip commas)
- * COMPANY                    → organizationId
- * LPO                        → customerPoNo
- * SALES ORDER NO             → salesOrderNo
- * INNOSYS BILL TO AFFIRMA    → notes         (cross-reference invoice no.)
- * SURGEON                    → customerId + customerSnapshot (name lookup)
- * HOSPITAL                   → customerSnapshot.organizationName (company lookup)
- * DATE                       → caseDate      (DD/MM/YY)
- * CASE                       → caseType
- * TIME                       → caseTime
- * MRN NO                     → mrnNo
- * SOA Status                 → soaVerified   (✔ = true)
+ * Col C  DATE                 → invoiceDate   (DD/MM/YY)
+ * Col D  HOSPITAL             → customerSnapshot.organizationName (company lookup)
+ * Col E  SURGEON              → customerId + customerSnapshot (name lookup)
+ * Col F  CASE                 → caseType
+ * Col G  TIME                 → caseTime
+ * Col I  MRN NO               → mrnNo
+ * Col J  SALES ORDER NO       → salesOrderNo
+ * Col K  TOTAL SO             → grandTotal    (strip commas)
+ * Col L  COMPANY              → organizationId
+ * Col M  INNOSYS BILL TO AFFIRMA → notes     (cross-reference invoice no.)
+ * Col N  LPO                  → customerPoNo
+ * Col P  INVOICE NO           → invoiceNo
+ * Col R  STATUS               → status        (Paid→paid, Outstanding→sent, CANCELLED→cancelled)
+ * Col S  PAYMENT DATE         → paidAt        (DD/MM/YY, receive payment date)
+ * Col T  PAYMENT REF          → paymentRef
+ * Col AD SOA Status           → soaVerified   (✔ = true)
  *
  * caseCommission (created when at least one field is non-null):
  *   ATTEND COMMISSION CLAIM BY → claimedBy
@@ -175,7 +174,8 @@ async function seed() {
     // ── Status & payment ──────────────────────────────────────────────────
     const statusRaw = str(r["STATUS"]) ?? "";
     const status    = mapStatus(statusRaw);
-    const paidAt    = status === "paid" ? toDate(r["PAYMENT DATE"]) ?? null : null;
+    // Column S = PAYMENT DATE = receive payment date — always read, null if blank
+    const paidAt    = toDate(r["PAYMENT DATE"]) ?? null;
 
     // ── Notes: cross-reference Innosys→Affirma invoice ───────────────────
     const billTo = str(r["INNOSYS BILL TO AFFIRMA"]);
@@ -185,7 +185,8 @@ async function seed() {
       id:               nanoid(),
       organizationId:   orgId,
       invoiceNo,
-      invoiceDate:      toDate(r["INVOICE DATE"]) ?? new Date(),
+      // Column C = DATE = invoice date per spreadsheet
+      invoiceDate:      toDate(r["DATE"]) ?? new Date(),
       customerId,
       customerSnapshot,
       customerPoNo:     str(r["LPO"]),
