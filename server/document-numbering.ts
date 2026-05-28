@@ -1,10 +1,10 @@
 "use server";
 
 import { db } from "@/db";
-import { documentNumberingSetting, member, organization } from "@/db/schema";
+import { documentNumberingSetting, organization } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { type DocType, DOC_TYPE_DEFAULTS } from "@/lib/document-numbering";
@@ -29,31 +29,14 @@ async function getSession() {
   return { session, orgId, userId: session.user.id };
 }
 
-async function getOwnerOrgId(userId: string, currentOrgId: string): Promise<string> {
-  const [ownerMember] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
-    .limit(1);
-  if (!ownerMember) return currentOrgId;
-  const [primaryOrg] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
-    .orderBy(asc(member.createdAt))
-    .limit(1);
-  return primaryOrg?.organizationId ?? currentOrgId;
-}
-
 // ── Queries ──────────────────────────────────────────────────────────────────
 
 export async function getDocumentNumberingSettings(): Promise<NumberingSetting[]> {
-  const { orgId, userId } = await getSession();
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
+  const { orgId } = await getSession();
   return db
     .select()
     .from(documentNumberingSetting)
-    .where(eq(documentNumberingSetting.organizationId, ownerOrgId));
+    .where(eq(documentNumberingSetting.organizationId, orgId));
 }
 
 // Used inside other server actions — no auth check, orgId already resolved.
@@ -104,13 +87,8 @@ export async function upsertDocumentNumberingSettings(
   settings: Pick<NumberingConfig, "documentType" | "prefix" | "docCode" | "separator" | "includeYear" | "paddingLength" | "numberFormat">[],
 ): Promise<void> {
   const { orgId, userId } = await getSession();
-  const perms = await import("@/lib/permissions/get-user-permissions").then((m) =>
-    m.getUserPermissions(userId, orgId),
-  );
-  const { hasAccess } = await import("@/lib/permissions/has-access");
+  const perms = await getUserPermissions(userId, orgId);
   if (!hasAccess(perms, "organization:update")) throw new Error("Forbidden");
-
-  const ownerOrgId = await getOwnerOrgId(userId, orgId);
 
   for (const s of settings) {
     const existing = await db
@@ -118,7 +96,7 @@ export async function upsertDocumentNumberingSettings(
       .from(documentNumberingSetting)
       .where(
         and(
-          eq(documentNumberingSetting.organizationId, ownerOrgId),
+          eq(documentNumberingSetting.organizationId, orgId),
           eq(documentNumberingSetting.documentType, s.documentType),
         ),
       )
@@ -139,7 +117,7 @@ export async function upsertDocumentNumberingSettings(
     } else {
       await db.insert(documentNumberingSetting).values({
         id: nanoid(),
-        organizationId: ownerOrgId,
+        organizationId: orgId,
         documentType: s.documentType,
         prefix: s.prefix,
         docCode: s.docCode,
