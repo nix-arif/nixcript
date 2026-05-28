@@ -293,6 +293,16 @@ export async function getCustomerPoForTracking(id: string): Promise<CustomerPoTr
 
 export type PaymentStatus = "none" | "unpaid" | "partial" | "paid" | "overdue";
 
+export interface CustomerPoSummaryInvoice {
+  id: string;
+  invoiceNo: string;
+  status: string;
+  grandTotal: string;
+  paidAmount: string | null;
+  dueDate: Date | null;
+  createdAt: Date;
+}
+
 export interface CustomerPoSummaryRow {
   cpo: CustomerPo;
   soNo: string | null;
@@ -301,9 +311,7 @@ export interface CustomerPoSummaryRow {
   internalPoCount: number;
   doTotal: number;
   doDelivered: number;
-  invoiceNo: string | null;   // first invoice no (most recent)
-  invoiceId: string | null;
-  invoiceStatus: string | null;
+  invoices: CustomerPoSummaryInvoice[];   // all invoices linked to this CPO
   invoiceTotal: number;
   paidAmount: number;
   paymentStatus: PaymentStatus;
@@ -402,7 +410,6 @@ export async function getCustomerPoSummary(): Promise<CustomerPoSummaryRow[]> {
       else                                               paymentStatus = "unpaid";
     }
 
-    const latestInv = invs[0] ?? null;
     const latestDue = invs.reduce<Date | null>((d, i) => {
       if (!i.dueDate) return d;
       const dt = new Date(i.dueDate);
@@ -417,9 +424,15 @@ export async function getCustomerPoSummary(): Promise<CustomerPoSummaryRow[]> {
       internalPoCount: poCountByCpo.get(cpo.id) ?? 0,
       doTotal:       dos.length,
       doDelivered,
-      invoiceNo:     latestInv?.invoiceNo ?? null,
-      invoiceId:     latestInv?.id ?? null,
-      invoiceStatus: latestInv?.status ?? null,
+      invoices: invs.map((i) => ({
+        id:          i.id,
+        invoiceNo:   i.invoiceNo,
+        status:      i.status,
+        grandTotal:  i.grandTotal,
+        paidAmount:  i.paidAmount,
+        dueDate:     i.dueDate,
+        createdAt:   i.createdAt,
+      })),
       invoiceTotal,
       paidAmount,
       paymentStatus,

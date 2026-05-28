@@ -92,7 +92,7 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
         snap?.name?.toLowerCase().includes(q) ||
         snap?.organizationName?.toLowerCase().includes(q) ||
         r.soNo?.toLowerCase().includes(q) ||
-        r.invoiceNo?.toLowerCase().includes(q) ||
+        r.invoices.some((inv) => inv.invoiceNo.toLowerCase().includes(q)) ||
         r.cpo.quotationNo?.toLowerCase().includes(q)
       );
     });
@@ -124,11 +124,10 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
   }, [filtered, sortKey, sortDir]);
 
   // ── Stats ──────────────────────────────────────────────────────────────
-  const totalAmt  = rows.reduce((s, r) => s + Number(r.cpo.amount), 0);
-  const totalInv  = rows.reduce((s, r) => s + r.invoiceTotal, 0);
-  const totalPaid = rows.reduce((s, r) => s + r.paidAmount, 0);
+  const totalAmt      = rows.reduce((s, r) => s + Number(r.cpo.amount), 0);
+  const totalInv      = rows.reduce((s, r) => s + r.invoiceTotal, 0);
+  const totalPaid     = rows.reduce((s, r) => s + r.paidAmount, 0);
   const overdueCount  = rows.filter((r) => r.paymentStatus === "overdue").length;
-  const fulfilledCount = rows.filter((r) => r.cpo.status === "fulfilled").length;
 
   return (
     <div className="p-6 space-y-5">
@@ -146,16 +145,15 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
       {/* ── Stats strip ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Total CPOs",  value: rows.length.toString() },
-          { label: "CPO Value",   value: fmtAmt(totalAmt) },
-          { label: "Outstanding", value: fmtAmt(totalInv - totalPaid), highlight: totalInv - totalPaid > 0 },
-          { label: "Overdue",     value: overdueCount.toString(), warn: overdueCount > 0 },
+          { label: "Total CPOs",   value: rows.length.toString() },
+          { label: "CPO Value",    value: fmtAmt(totalAmt) },
+          { label: "Outstanding",  value: fmtAmt(totalInv - totalPaid), highlight: totalInv - totalPaid > 0 },
+          { label: "Overdue",      value: overdueCount.toString(), warn: overdueCount > 0 },
         ].map(({ label, value, highlight, warn }) => (
           <div key={label} className="border border-border rounded-xl px-4 py-3">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">{label}</p>
             <p className={cn("text-sm font-semibold tabular-nums",
-              warn && overdueCount > 0 ? "text-red-600 dark:text-red-400" :
-              highlight ? "text-foreground" : "text-foreground",
+              warn && overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-foreground",
             )}>{value}</p>
           </div>
         ))}
@@ -196,7 +194,7 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
                 <Th sort={{ col: "so", active: sortKey, dir: sortDir, toggle: toggleSort }}>Sales Order</Th>
                 <Th>Int. PO</Th>
                 <Th sort={{ col: "do", active: sortKey, dir: sortDir, toggle: toggleSort }}>Delivery</Th>
-                <Th sort={{ col: "invoice", active: sortKey, dir: sortDir, toggle: toggleSort }}>Invoice</Th>
+                <Th sort={{ col: "invoice", active: sortKey, dir: sortDir, toggle: toggleSort }}>Invoices</Th>
                 <Th sort={{ col: "payment", active: sortKey, dir: sortDir, toggle: toggleSort }} right>Payment</Th>
                 <Th right>Outstanding</Th>
               </tr>
@@ -210,11 +208,10 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
                 </tr>
               ) : (
                 sorted.map((r, i) => {
-                  const snap       = r.cpo.customerSnapshot as any;
-                  const cpoStatus  = CPO_STATUS[r.cpo.status] ?? CPO_STATUS.received;
-                  const soStatus   = r.soStatus ? (SO_STATUS[r.soStatus] ?? SO_STATUS.draft) : null;
-                  const invStatus  = r.invoiceStatus ? (INV_STATUS[r.invoiceStatus] ?? INV_STATUS.draft) : null;
-                  const payStatus  = PAY_STATUS[r.paymentStatus];
+                  const snap      = r.cpo.customerSnapshot as any;
+                  const cpoStatus = CPO_STATUS[r.cpo.status] ?? CPO_STATUS.received;
+                  const soStatus  = r.soStatus ? (SO_STATUS[r.soStatus] ?? SO_STATUS.draft) : null;
+                  const payStatus = PAY_STATUS[r.paymentStatus];
                   const outstanding = r.invoiceTotal - r.paidAmount;
 
                   return (
@@ -305,20 +302,31 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
                         )}
                       </Td>
 
-                      {/* Invoice */}
+                      {/* Invoices — full list, each clickable */}
                       <Td>
-                        {r.invoiceNo && invStatus ? (
-                          <div
-                            className="flex items-center gap-1.5 group"
-                            onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/sales/invoice/${r.invoiceId}`); }}
-                          >
-                            <span className="font-mono group-hover:underline cursor-pointer">
-                              <Highlight text={r.invoiceNo} query={search} />
-                            </span>
-                            <Badge label={invStatus.label} cls={invStatus.cls} />
-                          </div>
-                        ) : (
+                        {r.invoices.length === 0 ? (
                           <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <div className="space-y-1">
+                            {r.invoices.map((inv) => {
+                              const invStatus = INV_STATUS[inv.status] ?? INV_STATUS.draft;
+                              return (
+                                <div
+                                  key={inv.id}
+                                  className="flex items-center gap-1.5 group"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    router.push(`/dashboard/fulfillment/invoice/${inv.id}`);
+                                  }}
+                                >
+                                  <span className="font-mono group-hover:underline cursor-pointer">
+                                    <Highlight text={inv.invoiceNo} query={search} />
+                                  </span>
+                                  <Badge label={invStatus.label} cls={invStatus.cls} />
+                                </div>
+                              );
+                            })}
+                          </div>
                         )}
                       </Td>
 
@@ -366,9 +374,7 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
                     {fmtAmt(sorted.reduce((s, r) => s + Number(r.cpo.amount), 0))}
                   </td>
                   <td colSpan={4} />
-                  <td className="px-3 py-2.5 text-xs font-semibold text-right tabular-nums font-mono text-muted-foreground">
-                    {/* Payment col — blank */}
-                  </td>
+                  <td className="px-3 py-2.5 text-xs font-semibold text-right tabular-nums font-mono text-muted-foreground" />
                   <td className="px-3 py-2.5 text-xs font-semibold text-right tabular-nums font-mono">
                     {(() => {
                       const out = sorted.reduce((s, r) => s + Math.max(0, r.invoiceTotal - r.paidAmount), 0);
