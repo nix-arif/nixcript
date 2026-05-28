@@ -104,12 +104,13 @@ export function OrganizationSwitcher() {
       });
   }, [activeOrganization, organizationList, isActivePending, isListPending]);
 
-  // Clear optimistic state only once the real activeOrganization has caught up
+  // Clear optimistic state + org-switch loading once the real activeOrganization has caught up
   React.useEffect(() => {
     if (pendingOrgId && activeOrganization?.id === pendingOrgId) {
       setPendingOrgId(null);
+      setOrgSwitching(false); // signals NavigationLoader to dismiss the skeleton
     }
-  }, [activeOrganization?.id, pendingOrgId]);
+  }, [activeOrganization?.id, pendingOrgId, setOrgSwitching]);
 
   const handleSwitchOrg = useCallback((organizationId: string) => {
     if (!activeOrganization) return;

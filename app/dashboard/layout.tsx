@@ -1,6 +1,7 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { DashboardBreadcrumb } from "@/components/dashboard-breadcrumb";
 import { NotificationCenter } from "@/components/notification-center";
+import { NavigationLoader } from "./_navigation-loader";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
@@ -48,7 +49,7 @@ export default async function DashboardLayout({
           </div>
         </header>
         <div className="flex flex-1 flex-col min-h-0">
-          {children}
+          <NavigationLoader>{children}</NavigationLoader>
         </div>
       </SidebarInset>
     </SidebarProvider>
