@@ -8,16 +8,43 @@ export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string
   inv: { docCode: "INV", label: "Invoice" },
 };
 
+export type NumberFormat = "standard" | "compact";
+
+export interface NumberingConfig {
+  prefix: string;
+  docCode: string;
+  separator: string;
+  includeYear: number;
+  paddingLength: number;
+  numberFormat?: string;
+}
+
+/**
+ * standard  →  INV-SI-2026-0001   (doc code · company code · year · counter, same separator)
+ * compact   →  INVSI/26-0001      (doc code + company code concatenated, slash, 2-digit year, dash)
+ */
 export function buildDocumentNo(
-  cfg: { prefix: string; docCode: string; separator: string; includeYear: number; paddingLength: number },
+  cfg: NumberingConfig,
   year: number,
   nextNo: number,
 ): string {
+  const counter = String(nextNo).padStart(cfg.paddingLength, "0");
+
+  if (cfg.numberFormat === "compact") {
+    // INVSI/26-0001
+    const code = cfg.docCode + (cfg.prefix ?? "");
+    const yy = String(year).slice(-2);
+    return cfg.includeYear
+      ? `${code}/${yy}-${counter}`
+      : `${code}-${counter}`;
+  }
+
+  // standard: INV-SI-2026-0001
   const sep = cfg.separator || "-";
   const parts: string[] = [];
-  if (cfg.prefix) parts.push(cfg.prefix);
   parts.push(cfg.docCode);
+  if (cfg.prefix) parts.push(cfg.prefix);
   if (cfg.includeYear) parts.push(String(year));
-  parts.push(String(nextNo).padStart(cfg.paddingLength, "0"));
+  parts.push(counter);
   return parts.join(sep);
 }

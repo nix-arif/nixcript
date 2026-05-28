@@ -18,6 +18,7 @@ export interface NumberingConfig {
   separator: string;
   includeYear: number;
   paddingLength: number;
+  numberFormat: string;
 }
 
 async function getSession() {
@@ -76,6 +77,7 @@ export async function getNumberingConfig(orgId: string, docType: DocType): Promi
       separator: row.separator,
       includeYear: row.includeYear,
       paddingLength: row.paddingLength,
+      numberFormat: row.numberFormat ?? "standard",
     };
   }
 
@@ -92,13 +94,14 @@ export async function getNumberingConfig(orgId: string, docType: DocType): Promi
     separator: "-",
     includeYear: 1,
     paddingLength: 4,
+    numberFormat: "standard",
   };
 }
 
 // ── Mutations ────────────────────────────────────────────────────────────────
 
 export async function upsertDocumentNumberingSettings(
-  settings: Pick<NumberingConfig, "documentType" | "prefix" | "docCode" | "separator" | "includeYear" | "paddingLength">[],
+  settings: Pick<NumberingConfig, "documentType" | "prefix" | "docCode" | "separator" | "includeYear" | "paddingLength" | "numberFormat">[],
 ): Promise<void> {
   const { orgId, userId } = await getSession();
   const perms = await import("@/lib/permissions/get-user-permissions").then((m) =>
@@ -130,6 +133,7 @@ export async function upsertDocumentNumberingSettings(
           separator: s.separator,
           includeYear: s.includeYear,
           paddingLength: s.paddingLength,
+          numberFormat: s.numberFormat,
         })
         .where(eq(documentNumberingSetting.id, existing[0].id));
     } else {
@@ -142,6 +146,7 @@ export async function upsertDocumentNumberingSettings(
         separator: s.separator,
         includeYear: s.includeYear,
         paddingLength: s.paddingLength,
+        numberFormat: s.numberFormat,
       });
     }
   }

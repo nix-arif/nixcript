@@ -21,6 +21,7 @@ interface NumberingState {
   separator: string;
   includeYear: boolean;
   paddingLength: number;
+  numberFormat: "standard" | "compact";
 }
 
 function makeDefaultNumberingState(
@@ -34,6 +35,7 @@ function makeDefaultNumberingState(
     separator:     existing?.separator     ?? "-",
     includeYear:   existing ? existing.includeYear === 1 : true,
     paddingLength: existing?.paddingLength ?? 4,
+    numberFormat:  (existing?.numberFormat as "standard" | "compact") ?? "standard",
   };
 }
 
@@ -189,6 +191,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
             separator:     numbering[dt].separator || "-",
             includeYear:   numbering[dt].includeYear ? 1 : 0,
             paddingLength: numbering[dt].paddingLength,
+            numberFormat:  numbering[dt].numberFormat,
           })),
         ),
         upsertOrganizationProfile({
@@ -845,33 +848,78 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
                   },
                   now.getFullYear(), 1,
                 );
+                // Build previews for each format option
+                const previewStd = buildDocumentNo(
+                  { prefix: s.prefix.trim() || "SI", docCode: s.docCode.trim() || DOC_TYPE_DEFAULTS[dt].docCode,
+                    separator: s.separator || "-", includeYear: s.includeYear ? 1 : 0,
+                    paddingLength: s.paddingLength, numberFormat: "standard" },
+                  now.getFullYear(), 1,
+                );
+                const previewCmp = buildDocumentNo(
+                  { prefix: s.prefix.trim() || "SI", docCode: s.docCode.trim() || DOC_TYPE_DEFAULTS[dt].docCode,
+                    separator: s.separator || "-", includeYear: s.includeYear ? 1 : 0,
+                    paddingLength: s.paddingLength, numberFormat: "compact" },
+                  now.getFullYear(), 1,
+                );
+
                 return (
                   <div key={dt} className="border border-border rounded-xl overflow-hidden">
+                    {/* Header */}
                     <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border">
                       <span className="text-xs font-semibold">{DOC_TYPE_DEFAULTS[dt].label}</span>
                       <span className="font-mono text-xs px-2 py-0.5 rounded border bg-background border-border">{previewNo}</span>
                     </div>
-                    <div className="p-3 grid grid-cols-2 gap-2">
-                      <div>
-                        <p className="text-[10px] text-muted-foreground mb-1">Prefix</p>
-                        <Input value={s.prefix} onChange={(e) => updateNumbering(dt, { prefix: e.target.value })}
-                          placeholder="e.g. BMS" className="h-7 text-xs font-mono" maxLength={10} />
+
+                    {/* Format picker */}
+                    <div className="px-3 pt-3 pb-1">
+                      <p className="text-[10px] text-muted-foreground mb-1.5">Format</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {([
+                          { id: "standard", label: "Standard", preview: previewStd, desc: "Separated parts" },
+                          { id: "compact",  label: "Compact",  preview: previewCmp, desc: "Concatenated + slash" },
+                        ] as const).map((f) => {
+                          const active = s.numberFormat === f.id;
+                          return (
+                            <button
+                              key={f.id} type="button"
+                              onClick={() => updateNumbering(dt, { numberFormat: f.id })}
+                              className={cn(
+                                "text-left border rounded-lg px-3 py-2 transition-colors",
+                                active ? "border-primary bg-primary/5" : "border-border hover:bg-muted/20",
+                              )}
+                            >
+                              <p className={cn("text-[10px] font-medium mb-0.5", active ? "text-primary" : "text-foreground")}>{f.label}</p>
+                              <p className="font-mono text-[11px] tabular-nums text-muted-foreground">{f.preview}</p>
+                            </button>
+                          );
+                        })}
                       </div>
+                    </div>
+
+                    {/* Fields */}
+                    <div className="p-3 grid grid-cols-2 gap-2">
                       <div>
                         <p className="text-[10px] text-muted-foreground mb-1">Doc code</p>
                         <Input value={s.docCode} onChange={(e) => updateNumbering(dt, { docCode: e.target.value.toUpperCase() })}
                           placeholder={DOC_TYPE_DEFAULTS[dt].docCode} className="h-7 text-xs font-mono" maxLength={6} />
                       </div>
                       <div>
-                        <p className="text-[10px] text-muted-foreground mb-1">Separator</p>
-                        <select value={s.separator} onChange={(e) => updateNumbering(dt, { separator: e.target.value })}
-                          className="w-full h-7 rounded-md border border-border bg-background px-2 text-xs font-mono">
-                          <option value="-">- hyphen</option>
-                          <option value="/">/ slash</option>
-                          <option value=".">. dot</option>
-                          <option value="">none</option>
-                        </select>
+                        <p className="text-[10px] text-muted-foreground mb-1">Company code</p>
+                        <Input value={s.prefix} onChange={(e) => updateNumbering(dt, { prefix: e.target.value })}
+                          placeholder="e.g. SI" className="h-7 text-xs font-mono" maxLength={10} />
                       </div>
+                      {s.numberFormat === "standard" && (
+                        <div>
+                          <p className="text-[10px] text-muted-foreground mb-1">Separator</p>
+                          <select value={s.separator} onChange={(e) => updateNumbering(dt, { separator: e.target.value })}
+                            className="w-full h-7 rounded-md border border-border bg-background px-2 text-xs font-mono">
+                            <option value="-">- hyphen</option>
+                            <option value="/">/ slash</option>
+                            <option value=".">. dot</option>
+                            <option value="">none</option>
+                          </select>
+                        </div>
+                      )}
                       <div>
                         <p className="text-[10px] text-muted-foreground mb-1">Counter digits</p>
                         <select value={s.paddingLength} onChange={(e) => updateNumbering(dt, { paddingLength: parseInt(e.target.value) })}

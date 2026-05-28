@@ -1822,6 +1822,7 @@ export const documentNumberingSetting = pgTable(
     separator: text("separator").notNull().default("-"),
     includeYear: integer("include_year").notNull().default(1), // 1 = yes, 0 = no
     paddingLength: integer("padding_length").notNull().default(4),
+    numberFormat: text("number_format").notNull().default("standard"), // "standard" | "compact"
     updatedAt: timestamp("updated_at")
       .defaultNow()
       .$onUpdate(() => new Date())
