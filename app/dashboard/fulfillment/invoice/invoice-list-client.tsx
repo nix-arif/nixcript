@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { deleteInvoice, type InvoiceListRow } from "@/server/invoice";
@@ -10,35 +10,186 @@ import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
-  PlusIcon, SearchIcon, XIcon, ReceiptIcon,
-  PencilIcon, TrashIcon, UserIcon, BuildingIcon, CalendarIcon,
+  PlusIcon,
+  SearchIcon,
+  XIcon,
+  ReceiptIcon,
+  PencilIcon,
+  TrashIcon,
+  ChevronUpIcon,
+  ChevronDownIcon,
+  ChevronsUpDownIcon,
+  CheckCircle2Icon,
+  CircleIcon,
+  AlertCircleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// ── Formatters ─────────────────────────────────────────────────────────────
+
 const fmtDate = (d: Date | string | null | undefined) =>
-  d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+  d
+    ? new Date(d).toLocaleDateString("en-MY", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      })
+    : "—";
 
 const fmtMoney = (v: string | null | undefined) =>
-  v ? parseFloat(v).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
+  v
+    ? parseFloat(v).toLocaleString("en-MY", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+    : "0.00";
 
-const INV_STATUS: Record<string, { label: string; className: string }> = {
-  draft:     { label: "Draft",     className: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400" },
-  sent:      { label: "Sent",      className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
-  paid:      { label: "Paid",      className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
-  overdue:   { label: "Overdue",   className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
-  cancelled: { label: "Cancelled", className: "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-500" },
+const parseMoney = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
+
+// ── Status config ──────────────────────────────────────────────────────────
+
+const INV_STATUS: Record<
+  string,
+  { label: string; cls: string; dot: string }
+> = {
+  draft: {
+    label: "Draft",
+    cls: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400",
+    dot: "bg-zinc-400",
+  },
+  sent: {
+    label: "Sent",
+    cls: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400",
+    dot: "bg-blue-500",
+  },
+  paid: {
+    label: "Paid",
+    cls: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400",
+    dot: "bg-green-500",
+  },
+  overdue: {
+    label: "Overdue",
+    cls: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400",
+    dot: "bg-red-500",
+  },
+  cancelled: {
+    label: "Cancelled",
+    cls: "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-500",
+    dot: "bg-zinc-300",
+  },
 };
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = INV_STATUS[status] ?? INV_STATUS.draft;
-  return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5",
+        cfg.cls,
+      )}
+    >
+      <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
+      {cfg.label}
+    </span>
+  );
 }
 
-function ProfitBadge({ profit }: { profit: string | null | undefined }) {
-  const val = parseFloat(profit ?? "0");
-  const cls = val >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400";
-  return <span className={cn("text-[11px] font-mono tabular-nums", cls)}>{val >= 0 ? "+" : ""}{val.toFixed(2)}</span>;
+// ── Sort ──────────────────────────────────────────────────────────────────
+
+type SortKey =
+  | "invoiceNo"
+  | "invoiceDate"
+  | "customer"
+  | "hospital"
+  | "status"
+  | "grandTotal"
+  | "paidAmount"
+  | "outstanding"
+  | "dueDate"
+  | "caseDate";
+
+function SortIcon({
+  col,
+  active,
+  dir,
+}: {
+  col: SortKey;
+  active: SortKey;
+  dir: "asc" | "desc";
+}) {
+  if (col !== active)
+    return <ChevronsUpDownIcon className="w-3 h-3 text-muted-foreground/40" />;
+  return dir === "asc" ? (
+    <ChevronUpIcon className="w-3 h-3 text-foreground" />
+  ) : (
+    <ChevronDownIcon className="w-3 h-3 text-foreground" />
+  );
 }
+
+// ── Stat card ─────────────────────────────────────────────────────────────
+
+function Stat({
+  label,
+  value,
+  sub,
+  color,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  color?: string;
+}) {
+  return (
+    <div className="bg-background border border-border rounded-xl px-4 py-3 flex flex-col gap-0.5 min-w-0">
+      <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium truncate">
+        {label}
+      </span>
+      <span className={cn("text-xl font-semibold tabular-nums truncate", color)}>
+        {value}
+      </span>
+      {sub && (
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          {sub}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Skeleton ──────────────────────────────────────────────────────────────
+
+function TableSkeleton() {
+  return (
+    <div className="border border-border rounded-xl overflow-hidden">
+      <table className="w-full text-sm">
+        <tbody>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <tr key={i} className="border-b border-border last:border-0">
+              {Array.from({ length: 10 }).map((_, j) => (
+                <td key={j} className="px-3 py-3">
+                  <div className="h-3 bg-muted rounded animate-pulse" />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Status filter pills ────────────────────────────────────────────────────
+
+const STATUS_FILTERS = [
+  { value: "", label: "All" },
+  { value: "draft", label: "Draft" },
+  { value: "sent", label: "Sent" },
+  { value: "overdue", label: "Overdue" },
+  { value: "paid", label: "Paid" },
+  { value: "cancelled", label: "Cancelled" },
+];
+
+// ── Main component ─────────────────────────────────────────────────────────
 
 const EDITABLE_STATUSES = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
@@ -49,31 +200,162 @@ interface Props {
   currentUserId: string;
 }
 
-export function InvoiceListClient({ initialInvoices, permissions, currentUserId }: Props) {
+export function InvoiceListClient({
+  initialInvoices,
+  permissions,
+  currentUserId,
+}: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("invoiceDate");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [deleting, setDeleting] = useState<string | null>(null);
   const { isSwitchingOrg, setOrgSwitching } = useAppStore();
 
-  const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+  const can = (p: string) =>
+    permissions.includes("*") || permissions.includes(p);
 
-  useEffect(() => { setOrgSwitching(false); }, [initialInvoices]);
+  useEffect(() => {
+    setOrgSwitching(false);
+  }, [initialInvoices]);
 
-  const filtered = initialInvoices.filter((inv) => {
-    if (!search) return true;
-    const s = search.toLowerCase();
-    const snap = inv.customerSnapshot as any;
-    return (
-      inv.invoiceNo.toLowerCase().includes(s) ||
-      snap?.name?.toLowerCase().includes(s) ||
-      snap?.organizationName?.toLowerCase().includes(s) ||
-      inv.salesPersonName?.toLowerCase().includes(s) ||
-      inv.customerPoNo?.toLowerCase().includes(s) ||
-      inv.salesOrderNo?.toLowerCase().includes(s) ||
-      inv.status.toLowerCase().includes(s) ||
-      inv.createdByName?.toLowerCase().includes(s)
-    );
-  });
+  // ── Search + status filter ────────────────────────────────────────────
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return initialInvoices.filter((inv) => {
+      const snap = inv.customerSnapshot as any;
+      if (statusFilter && inv.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
+        inv.invoiceNo.toLowerCase().includes(q) ||
+        snap?.name?.toLowerCase().includes(q) ||
+        snap?.organizationName?.toLowerCase().includes(q) ||
+        inv.salesPersonName?.toLowerCase().includes(q) ||
+        inv.customerPoNo?.toLowerCase().includes(q) ||
+        inv.salesOrderNo?.toLowerCase().includes(q) ||
+        inv.status.toLowerCase().includes(q) ||
+        inv.caseType?.toLowerCase().includes(q) ||
+        inv.mrnNo?.toLowerCase().includes(q) ||
+        inv.createdByName?.toLowerCase().includes(q)
+      );
+    });
+  }, [initialInvoices, search, statusFilter]);
+
+  // ── Sort ──────────────────────────────────────────────────────────────
+
+  const sorted = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      const snapA = a.customerSnapshot as any;
+      const snapB = b.customerSnapshot as any;
+      switch (sortKey) {
+        case "invoiceNo":
+          return dir * a.invoiceNo.localeCompare(b.invoiceNo);
+        case "invoiceDate":
+          return (
+            dir *
+            (new Date(a.invoiceDate).getTime() -
+              new Date(b.invoiceDate).getTime())
+          );
+        case "customer":
+          return dir * (snapA?.name ?? "").localeCompare(snapB?.name ?? "");
+        case "hospital":
+          return (
+            dir *
+            (snapA?.organizationName ?? "").localeCompare(
+              snapB?.organizationName ?? "",
+            )
+          );
+        case "status":
+          return dir * a.status.localeCompare(b.status);
+        case "grandTotal":
+          return dir * (parseMoney(a.grandTotal) - parseMoney(b.grandTotal));
+        case "paidAmount":
+          return (
+            dir * (parseMoney(a.paidAmount) - parseMoney(b.paidAmount))
+          );
+        case "outstanding": {
+          const outA =
+            parseMoney(a.grandTotal) - parseMoney(a.paidAmount);
+          const outB =
+            parseMoney(b.grandTotal) - parseMoney(b.paidAmount);
+          return dir * (outA - outB);
+        }
+        case "dueDate": {
+          const da = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+          const db_ = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+          return dir * (da - db_);
+        }
+        case "caseDate": {
+          const ca = a.caseDate ? new Date(a.caseDate).getTime() : 0;
+          const cb = b.caseDate ? new Date(b.caseDate).getTime() : 0;
+          return dir * (ca - cb);
+        }
+        default:
+          return 0;
+      }
+    });
+  }, [filtered, sortKey, sortDir]);
+
+  // ── Stats ─────────────────────────────────────────────────────────────
+
+  const stats = useMemo(() => {
+    const all = initialInvoices;
+    const totalBilled = all.reduce((s, i) => s + parseMoney(i.grandTotal), 0);
+    const totalPaid = all.reduce((s, i) => s + parseMoney(i.paidAmount), 0);
+    const outstanding = totalBilled - totalPaid;
+    const overdueCount = all.filter((i) => i.status === "overdue").length;
+    const soaPendingCount = all.filter(
+      (i) => !i.soaVerified && i.status !== "draft" && i.status !== "cancelled",
+    ).length;
+    return { total: all.length, totalBilled, totalPaid, outstanding, overdueCount, soaPendingCount };
+  }, [initialInvoices]);
+
+  // Footer totals for visible rows
+  const footerTotals = useMemo(() => {
+    const billed = sorted.reduce((s, i) => s + parseMoney(i.grandTotal), 0);
+    const paid = sorted.reduce((s, i) => s + parseMoney(i.paidAmount), 0);
+    const out = billed - paid;
+    return { billed, paid, out };
+  }, [sorted]);
+
+  // ── Sort handler ──────────────────────────────────────────────────────
+
+  const handleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  };
+
+  const Th = ({
+    k,
+    children,
+    className,
+  }: {
+    k: SortKey;
+    children: React.ReactNode;
+    className?: string;
+  }) => (
+    <th
+      className={cn(
+        "px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-foreground transition-colors",
+        className,
+      )}
+      onClick={() => handleSort(k)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {children}
+        <SortIcon col={k} active={sortKey} dir={sortDir} />
+      </span>
+    </th>
+  );
+
+  // ── Delete ────────────────────────────────────────────────────────────
 
   async function handleDelete(id: string, invoiceNo: string) {
     if (!confirm(`Delete ${invoiceNo}? This cannot be undone.`)) return;
@@ -89,149 +371,472 @@ export function InvoiceListClient({ initialInvoices, permissions, currentUserId 
     }
   }
 
+  // ── Render ────────────────────────────────────────────────────────────
+
   return (
-    <div className="p-6">
+    <div className="p-6 space-y-5">
       <PageHeader
         title="Invoices"
         description="Tax invoices and billing records"
         action={
           can("invoice:create") && (
-            <Button onClick={() => router.push("/dashboard/fulfillment/invoice/create")} className="gap-2">
+            <Button
+              onClick={() =>
+                router.push("/dashboard/fulfillment/invoice/create")
+              }
+              className="gap-2"
+            >
               <PlusIcon className="w-4 h-4" /> New Invoice
             </Button>
           )
         }
       />
 
-      <div className="relative mb-4">
-        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by invoice no., customer, SO, status..."
-          className="pl-9 h-9 text-sm"
+      {/* Stats strip */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <Stat
+          label="Total invoices"
+          value={stats.total.toString()}
+          sub={`${filtered.length !== stats.total ? `${filtered.length} shown` : "all shown"}`}
         />
-        {search && (
-          <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-            <XIcon className="w-3.5 h-3.5" />
-          </button>
-        )}
+        <Stat
+          label="Total billed"
+          value={`MYR ${fmtMoney(stats.totalBilled.toFixed(2))}`}
+          color="text-foreground"
+        />
+        <Stat
+          label="Collected"
+          value={`MYR ${fmtMoney(stats.totalPaid.toFixed(2))}`}
+          color="text-green-600 dark:text-green-400"
+        />
+        <Stat
+          label="Outstanding"
+          value={`MYR ${fmtMoney(stats.outstanding.toFixed(2))}`}
+          color={
+            stats.outstanding > 0
+              ? "text-amber-600 dark:text-amber-400"
+              : "text-foreground"
+          }
+        />
+        <Stat
+          label="Overdue"
+          value={stats.overdueCount.toString()}
+          sub={`${stats.soaPendingCount} SOA pending`}
+          color={
+            stats.overdueCount > 0
+              ? "text-red-600 dark:text-red-400"
+              : "text-foreground"
+          }
+        />
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row gap-2.5 items-start sm:items-center">
+        {/* Search */}
+        <div className="relative flex-1 min-w-0">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search invoice no., customer, hospital, case type…"
+            className="pl-9 h-9 text-sm"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Status pills */}
+        <div className="flex items-center gap-1 flex-wrap">
+          {STATUS_FILTERS.map((f) => {
+            const count =
+              f.value === ""
+                ? initialInvoices.length
+                : initialInvoices.filter((i) => i.status === f.value).length;
+            return (
+              <button
+                key={f.value}
+                onClick={() => setStatusFilter(f.value)}
+                className={cn(
+                  "text-xs px-2.5 py-1 rounded-full border transition-colors tabular-nums",
+                  statusFilter === f.value
+                    ? "bg-foreground text-background border-foreground"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30",
+                )}
+              >
+                {f.label}
+                {count > 0 && (
+                  <span className="ml-1 opacity-60">{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Count */}
+      <div className="text-xs text-muted-foreground tabular-nums -mt-2">
+        {sorted.length} invoice{sorted.length !== 1 ? "s" : ""}
+        {(search || statusFilter) && ` · filtered from ${initialInvoices.length}`}
       </div>
 
       {isSwitchingOrg ? (
-        <div className="space-y-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="border border-border rounded-xl px-4 py-3 animate-pulse">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-muted shrink-0" />
-                <div className="flex-1 space-y-2">
-                  <div className="flex gap-2"><div className="h-3.5 w-28 bg-muted rounded" /><div className="h-3.5 w-16 bg-muted rounded" /></div>
-                  <div className="h-3 w-48 bg-muted rounded" />
-                  <div className="h-3 w-36 bg-muted rounded" />
-                </div>
+        <TableSkeleton />
+      ) : sorted.length === 0 ? (
+        <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
+          <ReceiptIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
+          <div className="text-sm font-medium mb-1">
+            {search || statusFilter ? "No invoices match your filter" : "No invoices yet"}
+          </div>
+          {!search && !statusFilter && (
+            <>
+              <div className="text-xs mb-4">
+                Create your first invoice to get started
               </div>
-            </div>
-          ))}
-        </div>
-      ) : filtered.length === 0 ? (
-        <>
-          <div className="text-xs text-muted-foreground mb-3 tabular-nums">0 invoices</div>
-          <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
-            <ReceiptIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-            <div className="text-sm font-medium mb-1">No invoices yet</div>
-            <div className="text-xs mb-4">Create your first invoice to get started</div>
-            {can("invoice:create") && (
-              <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/fulfillment/invoice/create")}>
-                <PlusIcon className="w-3.5 h-3.5" /> New Invoice
-              </Button>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-            {filtered.length} invoice{filtered.length !== 1 ? "s" : ""}
-          </div>
-          <div className="space-y-2">
-            {filtered.map((inv) => {
-              const snap = inv.customerSnapshot as any;
-              return (
-                <div
-                  key={inv.id}
-                  className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
-                  onClick={() => router.push(`/dashboard/fulfillment/invoice/${inv.id}`)}
+              {can("invoice:create") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() =>
+                    router.push("/dashboard/fulfillment/invoice/create")
+                  }
                 >
-                  <div className="flex items-center gap-3 px-4 py-3">
-                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0">
-                      <ReceiptIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                    </div>
+                  <PlusIcon className="w-3.5 h-3.5" /> New Invoice
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="border border-border rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-muted/30 border-b border-border">
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider w-8">
+                    #
+                  </th>
+                  <Th k="invoiceNo">Invoice No.</Th>
+                  <Th k="invoiceDate">Date</Th>
+                  <Th k="customer">Customer</Th>
+                  <Th k="hospital">Hospital</Th>
+                  <Th k="caseDate" className="hidden xl:table-cell">
+                    Case
+                  </Th>
+                  <Th k="status">Status</Th>
+                  <Th k="grandTotal" className="text-right">
+                    Billed
+                  </Th>
+                  <Th k="paidAmount" className="text-right">
+                    Paid
+                  </Th>
+                  <Th k="outstanding" className="text-right">
+                    Outstanding
+                  </Th>
+                  <Th k="dueDate" className="hidden lg:table-cell">
+                    Due
+                  </Th>
+                  <th className="px-3 py-2.5 text-center text-[11px] font-medium text-muted-foreground uppercase tracking-wider w-10 hidden lg:table-cell">
+                    SOA
+                  </th>
+                  <th className="px-3 py-2.5 w-16" />
+                </tr>
+              </thead>
 
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-sm font-medium">
+              <tbody>
+                {sorted.map((inv, idx) => {
+                  const snap = inv.customerSnapshot as any;
+                  const outstanding =
+                    parseMoney(inv.grandTotal) - parseMoney(inv.paidAmount);
+                  const isOverdue = inv.status === "overdue";
+                  const isDueSoon =
+                    inv.dueDate &&
+                    inv.status !== "paid" &&
+                    inv.status !== "cancelled" &&
+                    new Date(inv.dueDate).getTime() - Date.now() <
+                      7 * 24 * 60 * 60 * 1000;
+
+                  return (
+                    <tr
+                      key={inv.id}
+                      onClick={() =>
+                        router.push(
+                          `/dashboard/fulfillment/invoice/${inv.id}`,
+                        )
+                      }
+                      className={cn(
+                        "border-b border-border last:border-0 cursor-pointer transition-colors",
+                        isOverdue
+                          ? "hover:bg-red-50/40 dark:hover:bg-red-900/10"
+                          : "hover:bg-muted/20",
+                      )}
+                    >
+                      {/* # */}
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground tabular-nums">
+                        {idx + 1}
+                      </td>
+
+                      {/* Invoice No. */}
+                      <td className="px-3 py-2.5">
+                        <span className="font-mono text-xs font-medium text-foreground">
                           <Highlight text={inv.invoiceNo} query={search} />
                         </span>
-                        <StatusBadge status={inv.status} />
-                        {inv.customerPoNo && (
-                          <span className="text-[10px] bg-muted/50 text-muted-foreground rounded px-1.5 py-0.5 font-mono">
-                            PO: <Highlight text={inv.customerPoNo} query={search} />
-                          </span>
-                        )}
                         {inv.salesOrderNo && (
-                          <span className="text-[10px] bg-muted/50 text-muted-foreground rounded px-1.5 py-0.5 font-mono">
-                            SO: <Highlight text={inv.salesOrderNo} query={search} />
-                          </span>
+                          <div className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                            SO:{" "}
+                            <Highlight
+                              text={inv.salesOrderNo}
+                              query={search}
+                            />
+                          </div>
                         )}
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                        {snap?.name && (
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <UserIcon className="w-3 h-3" />
+                        {inv.customerPoNo && (
+                          <div className="text-[10px] text-muted-foreground font-mono">
+                            PO:{" "}
+                            <Highlight
+                              text={inv.customerPoNo}
+                              query={search}
+                            />
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Date */}
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                        {fmtDate(inv.invoiceDate)}
+                      </td>
+
+                      {/* Customer */}
+                      <td className="px-3 py-2.5 max-w-35">
+                        {snap?.name ? (
+                          <span className="text-xs truncate block">
                             <Highlight text={snap.name} query={search} />
                           </span>
-                        )}
-                        {snap?.organizationName && (
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <BuildingIcon className="w-3 h-3" />
-                            <Highlight text={snap.organizationName} query={search} />
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50 italic">
+                            —
                           </span>
                         )}
-                        <span className="text-[11px] text-muted-foreground ml-auto flex items-center gap-2">
-                          <span className="font-mono tabular-nums font-semibold text-foreground">MYR {fmtMoney(inv.grandTotal)}</span>
-                          <span className="text-[10px] text-muted-foreground/60">profit</span>
-                          <ProfitBadge profit={inv.profit} />
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                        {inv.createdByName && (
-                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <CalendarIcon className="w-3 h-3" />
-                            {fmtDate(inv.createdAt)} · {inv.createdByName}
+                        {inv.salesPersonName && (
+                          <span className="text-[10px] text-muted-foreground block truncate">
+                            <Highlight
+                              text={inv.salesPersonName}
+                              query={search}
+                            />
                           </span>
                         )}
-                      </div>
-                    </div>
+                      </td>
 
-                    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      {can("invoice:update") && EDITABLE_STATUSES.has(inv.status) && inv.createdBy === currentUserId && (
-                        <Button variant="ghost" size="icon" className="w-7 h-7"
-                          onClick={() => router.push(`/dashboard/fulfillment/invoice/${inv.id}/edit`)}>
-                          <PencilIcon className="w-3.5 h-3.5" />
-                        </Button>
+                      {/* Hospital */}
+                      <td className="px-3 py-2.5 max-w-40">
+                        {snap?.organizationName ? (
+                          <span className="text-xs truncate block">
+                            <Highlight
+                              text={snap.organizationName}
+                              query={search}
+                            />
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">
+                            —
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Case (hidden on small screens) */}
+                      <td className="px-3 py-2.5 hidden xl:table-cell">
+                        {inv.caseType ? (
+                          <>
+                            <span className="text-xs font-medium">
+                              <Highlight
+                                text={inv.caseType}
+                                query={search}
+                              />
+                            </span>
+                            {inv.caseDate && (
+                              <div className="text-[10px] text-muted-foreground whitespace-nowrap">
+                                {fmtDate(inv.caseDate)}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">
+                            —
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <StatusBadge status={inv.status} />
+                      </td>
+
+                      {/* Billed */}
+                      <td className="px-3 py-2.5 text-right">
+                        <span className="text-xs font-mono tabular-nums font-medium">
+                          {fmtMoney(inv.grandTotal)}
+                        </span>
+                      </td>
+
+                      {/* Paid */}
+                      <td className="px-3 py-2.5 text-right">
+                        {parseMoney(inv.paidAmount) > 0 ? (
+                          <span className="text-xs font-mono tabular-nums text-green-700 dark:text-green-400">
+                            {fmtMoney(inv.paidAmount)}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">
+                            —
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Outstanding */}
+                      <td className="px-3 py-2.5 text-right">
+                        {outstanding > 0 ? (
+                          <span
+                            className={cn(
+                              "text-xs font-mono tabular-nums font-medium",
+                              isOverdue
+                                ? "text-red-600 dark:text-red-400"
+                                : "text-amber-600 dark:text-amber-400",
+                            )}
+                          >
+                            {fmtMoney(outstanding.toFixed(2))}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">
+                            —
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Due Date (hidden on small screens) */}
+                      <td className="px-3 py-2.5 whitespace-nowrap hidden lg:table-cell">
+                        {inv.dueDate ? (
+                          <span
+                            className={cn(
+                              "text-xs",
+                              isOverdue
+                                ? "text-red-600 dark:text-red-400 font-medium"
+                                : isDueSoon
+                                  ? "text-amber-600 dark:text-amber-400 font-medium"
+                                  : "text-muted-foreground",
+                            )}
+                          >
+                            {fmtDate(inv.dueDate)}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">
+                            —
+                          </span>
+                        )}
+                      </td>
+
+                      {/* SOA verified (hidden on small screens) */}
+                      <td className="px-3 py-2.5 text-center hidden lg:table-cell">
+                        {inv.soaVerified ? (
+                          <CheckCircle2Icon className="w-3.5 h-3.5 text-green-600 dark:text-green-400 mx-auto" />
+                        ) : inv.status !== "draft" &&
+                          inv.status !== "cancelled" ? (
+                          <AlertCircleIcon className="w-3.5 h-3.5 text-amber-500 mx-auto opacity-70" />
+                        ) : (
+                          <CircleIcon className="w-3.5 h-3.5 text-muted-foreground/20 mx-auto" />
+                        )}
+                      </td>
+
+                      {/* Actions */}
+                      <td
+                        className="px-3 py-2.5"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center gap-0.5 justify-end">
+                          {can("invoice:update") &&
+                            EDITABLE_STATUSES.has(inv.status) &&
+                            inv.createdBy === currentUserId && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-6 h-6"
+                                onClick={() =>
+                                  router.push(
+                                    `/dashboard/fulfillment/invoice/${inv.id}/edit`,
+                                  )
+                                }
+                              >
+                                <PencilIcon className="w-3 h-3" />
+                              </Button>
+                            )}
+                          {can("invoice:delete") &&
+                            DELETABLE_STATUSES.has(inv.status) &&
+                            inv.createdBy === currentUserId && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-6 h-6 text-destructive hover:text-destructive"
+                                disabled={deleting === inv.id}
+                                onClick={() =>
+                                  handleDelete(inv.id, inv.invoiceNo)
+                                }
+                              >
+                                <TrashIcon className="w-3 h-3" />
+                              </Button>
+                            )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+
+              {/* Footer totals */}
+              <tfoot>
+                <tr className="bg-muted/20 border-t border-border">
+                  <td
+                    colSpan={7}
+                    className="px-3 py-2.5 text-xs font-medium text-muted-foreground"
+                  >
+                    {sorted.length} invoice{sorted.length !== 1 ? "s" : ""}
+                    {(search || statusFilter) &&
+                      ` · filtered from ${initialInvoices.length}`}
+                  </td>
+                  <td className="px-3 py-2.5 text-right">
+                    <span className="text-xs font-mono tabular-nums font-semibold">
+                      {fmtMoney(footerTotals.billed.toFixed(2))}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right">
+                    <span className="text-xs font-mono tabular-nums font-semibold text-green-700 dark:text-green-400">
+                      {fmtMoney(footerTotals.paid.toFixed(2))}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right">
+                    <span
+                      className={cn(
+                        "text-xs font-mono tabular-nums font-semibold",
+                        footerTotals.out > 0
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-muted-foreground",
                       )}
-                      {can("invoice:delete") && DELETABLE_STATUSES.has(inv.status) && inv.createdBy === currentUserId && (
-                        <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
-                          disabled={deleting === inv.id} onClick={() => handleDelete(inv.id, inv.invoiceNo)}>
-                          <TrashIcon className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                    >
+                      {fmtMoney(footerTotals.out.toFixed(2))}
+                    </span>
+                  </td>
+                  <td
+                    colSpan={3}
+                    className="hidden lg:table-cell"
+                  />
+                </tr>
+              </tfoot>
+            </table>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
