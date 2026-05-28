@@ -69,6 +69,34 @@ export type InvoiceWithDetails = InvoiceRow & {
 };
 export type InvoiceListRow = InvoiceRow & { createdByName: string | null };
 
+// ── SOA types ──────────────────────────────────────────────────────────────
+export interface SoaInvoice {
+  id: string;
+  invoiceNo: string;
+  invoiceDate: Date;
+  customerPoNo: string | null;
+  salesOrderNo: string | null;
+  caseType: string | null;
+  caseDate: Date | null;
+  mrnNo: string | null;
+  grandTotal: string;
+  paidAmount: string | null;
+  paidAt: Date | null;
+  dueDate: Date | null;
+  status: string;
+  soaVerified: boolean;
+}
+
+export interface SoaOrganization {
+  organizationName: string;
+  invoices: SoaInvoice[];
+  totalBilled: number;
+  totalPaid: number;
+  outstanding: number;
+  overdueCount: number;
+  soaVerifiedCount: number;
+}
+
 const EDITABLE_STATUSES = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
@@ -175,6 +203,80 @@ export async function getInvoices(): Promise<InvoiceListRow[]> {
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
 
   return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy) }));
+}
+
+export async function getStatementOfAccount(): Promise<SoaOrganization[]> {
+  const { orgId } = await requireAccess("invoice:read");
+
+  const rows = await db
+    .select()
+    .from(invoice)
+    .where(
+      and(
+        eq(invoice.organizationId, orgId),
+        // Exclude draft invoices from SOA
+      ),
+    )
+    .orderBy(desc(invoice.invoiceDate));
+
+  // Group by organizationName from customerSnapshot
+  const map = new Map<string, SoaInvoice[]>();
+  for (const r of rows) {
+    const snap = r.customerSnapshot as { organizationName?: string } | null;
+    const orgName = snap?.organizationName?.trim() || "— No Hospital —";
+    if (!map.has(orgName)) map.set(orgName, []);
+    map.get(orgName)!.push({
+      id: r.id,
+      invoiceNo: r.invoiceNo,
+      invoiceDate: r.invoiceDate,
+      customerPoNo: r.customerPoNo,
+      salesOrderNo: r.salesOrderNo,
+      caseType: r.caseType,
+      caseDate: r.caseDate,
+      mrnNo: r.mrnNo,
+      grandTotal: r.grandTotal,
+      paidAmount: r.paidAmount,
+      paidAt: r.paidAt,
+      dueDate: r.dueDate,
+      status: r.status,
+      soaVerified: r.soaVerified,
+    });
+  }
+
+  // Build SoaOrganization summary per hospital
+  const result: SoaOrganization[] = [];
+  for (const [organizationName, invoices] of map) {
+    const totalBilled = invoices.reduce((s, i) => s + parseFloat(i.grandTotal || "0"), 0);
+    const totalPaid = invoices.reduce((s, i) => {
+      if (i.status === "paid") return s + parseFloat(i.grandTotal || "0");
+      return s + parseFloat(i.paidAmount || "0");
+    }, 0);
+    const outstanding = invoices.reduce((s, i) => {
+      if (i.status === "paid" || i.status === "cancelled") return s;
+      return s + Math.max(0, parseFloat(i.grandTotal || "0") - parseFloat(i.paidAmount || "0"));
+    }, 0);
+    const overdueCount = invoices.filter((i) => i.status === "overdue").length;
+    const soaVerifiedCount = invoices.filter((i) => i.soaVerified).length;
+
+    result.push({ organizationName, invoices, totalBilled, totalPaid, outstanding, overdueCount, soaVerifiedCount });
+  }
+
+  // Sort: hospitals with outstanding first, then by name
+  result.sort((a, b) => {
+    if (b.outstanding !== a.outstanding) return b.outstanding - a.outstanding;
+    return a.organizationName.localeCompare(b.organizationName);
+  });
+
+  return result;
+}
+
+export async function markSoaVerified(invoiceIds: string[], verified: boolean): Promise<void> {
+  const { orgId } = await requireAccess("invoice:update");
+  if (invoiceIds.length === 0) return;
+  await db
+    .update(invoice)
+    .set({ soaVerified: verified })
+    .where(and(inArray(invoice.id, invoiceIds), eq(invoice.organizationId, orgId)));
 }
 
 export async function getInvoiceDetail(id: string): Promise<InvoiceWithDetails | null> {

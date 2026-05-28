@@ -64,8 +64,9 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(TruckIcon),
     items: [
-      { title: "Delivery Orders", url: "/dashboard/fulfillment/delivery", permission: "delivery-order:read" },
-      { title: "Invoices",        url: "/dashboard/fulfillment/invoice",  permission: "invoice:read"         },
+      { title: "Delivery Orders",     url: "/dashboard/fulfillment/delivery", permission: "delivery-order:read" },
+      { title: "Invoices",            url: "/dashboard/fulfillment/invoice",  permission: "invoice:read"         },
+      { title: "Statement of Account", url: "/dashboard/fulfillment/soa",     permission: "invoice:read"         },
     ],
   },
   {
