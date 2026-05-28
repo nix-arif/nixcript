@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
 
 type SpreadsheetRow = {
-  no: number;
+  no?: string;          // as-is from spreadsheet — may be roman numerals
   sku?: string;
   productCode: string;
   description?: string;
@@ -50,7 +50,7 @@ function mapSpreadsheetRow(row: Record<string, any>): SpreadsheetRow | null {
   if (!productCode) return null;
 
   return {
-    no: Number(get("no", "number", "#") ?? 0),
+    no: get("no", "number", "#"),   // string — preserves roman numerals
     sku: get("sku", "item sku"),
     productCode,
     description: get("description", "desc", "item name", "name"),
@@ -118,7 +118,7 @@ export function CatalogueGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: rows.map((r, i) => ({
-            no: r.no || i + 1,
+            no: r.no ?? String(i + 1),   // use spreadsheet value; fallback to 1-based index
             productCode: r.productCode,
             sku: r.sku,
             description: r.description,
@@ -127,12 +127,13 @@ export function CatalogueGenerator() {
           })),
           title: title.trim(),
           subtitle: subtitle.trim() || undefined,
-          companyName: showCompany ? companyName.trim() || undefined : undefined,
+          companyName: companyName.trim() || undefined,
           options: {
             showSku: showSku && hasSku,
             showProductCode,
             showRegNo,
             showValidity,
+            showCompany,   // controls whether any company name appears
           },
         }),
       });
@@ -432,7 +433,7 @@ export function CatalogueGenerator() {
                       className={i < 4 ? "border-b border-border" : ""}
                     >
                       <td className="px-3 py-2 text-muted-foreground">
-                        {row.no || i + 1}
+                        {row.no ?? i + 1}
                       </td>
                       {hasSku && showSku && (
                         <td className="px-3 py-2 font-mono">

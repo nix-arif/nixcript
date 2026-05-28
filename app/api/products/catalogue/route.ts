@@ -87,7 +87,7 @@ async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<
 
 export type CatalogueRequestBody = {
   /** Ordered list from the spreadsheet (de-duped by caller, but API de-dupes again) */
-  items: Array<{ no: number; productCode: string; sku?: string; description?: string; qty?: string; uom?: string }>;
+  items: Array<{ no: string; productCode: string; sku?: string; description?: string; qty?: string; uom?: string }>;
   title: string;
   subtitle?: string;
   companyName?: string;
@@ -96,6 +96,7 @@ export type CatalogueRequestBody = {
     showProductCode: boolean;
     showRegNo: boolean;
     showValidity: boolean;
+    showCompany: boolean;
   };
 };
 
@@ -162,11 +163,13 @@ export async function POST(req: NextRequest) {
       return rgb(Math.max(0, r * 0.55), Math.max(0, g * 0.55), Math.max(0, b * 0.55));
     })();
 
-    const effectiveCompanyName = companyName?.trim() || orgProfile?.companyName || null;
+    const effectiveCompanyName = options.showCompany
+      ? (companyName?.trim() || orgProfile?.companyName || null)
+      : null;
 
     // ── Build enriched item list ────────────────────────────────────────────
     type EnrichedItem = {
-      no: number;
+      no: string;
       productCode: string;
       sku?: string;
       description: string;
@@ -180,7 +183,7 @@ export async function POST(req: NextRequest) {
     const enrichedItems: EnrichedItem[] = items.map((item, idx) => {
       const db = dbMap.get(item.productCode);
       return {
-        no: item.no || idx + 1,
+        no: item.no || String(idx + 1),
         productCode: item.productCode,
         sku: item.sku,
         description: item.description || db?.description || item.productCode,
@@ -319,8 +322,8 @@ export async function POST(req: NextRequest) {
         // Bottom separator
         catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
 
-        // Row number
-        const noStr = String(item.no);
+        // Row number (string — may be roman numerals from spreadsheet)
+        const noStr = sanitize(item.no);
         catPage.drawText(noStr, {
           x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2,
           y: rowY + CAT_ROW_H / 2 - 4,
