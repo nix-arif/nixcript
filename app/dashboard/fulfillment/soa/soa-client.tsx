@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { type SoaOrganization } from "@/server/invoice";
 import { markSoaVerified } from "@/server/invoice";
 import { type FullOrganizationProfile } from "@/server/organization-profile";
+import { generateSoaPdf } from "./_pdf-soa";
 import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import {
   BuildingIcon,
   ReceiptIcon,
   CheckIcon,
+  DownloadIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Highlight } from "@/components/highlight";
@@ -90,8 +92,32 @@ export function SoaClient({ soa, permissions, orgProfile }: Props) {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+
+  // ── PDF download ───────────────────────────────────────────────────────────
+  const handleDownloadPdf = async () => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const bytes = await generateSoaPdf(soa, orgProfile);
+      const blob = new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const today = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `SOA-${today}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      toast.error(`PDF failed: ${e.message}`);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   // ── Stats ──────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -200,6 +226,16 @@ export function SoaClient({ soa, permissions, orgProfile }: Props) {
         </Button>
         <Button variant="outline" size="sm" onClick={collapseAll} className="shrink-0 h-9 text-xs">
           Collapse all
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDownloadPdf}
+          disabled={isDownloading || soa.length === 0}
+          className="shrink-0 h-9 text-xs gap-1.5"
+        >
+          <DownloadIcon className="w-3.5 h-3.5" />
+          {isDownloading ? "Generating…" : "Download PDF"}
         </Button>
       </div>
 
