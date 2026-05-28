@@ -122,7 +122,11 @@ export function OrganizationSwitcher() {
 
     authClient.organization.setActive({ organizationId }).then(() => {
       refetchActive();
-      router.refresh();
+      // router.replace triggers loading.tsx + re-renders server components with the
+      // new active org session. router.refresh() bypasses Suspense boundaries entirely
+      // and never shows the loading skeleton.
+      const url = window.location.pathname + window.location.search;
+      router.replace(url);
     }).catch((err) => {
       console.error("Failed to switch organization", err);
       clearPermissions();
