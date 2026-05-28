@@ -101,9 +101,9 @@ type SortKey =
   | "invoiceDate"
   | "customer"
   | "hospital"
+  | "customerPoNo"
   | "status"
   | "grandTotal"
-  | "paidAmount"
   | "outstanding"
   | "dueDate"
   | "caseDate";
@@ -268,19 +268,15 @@ export function InvoiceListClient({
               snapB?.organizationName ?? "",
             )
           );
+        case "customerPoNo":
+          return dir * (a.customerPoNo ?? "").localeCompare(b.customerPoNo ?? "");
         case "status":
           return dir * a.status.localeCompare(b.status);
         case "grandTotal":
           return dir * (parseMoney(a.grandTotal) - parseMoney(b.grandTotal));
-        case "paidAmount":
-          return (
-            dir * (parseMoney(a.paidAmount) - parseMoney(b.paidAmount))
-          );
         case "outstanding": {
-          const outA =
-            parseMoney(a.grandTotal) - parseMoney(a.paidAmount);
-          const outB =
-            parseMoney(b.grandTotal) - parseMoney(b.paidAmount);
+          const outA = a.status === "paid" ? 0 : parseMoney(a.grandTotal) - parseMoney(a.paidAmount);
+          const outB = b.status === "paid" ? 0 : parseMoney(b.grandTotal) - parseMoney(b.paidAmount);
           return dir * (outA - outB);
         }
         case "dueDate": {
@@ -304,21 +300,25 @@ export function InvoiceListClient({
   const stats = useMemo(() => {
     const all = initialInvoices;
     const totalBilled = all.reduce((s, i) => s + parseMoney(i.grandTotal), 0);
-    const totalPaid = all.reduce((s, i) => s + parseMoney(i.paidAmount), 0);
-    const outstanding = totalBilled - totalPaid;
+    const outstanding = all.reduce((s, i) => {
+      if (i.status === "paid" || i.status === "cancelled") return s;
+      return s + Math.max(0, parseMoney(i.grandTotal) - parseMoney(i.paidAmount));
+    }, 0);
     const overdueCount = all.filter((i) => i.status === "overdue").length;
     const soaPendingCount = all.filter(
       (i) => !i.soaVerified && i.status !== "draft" && i.status !== "cancelled",
     ).length;
-    return { total: all.length, totalBilled, totalPaid, outstanding, overdueCount, soaPendingCount };
+    return { total: all.length, totalBilled, outstanding, overdueCount, soaPendingCount };
   }, [initialInvoices]);
 
   // Footer totals for visible rows
   const footerTotals = useMemo(() => {
     const billed = sorted.reduce((s, i) => s + parseMoney(i.grandTotal), 0);
-    const paid = sorted.reduce((s, i) => s + parseMoney(i.paidAmount), 0);
-    const out = billed - paid;
-    return { billed, paid, out };
+    const out = sorted.reduce((s, i) => {
+      if (i.status === "paid" || i.status === "cancelled") return s;
+      return s + Math.max(0, parseMoney(i.grandTotal) - parseMoney(i.paidAmount));
+    }, 0);
+    return { billed, out };
   }, [sorted]);
 
   // ── Sort handler ──────────────────────────────────────────────────────
@@ -524,6 +524,9 @@ export function InvoiceListClient({
                   </th>
                   <Th k="invoiceNo">Invoice No.</Th>
                   <Th k="invoiceDate">Date</Th>
+                  <Th k="customerPoNo" className="hidden md:table-cell">
+                    Customer PO
+                  </Th>
                   <Th k="customer">Customer</Th>
                   <Th k="hospital">Hospital</Th>
                   <Th k="caseDate" className="hidden xl:table-cell">
@@ -532,9 +535,6 @@ export function InvoiceListClient({
                   <Th k="status">Status</Th>
                   <Th k="grandTotal" className="text-right">
                     Billed
-                  </Th>
-                  <Th k="paidAmount" className="text-right">
-                    Paid
                   </Th>
                   <Th k="outstanding" className="text-right">
                     Outstanding
@@ -553,7 +553,9 @@ export function InvoiceListClient({
                 {sorted.map((inv, idx) => {
                   const snap = inv.customerSnapshot as any;
                   const outstanding =
-                    parseMoney(inv.grandTotal) - parseMoney(inv.paidAmount);
+                    inv.status === "paid"
+                      ? 0
+                      : Math.max(0, parseMoney(inv.grandTotal) - parseMoney(inv.paidAmount));
                   const isOverdue = inv.status === "overdue";
                   const isDueSoon =
                     inv.dueDate &&
@@ -596,14 +598,16 @@ export function InvoiceListClient({
                             />
                           </div>
                         )}
-                        {inv.customerPoNo && (
-                          <div className="text-[10px] text-muted-foreground font-mono">
-                            PO:{" "}
-                            <Highlight
-                              text={inv.customerPoNo}
-                              query={search}
-                            />
-                          </div>
+                      </td>
+
+                      {/* Customer PO */}
+                      <td className="px-3 py-2.5 hidden md:table-cell">
+                        {inv.customerPoNo ? (
+                          <span className="font-mono text-xs text-muted-foreground">
+                            <Highlight text={inv.customerPoNo} query={search} />
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/40">—</span>
                         )}
                       </td>
 
@@ -682,19 +686,6 @@ export function InvoiceListClient({
                         <span className="text-xs font-mono tabular-nums font-medium">
                           {fmtMoney(inv.grandTotal)}
                         </span>
-                      </td>
-
-                      {/* Paid */}
-                      <td className="px-3 py-2.5 text-right">
-                        {parseMoney(inv.paidAmount) > 0 ? (
-                          <span className="text-xs font-mono tabular-nums text-green-700 dark:text-green-400">
-                            {fmtMoney(inv.paidAmount)}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground/50">
-                            —
-                          </span>
-                        )}
                       </td>
 
                       {/* Outstanding */}
@@ -799,7 +790,7 @@ export function InvoiceListClient({
               <tfoot>
                 <tr className="bg-muted/20 border-t border-border">
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="px-3 py-2.5 text-xs font-medium text-muted-foreground"
                   >
                     {sorted.length} invoice{sorted.length !== 1 ? "s" : ""}
@@ -809,11 +800,6 @@ export function InvoiceListClient({
                   <td className="px-3 py-2.5 text-right">
                     <span className="text-xs font-mono tabular-nums font-semibold">
                       {fmtMoney(footerTotals.billed.toFixed(2))}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-right">
-                    <span className="text-xs font-mono tabular-nums font-semibold text-green-700 dark:text-green-400">
-                      {fmtMoney(footerTotals.paid.toFixed(2))}
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-right">
