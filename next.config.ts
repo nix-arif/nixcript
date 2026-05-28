@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   experimental: {
     authInterrupts: true,
     staleTimes: {
-      dynamic: 30,  // keep dynamic pages in router cache for 30s — back button is instant
+      dynamic: 0,   // 0 = disable client Router Cache for dynamic pages — loading.tsx fires on every navigation
       static: 180,
     },
   },
