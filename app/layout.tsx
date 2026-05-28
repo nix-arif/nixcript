@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NIXCRIP",
-  description: "COMPREHENSIVE CRM SYSTEM",
+  title: "niXcriP",
+  description: "Comprehensive CRM System",
 };
 
 export default function RootLayout({
