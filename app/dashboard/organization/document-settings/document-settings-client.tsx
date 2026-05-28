@@ -845,6 +845,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
                     separator: s.separator || "-",
                     includeYear: s.includeYear ? 1 : 0,
                     paddingLength: s.paddingLength,
+                    numberFormat: s.numberFormat,
                   },
                   now.getFullYear(), 1,
                 );
