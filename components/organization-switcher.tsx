@@ -75,8 +75,15 @@ export function OrganizationSwitcher() {
   }, [refetchActive, refetchList]);
 
   // Only auto-set once — when the user has NEVER had an active org this session.
-  // hasEverHadOrgRef prevents re-firing when activeOrganization briefly goes null
-  // during a refetch (e.g. after router.refresh() or switching orgs).
+  // hasBootstrappedRef — goes false→true once BOTH queries have returned real
+  // data. After that point the loading spinner is permanently suppressed so that
+  // transient null states (HMR re-init, 401, component remount before re-fetch)
+  // fall through to the displayOrg fallback instead of flashing a spinner.
+  const hasBootstrappedRef = React.useRef(false);
+
+  // hasEverHadOrgRef — prevents the auto-set effect from re-firing when
+  // activeOrganization briefly goes null during a refetch (e.g. after
+  // router.refresh() or switching orgs).
   //
   // IMPORTANT: wait for both pending states to resolve first.
   // On hard reload, organizationList can finish before useActiveOrganization —
@@ -160,12 +167,14 @@ export function OrganizationSwitcher() {
 
   // ✅ Conditional returns only after ALL hooks
   //
-  // Only show the full loading spinner on the INITIAL load when no data has
-  // arrived yet. On subsequent background refetches (triggered by popstate /
-  // visibilitychange) we already have valid data — keep rendering it instead
-  // of flashing the spinner. This is a stale-while-revalidate pattern.
+  // Advance the bootstrap guard synchronously during render (valid: monotonic
+  // false→true, refs don't cause re-renders).
+  if (organizationList && activeOrganization) {
+    hasBootstrappedRef.current = true;
+  }
+
   const hasData = !!organizationList && !!activeOrganization;
-  if (!hasData && (isListPending || isActivePending)) {
+  if (!hasBootstrappedRef.current && !hasData && (isListPending || isActivePending)) {
     return (
       <SidebarMenu>
         <SidebarMenuButton size="lg">

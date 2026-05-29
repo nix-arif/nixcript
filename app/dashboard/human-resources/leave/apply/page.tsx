@@ -1,12 +1,5 @@
-import { requirePermission } from "@/lib/auth/require-permission";
-import { getActiveLeaveTypes, getMyLeaveBalances } from "@/server/leave";
-import { ApplyLeaveClient } from "./apply-leave-client";
+import { redirect } from "next/navigation";
 
-export default async function ApplyLeavePage() {
-  await requirePermission("leave:apply");
-  const [leaveTypes, balances] = await Promise.all([
-    getActiveLeaveTypes(),
-    getMyLeaveBalances(),
-  ]);
-  return <ApplyLeaveClient leaveTypes={leaveTypes} balances={balances} />;
+export default function LeaveApplyPage() {
+  redirect("/dashboard/human-resources/leave");
 }
