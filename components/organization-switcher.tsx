@@ -154,7 +154,13 @@ export function OrganizationSwitcher() {
   }, [organizationList, handleSwitchOrg]);
 
   // ✅ Conditional returns only after ALL hooks
-  if (isListPending || isActivePending) {
+  //
+  // Only show the full loading spinner on the INITIAL load when no data has
+  // arrived yet. On subsequent background refetches (triggered by popstate /
+  // visibilitychange) we already have valid data — keep rendering it instead
+  // of flashing the spinner. This is a stale-while-revalidate pattern.
+  const hasData = !!organizationList && !!activeOrganization;
+  if (!hasData && (isListPending || isActivePending)) {
     return (
       <SidebarMenu>
         <SidebarMenuButton size="lg">
@@ -193,7 +199,11 @@ export function OrganizationSwitcher() {
     );
   }
 
-  if (!activeOrganization) {
+  // Only show "Setting up..." on first arrival (never had an org yet).
+  // If we previously had an org and it's momentarily null during a background
+  // refetch, fall through to render with the last displayOrg instead of
+  // flashing the spinner.
+  if (!activeOrganization && !hasEverHadOrgRef.current) {
     return (
       <SidebarMenu>
         <SidebarMenuButton size="lg">
@@ -203,10 +213,15 @@ export function OrganizationSwitcher() {
     );
   }
 
-  // Optimistic display — show the selected org immediately while setActive runs
+  // Optimistic display — show the pending org immediately while setActive runs.
+  // Fall back to organizationList[0] when activeOrganization is transiently null
+  // during a background refetch (we've been here before, so pick the last known entry).
+  const fallbackOrg = organizationList?.find((o) => o.id === activeOrganization?.id)
+    ?? organizationList?.[0]
+    ?? activeOrganization;
   const displayOrg = pendingOrgId
-    ? (organizationList?.find(o => o.id === pendingOrgId) ?? activeOrganization)
-    : activeOrganization;
+    ? (organizationList?.find((o) => o.id === pendingOrgId) ?? activeOrganization ?? fallbackOrg)
+    : (activeOrganization ?? fallbackOrg);
 
   return (
     <>
