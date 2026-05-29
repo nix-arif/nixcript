@@ -46,45 +46,32 @@ export function OrganizationSwitcher() {
 
   // ✅ ALL hooks before any conditional return
   React.useEffect(() => {
-    const refetchAll = () => {
-      refetchActive();
-      refetchList();
-    };
-
     // ── pageshow (bfcache restore) ────────────────────────────────────────
     // Fires when the browser restores a frozen page from the back/forward cache.
     // The session/org may have changed in other tabs while the page was cached,
     // so a refetch is genuinely needed here.
-    const handlePageShow = (e: PageTransitionEvent) => {
-      if (e.persisted) refetchAll();
-    };
-
-    // ── popstate (browser back / forward) ────────────────────────────────
-    // Rate-limited to once per 5 minutes so that rapid same-org back/forward
-    // navigation (e.g. Leave → Apply Leave → back) does NOT trigger a refetch
-    // on every pop. The 5-min window still catches the real edge case: user
-    // navigates to a 404, stays away long enough for the session to change,
-    // then hits Back.
     //
-    // Note: visibilitychange is intentionally omitted here — better-auth
-    // already handles tab-focus refetching internally via its WindowFocusManager
-    // (focus-manager.mjs). Adding a manual listener would duplicate the request.
-    let lastPopStateRefetch = 0;
-    const POPSTATE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-    const handlePopState = () => {
-      const now = Date.now();
-      if (now - lastPopStateRefetch < POPSTATE_COOLDOWN_MS) return;
-      lastPopStateRefetch = now;
-      refetchAll();
+    // NOTE: popstate (browser back/forward) is intentionally omitted.
+    // This is an SPA — client-side navigation via Next.js Link or router.push
+    // does NOT reload the JS heap, so nanostores data remains valid across pops.
+    // Firing refetchAll() on every popstate caused an unnecessary round-trip on
+    // the very first back-button press after mount (because lastPopStateRefetch
+    // starts at 0, which is always past any cooldown threshold).
+    //
+    // NOTE: visibilitychange is also intentionally omitted — better-auth already
+    // handles tab-focus refetching internally via its WindowFocusManager
+    // (session-refresh.mjs). That is disabled by sessionOptions.refetchOnWindowFocus:false
+    // in authClient to avoid the cross-tab cascade. Adding a manual listener here
+    // would duplicate the request.
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        refetchActive();
+        refetchList();
+      }
     };
 
     window.addEventListener("pageshow", handlePageShow);
-    window.addEventListener("popstate", handlePopState);
-
-    return () => {
-      window.removeEventListener("pageshow", handlePageShow);
-      window.removeEventListener("popstate", handlePopState);
-    };
+    return () => window.removeEventListener("pageshow", handlePageShow);
   }, [refetchActive, refetchList]);
 
   // Only auto-set once — when the user has NEVER had an active org this session.
@@ -137,7 +124,10 @@ export function OrganizationSwitcher() {
     setOrgSwitching(true);
 
     authClient.organization.setActive({ organizationId }).then(() => {
-      refetchActive();
+      // After setActive, the proxy's atomListeners automatically toggle $activeOrgSignal
+      // (10 ms setTimeout in proxy.mjs), which triggers useActiveOrganization to refetch.
+      // A manual refetchActive() here would create a second concurrent request — omitted.
+      //
       // router.replace triggers loading.tsx + re-renders server components with the
       // new active org session. router.refresh() bypasses Suspense boundaries entirely
       // and never shows the loading skeleton.
@@ -149,7 +139,7 @@ export function OrganizationSwitcher() {
       setPendingOrgId(null);
       setOrgSwitching(false);
     });
-  }, [activeOrganization, pendingOrgId, router, fetchPermissions, clearPermissions, refetchActive]);
+  }, [activeOrganization, pendingOrgId, router, fetchPermissions, clearPermissions]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

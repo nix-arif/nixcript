@@ -18,6 +18,15 @@ export const authClient = createAuthClient({
       },
     }),
   ],
+  sessionOptions: {
+    // Disable better-auth's WindowFocusManager (visibilitychange) from firing an
+    // automatic session refetch whenever the user tabs back into the app.
+    // The session-refresh cascade (sessionAtom → sessionSignal → useSession refetch)
+    // was the primary source of "unnecessary refetching" observed while navigating
+    // between HR/Leave pages.  Server-side requirePermission() catches stale or
+    // expired sessions on the next user action, so client-side polling is redundant.
+    refetchOnWindowFocus: false,
+  },
 });
 
 export const { signIn, signUp } = createAuthClient();

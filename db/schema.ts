@@ -2157,6 +2157,123 @@ export const leaveDocumentRelations = relations(leaveDocument, ({ one }) => ({
 }));
 
 /* =========================
+   CLAIM MANAGEMENT
+========================= */
+
+export const claimType = pgTable(
+  "claim_type",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    // MILEAGE | MEDICAL | MEAL | TRANSPORT | OVERTIME | ENTERTAINMENT | OTHER
+    category: text("category").notNull().default("OTHER"),
+    // AMOUNT | KM | HOUR  — determines the claim entry mode
+    unitType: text("unit_type").notNull().default("AMOUNT"),
+    // Rate per unit (km/hour). Null for AMOUNT type.
+    ratePerUnit: text("rate_per_unit"),
+    requiresReceipt: boolean("requires_receipt").notNull().default(true),
+    maxAmountPerClaim: text("max_amount_per_claim"),
+    maxAmountPerYear: text("max_amount_per_year"),
+    isActive: boolean("is_active").notNull().default(true),
+    description: text("description"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("claim_type_org_code_uidx").on(t.organizationId, t.code),
+    index("claim_type_org_idx").on(t.organizationId),
+  ],
+);
+
+export const claimApplication = pgTable(
+  "claim_application",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    applicationNo: text("application_no").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    claimTypeId: text("claim_type_id")
+      .notNull()
+      .references(() => claimType.id),
+    claimTypeName: text("claim_type_name").notNull(),
+    claimTypeCode: text("claim_type_code").notNull(),
+    claimDate: text("claim_date").notNull(),            // ISO YYYY-MM-DD
+    description: text("description").notNull(),
+    // Snapshot of unit type at submission time
+    unitType: text("unit_type").notNull().default("AMOUNT"),
+    quantity: text("quantity"),                         // km / hours (null for AMOUNT)
+    ratePerUnit: text("rate_per_unit"),                 // snapshot
+    amount: text("amount").notNull().default("0"),      // total claimed
+    status: text("status").notNull().default("PENDING"), // PENDING | APPROVED | REJECTED | CANCELLED
+    reviewedBy: text("reviewed_by").references(() => user.id),
+    reviewedAt: timestamp("reviewed_at"),
+    reviewComment: text("review_comment"),
+    cancelledBy: text("cancelled_by").references(() => user.id),
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("claim_application_no_org_uidx").on(t.organizationId, t.applicationNo),
+    index("claim_application_user_idx").on(t.userId, t.organizationId),
+    index("claim_application_status_idx").on(t.status, t.organizationId),
+  ],
+);
+
+export const claimDocument = pgTable(
+  "claim_document",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => claimApplication.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    fileKey: text("file_key").notNull(),
+    fileSize: integer("file_size").notNull(),
+    mimeType: text("mime_type").notNull(),
+    uploadedBy: text("uploaded_by").notNull().references(() => user.id),
+    uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("claim_document_application_idx").on(t.applicationId),
+    index("claim_document_org_idx").on(t.organizationId),
+  ],
+);
+
+export const claimTypeRelations = relations(claimType, ({ one, many }) => ({
+  organization: one(organization, { fields: [claimType.organizationId], references: [organization.id] }),
+  applications: many(claimApplication),
+}));
+
+export const claimApplicationRelations = relations(claimApplication, ({ one, many }) => ({
+  organization: one(organization, { fields: [claimApplication.organizationId], references: [organization.id] }),
+  user: one(user, { fields: [claimApplication.userId], references: [user.id] }),
+  claimType: one(claimType, { fields: [claimApplication.claimTypeId], references: [claimType.id] }),
+  reviewedByUser: one(user, { fields: [claimApplication.reviewedBy], references: [user.id], relationName: "claim_reviewedBy" }),
+  cancelledByUser: one(user, { fields: [claimApplication.cancelledBy], references: [user.id], relationName: "claim_cancelledBy" }),
+  documents: many(claimDocument),
+}));
+
+export const claimDocumentRelations = relations(claimDocument, ({ one }) => ({
+  application: one(claimApplication, { fields: [claimDocument.applicationId], references: [claimApplication.id] }),
+  organization: one(organization, { fields: [claimDocument.organizationId], references: [organization.id] }),
+  uploadedByUser: one(user, { fields: [claimDocument.uploadedBy], references: [user.id] }),
+}));
+
+/* =========================
    SCHEMA EXPORT
 ========================= */
 
@@ -2269,4 +2386,11 @@ export const schema = {
   leaveEntitlementRelations,
   leaveApplicationRelations,
   leaveDocumentRelations,
+  // claim management
+  claimType,
+  claimApplication,
+  claimDocument,
+  claimTypeRelations,
+  claimApplicationRelations,
+  claimDocumentRelations,
 };
