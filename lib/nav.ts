@@ -116,8 +116,12 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(HardHat),
     items: [
-      { title: "Payroll",     url: "/dashboard/human-resources/payroll",   permission: "payslip:read:all" },
-      { title: "My Payslips", url: "/dashboard/human-resources/payslips",  permission: "payslip:read:own" },
+      { title: "Payroll",     url: "/dashboard/human-resources/payroll",              permission: "payslip:read:all" },
+      { title: "My Payslips", url: "/dashboard/human-resources/payslips",             permission: "payslip:read:own" },
+      { title: "My Leave",    url: "/dashboard/human-resources/leave",                permission: "leave:read:own"   },
+      { title: "Apply Leave", url: "/dashboard/human-resources/leave/apply",          permission: "leave:apply"      },
+      { title: "Approvals",   url: "/dashboard/human-resources/leave/approvals",      permission: "leave:approve"    },
+      { title: "Leave Types", url: "/dashboard/human-resources/leave/types",          permission: "leave:manage"     },
     ],
   },
   {

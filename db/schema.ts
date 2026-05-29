@@ -2005,6 +2005,158 @@ export const ledgerDocumentRelations = relations(ledgerDocument, ({ one }) => ({
 }));
 
 /* =========================
+   LEAVE MANAGEMENT
+========================= */
+
+export const leaveType = pgTable(
+  "leave_type",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    isPaid: boolean("is_paid").notNull().default(true),
+    isActive: boolean("is_active").notNull().default(true),
+    requiresDocument: boolean("requires_document").notNull().default(false),
+    allowHalfDay: boolean("allow_half_day").notNull().default(true),
+    maxDaysPerApplication: integer("max_days_per_application"),
+    carryForwardEnabled: boolean("carry_forward_enabled").notNull().default(false),
+    maxCarryForward: integer("max_carry_forward"),
+    entitlementRules: json("entitlement_rules")
+      .$type<Array<{ minYears: number; maxYears: number | null; days: number }>>()
+      .notNull()
+      .default([]),
+    sortOrder: integer("sort_order").notNull().default(0),
+    description: text("description"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("leave_type_org_code_uidx").on(t.organizationId, t.code),
+    index("leave_type_org_idx").on(t.organizationId),
+  ],
+);
+
+export const leaveEntitlement = pgTable(
+  "leave_entitlement",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    leaveTypeId: text("leave_type_id")
+      .notNull()
+      .references(() => leaveType.id, { onDelete: "cascade" }),
+    year: integer("year").notNull(),
+    entitledDays: text("entitled_days").notNull().default("0"),
+    usedDays: text("used_days").notNull().default("0"),
+    pendingDays: text("pending_days").notNull().default("0"),
+    carryForwardDays: text("carry_forward_days").notNull().default("0"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("leave_entitlement_unique").on(t.organizationId, t.userId, t.leaveTypeId, t.year),
+    index("leave_entitlement_user_idx").on(t.userId, t.organizationId),
+  ],
+);
+
+export const leaveApplication = pgTable(
+  "leave_application",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    applicationNo: text("application_no").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    leaveTypeId: text("leave_type_id")
+      .notNull()
+      .references(() => leaveType.id),
+    leaveTypeName: text("leave_type_name").notNull(),
+    leaveTypeCode: text("leave_type_code").notNull(),
+    startDate: text("start_date").notNull(),
+    endDate: text("end_date").notNull(),
+    totalDays: text("total_days").notNull(),
+    isHalfDay: boolean("is_half_day").notNull().default(false),
+    halfDayPeriod: text("half_day_period"),
+    reason: text("reason"),
+    status: text("status").notNull().default("PENDING"),
+    reviewedBy: text("reviewed_by").references(() => user.id),
+    reviewedAt: timestamp("reviewed_at"),
+    reviewComment: text("review_comment"),
+    cancelledBy: text("cancelled_by").references(() => user.id),
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("leave_application_no_org_uidx").on(t.organizationId, t.applicationNo),
+    index("leave_application_user_idx").on(t.userId, t.organizationId),
+    index("leave_application_status_idx").on(t.status, t.organizationId),
+    index("leave_application_date_idx").on(t.startDate),
+  ],
+);
+
+export const leaveDocument = pgTable(
+  "leave_document",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => leaveApplication.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    fileKey: text("file_key").notNull(),
+    fileSize: integer("file_size").notNull(),
+    mimeType: text("mime_type").notNull(),
+    uploadedBy: text("uploaded_by").notNull().references(() => user.id),
+    uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("leave_document_application_idx").on(t.applicationId),
+    index("leave_document_org_idx").on(t.organizationId),
+  ],
+);
+
+export const leaveTypeRelations = relations(leaveType, ({ one, many }) => ({
+  organization: one(organization, { fields: [leaveType.organizationId], references: [organization.id] }),
+  entitlements: many(leaveEntitlement),
+  applications: many(leaveApplication),
+}));
+
+export const leaveEntitlementRelations = relations(leaveEntitlement, ({ one }) => ({
+  organization: one(organization, { fields: [leaveEntitlement.organizationId], references: [organization.id] }),
+  user: one(user, { fields: [leaveEntitlement.userId], references: [user.id] }),
+  leaveType: one(leaveType, { fields: [leaveEntitlement.leaveTypeId], references: [leaveType.id] }),
+}));
+
+export const leaveApplicationRelations = relations(leaveApplication, ({ one, many }) => ({
+  organization: one(organization, { fields: [leaveApplication.organizationId], references: [organization.id] }),
+  user: one(user, { fields: [leaveApplication.userId], references: [user.id] }),
+  leaveType: one(leaveType, { fields: [leaveApplication.leaveTypeId], references: [leaveType.id] }),
+  reviewedByUser: one(user, { fields: [leaveApplication.reviewedBy], references: [user.id] }),
+  cancelledByUser: one(user, { fields: [leaveApplication.cancelledBy], references: [user.id] }),
+  documents: many(leaveDocument),
+}));
+
+export const leaveDocumentRelations = relations(leaveDocument, ({ one }) => ({
+  application: one(leaveApplication, { fields: [leaveDocument.applicationId], references: [leaveApplication.id] }),
+  organization: one(organization, { fields: [leaveDocument.organizationId], references: [organization.id] }),
+  uploadedByUser: one(user, { fields: [leaveDocument.uploadedBy], references: [user.id] }),
+}));
+
+/* =========================
    SCHEMA EXPORT
 ========================= */
 
@@ -2108,4 +2260,13 @@ export const schema = {
   ledgerEntryRelations,
   ledgerLineRelations,
   ledgerDocumentRelations,
+  // leave management
+  leaveType,
+  leaveEntitlement,
+  leaveApplication,
+  leaveDocument,
+  leaveTypeRelations,
+  leaveEntitlementRelations,
+  leaveApplicationRelations,
+  leaveDocumentRelations,
 };
