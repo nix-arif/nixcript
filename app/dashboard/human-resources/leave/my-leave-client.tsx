@@ -4,7 +4,6 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -16,61 +15,48 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import type { MyLeaveBalance, LeaveApplicationWithDetails } from "@/server/leave";
 import { cancelLeave } from "@/server/leave";
-import { PlusIcon, FileDownIcon, XIcon } from "lucide-react";
+import { PlusIcon, FileDownIcon, XIcon, CalendarDaysIcon, AlertTriangleIcon } from "lucide-react";
 
-/* =========================
-   HELPERS
-========================= */
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatDays(days: string | number): string {
   const n = parseFloat(String(days));
   return n % 1 === 0 ? String(Math.round(n)) : n.toFixed(1);
 }
 
-function statusBadge(status: string) {
-  switch (status) {
-    case "PENDING":
-      return (
-        <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 border-amber-200">
-          Pending
-        </Badge>
-      );
-    case "APPROVED":
-      return (
-        <Badge className="bg-green-100 text-green-800 hover:bg-green-100 border-green-200">
-          Approved
-        </Badge>
-      );
-    case "REJECTED":
-      return (
-        <Badge className="bg-red-100 text-red-800 hover:bg-red-100 border-red-200">
-          Rejected
-        </Badge>
-      );
-    case "CANCELLED":
-      return (
-        <Badge className="bg-gray-100 text-gray-600 hover:bg-gray-100 border-gray-200">
-          Cancelled
-        </Badge>
-      );
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    PENDING:
+      "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700",
+    APPROVED:
+      "bg-green-100 text-green-800 border-green-200 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700",
+    REJECTED:
+      "bg-red-100 text-red-800 border-red-200 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700",
+    CANCELLED:
+      "bg-muted text-muted-foreground border-border hover:bg-muted",
+  };
+  const labels: Record<string, string> = {
+    PENDING: "Pending",
+    APPROVED: "Approved",
+    REJECTED: "Rejected",
+    CANCELLED: "Cancelled",
+  };
+  return (
+    <Badge className={`border text-xs ${map[status] ?? "border-border"}`}>
+      {labels[status] ?? status}
+    </Badge>
+  );
 }
 
-/* =========================
-   BALANCE CARD
-========================= */
+// ── Balance Card ───────────────────────────────────────────────────────────
 
 function BalanceCard({ balance }: { balance: MyLeaveBalance }) {
   const entitled = parseFloat(balance.entitledDays);
@@ -81,73 +67,73 @@ function BalanceCard({ balance }: { balance: MyLeaveBalance }) {
   const total = entitled + carry;
   const progressVal = total > 0 ? Math.min(100, ((used + pending) / total) * 100) : 0;
 
-  const remainingPct = total > 0 ? remaining / total : 0;
-  let cardColor = "border-green-200 bg-green-50/30";
-  let remainingColor = "text-green-700";
-  if (remaining <= 0) {
-    cardColor = "border-red-200 bg-red-50/30";
-    remainingColor = "text-red-700";
-  } else if (remainingPct < 0.2) {
-    cardColor = "border-amber-200 bg-amber-50/30";
-    remainingColor = "text-amber-700";
-  }
+  const pct = total > 0 ? remaining / total : 1;
+  const [borderCls, numCls] =
+    remaining <= 0
+      ? ["border-red-200 dark:border-red-800", "text-red-600 dark:text-red-400"]
+      : pct < 0.2
+      ? ["border-amber-200 dark:border-amber-700", "text-amber-600 dark:text-amber-400"]
+      : ["border-green-200 dark:border-green-800", "text-green-700 dark:text-green-400"];
 
   return (
-    <Card className={`border ${cardColor}`}>
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-semibold text-gray-700">
-            {balance.leaveTypeName}
-          </CardTitle>
-          <div className="flex gap-1">
-            <Badge variant="outline" className="text-xs font-mono">
-              {balance.leaveTypeCode}
-            </Badge>
-            <Badge
-              variant="outline"
-              className={`text-xs ${balance.isPaid ? "text-blue-700 border-blue-200 bg-blue-50" : "text-gray-500"}`}
-            >
-              {balance.isPaid ? "Paid" : "Unpaid"}
-            </Badge>
-          </div>
+    <div className={`rounded-lg border ${borderCls} bg-card p-4 flex flex-col gap-2.5`}>
+      {/* Badges — own row, wraps freely */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <Badge variant="outline" className="font-mono text-xs px-1.5 py-0 h-5">
+          {balance.leaveTypeCode}
+        </Badge>
+        <Badge
+          variant="outline"
+          className={`text-xs px-1.5 py-0 h-5 ${
+            balance.isPaid
+              ? "text-blue-700 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-700 dark:bg-blue-900/20"
+              : "text-muted-foreground"
+          }`}
+        >
+          {balance.isPaid ? "Paid" : "Unpaid"}
+        </Badge>
+      </div>
+
+      {/* Leave type name — full width, no competition */}
+      <p className="text-sm font-semibold leading-snug">{balance.leaveTypeName}</p>
+
+      {/* Remaining days — big number */}
+      <div className={`text-3xl font-bold leading-none ${numCls}`}>
+        {formatDays(remaining)}
+        <span className="text-sm font-normal text-muted-foreground ml-1.5">days left</span>
+      </div>
+
+      {/* Progress */}
+      <Progress value={progressVal} className="h-1.5" />
+
+      {/* Breakdown */}
+      <div className="text-xs text-muted-foreground space-y-1">
+        <div className="flex justify-between">
+          <span>Entitled</span>
+          <span className="font-medium text-foreground">{formatDays(entitled)}d</span>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className={`text-3xl font-bold ${remainingColor}`}>
-          {formatDays(balance.remainingDays)}
-          <span className="text-sm font-normal text-gray-500 ml-1">days left</span>
-        </div>
-        <Progress value={progressVal} className="h-2" />
-        <div className="text-xs text-gray-500 space-y-0.5">
+        {carry > 0 && (
           <div className="flex justify-between">
-            <span>Entitled</span>
-            <span className="font-medium">{formatDays(entitled)} days</span>
+            <span>Carried fwd</span>
+            <span className="font-medium text-blue-600 dark:text-blue-400">+{formatDays(carry)}d</span>
           </div>
-          {carry > 0 && (
-            <div className="flex justify-between">
-              <span>Carried forward</span>
-              <span className="font-medium text-blue-600">+{formatDays(carry)} days</span>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span>Used</span>
-            <span className="font-medium text-gray-700">{formatDays(used)} days</span>
-          </div>
-          {pending > 0 && (
-            <div className="flex justify-between">
-              <span>Pending</span>
-              <span className="font-medium text-amber-600">{formatDays(pending)} days</span>
-            </div>
-          )}
+        )}
+        <div className="flex justify-between">
+          <span>Used</span>
+          <span className="font-medium text-foreground">{formatDays(used)}d</span>
         </div>
-      </CardContent>
-    </Card>
+        {pending > 0 && (
+          <div className="flex justify-between">
+            <span>Pending</span>
+            <span className="font-medium text-amber-600 dark:text-amber-400">{formatDays(pending)}d</span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
-/* =========================
-   MAIN CLIENT COMPONENT
-========================= */
+// ── Main Component ─────────────────────────────────────────────────────────
 
 interface Props {
   balances: MyLeaveBalance[];
@@ -157,7 +143,7 @@ interface Props {
 
 export function MyLeaveClient({ balances, applications, permissions }: Props) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [cancelTarget, setCancelTarget] = useState<LeaveApplicationWithDetails | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
@@ -179,19 +165,22 @@ export function MyLeaveClient({ balances, applications, permissions }: Props) {
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-8">
+    <div className="p-6 flex flex-col gap-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">My Leave</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            View your leave balances and application history
+      <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <CalendarDaysIcon className="h-5 w-5 text-muted-foreground" />
+            My Leave
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            View your leave balances and application history.
           </p>
         </div>
         {canApply && (
           <Link href="/dashboard/human-resources/leave/apply">
-            <Button className="gap-2">
-              <PlusIcon className="h-4 w-4" />
+            <Button size="sm">
+              <PlusIcon className="h-4 w-4 mr-1" />
               Apply Leave
             </Button>
           </Link>
@@ -199,147 +188,151 @@ export function MyLeaveClient({ balances, applications, permissions }: Props) {
       </div>
 
       {/* Balance Cards */}
-      {balances.length > 0 ? (
-        <div>
-          <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">
-            Leave Balances — {new Date().getFullYear()}
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Leave Balances — {new Date().getFullYear()}
+        </h2>
+        {balances.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
             {balances.map((b) => (
               <BalanceCard key={b.id} balance={b} />
             ))}
           </div>
-        </div>
-      ) : (
-        <Card>
-          <CardContent className="py-8 text-center text-gray-500">
-            No leave types configured. Contact your HR administrator.
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Applications Table */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">
-          Leave History
-        </h2>
-        {applications.length === 0 ? (
-          <Card>
-            <CardContent className="py-8 text-center text-gray-500">
-              No leave applications yet.{" "}
-              {canApply && (
-                <Link
-                  href="/dashboard/human-resources/leave/apply"
-                  className="text-blue-600 hover:underline"
-                >
-                  Apply for leave
-                </Link>
-              )}
-            </CardContent>
-          </Card>
         ) : (
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Application No</TableHead>
-                    <TableHead>Leave Type</TableHead>
-                    <TableHead>From</TableHead>
-                    <TableHead>To</TableHead>
-                    <TableHead>Days</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {applications.map((app) => (
-                    <TableRow key={app.id}>
-                      <TableCell className="font-mono text-xs">{app.applicationNo}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-medium">{app.leaveTypeName}</span>
-                          {app.isHalfDay && (
-                            <Badge variant="outline" className="text-xs">
-                              {app.halfDayPeriod ?? "Half-day"}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">{app.startDate}</TableCell>
-                      <TableCell className="text-sm">{app.endDate}</TableCell>
-                      <TableCell className="text-sm font-medium">
-                        {formatDays(app.totalDays)}
-                      </TableCell>
-                      <TableCell>{statusBadge(app.status)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {app.documents.length > 0 && (
-                            <a
-                              href={`/api/leave/download/${app.documents[0].fileKey}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <Button variant="ghost" size="sm" className="gap-1 text-xs">
-                                <FileDownIcon className="h-3 w-3" />
-                                Doc
-                              </Button>
-                            </a>
-                          )}
-                          {app.status === "PENDING" && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                              onClick={() => setCancelTarget(app)}
-                            >
-                              <XIcon className="h-3 w-3" />
-                              Cancel
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+          <div className="rounded-lg border border-border py-10 text-center text-sm text-muted-foreground">
+            No leave types configured. Contact your HR administrator.
+          </div>
         )}
       </div>
 
-      {/* Cancel Confirmation Dialog */}
-      <Dialog open={!!cancelTarget} onOpenChange={(open) => !open && setCancelTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Cancel Leave Application</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to cancel{" "}
-              <strong>
-                {cancelTarget?.leaveTypeName} ({cancelTarget?.applicationNo})
-              </strong>{" "}
-              from <strong>{cancelTarget?.startDate}</strong> to{" "}
-              <strong>{cancelTarget?.endDate}</strong>? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setCancelTarget(null)}
-              disabled={cancelling}
-            >
-              Keep Application
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleCancel}
-              disabled={cancelling}
-            >
-              {cancelling ? "Cancelling..." : "Yes, Cancel"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Applications Table */}
+      <div className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Leave History
+        </h2>
+        {applications.length === 0 ? (
+          <div className="rounded-lg border border-border py-10 text-center text-sm text-muted-foreground">
+            No leave applications yet.{" "}
+            {canApply && (
+              <Link
+                href="/dashboard/human-resources/leave/apply"
+                className="text-primary hover:underline"
+              >
+                Apply for leave
+              </Link>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/40">
+                  <TableHead className="w-32.5">Ref No.</TableHead>
+                  <TableHead>Leave Type</TableHead>
+                  <TableHead className="w-50">Period</TableHead>
+                  <TableHead className="w-15 text-right">Days</TableHead>
+                  <TableHead className="w-27.5">Status</TableHead>
+                  <TableHead className="w-20 text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {applications.map((app) => (
+                  <TableRow key={app.id}>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {app.applicationNo}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-medium">{app.leaveTypeName}</span>
+                        {app.isHalfDay && (
+                          <Badge variant="outline" className="text-xs px-1.5 py-0 h-5">
+                            {app.halfDayPeriod ?? "Half-day"}
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                      {app.startDate}
+                      {app.startDate !== app.endDate && (
+                        <> &rarr; {app.endDate}</>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-medium">
+                      {formatDays(app.totalDays)}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={app.status} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {app.documents.length > 0 && (
+                          <a
+                            href={`/api/leave/download/${app.documents[0].fileKey}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              title="Download document"
+                            >
+                              <FileDownIcon className="h-3.5 w-3.5" />
+                            </Button>
+                          </a>
+                        )}
+                        {app.status === "PENDING" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => setCancelTarget(app)}
+                            title="Cancel application"
+                          >
+                            <XIcon className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+
+      {/* Cancel Confirmation Sheet */}
+      <Sheet open={!!cancelTarget} onOpenChange={(open) => !open && setCancelTarget(null)}>
+        <SheetContent className="w-full sm:max-w-md max-w-lg! overflow-y-auto px-10">
+          <SheetHeader className="mb-5">
+            <SheetTitle>Cancel Leave Application</SheetTitle>
+          </SheetHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 flex items-start gap-3">
+              <AlertTriangleIcon className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+              <p className="text-sm text-destructive leading-relaxed">
+                Are you sure you want to cancel{" "}
+                <strong>
+                  {cancelTarget?.leaveTypeName} ({cancelTarget?.applicationNo})
+                </strong>{" "}
+                from <strong>{cancelTarget?.startDate}</strong> to{" "}
+                <strong>{cancelTarget?.endDate}</strong>? This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <Button variant="destructive" onClick={handleCancel} disabled={cancelling} className="flex-1">
+                {cancelling ? "Cancelling…" : "Yes, Cancel Leave"}
+              </Button>
+              <Button variant="outline" onClick={() => setCancelTarget(null)} disabled={cancelling}>
+                Keep
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

@@ -4,18 +4,29 @@ import { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { LeaveTypeRow, MyLeaveBalance } from "@/server/leave";
 import { applyForLeave, createLeaveDocumentRecord } from "@/server/leave";
-import { ArrowLeftIcon, UploadIcon, XIcon, InfoIcon, AlertTriangleIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  UploadIcon,
+  XIcon,
+  InfoIcon,
+  AlertTriangleIcon,
+  FilePlusIcon,
+} from "lucide-react";
 
-/* =========================
-   CLIENT-SIDE WORKING DAYS
-========================= */
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function calcWorkingDays(start: string, end: string, isHalfDay: boolean): number {
   if (isHalfDay) return 0.5;
@@ -38,30 +49,25 @@ function formatDays(n: number | string): string {
   return v % 1 === 0 ? String(Math.round(v)) : v.toFixed(1);
 }
 
-/* =========================
-   QUEUED FILE
-========================= */
+// ── Types ──────────────────────────────────────────────────────────────────
 
 interface QueuedFile {
   file: File;
   id: string;
 }
 
-/* =========================
-   MAIN COMPONENT
-========================= */
-
 interface Props {
   leaveTypes: LeaveTypeRow[];
   balances: MyLeaveBalance[];
 }
 
+// ── Component ──────────────────────────────────────────────────────────────
+
 export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Form state
   const [selectedTypeId, setSelectedTypeId] = useState<string>("");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
@@ -71,14 +77,12 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  // Derived state
   const selectedType = leaveTypes.find((t) => t.id === selectedTypeId) ?? null;
   const selectedBalance = balances.find((b) => b.leaveTypeId === selectedTypeId) ?? null;
 
-  const effectiveStart = isHalfDay ? startDate : startDate;
+  const effectiveStart = startDate;
   const effectiveEnd = isHalfDay ? startDate : endDate;
   const workingDays = calcWorkingDays(effectiveStart, effectiveEnd, isHalfDay);
-
   const remaining = selectedBalance ? parseFloat(selectedBalance.remainingDays) : 0;
   const insufficientBalance = selectedType !== null && workingDays > 0 && workingDays > remaining;
 
@@ -91,22 +95,16 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
-    const newFiles: QueuedFile[] = files.map((f) => ({
-      file: f,
-      id: Math.random().toString(36).slice(2),
-    }));
-    setQueuedFiles((prev) => [...prev, ...newFiles]);
+    setQueuedFiles((prev) => [
+      ...prev,
+      ...files.map((f) => ({ file: f, id: Math.random().toString(36).slice(2) })),
+    ]);
     if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-
-  function removeFile(id: string) {
-    setQueuedFiles((prev) => prev.filter((f) => f.id !== id));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!isFormValid || submitting) return;
-
     setSubmitting(true);
     try {
       const appId = await applyForLeave({
@@ -118,7 +116,6 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
         reason: reason.trim() || undefined,
       });
 
-      // Upload documents if any
       for (const qf of queuedFiles) {
         const res = await fetch("/api/leave/upload-url", {
           method: "POST",
@@ -130,20 +127,14 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
             fileSize: qf.file.size,
           }),
         });
-        if (!res.ok) {
-          toast.error(`Failed to get upload URL for ${qf.file.name}`);
-          continue;
-        }
+        if (!res.ok) { toast.error(`Failed to get upload URL for ${qf.file.name}`); continue; }
         const { uploadUrl, key } = await res.json();
         const uploadRes = await fetch(uploadUrl, {
           method: "PUT",
           body: qf.file,
           headers: { "Content-Type": qf.file.type || "application/octet-stream" },
         });
-        if (!uploadRes.ok) {
-          toast.error(`Failed to upload ${qf.file.name}`);
-          continue;
-        }
+        if (!uploadRes.ok) { toast.error(`Failed to upload ${qf.file.name}`); continue; }
         await createLeaveDocumentRecord({
           applicationId: appId,
           fileName: qf.file.name,
@@ -163,128 +154,139 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-6">
+    <div className="p-6 flex flex-col gap-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <Link href="/dashboard/human-resources/leave">
-          <Button variant="ghost" size="icon">
+          <Button variant="ghost" size="icon" className="mt-0.5 shrink-0">
             <ArrowLeftIcon className="h-4 w-4" />
           </Button>
         </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Apply for Leave</h1>
-          <p className="text-sm text-gray-500">Submit a new leave application</p>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <FilePlusIcon className="h-5 w-5 text-muted-foreground" />
+            Apply for Leave
+          </h1>
+          <p className="text-sm text-muted-foreground">Submit a new leave application.</p>
         </div>
       </div>
 
       {leaveTypes.length === 0 ? (
-        <Card>
-          <CardContent className="py-10 text-center text-gray-500">
-            No active leave types are configured. Please contact your HR administrator.
-          </CardContent>
-        </Card>
+        <div className="rounded-lg border border-border py-12 text-center text-sm text-muted-foreground">
+          No active leave types are configured. Please contact your HR administrator.
+        </div>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Leave Type */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Leave Type</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="leaveType">Select Leave Type *</Label>
-                <select
-                  id="leaveType"
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5 max-w-2xl">
+
+          {/* ── Leave Type ── */}
+          <section className="rounded-lg border border-border overflow-hidden">
+            <div className="px-4 py-3 bg-muted/40 border-b border-border">
+              <h2 className="text-sm font-semibold">Leave Type</h2>
+            </div>
+            <div className="p-4 flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="leaveType">Select Leave Type <span className="text-destructive">*</span></Label>
+                <Select
                   value={selectedTypeId}
-                  onChange={(e) => {
-                    setSelectedTypeId(e.target.value);
-                    setIsHalfDay(false);
-                  }}
-                  className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                  required
+                  onValueChange={(v) => { setSelectedTypeId(v); setIsHalfDay(false); }}
                 >
-                  <option value="">-- Select leave type --</option>
-                  {leaveTypes.map((t) => {
-                    const bal = balances.find((b) => b.leaveTypeId === t.id);
-                    const rem = bal ? parseFloat(bal.remainingDays) : null;
-                    return (
-                      <option key={t.id} value={t.id}>
-                        {t.name} ({rem !== null ? `${formatDays(rem)} days remaining` : "no balance info"})
-                      </option>
-                    );
-                  })}
-                </select>
+                  <SelectTrigger id="leaveType">
+                    <SelectValue placeholder="Select a leave type…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {leaveTypes.map((t) => {
+                      const bal = balances.find((b) => b.leaveTypeId === t.id);
+                      const rem = bal ? parseFloat(bal.remainingDays) : null;
+                      return (
+                        <SelectItem key={t.id} value={t.id}>
+                          <span className="font-medium">{t.name}</span>
+                          <span className="text-muted-foreground ml-1.5 text-xs">
+                            {rem !== null ? `— ${formatDays(rem)} days left` : ""}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
               </div>
 
               {selectedType && (
-                <div className="rounded-lg bg-blue-50 border border-blue-100 p-3 space-y-1.5">
-                  <div className="flex items-center gap-2 text-sm text-blue-700">
-                    <InfoIcon className="h-4 w-4 flex-shrink-0" />
-                    <span className="font-medium">{selectedType.name}</span>
-                    <div className="flex gap-1 ml-auto">
+                <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <InfoIcon className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <span className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                      {selectedType.name}
+                    </span>
+                    <div className="flex gap-1.5 ml-auto flex-wrap justify-end">
                       <Badge
                         variant="outline"
-                        className={`text-xs ${selectedType.isPaid ? "text-blue-700 border-blue-300 bg-blue-100" : "text-gray-600"}`}
+                        className={`text-xs px-1.5 py-0 h-5 ${
+                          selectedType.isPaid
+                            ? "text-blue-700 border-blue-300 bg-blue-100 dark:text-blue-400 dark:border-blue-700"
+                            : "text-muted-foreground"
+                        }`}
                       >
                         {selectedType.isPaid ? "Paid" : "Unpaid"}
                       </Badge>
                       {selectedType.allowHalfDay && (
-                        <Badge variant="outline" className="text-xs text-green-700 border-green-200 bg-green-50">
+                        <Badge
+                          variant="outline"
+                          className="text-xs px-1.5 py-0 h-5 text-green-700 border-green-300 bg-green-50 dark:text-green-400 dark:border-green-700"
+                        >
                           Half-day OK
                         </Badge>
                       )}
                     </div>
                   </div>
                   {selectedType.description && (
-                    <p className="text-xs text-blue-600 pl-6">{selectedType.description}</p>
+                    <p className="text-xs text-blue-700 dark:text-blue-400 pl-6">
+                      {selectedType.description}
+                    </p>
                   )}
                   {selectedType.requiresDocument && (
-                    <p className="text-xs text-amber-700 pl-6 font-medium">
-                      Supporting document (MC/certificate) is required for this leave type.
+                    <p className="text-xs text-amber-700 dark:text-amber-400 pl-6 font-medium">
+                      ⚠ Supporting document (MC/certificate) is required for this leave type.
                     </p>
                   )}
                   {selectedBalance && (
-                    <div className="text-xs text-blue-600 pl-6 mt-1">
-                      Balance: {formatDays(selectedBalance.remainingDays)} days remaining
+                    <p className="text-xs text-blue-600 dark:text-blue-400 pl-6">
+                      Balance:{" "}
+                      <strong>{formatDays(selectedBalance.remainingDays)} days</strong> remaining
                       {parseFloat(selectedBalance.pendingDays) > 0 && (
-                        <span className="text-amber-600 ml-1">
+                        <span className="text-amber-600 dark:text-amber-400 ml-1">
                           ({formatDays(selectedBalance.pendingDays)} pending)
                         </span>
                       )}
-                    </div>
+                    </p>
                   )}
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          {/* Dates */}
+          {/* ── Dates ── */}
           {selectedType && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Leave Dates</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Half-day toggle */}
+            <section className="rounded-lg border border-border overflow-hidden">
+              <div className="px-4 py-3 bg-muted/40 border-b border-border">
+                <h2 className="text-sm font-semibold">Leave Dates</h2>
+              </div>
+              <div className="p-4 flex flex-col gap-4">
                 {selectedType.allowHalfDay && (
-                  <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none w-fit">
                     <input
                       type="checkbox"
-                      id="halfDay"
                       checked={isHalfDay}
                       onChange={(e) => setIsHalfDay(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-input accent-primary"
                     />
-                    <Label htmlFor="halfDay" className="cursor-pointer">
-                      Half-day leave
-                    </Label>
-                  </div>
+                    <span className="text-sm font-medium">Half-day leave</span>
+                  </label>
                 )}
 
                 {isHalfDay ? (
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="halfDayDate">Date *</Label>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="halfDayDate">Date <span className="text-destructive">*</span></Label>
                       <input
                         type="date"
                         id="halfDayDate"
@@ -294,23 +296,26 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                         required
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="halfDayPeriod">Period *</Label>
-                      <select
-                        id="halfDayPeriod"
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="halfDayPeriod">Period <span className="text-destructive">*</span></Label>
+                      <Select
                         value={halfDayPeriod}
-                        onChange={(e) => setHalfDayPeriod(e.target.value as "AM" | "PM")}
-                        className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                        onValueChange={(v) => setHalfDayPeriod(v as "AM" | "PM")}
                       >
-                        <option value="AM">Morning (AM)</option>
-                        <option value="PM">Afternoon (PM)</option>
-                      </select>
+                        <SelectTrigger id="halfDayPeriod">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="AM">Morning (AM)</SelectItem>
+                          <SelectItem value="PM">Afternoon (PM)</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="startDate">Start Date *</Label>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="startDate">Start Date <span className="text-destructive">*</span></Label>
                       <input
                         type="date"
                         id="startDate"
@@ -323,8 +328,8 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                         required
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="endDate">End Date *</Label>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="endDate">End Date <span className="text-destructive">*</span></Label>
                       <input
                         type="date"
                         id="endDate"
@@ -338,25 +343,25 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                   </div>
                 )}
 
-                {/* Working days display */}
+                {/* Day count indicator */}
                 {(isHalfDay ? startDate : startDate && endDate) && (
                   <div
-                    className={`rounded-md px-4 py-2 text-sm font-medium ${
+                    className={`rounded-md px-4 py-2.5 text-sm font-medium border ${
                       insufficientBalance
-                        ? "bg-red-50 text-red-700 border border-red-200"
+                        ? "bg-destructive/10 text-destructive border-destructive/30"
                         : workingDays > 0
-                        ? "bg-green-50 text-green-700 border border-green-200"
-                        : "bg-gray-50 text-gray-500 border border-gray-200"
+                        ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-400 dark:border-green-800"
+                        : "bg-muted text-muted-foreground border-border"
                     }`}
                   >
                     {workingDays > 0 ? (
                       <>
                         {formatDays(workingDays)} working{" "}
-                        {workingDays === 1 || workingDays === 0.5 ? "day" : "days"}
-                        {isHalfDay && ` (${halfDayPeriod})`}
+                        {workingDays <= 1 ? "day" : "days"}
+                        {isHalfDay && ` — ${halfDayPeriod}`}
                         {insufficientBalance && (
-                          <span className="ml-2 font-normal">
-                            — Insufficient balance ({formatDays(remaining)} days available)
+                          <span className="ml-2 font-normal opacity-90">
+                            (only {formatDays(remaining)} available)
                           </span>
                         )}
                       </>
@@ -367,60 +372,60 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                 )}
 
                 {insufficientBalance && (
-                  <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">
-                    <AlertTriangleIcon className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md p-3">
+                    <AlertTriangleIcon className="h-4 w-4 mt-0.5 shrink-0" />
                     <span>
-                      You only have <strong>{formatDays(remaining)}</strong> days remaining for{" "}
-                      {selectedType.name}. Requested: <strong>{formatDays(workingDays)}</strong> days.
+                      Only <strong>{formatDays(remaining)}</strong> days remaining for{" "}
+                      {selectedType.name}. You requested{" "}
+                      <strong>{formatDays(workingDays)}</strong> days.
                     </span>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </section>
           )}
 
-          {/* Reason */}
+          {/* ── Reason ── */}
           {selectedType && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Reason</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
+            <section className="rounded-lg border border-border overflow-hidden">
+              <div className="px-4 py-3 bg-muted/40 border-b border-border">
+                <h2 className="text-sm font-semibold">Reason</h2>
+              </div>
+              <div className="p-4">
+                <div className="flex flex-col gap-1.5">
                   <Label htmlFor="reason">
                     Reason{" "}
-                    <span className="text-gray-400 font-normal">(optional but recommended)</span>
+                    <span className="text-muted-foreground font-normal">(optional but recommended)</span>
                   </Label>
                   <Textarea
                     id="reason"
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    placeholder="Briefly describe the reason for your leave..."
+                    placeholder="Briefly describe the reason for your leave…"
                     rows={3}
                   />
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </section>
           )}
 
-          {/* Documents */}
+          {/* ── Supporting Document ── */}
           {selectedType && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">
+            <section className="rounded-lg border border-border overflow-hidden">
+              <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between">
+                <h2 className="text-sm font-semibold">
                   Supporting Document
                   {selectedType.requiresDocument && (
-                    <span className="ml-2 text-red-500 font-normal text-sm">* Required</span>
+                    <span className="ml-1.5 text-destructive font-normal text-xs">* Required</span>
                   )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
+                </h2>
+              </div>
+              <div className="p-4 flex flex-col gap-3">
                 {selectedType.requiresDocument && queuedFiles.length === 0 && (
-                  <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-3">
-                    <AlertTriangleIcon className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-700 rounded-md p-3">
+                    <AlertTriangleIcon className="h-4 w-4 mt-0.5 shrink-0" />
                     <span>
-                      This leave type requires a supporting document (e.g. Medical Certificate).
-                      Please attach the document before submitting.
+                      A supporting document (e.g. Medical Certificate) is required. Please attach it before submitting.
                     </span>
                   </div>
                 )}
@@ -437,7 +442,8 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                 <Button
                   type="button"
                   variant="outline"
-                  className="gap-2"
+                  size="sm"
+                  className="w-fit gap-2"
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <UploadIcon className="h-4 w-4" />
@@ -445,24 +451,24 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                 </Button>
 
                 {queuedFiles.length > 0 && (
-                  <div className="space-y-2">
+                  <div className="flex flex-col gap-1.5">
                     {queuedFiles.map((qf) => (
                       <div
                         key={qf.id}
-                        className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                        className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2 text-sm"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="truncate text-gray-700">{qf.file.name}</span>
-                          <span className="text-gray-400 text-xs flex-shrink-0">
-                            ({(qf.file.size / 1024).toFixed(0)} KB)
+                          <span className="truncate font-medium text-foreground">{qf.file.name}</span>
+                          <span className="text-muted-foreground text-xs shrink-0">
+                            {(qf.file.size / 1024).toFixed(0)} KB
                           </span>
                         </div>
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6 text-gray-400 hover:text-red-500 flex-shrink-0"
-                          onClick={() => removeFile(qf.id)}
+                          className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
+                          onClick={() => setQueuedFiles((prev) => prev.filter((f) => f.id !== qf.id))}
                         >
                           <XIcon className="h-3 w-3" />
                         </Button>
@@ -471,26 +477,22 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                   </div>
                 )}
 
-                <p className="text-xs text-gray-400">
-                  Accepted: PDF, JPG, PNG, DOC, DOCX. Max recommended: 10 MB per file.
+                <p className="text-xs text-muted-foreground">
+                  Accepted: PDF, JPG, PNG, DOC, DOCX — max 10 MB per file.
                 </p>
-              </CardContent>
-            </Card>
+              </div>
+            </section>
           )}
 
-          {/* Submit */}
-          <div className="flex gap-3">
-            <Link href="/dashboard/human-resources/leave" className="flex-1">
-              <Button type="button" variant="outline" className="w-full" disabled={submitting}>
+          {/* ── Actions ── */}
+          <div className="flex items-center gap-3 pt-1">
+            <Link href="/dashboard/human-resources/leave">
+              <Button type="button" variant="outline" disabled={submitting}>
                 Cancel
               </Button>
             </Link>
-            <Button
-              type="submit"
-              className="flex-1"
-              disabled={!isFormValid || submitting}
-            >
-              {submitting ? "Submitting..." : "Submit Application"}
+            <Button type="submit" disabled={!isFormValid || submitting}>
+              {submitting ? "Submitting…" : "Submit Application"}
             </Button>
           </div>
         </form>
