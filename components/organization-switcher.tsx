@@ -51,22 +51,37 @@ export function OrganizationSwitcher() {
       refetchList();
     };
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") refetchAll();
-    };
+    // ── pageshow (bfcache restore) ────────────────────────────────────────
+    // Fires when the browser restores a frozen page from the back/forward cache.
+    // The session/org may have changed in other tabs while the page was cached,
+    // so a refetch is genuinely needed here.
     const handlePageShow = (e: PageTransitionEvent) => {
       if (e.persisted) refetchAll();
     };
-    // popstate fires on all back/forward navigation (SPA + non-bfcache).
-    // This covers the 404 → back case where pageshow and visibilitychange don't fire.
-    const handlePopState = () => refetchAll();
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    // ── popstate (browser back / forward) ────────────────────────────────
+    // Rate-limited to once per 5 minutes so that rapid same-org back/forward
+    // navigation (e.g. Leave → Apply Leave → back) does NOT trigger a refetch
+    // on every pop. The 5-min window still catches the real edge case: user
+    // navigates to a 404, stays away long enough for the session to change,
+    // then hits Back.
+    //
+    // Note: visibilitychange is intentionally omitted here — better-auth
+    // already handles tab-focus refetching internally via its WindowFocusManager
+    // (focus-manager.mjs). Adding a manual listener would duplicate the request.
+    let lastPopStateRefetch = 0;
+    const POPSTATE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+    const handlePopState = () => {
+      const now = Date.now();
+      if (now - lastPopStateRefetch < POPSTATE_COOLDOWN_MS) return;
+      lastPopStateRefetch = now;
+      refetchAll();
+    };
+
     window.addEventListener("pageshow", handlePageShow);
     window.addEventListener("popstate", handlePopState);
 
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pageshow", handlePageShow);
       window.removeEventListener("popstate", handlePopState);
     };

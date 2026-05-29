@@ -14,6 +14,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { ChevronRightIcon } from "lucide-react";
 import Link from "next/link";
@@ -34,6 +35,11 @@ export function NavMain({
   }[];
 }) {
   const pathname = usePathname();
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  const closeMobile = () => {
+    if (isMobile) setOpenMobile(false);
+  };
 
   return (
     <SidebarGroup>
@@ -67,7 +73,7 @@ export function NavMain({
                       return (
                         <SidebarMenuSubItem key={subItem.title}>
                           <SidebarMenuSubButton asChild isActive={isActive}>
-                            <Link href={subItem.url}>
+                            <Link href={subItem.url} onClick={closeMobile}>
                               <span>{subItem.title}</span>
                             </Link>
                           </SidebarMenuSubButton>
