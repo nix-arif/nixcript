@@ -2253,6 +2253,61 @@ export const claimDocument = pgTable(
   ],
 );
 
+// ── Claim Line Items ───────────────────────────────────────────────────────
+// One row per expense line within a LOCAL or OVERSEAS claim.
+// category discriminates the sub-section and which nullable columns apply.
+export const claimLineItem = pgTable(
+  "claim_line_item",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => claimApplication.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull(),
+    // Sub-section discriminator
+    // LOCAL:   TRAVEL | TOLL | PARKING | MOBILE | IN_BASE_ENT | OTHER_LOCAL
+    // OVERSEAS: OVERSEAS_MYR | OVERSEAS_FX | OVERSEAS_OTHER
+    category: text("category").notNull(),
+    lineDate: text("line_date").notNull(),
+    description: text("description"),           // all except TRAVEL
+    fromLocation: text("from_location"),         // TRAVEL
+    toLocation: text("to_location"),             // TRAVEL
+    distanceKm: text("distance_km"),             // TRAVEL (km)
+    ratePerUnit: text("rate_per_unit"),          // TRAVEL (RM/km)
+    venue: text("venue"),                        // IN_BASE_ENT
+    destination: text("destination"),            // OVERSEAS_MYR, OVERSEAS_FX
+    currency: text("currency"),                  // OVERSEAS_FX (e.g. USD, SGD)
+    amountForeign: text("amount_foreign"),       // OVERSEAS_FX
+    exchangeRate: text("exchange_rate"),         // OVERSEAS_FX
+    amountMyr: text("amount_myr").notNull(),     // final MYR amount for all
+    sortOrder: integer("sort_order").default(0).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("claim_line_item_app_idx").on(t.applicationId),
+    index("claim_line_item_org_idx").on(t.organizationId),
+  ],
+);
+
+// ── Claim Entertainment Detail ─────────────────────────────────────────────
+// Extra fields for the standalone Entertainment Form claim type.
+// One record per claim application (1:1).
+export const claimEntertainmentDetail = pgTable("claim_entertainment_detail", {
+  id: text("id").primaryKey(),
+  applicationId: text("application_id")
+    .notNull()
+    .unique()
+    .references(() => claimApplication.id, { onDelete: "cascade" }),
+  organizationId: text("organization_id").notNull(),
+  eventDate: text("event_date").notNull(),
+  restaurantName: text("restaurant_name").notNull(),
+  customerName: text("customer_name").notNull(),
+  departmentOrganization: text("department_organization").notNull(),
+  purpose: text("purpose").notNull(),
+  amount: text("amount").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const claimTypeRelations = relations(claimType, ({ one, many }) => ({
   organization: one(organization, { fields: [claimType.organizationId], references: [organization.id] }),
   applications: many(claimApplication),
@@ -2265,12 +2320,25 @@ export const claimApplicationRelations = relations(claimApplication, ({ one, man
   reviewedByUser: one(user, { fields: [claimApplication.reviewedBy], references: [user.id], relationName: "claim_reviewedBy" }),
   cancelledByUser: one(user, { fields: [claimApplication.cancelledBy], references: [user.id], relationName: "claim_cancelledBy" }),
   documents: many(claimDocument),
+  lineItems: many(claimLineItem),
+  entertainmentDetail: one(claimEntertainmentDetail, {
+    fields: [claimApplication.id],
+    references: [claimEntertainmentDetail.applicationId],
+  }),
 }));
 
 export const claimDocumentRelations = relations(claimDocument, ({ one }) => ({
   application: one(claimApplication, { fields: [claimDocument.applicationId], references: [claimApplication.id] }),
   organization: one(organization, { fields: [claimDocument.organizationId], references: [organization.id] }),
   uploadedByUser: one(user, { fields: [claimDocument.uploadedBy], references: [user.id] }),
+}));
+
+export const claimLineItemRelations = relations(claimLineItem, ({ one }) => ({
+  application: one(claimApplication, { fields: [claimLineItem.applicationId], references: [claimApplication.id] }),
+}));
+
+export const claimEntertainmentDetailRelations = relations(claimEntertainmentDetail, ({ one }) => ({
+  application: one(claimApplication, { fields: [claimEntertainmentDetail.applicationId], references: [claimApplication.id] }),
 }));
 
 /* =========================
@@ -2390,7 +2458,11 @@ export const schema = {
   claimType,
   claimApplication,
   claimDocument,
+  claimLineItem,
+  claimEntertainmentDetail,
   claimTypeRelations,
   claimApplicationRelations,
   claimDocumentRelations,
+  claimLineItemRelations,
+  claimEntertainmentDetailRelations,
 };

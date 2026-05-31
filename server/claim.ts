@@ -5,6 +5,8 @@ import {
   claimType,
   claimApplication,
   claimDocument,
+  claimLineItem,
+  claimEntertainmentDetail,
   notification,
   userPermission,
   user,
@@ -22,18 +24,75 @@ import { eq, and, desc, asc, inArray, sql } from "drizzle-orm";
 export type ClaimTypeRow = typeof claimType.$inferSelect;
 export type ClaimApplicationRow = typeof claimApplication.$inferSelect;
 export type ClaimDocumentRow = typeof claimDocument.$inferSelect;
+export type ClaimLineItemRow = typeof claimLineItem.$inferSelect;
+export type ClaimEntertainmentDetailRow = typeof claimEntertainmentDetail.$inferSelect;
 
-export type ClaimApplicationWithDetails = ClaimApplicationRow & {
-  applicantName: string | null;
-  documents: ClaimDocumentRow[];
+// Form type discriminators — matches claimType.category
+export const CLAIM_FORM = {
+  LOCAL: "LOCAL",
+  OVERSEAS: "OVERSEAS",
+  ENTERTAINMENT_FORM: "ENTERTAINMENT_FORM",
+} as const;
+export type ClaimFormType = (typeof CLAIM_FORM)[keyof typeof CLAIM_FORM];
+
+// Line item sub-categories
+export const LINE_CATEGORY = {
+  // LOCAL sub-sections
+  TRAVEL: "TRAVEL",            // 1.1 Travel Expenses (km-based)
+  TOLL: "TOLL",                // 1.2.1
+  PARKING: "PARKING",          // 1.2.2
+  MOBILE: "MOBILE",            // 1.2.3
+  IN_BASE_ENT: "IN_BASE_ENT",  // 1.3 In-Base Entertainment
+  OTHER_LOCAL: "OTHER_LOCAL",  // 1.4 Other Expenses
+  // OVERSEAS sub-sections
+  OVERSEAS_MYR: "OVERSEAS_MYR",      // 2.1 Travel in MYR
+  OVERSEAS_FX: "OVERSEAS_FX",        // 2.2 Travel in Foreign Currency
+  OVERSEAS_OTHER: "OVERSEAS_OTHER",  // 2.3 Other Expenses
+} as const;
+export type LineCategoryType = (typeof LINE_CATEGORY)[keyof typeof LINE_CATEGORY];
+
+export type ClaimLineItemInput = {
+  category: LineCategoryType;
+  lineDate: string;
+  // TRAVEL
+  fromLocation?: string;
+  toLocation?: string;
+  distanceKm?: number;
+  ratePerUnit?: string;
+  // IN_BASE_ENT
+  venue?: string;
+  // OVERSEAS_MYR, OVERSEAS_FX, OVERSEAS_OTHER
+  destination?: string;
+  currency?: string;         // e.g. "USD", "SGD"
+  amountForeign?: string;   // OVERSEAS_FX
+  exchangeRate?: string;    // OVERSEAS_FX
+  // All types
+  description?: string;
+  amountMyr: string;        // final MYR amount (required)
+};
+
+export type ClaimEntertainmentDetailInput = {
+  eventDate: string;
+  restaurantName: string;
+  customerName: string;
+  departmentOrganization: string;
+  purpose: string;
+  amount: string;
 };
 
 export type ApplyClaimInput = {
   claimTypeId: string;
-  claimDate: string;       // YYYY-MM-DD
-  description: string;
-  quantity?: number;       // km or hours; null for AMOUNT type
-  amount: string;          // final claimed amount
+  claimPeriod: string;       // YYYY-MM for LOCAL/OVERSEAS; YYYY-MM-DD for ENTERTAINMENT_FORM
+  description: string;       // overall note / summary
+  lineItems?: ClaimLineItemInput[];                    // LOCAL + OVERSEAS
+  entertainmentDetail?: ClaimEntertainmentDetailInput; // ENTERTAINMENT_FORM
+};
+
+export type ClaimApplicationWithDetails = ClaimApplicationRow & {
+  applicantName: string | null;
+  documents: ClaimDocumentRow[];
+  lineItems: ClaimLineItemRow[];
+  entertainmentDetail: ClaimEntertainmentDetailRow | null;
 };
 
 /* =========================
@@ -116,6 +175,38 @@ async function notifyUser(
     isRead: 0,
     createdAt: new Date(),
   });
+}
+
+async function loadExtras(appIds: string[]): Promise<{
+  docMap: Record<string, ClaimDocumentRow[]>;
+  lineMap: Record<string, ClaimLineItemRow[]>;
+  entMap: Record<string, ClaimEntertainmentDetailRow>;
+}> {
+  const [docs, lines, ents] = await Promise.all([
+    db.select().from(claimDocument).where(inArray(claimDocument.applicationId, appIds)),
+    db
+      .select()
+      .from(claimLineItem)
+      .where(inArray(claimLineItem.applicationId, appIds))
+      .orderBy(asc(claimLineItem.sortOrder), asc(claimLineItem.lineDate)),
+    db
+      .select()
+      .from(claimEntertainmentDetail)
+      .where(inArray(claimEntertainmentDetail.applicationId, appIds)),
+  ]);
+  const docMap: Record<string, ClaimDocumentRow[]> = {};
+  for (const doc of docs) {
+    if (!docMap[doc.applicationId]) docMap[doc.applicationId] = [];
+    docMap[doc.applicationId].push(doc);
+  }
+  const lineMap: Record<string, ClaimLineItemRow[]> = {};
+  for (const li of lines) {
+    if (!lineMap[li.applicationId]) lineMap[li.applicationId] = [];
+    lineMap[li.applicationId].push(li);
+  }
+  const entMap: Record<string, ClaimEntertainmentDetailRow> = {};
+  for (const e of ents) entMap[e.applicationId] = e;
+  return { docMap, lineMap, entMap };
 }
 
 /* =========================
@@ -222,77 +313,35 @@ export async function seedDefaultClaimTypes(): Promise<void> {
 
   const defaults = [
     {
-      name: "Mileage Claim",
-      code: "MILE",
-      category: "MILEAGE",
-      unitType: "KM",
-      ratePerUnit: "0.80",
+      name: "Local Reimbursement Claim",
+      code: "LOCAL",
+      category: CLAIM_FORM.LOCAL,
+      unitType: "AMOUNT",
+      ratePerUnit: "0.80",     // RM/km for travel section
       requiresReceipt: false,
       sortOrder: 1,
-      description: "Travel reimbursement at RM 0.80/km using own vehicle.",
+      description: "Travel, miscellaneous, in-base entertainment and other local expenses.",
     },
     {
-      name: "Medical Claim",
-      code: "MED",
-      category: "MEDICAL",
+      name: "Overseas Expenses Reimbursement",
+      code: "OVERSEAS",
+      category: CLAIM_FORM.OVERSEAS,
       unitType: "AMOUNT",
       ratePerUnit: null,
       requiresReceipt: true,
-      maxAmountPerYear: "1000.00",
       sortOrder: 2,
-      description: "Medical / dental reimbursement. Receipt required.",
+      description: "Overseas travel and accommodation expenses (MYR and foreign currency).",
     },
     {
-      name: "Meal Allowance",
-      code: "MEAL",
-      category: "MEAL",
-      unitType: "AMOUNT",
-      ratePerUnit: null,
-      requiresReceipt: true,
-      maxAmountPerClaim: "50.00",
-      sortOrder: 3,
-      description: "Meal expenses during business travel or overtime.",
-    },
-    {
-      name: "Transport Claim",
-      code: "TRANS",
-      category: "TRANSPORT",
-      unitType: "AMOUNT",
-      ratePerUnit: null,
-      requiresReceipt: true,
-      sortOrder: 4,
-      description: "Public transport, taxi, or e-hailing reimbursement.",
-    },
-    {
-      name: "Overtime Claim",
-      code: "OT",
-      category: "OVERTIME",
-      unitType: "HOUR",
-      ratePerUnit: "20.00",
-      requiresReceipt: false,
-      sortOrder: 5,
-      description: "Overtime pay at agreed hourly rate.",
-    },
-    {
-      name: "Entertainment Claim",
-      code: "ENT",
-      category: "ENTERTAINMENT",
+      name: "Entertainment Form",
+      code: "ENT_FORM",
+      category: CLAIM_FORM.ENTERTAINMENT_FORM,
       unitType: "AMOUNT",
       ratePerUnit: null,
       requiresReceipt: true,
       maxAmountPerClaim: "500.00",
-      sortOrder: 6,
-      description: "Client entertainment. Receipt and purpose required.",
-    },
-    {
-      name: "Other Claim",
-      code: "OTHER",
-      category: "OTHER",
-      unitType: "AMOUNT",
-      ratePerUnit: null,
-      requiresReceipt: true,
-      sortOrder: 7,
-      description: "Miscellaneous work-related expenses.",
+      sortOrder: 3,
+      description: "Client entertainment — restaurant, customer, purpose, department details required.",
     },
   ];
 
@@ -306,7 +355,7 @@ export async function seedDefaultClaimTypes(): Promise<void> {
     ratePerUnit: d.ratePerUnit ?? null,
     requiresReceipt: d.requiresReceipt,
     maxAmountPerClaim: (d as { maxAmountPerClaim?: string }).maxAmountPerClaim ?? null,
-    maxAmountPerYear: (d as { maxAmountPerYear?: string }).maxAmountPerYear ?? null,
+    maxAmountPerYear: null,
     isActive: true,
     description: d.description,
     sortOrder: d.sortOrder,
@@ -325,34 +374,22 @@ export async function getMyClaimApplications(): Promise<ClaimApplicationWithDeta
   const apps = await db
     .select()
     .from(claimApplication)
-    .where(
-      and(eq(claimApplication.organizationId, orgId), eq(claimApplication.userId, userId)),
-    )
+    .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.userId, userId)))
     .orderBy(desc(claimApplication.createdAt));
 
   if (apps.length === 0) return [];
   const appIds = apps.map((a) => a.id);
-  const docs = await db
-    .select()
-    .from(claimDocument)
-    .where(inArray(claimDocument.applicationId, appIds));
-  const docMap: Record<string, ClaimDocumentRow[]> = {};
-  for (const doc of docs) {
-    if (!docMap[doc.applicationId]) docMap[doc.applicationId] = [];
-    docMap[doc.applicationId].push(doc);
-  }
+  const { docMap, lineMap, entMap } = await loadExtras(appIds);
 
-  const userRow = await db
-    .select({ name: user.name })
-    .from(user)
-    .where(eq(user.id, userId))
-    .limit(1);
+  const userRow = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
   const applicantName = userRow[0]?.name ?? null;
 
   return apps.map((a) => ({
     ...a,
     applicantName,
     documents: docMap[a.id] ?? [],
+    lineItems: lineMap[a.id] ?? [],
+    entertainmentDetail: entMap[a.id] ?? null,
   }));
 }
 
@@ -362,27 +399,19 @@ export async function getPendingClaimApprovals(): Promise<ClaimApplicationWithDe
     .select({ app: claimApplication, applicantName: user.name })
     .from(claimApplication)
     .leftJoin(user, eq(claimApplication.userId, user.id))
-    .where(
-      and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "PENDING")),
-    )
+    .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "PENDING")))
     .orderBy(asc(claimApplication.claimDate));
 
   if (apps.length === 0) return [];
   const appIds = apps.map((a) => a.app.id);
-  const docs = await db
-    .select()
-    .from(claimDocument)
-    .where(inArray(claimDocument.applicationId, appIds));
-  const docMap: Record<string, ClaimDocumentRow[]> = {};
-  for (const doc of docs) {
-    if (!docMap[doc.applicationId]) docMap[doc.applicationId] = [];
-    docMap[doc.applicationId].push(doc);
-  }
+  const { docMap, lineMap, entMap } = await loadExtras(appIds);
 
   return apps.map(({ app, applicantName }) => ({
     ...app,
     applicantName: applicantName ?? null,
     documents: docMap[app.id] ?? [],
+    lineItems: lineMap[app.id] ?? [],
+    entertainmentDetail: entMap[app.id] ?? null,
   }));
 }
 
@@ -400,23 +429,29 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
     .limit(1);
   if (!type[0] || !type[0].isActive) throw new Error("Claim type not found or inactive");
   const ct = type[0];
+  const formType = ct.category as ClaimFormType;
 
-  if (!data.description.trim()) throw new Error("Description is required");
+  // ── Compute total amount ──────────────────────────────────────────────────
+  let totalAmount: number;
+  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
+    if (!data.entertainmentDetail) throw new Error("Entertainment details are required");
+    totalAmount = parseFloat(data.entertainmentDetail.amount);
+  } else {
+    if (!data.lineItems || data.lineItems.length === 0)
+      throw new Error("At least one expense line item is required");
+    totalAmount = data.lineItems.reduce((sum, li) => sum + parseFloat(li.amountMyr), 0);
+  }
+  if (isNaN(totalAmount) || totalAmount <= 0) throw new Error("Total amount must be greater than 0");
 
-  const amount = parseFloat(data.amount);
-  if (isNaN(amount) || amount <= 0) throw new Error("Amount must be greater than 0");
-
-  // Check per-claim cap
+  // ── Cap checks ────────────────────────────────────────────────────────────
   if (ct.maxAmountPerClaim) {
     const cap = parseFloat(ct.maxAmountPerClaim);
-    if (amount > cap)
+    if (totalAmount > cap)
       throw new Error(`Maximum claim amount per application is RM ${ct.maxAmountPerClaim}`);
   }
-
-  // Check per-year cap
   if (ct.maxAmountPerYear) {
     const yearCap = parseFloat(ct.maxAmountPerYear);
-    const year = new Date(data.claimDate).getFullYear();
+    const year = parseInt(data.claimPeriod.slice(0, 4), 10);
     const ytdRows = await db
       .select({ amount: claimApplication.amount })
       .from(claimApplication)
@@ -430,13 +465,15 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
         ),
       );
     const ytdTotal = ytdRows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
-    if (ytdTotal + amount > yearCap) {
+    if (ytdTotal + totalAmount > yearCap) {
       const remaining = yearCap - ytdTotal;
-      throw new Error(
-        `Annual cap of RM ${ct.maxAmountPerYear} exceeded. Remaining: RM ${remaining.toFixed(2)}`,
-      );
+      throw new Error(`Annual cap of RM ${ct.maxAmountPerYear} exceeded. Remaining: RM ${remaining.toFixed(2)}`);
     }
   }
+
+  // ── claimDate: YYYY-MM → YYYY-MM-01 for monthly claims ───────────────────
+  const claimDate =
+    /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
 
   const applicationNo = await generateApplicationNo(orgId);
   const appId = nanoid();
@@ -449,21 +486,63 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
     claimTypeId: ct.id,
     claimTypeName: ct.name,
     claimTypeCode: ct.code,
-    claimDate: data.claimDate,
+    claimDate,
     description: data.description.trim(),
     unitType: ct.unitType,
-    quantity: data.quantity != null ? String(data.quantity) : null,
+    quantity: null,
     ratePerUnit: ct.ratePerUnit ?? null,
-    amount: amount.toFixed(2),
+    amount: totalAmount.toFixed(2),
     status: "PENDING",
     createdAt: new Date(),
     updatedAt: new Date(),
   });
 
+  // ── Insert line items (LOCAL / OVERSEAS) ──────────────────────────────────
+  if (data.lineItems && data.lineItems.length > 0) {
+    const rows = data.lineItems.map((li, idx) => ({
+      id: nanoid(),
+      applicationId: appId,
+      organizationId: orgId,
+      category: li.category,
+      lineDate: li.lineDate,
+      description: li.description?.trim() ?? null,
+      fromLocation: li.fromLocation?.trim() ?? null,
+      toLocation: li.toLocation?.trim() ?? null,
+      distanceKm: li.distanceKm != null ? String(li.distanceKm) : null,
+      ratePerUnit: li.ratePerUnit ?? null,
+      venue: li.venue?.trim() ?? null,
+      destination: li.destination?.trim() ?? null,
+      currency: li.currency ?? null,
+      amountForeign: li.amountForeign ?? null,
+      exchangeRate: li.exchangeRate ?? null,
+      amountMyr: li.amountMyr,
+      sortOrder: idx,
+      createdAt: new Date(),
+    }));
+    await db.insert(claimLineItem).values(rows);
+  }
+
+  // ── Insert entertainment detail ───────────────────────────────────────────
+  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetail) {
+    const ed = data.entertainmentDetail;
+    await db.insert(claimEntertainmentDetail).values({
+      id: nanoid(),
+      applicationId: appId,
+      organizationId: orgId,
+      eventDate: ed.eventDate,
+      restaurantName: ed.restaurantName.trim(),
+      customerName: ed.customerName.trim(),
+      departmentOrganization: ed.departmentOrganization.trim(),
+      purpose: ed.purpose.trim(),
+      amount: ed.amount,
+      createdAt: new Date(),
+    });
+  }
+
   await notifyUsersWithPermission(orgId, "claim:approve", {
     type: "claim:submitted",
-    title: `Claim Application: ${ct.name}`,
-    body: `${userName} submitted a ${ct.name} claim for RM ${amount.toFixed(2)} on ${data.claimDate}`,
+    title: `Claim: ${ct.name}`,
+    body: `${userName} submitted a ${ct.name} for RM ${totalAmount.toFixed(2)}`,
     link: `/dashboard/human-resources/claim/approvals`,
   });
 
@@ -483,19 +562,13 @@ export async function approveClaim(appId: string, comment?: string): Promise<voi
 
   await db
     .update(claimApplication)
-    .set({
-      status: "APPROVED",
-      reviewedBy: userId,
-      reviewedAt: new Date(),
-      reviewComment: comment?.trim() ?? null,
-      updatedAt: new Date(),
-    })
+    .set({ status: "APPROVED", reviewedBy: userId, reviewedAt: new Date(), reviewComment: comment?.trim() ?? null, updatedAt: new Date() })
     .where(eq(claimApplication.id, appId));
 
   await notifyUser(orgId, app[0].userId, {
     type: "claim:approved",
     title: `Claim Approved: ${app[0].claimTypeName}`,
-    body: `Your ${app[0].claimTypeName} claim (RM ${parseFloat(app[0].amount).toFixed(2)}) on ${app[0].claimDate} has been approved.${comment ? ` Note: ${comment}` : ""}`,
+    body: `Your ${app[0].claimTypeName} (RM ${parseFloat(app[0].amount).toFixed(2)}) has been approved.${comment ? ` Note: ${comment}` : ""}`,
     link: `/dashboard/human-resources/claim`,
   });
 }
@@ -513,19 +586,13 @@ export async function rejectClaim(appId: string, reason: string): Promise<void> 
 
   await db
     .update(claimApplication)
-    .set({
-      status: "REJECTED",
-      reviewedBy: userId,
-      reviewedAt: new Date(),
-      reviewComment: reason.trim(),
-      updatedAt: new Date(),
-    })
+    .set({ status: "REJECTED", reviewedBy: userId, reviewedAt: new Date(), reviewComment: reason.trim(), updatedAt: new Date() })
     .where(eq(claimApplication.id, appId));
 
   await notifyUser(orgId, app[0].userId, {
     type: "claim:rejected",
     title: `Claim Rejected: ${app[0].claimTypeName}`,
-    body: `Your ${app[0].claimTypeName} claim (RM ${parseFloat(app[0].amount).toFixed(2)}) on ${app[0].claimDate} was rejected. Reason: ${reason}`,
+    body: `Your ${app[0].claimTypeName} (RM ${parseFloat(app[0].amount).toFixed(2)}) was rejected. Reason: ${reason}`,
     link: `/dashboard/human-resources/claim`,
   });
 }
@@ -540,19 +607,12 @@ export async function cancelClaim(appId: string, reason?: string): Promise<void>
   if (!app[0]) throw new Error("Application not found");
   const perms = await getUserPermissions(userId, orgId);
   const canApprove = hasAccess(perms, "claim:approve");
-  if (app[0].userId !== userId && !canApprove)
-    throw new Error("You can only cancel your own claims");
+  if (app[0].userId !== userId && !canApprove) throw new Error("You can only cancel your own claims");
   if (app[0].status === "CANCELLED") throw new Error("Application is already cancelled");
 
   await db
     .update(claimApplication)
-    .set({
-      status: "CANCELLED",
-      cancelledBy: userId,
-      cancelledAt: new Date(),
-      cancelReason: reason?.trim() ?? null,
-      updatedAt: new Date(),
-    })
+    .set({ status: "CANCELLED", cancelledBy: userId, cancelledAt: new Date(), cancelReason: reason?.trim() ?? null, updatedAt: new Date() })
     .where(eq(claimApplication.id, appId));
 }
 
@@ -571,9 +631,7 @@ export async function createClaimDocumentRecord(data: {
   const app = await db
     .select()
     .from(claimApplication)
-    .where(
-      and(eq(claimApplication.id, data.applicationId), eq(claimApplication.organizationId, orgId)),
-    )
+    .where(and(eq(claimApplication.id, data.applicationId), eq(claimApplication.organizationId, orgId)))
     .limit(1);
   if (!app[0]) throw new Error("Application not found");
   const row = {
@@ -600,8 +658,7 @@ export async function deleteClaimDocument(id: string): Promise<string> {
     .limit(1);
   if (!doc[0]) throw new Error("Document not found");
   const perms = await getUserPermissions(userId, orgId);
-  if (doc[0].uploadedBy !== userId && !hasAccess(perms, "claim:approve"))
-    throw new Error("Forbidden");
+  if (doc[0].uploadedBy !== userId && !hasAccess(perms, "claim:approve")) throw new Error("Forbidden");
   await db.delete(claimDocument).where(eq(claimDocument.id, id));
   return doc[0].fileKey;
 }

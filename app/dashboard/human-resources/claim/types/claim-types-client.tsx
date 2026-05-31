@@ -42,29 +42,19 @@ import { PlusIcon, PencilIcon, Trash2Icon, TagsIcon, SproutIcon } from "lucide-r
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const CATEGORIES = [
-  { value: "MILEAGE", label: "Mileage" },
-  { value: "MEDICAL", label: "Medical" },
-  { value: "MEAL", label: "Meal" },
-  { value: "TRANSPORT", label: "Transport" },
-  { value: "OVERTIME", label: "Overtime" },
-  { value: "ENTERTAINMENT", label: "Entertainment" },
-  { value: "OTHER", label: "Other" },
+  { value: "LOCAL",             label: "Local Reimbursement Claim" },
+  { value: "OVERSEAS",          label: "Overseas Expenses Reimbursement" },
+  { value: "ENTERTAINMENT_FORM",label: "Entertainment Form" },
 ];
 
 const UNIT_TYPES = [
   { value: "AMOUNT", label: "Amount (RM)" },
-  { value: "KM", label: "Per Kilometre (km × rate)" },
-  { value: "HOUR", label: "Per Hour (hr × rate)" },
 ];
 
 const CATEGORY_COLORS: Record<string, string> = {
-  MILEAGE: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700",
-  MEDICAL: "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700",
-  MEAL: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-700",
-  TRANSPORT: "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-700",
-  OVERTIME: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700",
-  ENTERTAINMENT: "bg-pink-50 text-pink-700 border-pink-200 dark:bg-pink-900/20 dark:text-pink-400 dark:border-pink-700",
-  OTHER: "bg-muted text-muted-foreground border-border",
+  LOCAL:             "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700",
+  OVERSEAS:          "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-700",
+  ENTERTAINMENT_FORM:"bg-pink-50 text-pink-700 border-pink-200 dark:bg-pink-900/20 dark:text-pink-400 dark:border-pink-700",
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -85,7 +75,7 @@ interface FormState {
 const emptyForm = (): FormState => ({
   name: "",
   code: "",
-  category: "OTHER",
+  category: "LOCAL",
   unitType: "AMOUNT",
   ratePerUnit: "",
   requiresReceipt: true,
