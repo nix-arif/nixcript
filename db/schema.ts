@@ -2156,6 +2156,7 @@ export const leaveDocumentRelations = relations(leaveDocument, ({ one }) => ({
   uploadedByUser: one(user, { fields: [leaveDocument.uploadedBy], references: [user.id] }),
 }));
 
+
 /* =========================
    CLAIM MANAGEMENT
 ========================= */
@@ -2169,11 +2170,11 @@ export const claimType = pgTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     code: text("code").notNull(),
-    // MILEAGE | MEDICAL | MEAL | TRANSPORT | OVERTIME | ENTERTAINMENT | OTHER
-    category: text("category").notNull().default("OTHER"),
-    // AMOUNT | KM | HOUR  — determines the claim entry mode
+    // LOCAL | OVERSEAS | ENTERTAINMENT_FORM
+    category: text("category").notNull().default("LOCAL"),
+    // AMOUNT | KM — determines claim entry mode for travel section
     unitType: text("unit_type").notNull().default("AMOUNT"),
-    // Rate per unit (km/hour). Null for AMOUNT type.
+    // Rate per km for LOCAL travel. Null for non-km types.
     ratePerUnit: text("rate_per_unit"),
     requiresReceipt: boolean("requires_receipt").notNull().default(true),
     maxAmountPerClaim: text("max_amount_per_claim"),
@@ -2206,13 +2207,12 @@ export const claimApplication = pgTable(
       .references(() => claimType.id),
     claimTypeName: text("claim_type_name").notNull(),
     claimTypeCode: text("claim_type_code").notNull(),
-    claimDate: text("claim_date").notNull(),            // ISO YYYY-MM-DD
+    claimDate: text("claim_date").notNull(),           // ISO YYYY-MM-DD (monthly: YYYY-MM-01)
     description: text("description").notNull(),
-    // Snapshot of unit type at submission time
     unitType: text("unit_type").notNull().default("AMOUNT"),
-    quantity: text("quantity"),                         // km / hours (null for AMOUNT)
-    ratePerUnit: text("rate_per_unit"),                 // snapshot
-    amount: text("amount").notNull().default("0"),      // total claimed
+    quantity: text("quantity"),
+    ratePerUnit: text("rate_per_unit"),
+    amount: text("amount").notNull().default("0"),     // total in MYR
     status: text("status").notNull().default("PENDING"), // PENDING | APPROVED | REJECTED | CANCELLED
     reviewedBy: text("reviewed_by").references(() => user.id),
     reviewedAt: timestamp("reviewed_at"),
@@ -2253,9 +2253,6 @@ export const claimDocument = pgTable(
   ],
 );
 
-// ── Claim Line Items ───────────────────────────────────────────────────────
-// One row per expense line within a LOCAL or OVERSEAS claim.
-// category discriminates the sub-section and which nullable columns apply.
 export const claimLineItem = pgTable(
   "claim_line_item",
   {
@@ -2264,22 +2261,21 @@ export const claimLineItem = pgTable(
       .notNull()
       .references(() => claimApplication.id, { onDelete: "cascade" }),
     organizationId: text("organization_id").notNull(),
-    // Sub-section discriminator
     // LOCAL:   TRAVEL | TOLL | PARKING | MOBILE | IN_BASE_ENT | OTHER_LOCAL
     // OVERSEAS: OVERSEAS_MYR | OVERSEAS_FX | OVERSEAS_OTHER
     category: text("category").notNull(),
     lineDate: text("line_date").notNull(),
-    description: text("description"),           // all except TRAVEL
-    fromLocation: text("from_location"),         // TRAVEL
-    toLocation: text("to_location"),             // TRAVEL
-    distanceKm: text("distance_km"),             // TRAVEL (km)
-    ratePerUnit: text("rate_per_unit"),          // TRAVEL (RM/km)
-    venue: text("venue"),                        // IN_BASE_ENT
-    destination: text("destination"),            // OVERSEAS_MYR, OVERSEAS_FX
-    currency: text("currency"),                  // OVERSEAS_FX (e.g. USD, SGD)
-    amountForeign: text("amount_foreign"),       // OVERSEAS_FX
-    exchangeRate: text("exchange_rate"),         // OVERSEAS_FX
-    amountMyr: text("amount_myr").notNull(),     // final MYR amount for all
+    description: text("description"),
+    fromLocation: text("from_location"),
+    toLocation: text("to_location"),
+    distanceKm: text("distance_km"),
+    ratePerUnit: text("rate_per_unit"),
+    venue: text("venue"),
+    destination: text("destination"),
+    currency: text("currency"),
+    amountForeign: text("amount_foreign"),
+    exchangeRate: text("exchange_rate"),
+    amountMyr: text("amount_myr").notNull(),
     sortOrder: integer("sort_order").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -2289,9 +2285,6 @@ export const claimLineItem = pgTable(
   ],
 );
 
-// ── Claim Entertainment Detail ─────────────────────────────────────────────
-// Extra fields for the standalone Entertainment Form claim type.
-// One record per claim application (1:1).
 export const claimEntertainmentDetail = pgTable("claim_entertainment_detail", {
   id: text("id").primaryKey(),
   applicationId: text("application_id")
