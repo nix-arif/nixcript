@@ -98,6 +98,11 @@ export const ALL_PERMISSIONS = [
   { key: "permission:create", label: "Create Permission" },
   { key: "permission:delete", label: "Delete Permission" },
 
+  // Inventory
+  { key: "inventory:read",   label: "View Inventory" },
+  { key: "inventory:adjust", label: "Adjust Stock" },
+  { key: "inventory:manage", label: "Manage Inventory Settings" },
+
   // Claim management
   { key: "claim:read:own", label: "View Own Claims" },
   { key: "claim:apply",    label: "Submit Claim Application" },

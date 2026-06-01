@@ -89,6 +89,8 @@ export const navConfig: NavGroup[] = [
       { title: "Catalogue",               url: "/dashboard/products/catalogue",                 permission: "product:read" },
       { title: "MDA Certificate Generator", url: "/dashboard/products/mda-certificate-generator", permission: "product:read" },
       { title: "Items Price Check",       url: "/dashboard/products/items-price",               permission: "product:read" },
+      { title: "Inventory",               url: "/dashboard/inventory",                          permission: "inventory:read" },
+      { title: "Movement History",        url: "/dashboard/inventory/movements",                permission: "inventory:read" },
     ],
   },
   {

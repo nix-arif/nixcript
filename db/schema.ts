@@ -582,6 +582,76 @@ export const productRelations = relations(product, ({ one }) => ({
   }),
 }));
 
+/* =========================
+   INVENTORY
+========================= */
+
+export const stockLevel = pgTable(
+  "stock_level",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => product.id, { onDelete: "cascade" }),
+    quantity: text("quantity").notNull().default("0"),
+    reservedQty: text("reserved_qty").notNull().default("0"),
+    unitCost: text("unit_cost"),
+    reorderPoint: text("reorder_point"),
+    maxStock: text("max_stock"),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("stock_level_product_org_uidx").on(t.productId, t.organizationId),
+    index("stock_level_org_idx").on(t.organizationId),
+  ],
+);
+
+export const stockMovement = pgTable(
+  "stock_movement",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => product.id, { onDelete: "cascade" }),
+    productCode: text("product_code").notNull(),
+    // STOCK_IN | STOCK_OUT | ADJUSTMENT | RETURN | OPENING
+    movementType: text("movement_type").notNull(),
+    quantity: text("quantity").notNull(),   // signed: positive = in, negative = out
+    balanceAfter: text("balance_after").notNull(),
+    unitCost: text("unit_cost"),
+    // PURCHASE_ORDER | SALES_ORDER | DELIVERY_ORDER | MANUAL
+    referenceType: text("reference_type").notNull().default("MANUAL"),
+    referenceId: text("reference_id"),
+    referenceNo: text("reference_no"),
+    notes: text("notes"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("stock_movement_product_idx").on(t.productId, t.organizationId),
+    index("stock_movement_type_idx").on(t.movementType),
+    index("stock_movement_org_idx").on(t.organizationId),
+    index("stock_movement_created_idx").on(t.createdAt),
+  ],
+);
+
+export const stockLevelRelations = relations(stockLevel, ({ one }) => ({
+  organization: one(organization, { fields: [stockLevel.organizationId], references: [organization.id] }),
+  product: one(product, { fields: [stockLevel.productId], references: [product.id] }),
+}));
+
+export const stockMovementRelations = relations(stockMovement, ({ one }) => ({
+  organization: one(organization, { fields: [stockMovement.organizationId], references: [organization.id] }),
+  product: one(product, { fields: [stockMovement.productId], references: [product.id] }),
+  createdByUser: one(user, { fields: [stockMovement.createdBy], references: [user.id] }),
+}));
+
 export const organizationProfile = pgTable("organization_profile", {
   id: text("id").primaryKey(),
   organizationId: text("organization_id")
@@ -2464,4 +2534,9 @@ export const schema = {
   claimDocumentRelations,
   claimLineItemRelations,
   claimEntertainmentDetailRelations,
+  // inventory
+  stockLevel,
+  stockMovement,
+  stockLevelRelations,
+  stockMovementRelations,
 };
