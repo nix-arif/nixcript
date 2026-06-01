@@ -1,12 +1,12 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, product } from "@/db/schema";
+import { stockLevel, stockMovement, product, user } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, asc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
@@ -85,35 +85,20 @@ export async function getInventory(): Promise<StockWithProduct[]> {
 export async function getStockMovements(productId?: string): Promise<MovementWithMeta[]> {
   const { orgId } = await requireAccess("inventory:read");
 
-  const rows = await db.execute(
-    sql`
-      SELECT sm.*, u.name AS created_by_name
-      FROM stock_movement sm
-      LEFT JOIN "user" u ON u.id = sm.created_by
-      WHERE sm.organization_id = ${orgId}
-      ${productId ? sql`AND sm.product_id = ${productId}` : sql``}
-      ORDER BY sm.created_at DESC
-      LIMIT 200
-    `,
-  );
+  const rows = await db
+    .select({ sm: stockMovement, createdByName: user.name })
+    .from(stockMovement)
+    .leftJoin(user, eq(stockMovement.createdBy, user.id))
+    .where(
+      and(
+        eq(stockMovement.organizationId, orgId),
+        productId ? eq(stockMovement.productId, productId) : undefined,
+      ),
+    )
+    .orderBy(desc(stockMovement.createdAt))
+    .limit(200);
 
-  return (rows as unknown as Record<string, unknown>[]).map((r) => ({
-    id: r.id as string,
-    organizationId: r.organization_id as string,
-    productId: r.product_id as string,
-    productCode: r.product_code as string,
-    movementType: r.movement_type as string,
-    quantity: r.quantity as string,
-    balanceAfter: r.balance_after as string,
-    unitCost: r.unit_cost as string | null,
-    referenceType: r.reference_type as string,
-    referenceId: r.reference_id as string | null,
-    referenceNo: r.reference_no as string | null,
-    notes: r.notes as string | null,
-    createdBy: r.created_by as string,
-    createdAt: r.created_at as Date,
-    createdByName: r.created_by_name as string | null,
-  }));
+  return rows.map(({ sm, createdByName }) => ({ ...sm, createdByName }));
 }
 
 /* =========================
