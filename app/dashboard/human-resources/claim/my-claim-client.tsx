@@ -27,7 +27,7 @@ import {
 import { CLAIM_FORM, LINE_CATEGORY } from "@/lib/claim/constants";
 import {
   PlusIcon, FileDownIcon, XIcon, ReceiptIcon,
-  AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon,
+  AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon, LoaderIcon, RouteIcon,
 } from "lucide-react";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -49,9 +49,10 @@ const CURRENCIES = ["USD", "EUR", "GBP", "SGD", "AUD", "JPY", "CNY", "HKD", "THB
 // ── Row types ──────────────────────────────────────────────────────────────
 
 interface TravelRow   { id:string; lineDate:string; fromLocation:string; toLocation:string; distanceKm:string }
-interface MiscRow     { id:string; subType:"TOLL"|"PARKING"|"MOBILE"; lineDate:string; description:string; amountMyr:string }
-interface InEntRow    { id:string; lineDate:string; venue:string; description:string; amountMyr:string }
-interface OtherLocalRow { id:string; lineDate:string; description:string; amountMyr:string }
+interface MiscRow     { id:string; subType:"TOLL"|"PARKING"|"MOBILE"; lineDate:string; description:string; amountMyr:string; file?:File }
+interface InEntRow    { id:string; lineDate:string; venue:string; description:string; amountMyr:string; file?:File }
+interface OtherLocalRow { id:string; lineDate:string; description:string; amountMyr:string; file?:File }
+interface HotelRow     { id:string; lineDate:string; hotelName:string; nights:string; receiptPerNight:string; file?:File }
 interface OvMyrRow    { id:string; lineDate:string; destination:string; description:string; amountMyr:string }
 interface OvFxRow     { id:string; lineDate:string; destination:string; currency:string; amountForeign:string; exchangeRate:string }
 interface OvOtherRow  { id:string; lineDate:string; description:string; amountMyr:string }
@@ -62,6 +63,59 @@ const emptyTravel   = (): TravelRow     => ({ id:newId(), lineDate:"", fromLocat
 const emptyMisc     = (): MiscRow       => ({ id:newId(), subType:"TOLL", lineDate:"", description:"", amountMyr:"" });
 const emptyInEnt    = (): InEntRow      => ({ id:newId(), lineDate:"", venue:"", description:"", amountMyr:"" });
 const emptyOther    = (): OtherLocalRow => ({ id:newId(), lineDate:"", description:"", amountMyr:"" });
+
+const ALLOWED_RECEIPT_TYPES = ["image/jpeg","image/png","image/webp","application/pdf"];
+const MAX_RECEIPT_SIZE = 5 * 1024 * 1024;
+
+function pickReceiptFile(e: React.ChangeEvent<HTMLInputElement>): File | null {
+  const f = e.target.files?.[0] ?? null;
+  e.target.value = "";
+  if (!f) return null;
+  if (!ALLOWED_RECEIPT_TYPES.includes(f.type)) { toast.error(`${f.name}: only JPG, PNG, WebP, PDF`); return null; }
+  if (f.size > MAX_RECEIPT_SIZE) { toast.error(`${f.name}: max 5 MB`); return null; }
+  return f;
+}
+
+function ReceiptPicker<T extends { id: string; file?: File }>({
+  row, setter,
+}: {
+  row: T;
+  setter: React.Dispatch<React.SetStateAction<T[]>>;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      <input
+        ref={ref}
+        type="file"
+        accept=".jpg,.jpeg,.png,.webp,.pdf"
+        className="hidden"
+        onChange={e => {
+          const f = pickReceiptFile(e);
+          if (f) setter(prev => prev.map(r => r.id === row.id ? { ...r, file: f } : r));
+        }}
+      />
+      {row.file ? (
+        <div className="flex items-center gap-1 rounded border border-green-500/40 bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 max-w-30">
+          <span className="text-xs text-green-700 dark:text-green-400 truncate" title={row.file.name}>{row.file.name}</span>
+          <button type="button" onClick={() => setter(prev => prev.map(r => r.id === row.id ? { ...r, file: undefined } : r))} className="text-green-600 hover:text-destructive shrink-0">
+            <XIcon className="h-3 w-3"/>
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => ref.current?.click()}
+          className="flex items-center gap-1 rounded border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 shrink-0"
+          title="Attach receipt"
+        >
+          <UploadIcon className="h-3 w-3 shrink-0"/>Receipt*
+        </button>
+      )}
+    </div>
+  );
+}
+const emptyHotel    = (): HotelRow     => ({ id:newId(), lineDate:"", hotelName:"", nights:"1", receiptPerNight:"" });
 const emptyOvMyr    = (): OvMyrRow      => ({ id:newId(), lineDate:"", destination:"", description:"", amountMyr:"" });
 const emptyOvFx     = (): OvFxRow       => ({ id:newId(), lineDate:"", destination:"", currency:"USD", amountForeign:"", exchangeRate:"" });
 const emptyOvOther  = (): OvOtherRow    => ({ id:newId(), lineDate:"", description:"", amountMyr:"" });
@@ -176,12 +230,14 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const [note, setNote] = useState("");
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [calculatingRows, setCalculatingRows] = useState<Set<string>>(new Set());
 
   // LOCAL
   const [travelRows, setTravelRows] = useState<TravelRow[]>([emptyTravel()]);
   const [miscRows,   setMiscRows]   = useState<MiscRow[]>([]);
   const [inEntRows,  setInEntRows]  = useState<InEntRow[]>([]);
   const [otherRows,  setOtherRows]  = useState<OtherLocalRow[]>([]);
+  const [hotelRows,  setHotelRows]  = useState<HotelRow[]>([]);
 
   // OVERSEAS
   const [ovMyrRows,   setOvMyrRows]   = useState<OvMyrRow[]>([]);
@@ -199,23 +255,32 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const canApply = permissions.includes("claim:apply") || permissions.includes("*");
   const selectedType = claimTypes.find(t => t.id === selectedTypeId) ?? null;
   const formType = selectedType?.category as typeof CLAIM_FORM[keyof typeof CLAIM_FORM] | undefined;
-  const ratePerKm = selectedType?.ratePerUnit ? parseFloat(selectedType.ratePerUnit) : 0;
+  const ratePerKm    = selectedType?.ratePerUnit ? parseFloat(selectedType.ratePerUnit) : 0;
+  const hotelCap     = selectedType?.hotelCapPerNight ? parseFloat(selectedType.hotelCapPerNight) : Infinity;
+
+  function hotelNightAmt(r: HotelRow): number {
+    const receipt = parseFloat(r.receiptPerNight);
+    const nights  = parseFloat(r.nights);
+    if (isNaN(receipt) || receipt <= 0 || isNaN(nights) || nights <= 0) return 0;
+    return parseFloat((Math.min(receipt, hotelCap) * nights).toFixed(2));
+  }
 
   // ── Totals ────────────────────────────────────────────────────────────────
   const travelTotal  = travelRows.reduce((s,r) => { const km=parseFloat(r.distanceKm); return s+(isNaN(km)||km<=0?0:km*ratePerKm); }, 0);
   const miscTotal    = miscRows.reduce((s,r)   => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const inEntTotal   = inEntRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const otherTotal   = otherRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
+  const hotelTotal   = hotelRows.reduce((s,r)  => s + hotelNightAmt(r), 0);
   const ovMyrTotal   = ovMyrRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const ovFxTotal    = ovFxRows.reduce((s,r)   => s+fxMyr(r.amountForeign,r.exchangeRate), 0);
   const ovOtherTotal = ovOtherRows.reduce((s,r)=> { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
-  const localTotal   = travelTotal+miscTotal+inEntTotal+otherTotal;
+  const localTotal   = travelTotal+miscTotal+inEntTotal+otherTotal+hotelTotal;
   const overseasTotal= ovMyrTotal+ovFxTotal+ovOtherTotal;
 
   // ── Reset ─────────────────────────────────────────────────────────────────
   function resetForm() {
     setSelectedTypeId(""); setClaimPeriod(""); setNote(""); setQueuedFiles([]);
-    setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
+    setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]); setHotelRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     setEntDate(""); setEntRest(""); setEntCust(""); setEntDeptOrg(""); setEntPurpose(""); setEntAmount("");
   }
@@ -223,7 +288,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   function handleTypeChange(id: string) {
     setSelectedTypeId(id);
     setClaimPeriod(""); setNote(""); setQueuedFiles([]);
-    setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
+    setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]); setHotelRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     setEntDate(""); setEntRest(""); setEntCust(""); setEntDeptOrg(""); setEntPurpose(""); setEntAmount("");
   }
@@ -241,6 +306,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const updateMisc     = updater(setMiscRows);
   const updateInEnt    = updater(setInEntRows);
   const updateOther    = updater(setOtherRows);
+  const updateHotel    = updater(setHotelRows);
   const updateOvMyr    = updater(setOvMyrRows);
   const updateOvFx     = updater(setOvFxRows);
   const updateOvOther  = updater(setOvOtherRows);
@@ -255,6 +321,30 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
       setQueuedFiles(p => [...p, { file:f, id:newId() }]);
     }
     e.target.value = "";
+  }
+
+  // ── Distance calculator ───────────────────────────────────────────────────
+  async function calculateDistance(rowId: string, from: string, to: string) {
+    if (!from.trim() || !to.trim()) {
+      toast.error("Enter both From and To locations first");
+      return;
+    }
+    setCalculatingRows(prev => new Set(prev).add(rowId));
+    try {
+      const res = await fetch("/api/claim/distance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error ?? "Could not calculate distance"); return; }
+      updateTravel(rowId, "distanceKm", String(data.distanceKm));
+      toast.success(`${data.distanceKm} km — RM ${(data.distanceKm * ratePerKm).toFixed(2)}`);
+    } catch {
+      toast.error("Distance lookup failed");
+    } finally {
+      setCalculatingRows(prev => { const s = new Set(prev); s.delete(rowId); return s; });
+    }
   }
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -281,6 +371,14 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
       let entertainmentDetail: ClaimEntertainmentDetailInput | undefined;
 
       if (formType === CLAIM_FORM.LOCAL) {
+        // Validate receipt presence for misc / in-base-ent / other rows
+        const miscValid  = miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0);
+        const inEntValid = inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0);
+        const otherValid = otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0);
+        const hotelValid = hotelRows.filter(r => r.lineDate && r.hotelName.trim() && parseFloat(r.receiptPerNight) > 0 && parseFloat(r.nights) > 0);
+        const missingReceipt = [...miscValid, ...inEntValid, ...otherValid, ...hotelValid].find(r => !r.file);
+        if (missingReceipt) { toast.error("Each expense item requires an attached receipt"); setSubmitting(false); return; }
+
         lineItems = [
           ...travelRows
             .filter(r => r.lineDate && r.fromLocation.trim() && r.toLocation.trim() && parseFloat(r.distanceKm) > 0)
@@ -293,15 +391,15 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
               ratePerUnit: selectedType.ratePerUnit ?? undefined,
               amountMyr: (parseFloat(r.distanceKm) * ratePerKm).toFixed(2),
             } satisfies ClaimLineItemInput)),
-          ...miscRows
-            .filter(r => r.lineDate && r.amountMyr && parseFloat(r.amountMyr) > 0)
-            .map(r => ({ category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
-          ...inEntRows
-            .filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0)
-            .map(r => ({ category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
-          ...otherRows
-            .filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0)
-            .map(r => ({ category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...miscValid.map(r => ({ id: r.id, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...inEntValid.map(r => ({ id: r.id, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...otherValid.map(r => ({ id: r.id, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...hotelValid.map(r => {
+            const nights  = parseFloat(r.nights);
+            const receipt = parseFloat(r.receiptPerNight);
+            const capped  = Math.min(receipt, hotelCap);
+            return { id: r.id, category: LINE_CATEGORY.OUTSTATION_HOTEL, lineDate: r.lineDate, description: `${r.hotelName} (${r.nights} night${parseFloat(r.nights)>1?"s":""})`, distanceKm: nights, ratePerUnit: capped.toFixed(2), amountMyr: (capped * nights).toFixed(2) } satisfies ClaimLineItemInput;
+          }),
         ];
         if (lineItems.length === 0) { toast.error("Add at least one expense item"); setSubmitting(false); return; }
       } else if (formType === CLAIM_FORM.OVERSEAS) {
@@ -329,13 +427,23 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
 
       const appId = await submitClaim({ claimTypeId: selectedType.id, claimPeriod, description: autoDesc, lineItems, entertainmentDetail });
 
-      for (const qf of queuedFiles) {
-        const res = await fetch("/api/claim/upload-url", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ appId, fileName:qf.file.name, mimeType:qf.file.type, fileSize:qf.file.size }) });
-        if (!res.ok) { toast.error(`Upload URL failed for ${qf.file.name}`); continue; }
+      // Build upload queue: line-item receipts + any global files
+      type UploadJob = { file: File; lineItemId?: string };
+      const uploadJobs: UploadJob[] = [
+        ...miscRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
+        ...inEntRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
+        ...otherRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
+        ...hotelRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
+        ...queuedFiles.map(qf => ({ file: qf.file })),
+      ];
+
+      for (const job of uploadJobs) {
+        const res = await fetch("/api/claim/upload-url", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ appId, fileName:job.file.name, mimeType:job.file.type, fileSize:job.file.size }) });
+        if (!res.ok) { toast.error(`Upload URL failed for ${job.file.name}`); continue; }
         const { uploadUrl, key } = await res.json();
-        const upload = await fetch(uploadUrl, { method:"PUT", headers:{"Content-Type":qf.file.type}, body:qf.file });
-        if (!upload.ok) { toast.error(`Upload failed for ${qf.file.name}`); continue; }
-        await createClaimDocumentRecord({ applicationId:appId, fileName:qf.file.name, fileKey:key, fileSize:qf.file.size, mimeType:qf.file.type });
+        const upload = await fetch(uploadUrl, { method:"PUT", headers:{"Content-Type":job.file.type}, body:job.file });
+        if (!upload.ok) { toast.error(`Upload failed for ${job.file.name}`); continue; }
+        await createClaimDocumentRecord({ applicationId:appId, lineItemId:job.lineItemId, fileName:job.file.name, fileKey:key, fileSize:job.file.size, mimeType:job.file.type });
       }
 
       toast.success("Claim submitted");
@@ -518,6 +626,19 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                         <input type="text" placeholder="From city / location" value={row.fromLocation} onChange={e => updateTravel(row.id,"fromLocation",e.target.value)} className={inputCls}/>
                         <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
                         <input type="text" placeholder="To city / location" value={row.toLocation} onChange={e => updateTravel(row.id,"toLocation",e.target.value)} className={inputCls}/>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7 shrink-0"
+                          title="Auto-calculate distance"
+                          disabled={calculatingRows.has(row.id) || !row.fromLocation.trim() || !row.toLocation.trim()}
+                          onClick={() => calculateDistance(row.id, row.fromLocation, row.toLocation)}
+                        >
+                          {calculatingRows.has(row.id)
+                            ? <LoaderIcon className="h-3.5 w-3.5 animate-spin"/>
+                            : <RouteIcon className="h-3.5 w-3.5"/>}
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -529,20 +650,23 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
               <Section title="1.2  Miscellaneous Expenses" badge={miscTotal > 0 ? fmtAmount(miscTotal) : undefined}>
                 <div className="flex flex-col gap-2">
                   {miscRows.map((row) => (
-                    <div key={row.id} className="grid grid-cols-[auto_1fr_1fr_auto_auto] gap-2 items-center rounded-md border border-border bg-muted/20 px-3 py-2">
-                      <Select value={row.subType} onValueChange={v => updateMisc(row.id,"subType",v)}>
-                        <SelectTrigger className="h-7 text-xs w-36"><SelectValue/></SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(MISC_SUB_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      <input type="date" value={row.lineDate} onChange={e => updateMisc(row.id,"lineDate",e.target.value)} className={inputCls}/>
-                      <input type="text" placeholder="Description (optional)" value={row.description} onChange={e => updateMisc(row.id,"description",e.target.value)} className={inputCls}/>
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs text-muted-foreground shrink-0">RM</span>
-                        <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateMisc(row.id,"amountMyr",e.target.value)} className={inputCls+" w-24"}/>
+                    <div key={row.id} className="flex flex-col gap-1.5 rounded-md border border-border bg-muted/20 px-3 py-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Select value={row.subType} onValueChange={v => updateMisc(row.id,"subType",v)}>
+                          <SelectTrigger className="h-7 text-xs w-36"><SelectValue/></SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(MISC_SUB_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <input type="date" value={row.lineDate} onChange={e => updateMisc(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
+                        <input type="text" placeholder="Description (optional)" value={row.description} onChange={e => updateMisc(row.id,"description",e.target.value)} className={inputCls}/>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-xs text-muted-foreground">RM</span>
+                          <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateMisc(row.id,"amountMyr",e.target.value)} className={inputCls+" w-24"}/>
+                        </div>
+                        <ReceiptPicker row={row} setter={setMiscRows}/>
+                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => setMiscRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
                       </div>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => setMiscRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
                     </div>
                   ))}
                 </div>
@@ -554,13 +678,14 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                 <div className="flex flex-col gap-2">
                   {inEntRows.map((row) => (
                     <div key={row.id} className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <input type="date" value={row.lineDate} onChange={e => updateInEnt(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
                         <input type="text" placeholder="Venue / Restaurant" value={row.venue} onChange={e => updateInEnt(row.id,"venue",e.target.value)} className={inputCls}/>
                         <div className="flex items-center gap-1 shrink-0">
                           <span className="text-xs text-muted-foreground">RM</span>
                           <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateInEnt(row.id,"amountMyr",e.target.value)} className={inputCls+" w-24"}/>
                         </div>
+                        <ReceiptPicker row={row} setter={setInEntRows}/>
                         <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setInEntRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
                       </div>
                       <input type="text" placeholder="Purpose / description" value={row.description} onChange={e => updateInEnt(row.id,"description",e.target.value)} className={inputCls}/>
@@ -574,18 +699,68 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
               <Section title="1.4  Other Expenses" badge={otherTotal > 0 ? fmtAmount(otherTotal) : undefined}>
                 <div className="flex flex-col gap-2">
                   {otherRows.map((row) => (
-                    <div key={row.id} className="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2">
+                    <div key={row.id} className="flex items-center gap-2 flex-wrap rounded-md border border-border bg-muted/20 px-3 py-2">
                       <input type="date" value={row.lineDate} onChange={e => updateOther(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
                       <input type="text" placeholder="Description (CME, Gift, Medical fee, etc.)" value={row.description} onChange={e => updateOther(row.id,"description",e.target.value)} className={inputCls}/>
                       <div className="flex items-center gap-1 shrink-0">
                         <span className="text-xs text-muted-foreground">RM</span>
                         <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateOther(row.id,"amountMyr",e.target.value)} className={inputCls+" w-24"}/>
                       </div>
+                      <ReceiptPicker row={row} setter={setOtherRows}/>
                       <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setOtherRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
                     </div>
                   ))}
                 </div>
                 <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOtherRows(p => [...p,emptyOther()])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
+              </Section>
+
+              {/* 1.5 Outstation Hotel */}
+              <Section
+                title="1.5  Outstation Hotel"
+                badge={hotelTotal > 0 ? fmtAmount(hotelTotal) : undefined}
+              >
+                {selectedType?.hotelCapPerNight && (
+                  <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-md px-3 py-2">
+                    <InfoIcon className="h-3.5 w-3.5 shrink-0"/>
+                    Hotel cap: <strong>RM {parseFloat(selectedType.hotelCapPerNight).toFixed(2)}/night</strong>. Receipts above this amount will be capped automatically.
+                  </div>
+                )}
+                <div className="flex flex-col gap-2">
+                  {hotelRows.map((row) => {
+                    const receipt = parseFloat(row.receiptPerNight);
+                    const nights  = parseFloat(row.nights);
+                    const capped  = isNaN(receipt) || receipt <= 0 ? 0 : Math.min(receipt, hotelCap);
+                    const isCapped = !isNaN(receipt) && receipt > 0 && isFinite(hotelCap) && receipt > hotelCap;
+                    const rowTotal = isNaN(nights) || nights <= 0 ? 0 : capped * nights;
+                    return (
+                      <div key={row.id} className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <input type="date" value={row.lineDate} onChange={e => updateHotel(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
+                          <input type="text" placeholder="Hotel name" value={row.hotelName} onChange={e => updateHotel(row.id,"hotelName",e.target.value)} className={inputCls}/>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <input type="number" min="1" step="1" placeholder="1" value={row.nights} onChange={e => updateHotel(row.id,"nights",e.target.value)} className={inputCls+" w-14 text-right"}/>
+                            <span className="text-xs text-muted-foreground">night(s)</span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="text-xs text-muted-foreground">RM</span>
+                            <input type="number" min="0.01" step="0.01" placeholder="receipt/night" value={row.receiptPerNight} onChange={e => updateHotel(row.id,"receiptPerNight",e.target.value)} className={inputCls+" w-28"}/>
+                          </div>
+                          {rowTotal > 0 && (
+                            <div className="flex flex-col shrink-0">
+                              <span className="text-xs font-semibold text-green-700 dark:text-green-400">{fmtAmount(rowTotal)}</span>
+                              {isCapped && (
+                                <span className="text-xs text-amber-600 dark:text-amber-400">capped @ RM {hotelCap.toFixed(2)}/night</span>
+                              )}
+                            </div>
+                          )}
+                          <ReceiptPicker row={row} setter={setHotelRows}/>
+                          <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setHotelRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setHotelRows(p => [...p, emptyHotel()])}><PlusIcon className="h-3.5 w-3.5"/>Add Hotel</Button>
               </Section>
 
               {localTotal > 0 && (

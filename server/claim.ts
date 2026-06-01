@@ -30,6 +30,7 @@ export type ClaimEntertainmentDetailRow = typeof claimEntertainmentDetail.$infer
 
 
 export type ClaimLineItemInput = {
+  id?: string;               // pre-generated client-side when a receipt file is attached
   category: LineCategoryType;
   lineDate: string;
   // TRAVEL
@@ -218,6 +219,7 @@ export async function createClaimType(data: {
   requiresReceipt: boolean;
   maxAmountPerClaim?: string;
   maxAmountPerYear?: string;
+  hotelCapPerNight?: string;
   description?: string;
   sortOrder?: number;
 }): Promise<ClaimTypeRow> {
@@ -233,6 +235,7 @@ export async function createClaimType(data: {
     requiresReceipt: data.requiresReceipt,
     maxAmountPerClaim: data.maxAmountPerClaim?.trim() || null,
     maxAmountPerYear: data.maxAmountPerYear?.trim() || null,
+    hotelCapPerNight: data.hotelCapPerNight?.trim() || null,
     isActive: true,
     description: data.description?.trim() ?? null,
     sortOrder: data.sortOrder ?? 0,
@@ -253,6 +256,7 @@ export async function updateClaimType(
     requiresReceipt: boolean;
     maxAmountPerClaim: string | null;
     maxAmountPerYear: string | null;
+    hotelCapPerNight: string | null;
     description: string;
     isActive: boolean;
     sortOrder: number;
@@ -295,7 +299,8 @@ export async function seedDefaultClaimTypes(): Promise<void> {
       code: "LOCAL",
       category: CLAIM_FORM.LOCAL,
       unitType: "AMOUNT",
-      ratePerUnit: "0.80",     // RM/km for travel section
+      ratePerUnit: "0.50",
+      hotelCapPerNight: "200.00",
       requiresReceipt: false,
       sortOrder: 1,
       description: "Travel, miscellaneous, in-base entertainment and other local expenses.",
@@ -334,6 +339,7 @@ export async function seedDefaultClaimTypes(): Promise<void> {
     requiresReceipt: d.requiresReceipt,
     maxAmountPerClaim: (d as { maxAmountPerClaim?: string }).maxAmountPerClaim ?? null,
     maxAmountPerYear: null,
+    hotelCapPerNight: (d as { hotelCapPerNight?: string }).hotelCapPerNight ?? null,
     isActive: true,
     description: d.description,
     sortOrder: d.sortOrder,
@@ -478,7 +484,7 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
   // ── Insert line items (LOCAL / OVERSEAS) ──────────────────────────────────
   if (data.lineItems && data.lineItems.length > 0) {
     const rows = data.lineItems.map((li, idx) => ({
-      id: nanoid(),
+      id: li.id ?? nanoid(),
       applicationId: appId,
       organizationId: orgId,
       category: li.category,
@@ -600,6 +606,7 @@ export async function cancelClaim(appId: string, reason?: string): Promise<void>
 
 export async function createClaimDocumentRecord(data: {
   applicationId: string;
+  lineItemId?: string;
   fileName: string;
   fileKey: string;
   fileSize: number;
@@ -615,6 +622,7 @@ export async function createClaimDocumentRecord(data: {
   const row = {
     id: nanoid(),
     applicationId: data.applicationId,
+    lineItemId: data.lineItemId ?? null,
     organizationId: orgId,
     fileName: data.fileName,
     fileKey: data.fileKey,

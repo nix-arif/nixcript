@@ -2179,6 +2179,7 @@ export const claimType = pgTable(
     requiresReceipt: boolean("requires_receipt").notNull().default(true),
     maxAmountPerClaim: text("max_amount_per_claim"),
     maxAmountPerYear: text("max_amount_per_year"),
+    hotelCapPerNight: text("hotel_cap_per_night"),
     isActive: boolean("is_active").notNull().default(true),
     description: text("description"),
     sortOrder: integer("sort_order").notNull().default(0),
@@ -2237,6 +2238,8 @@ export const claimDocument = pgTable(
     applicationId: text("application_id")
       .notNull()
       .references(() => claimApplication.id, { onDelete: "cascade" }),
+    lineItemId: text("line_item_id")
+      .references(() => claimLineItem.id, { onDelete: "set null" }),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),

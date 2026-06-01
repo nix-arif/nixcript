@@ -68,6 +68,7 @@ interface FormState {
   requiresReceipt: boolean;
   maxAmountPerClaim: string;
   maxAmountPerYear: string;
+  hotelCapPerNight: string;
   description: string;
   sortOrder: string;
 }
@@ -81,6 +82,7 @@ const emptyForm = (): FormState => ({
   requiresReceipt: true,
   maxAmountPerClaim: "",
   maxAmountPerYear: "",
+  hotelCapPerNight: "",
   description: "",
   sortOrder: "0",
 });
@@ -95,6 +97,7 @@ function formFromRow(row: ClaimTypeRow): FormState {
     requiresReceipt: row.requiresReceipt,
     maxAmountPerClaim: row.maxAmountPerClaim ?? "",
     maxAmountPerYear: row.maxAmountPerYear ?? "",
+    hotelCapPerNight: row.hotelCapPerNight ?? "",
     description: row.description ?? "",
     sortOrder: String(row.sortOrder),
   };
@@ -153,6 +156,7 @@ export function ClaimTypesClient({ claimTypes }: Props) {
         requiresReceipt: form.requiresReceipt,
         maxAmountPerClaim: form.maxAmountPerClaim || undefined,
         maxAmountPerYear: form.maxAmountPerYear || undefined,
+        hotelCapPerNight: form.hotelCapPerNight || undefined,
         description: form.description || undefined,
         sortOrder: parseInt(form.sortOrder, 10) || 0,
       };
@@ -162,6 +166,7 @@ export function ClaimTypesClient({ claimTypes }: Props) {
           ratePerUnit: form.ratePerUnit || null,
           maxAmountPerClaim: form.maxAmountPerClaim || null,
           maxAmountPerYear: form.maxAmountPerYear || null,
+          hotelCapPerNight: form.hotelCapPerNight || null,
         });
         toast.success("Claim type updated");
       } else {
@@ -206,6 +211,7 @@ export function ClaimTypesClient({ claimTypes }: Props) {
   }
 
   const isRateType = form.unitType === "KM" || form.unitType === "HOUR";
+  const isLocal = form.category === "LOCAL";
 
   return (
     <div className="p-6 flex flex-col gap-6">
@@ -292,14 +298,19 @@ export function ClaimTypesClient({ claimTypes }: Props) {
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1.5">
-                      {ct.unitType !== "AMOUNT" && ct.ratePerUnit && (
+                      {ct.ratePerUnit && (
                         <Badge variant="outline" className="text-xs px-1.5 py-0 h-5">
-                          RM {parseFloat(ct.ratePerUnit).toFixed(2)}/{ct.unitType === "KM" ? "km" : "hr"}
+                          RM {parseFloat(ct.ratePerUnit).toFixed(2)}/km
                         </Badge>
                       )}
-                      {ct.unitType === "AMOUNT" && (
+                      {!ct.ratePerUnit && ct.unitType === "AMOUNT" && (
                         <Badge variant="outline" className="text-xs px-1.5 py-0 h-5">
                           Amount
+                        </Badge>
+                      )}
+                      {ct.hotelCapPerNight && (
+                        <Badge variant="outline" className="text-xs px-1.5 py-0 h-5 text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-400 dark:border-amber-700">
+                          Hotel cap RM {parseFloat(ct.hotelCapPerNight).toFixed(0)}/night
                         </Badge>
                       )}
                       {ct.maxAmountPerClaim && (
@@ -419,12 +430,13 @@ export function ClaimTypesClient({ claimTypes }: Props) {
               </div>
             </div>
 
-            {/* Rate per unit — only for KM / HOUR */}
-            {isRateType && (
+            {/* Mileage rate — always shown for LOCAL, or for KM/HOUR unit types */}
+            {(isLocal || isRateType) && (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="ct-rate">
-                  Rate per {form.unitType === "KM" ? "km" : "hour"} (RM){" "}
-                  <span className="text-destructive">*</span>
+                  Mileage rate (RM/km){" "}
+                  {isRateType && <span className="text-destructive">*</span>}
+                  {!isRateType && <span className="text-muted-foreground font-normal text-xs">(for travel section)</span>}
                 </Label>
                 <Input
                   id="ct-rate"
@@ -433,7 +445,26 @@ export function ClaimTypesClient({ claimTypes }: Props) {
                   step="0.01"
                   value={form.ratePerUnit}
                   onChange={(e) => set("ratePerUnit", e.target.value)}
-                  placeholder="e.g. 0.80"
+                  placeholder="e.g. 0.50"
+                />
+              </div>
+            )}
+
+            {/* Hotel cap — only for LOCAL */}
+            {isLocal && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="ct-hotelCap">
+                  Outstation hotel cap (RM/night){" "}
+                  <span className="text-muted-foreground font-normal text-xs">(optional — receipts above this are capped)</span>
+                </Label>
+                <Input
+                  id="ct-hotelCap"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.hotelCapPerNight}
+                  onChange={(e) => set("hotelCapPerNight", e.target.value)}
+                  placeholder="e.g. 200.00"
                 />
               </div>
             )}
