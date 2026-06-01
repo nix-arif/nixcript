@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -20,22 +20,88 @@ import {
   PackageIcon, PlusIcon, SettingsIcon, AlertTriangleIcon, ArrowRightIcon, ArrowLeftRightIcon,
 } from "lucide-react";
 import type { StockWithProduct, Warehouse } from "@/server/inventory";
-import { adjustStock, setReorderPoint, transferStock } from "@/server/inventory";
+import { adjustStock, setReorderPoint, transferStock, searchProducts } from "@/server/inventory";
 import { MOVEMENT_TYPE } from "@/lib/inventory/constants";
 
 interface Product { id: string; productCode: string; description: string | null; uom: string | null }
 interface Props {
   inventory: StockWithProduct[];
-  products: Product[];
   warehouses: Warehouse[];
   permissions: string[];
+}
+
+function ProductSearch({ value, onChange }: { value: string; onChange: (id: string, code: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Product[]>([]);
+  const [open, setOpen] = useState(false);
+  const [selectedLabel, setSelectedLabel] = useState("");
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleInput(q: string) {
+    setQuery(q);
+    if (debounce.current) clearTimeout(debounce.current);
+    if (!q.trim()) { setResults([]); setOpen(false); return; }
+    debounce.current = setTimeout(async () => {
+      const r = await searchProducts(q);
+      setResults(r);
+      setOpen(r.length > 0);
+    }, 300);
+  }
+
+  function select(p: Product) {
+    setSelectedLabel(`${p.productCode}${p.description ? ` — ${p.description}` : ""}`);
+    setQuery("");
+    setResults([]);
+    setOpen(false);
+    onChange(p.id, p.productCode);
+  }
+
+  function clear() {
+    setSelectedLabel("");
+    setQuery("");
+    setResults([]);
+    onChange("", "");
+  }
+
+  return (
+    <div className="relative">
+      {selectedLabel ? (
+        <div className="flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm">
+          <span className="flex-1 truncate font-mono text-xs">{selectedLabel}</span>
+          <button type="button" onClick={clear} className="text-muted-foreground hover:text-foreground text-xs">✕</button>
+        </div>
+      ) : (
+        <Input
+          placeholder="Type product code or name…"
+          value={query}
+          onChange={e => handleInput(e.target.value)}
+          autoComplete="off"
+        />
+      )}
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-background shadow-md max-h-48 overflow-y-auto">
+          {results.map(p => (
+            <button
+              key={p.id}
+              type="button"
+              className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex gap-2"
+              onClick={() => select(p)}
+            >
+              <span className="font-mono font-medium">{p.productCode}</span>
+              <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function fmt(v: string | number) {
   return parseFloat(String(v)).toLocaleString("en-MY", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 }
 
-export function InventoryClient({ inventory, products, warehouses, permissions }: Props) {
+export function InventoryClient({ inventory, warehouses, permissions }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [search, setSearch] = useState("");
@@ -263,17 +329,7 @@ export function InventoryClient({ inventory, products, warehouses, permissions }
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Product <span className="text-destructive">*</span></Label>
-              <Select value={adjProductId} onValueChange={setAdjProductId}>
-                <SelectTrigger><SelectValue placeholder="Select product…"/></SelectTrigger>
-                <SelectContent>
-                  {products.map(p => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="font-mono mr-2">{p.productCode}</span>
-                      <span className="text-muted-foreground text-xs">{p.description ?? ""}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ProductSearch value={adjProductId} onChange={(id) => setAdjProductId(id)} />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Movement Type <span className="text-destructive">*</span></Label>
@@ -321,12 +377,7 @@ export function InventoryClient({ inventory, products, warehouses, permissions }
           <form onSubmit={handleTransfer} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label>Product <span className="text-destructive">*</span></Label>
-              <Select value={txProductId} onValueChange={setTxProductId}>
-                <SelectTrigger><SelectValue placeholder="Select product…"/></SelectTrigger>
-                <SelectContent>
-                  {products.map(p => <SelectItem key={p.id} value={p.id}><span className="font-mono mr-2">{p.productCode}</span><span className="text-muted-foreground text-xs">{p.description ?? ""}</span></SelectItem>)}
-                </SelectContent>
-              </Select>
+              <ProductSearch value={txProductId} onChange={(id) => setTxProductId(id)} />
             </div>
             <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
               <div className="flex flex-col gap-1.5">

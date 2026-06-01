@@ -6,7 +6,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
@@ -289,11 +289,19 @@ export async function setReorderPoint(
   revalidatePath("/dashboard/inventory");
 }
 
-export async function getProducts() {
+export async function searchProducts(query: string) {
   const { orgId } = await requireAccess("inventory:read");
+  if (!query.trim()) return [];
   return db
     .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom })
     .from(product)
-    .where(eq(product.organizationId, orgId))
-    .orderBy(asc(product.productCode));
+    .where(and(
+      eq(product.organizationId, orgId),
+      or(
+        ilike(product.productCode, `%${query}%`),
+        ilike(product.description, `%${query}%`),
+      ),
+    ))
+    .orderBy(asc(product.productCode))
+    .limit(50);
 }
