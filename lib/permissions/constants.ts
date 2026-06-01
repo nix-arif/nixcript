@@ -97,6 +97,12 @@ export const ALL_PERMISSIONS = [
   { key: "permission:read",   label: "View Permissions" },
   { key: "permission:create", label: "Create Permission" },
   { key: "permission:delete", label: "Delete Permission" },
+
+  // Claim management
+  { key: "claim:read:own", label: "View Own Claims" },
+  { key: "claim:apply",    label: "Submit Claim Application" },
+  { key: "claim:approve",  label: "Approve / Reject Claims" },
+  { key: "claim:manage",   label: "Manage Claim Types" },
 ] as const;
 
 export type PermissionKey = (typeof ALL_PERMISSIONS)[number]["key"];
@@ -161,6 +167,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own", "payslip:read:all",
       "organization-profile:read", "organization-profile:create", "organization-profile:update",
       "organization-role:create", "organization-role:update", "organization-role:delete",
+      "claim:read:own", "claim:apply", "claim:approve",
     ],
     member: [
       "quotation:read", "quotation:create", "quotation:update",
@@ -177,6 +184,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "organization-profile:read",
+      "claim:read:own", "claim:apply",
     ],
   },
 
@@ -194,6 +202,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
     member: [
       "quotation:read", "quotation:create", "quotation:update",
@@ -207,6 +216,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
   },
 
@@ -223,6 +233,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "organization-profile:read",
+      "claim:read:own", "claim:apply",
     ],
     member: [
       "invoice:read", "invoice:create",
@@ -233,6 +244,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "member:read",
       "department:read",
       "profile:read", "profile:update",
+      "claim:read:own", "claim:apply",
     ],
   },
 
@@ -243,12 +255,14 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update", "profile:read:all", "profile:update:all", "profile:delete:all",
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
       "organization-profile:read",
+      "claim:read:own", "claim:apply", "claim:approve", "claim:manage",
     ],
     member: [
       "member:read",
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
   },
 
@@ -262,6 +276,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
     member: [
       "product:read",
@@ -270,6 +285,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
   },
 
@@ -284,6 +300,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
     member: [
       "delivery-order:read",
@@ -295,6 +312,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
   },
 
@@ -308,6 +326,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
     member: [
       "customer:read",
@@ -317,6 +336,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
   },
 
@@ -332,6 +352,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
     member: [
       "quotation:read",
@@ -342,6 +363,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "payslip:read:own",
+      "claim:read:own", "claim:apply",
     ],
   },
 };
