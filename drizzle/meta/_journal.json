@@ -15,6 +15,13 @@
       "when": 1780229936496,
       "tag": "0001_left_starbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780317426141,
+      "tag": "0002_add-inventory-tables",
+      "breakpoints": true
     }
   ]
 }
