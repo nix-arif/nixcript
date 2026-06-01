@@ -52,6 +52,7 @@ interface TravelRow {
   id:string; lineDate:string; fromLocation:string; toLocation:string; distanceKm:string;
   mode:string;          // TRAVEL_MODE value or ""
   purpose:string;
+  flightFile?: File;    // required when mode = FLIGHT
   // Daily allowance (meal)
   dailyId:string; breakfastDays:string; lunchDays:string; dinnerDays:string;
   // Accommodation
@@ -345,7 +346,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   }
 
   const updateTravel   = updater(setTravelRows);
-  function setTravelFile(rowId: string, field: "accomFile" | "tEntFile", file: File | undefined) {
+  function setTravelFile(rowId: string, field: "accomFile" | "tEntFile" | "flightFile", file: File | undefined) {
     setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, [field]: file } : r));
   }
   const updateMisc     = updater(setMiscRows);
@@ -419,6 +420,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         const miscValid  = miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0);
         const inEntValid = inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0);
         const otherValid = otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0);
+        const flightMissingReceipt = travelRows.find(r => r.mode === TRAVEL_MODE.FLIGHT && !r.flightFile);
+        if (flightMissingReceipt) { toast.error("Flight receipt is required for flight travel"); setSubmitting(false); return; }
         const missingReceipt = [...miscValid, ...inEntValid, ...otherValid].find(r => !r.file);
         if (missingReceipt) { toast.error("Each expense item requires an attached receipt"); setSubmitting(false); return; }
 
@@ -428,8 +431,10 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
             const items: ClaimLineItemInput[] = [];
             const km = parseFloat(r.distanceKm);
             const usesMileage = r.mode !== TRAVEL_MODE.FLIGHT && r.mode !== TRAVEL_MODE.COMPANY_CAR;
-            if (usesMileage && km > 0 && r.fromLocation.trim() && r.toLocation.trim()) {
-              items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation, toLocation: r.toLocation, distanceKm: km, ratePerUnit: selectedType.ratePerUnit ?? undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: (km * ratePerKm).toFixed(2) });
+            const mileageAmt = usesMileage && km > 0 ? km * ratePerKm : 0;
+            // Always create a TRAVEL line item so documents (e.g. flight receipt) have an anchor
+            if (r.lineDate && (r.fromLocation.trim() || r.toLocation.trim() || r.purpose.trim() || r.mode)) {
+              items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
             }
             const bf = parseFloat(r.breakfastDays)||0;
             const ln = parseFloat(r.lunchDays)||0;
@@ -486,6 +491,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
       // Build upload queue: line-item receipts + any global files
       type UploadJob = { file: File; lineItemId?: string };
       const uploadJobs: UploadJob[] = [
+        ...travelRows.filter(r => r.flightFile).map(r => ({ file: r.flightFile!, lineItemId: r.id })),
         ...travelRows.filter(r => r.accomFile).map(r => ({ file: r.accomFile!, lineItemId: r.accomId })),
         ...travelRows.filter(r => r.tEntFile).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId })),
         ...miscRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
@@ -726,13 +732,24 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                             {showMileage && (
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="text-xs text-muted-foreground">Distance</span>
-                                <input type="number" min="0.1" step="0.1" placeholder="km" value={row.distanceKm} onChange={e => updateTravel(row.id,"distanceKm",e.target.value)} className={inputCls+" w-24"}/>
+                                <input type="number" placeholder="auto" value={row.distanceKm} readOnly className={inputCls+" w-24 bg-muted cursor-not-allowed text-muted-foreground"}/>
                                 <span className="text-xs text-muted-foreground">km</span>
                                 {mileageAmt > 0 && (
                                   <span className="text-xs text-muted-foreground">× RM{ratePerKm.toFixed(2)}/km =
                                     <strong className="text-green-700 dark:text-green-400 ml-1">{fmtAmount(mileageAmt)}</strong>
                                   </span>
                                 )}
+                              </div>
+                            )}
+                            {row.mode === TRAVEL_MODE.FLIGHT && (
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-xs text-muted-foreground">Flight receipt <span className="text-destructive">*</span></span>
+                                <TravelSubFilePicker
+                                  file={row.flightFile}
+                                  onPick={f => setTravelFile(row.id,"flightFile",f)}
+                                  onRemove={() => setTravelFile(row.id,"flightFile",undefined)}
+                                />
+                                {!row.flightFile && <span className="text-xs text-amber-600 dark:text-amber-400">Required for flight travel</span>}
                               </div>
                             )}
                           </div>
@@ -819,68 +836,149 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
 
               {/* 1.2 Miscellaneous */}
               <Section title="1.2  Miscellaneous Expenses" badge={miscTotal > 0 ? fmtAmount(miscTotal) : undefined}>
-                <div className="flex flex-col gap-2">
-                  {miscRows.map((row) => (
-                    <div key={row.id} className="flex flex-col gap-1.5 rounded-md border border-border bg-muted/20 px-3 py-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Select value={row.subType} onValueChange={v => updateMisc(row.id,"subType",v)}>
-                          <SelectTrigger className="h-7 text-xs w-36"><SelectValue/></SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(MISC_SUB_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <input type="date" value={row.lineDate} onChange={e => updateMisc(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
-                        <input type="text" placeholder="Description (optional)" value={row.description} onChange={e => updateMisc(row.id,"description",e.target.value)} className={inputCls}/>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span className="text-xs text-muted-foreground">RM</span>
-                          <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateMisc(row.id,"amountMyr",e.target.value)} className={inputCls+" w-24"}/>
+                <div className="flex flex-col gap-4">
+                  {miscRows.map((row, idx) => {
+                    const amt = parseFloat(row.amountMyr)||0;
+                    return (
+                      <div key={row.id} className="rounded-lg border border-border bg-card overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b border-border">
+                          <span className="text-xs font-semibold">Item {idx+1}</span>
+                          <div className="flex items-center gap-2">
+                            {amt > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => setMiscRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                          </div>
                         </div>
-                        <ReceiptPicker row={row} setter={setMiscRows}/>
-                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => setMiscRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                        <div className="p-4 flex flex-col gap-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Type</span>
+                              <Select value={row.subType} onValueChange={v => updateMisc(row.id,"subType",v)}>
+                                <SelectTrigger className="h-8 text-xs"><SelectValue/></SelectTrigger>
+                                <SelectContent>
+                                  {Object.entries(MISC_SUB_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Date</span>
+                              <input type="date" value={row.lineDate} onChange={e => updateMisc(row.id,"lineDate",e.target.value)} className={inputCls}/>
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground">Description <span className="font-normal opacity-60">(optional)</span></span>
+                            <input type="text" placeholder="e.g. Penang bridge toll" value={row.description} onChange={e => updateMisc(row.id,"description",e.target.value)} className={inputCls}/>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Amount</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-muted-foreground">RM</span>
+                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateMisc(row.id,"amountMyr",e.target.value)} className={inputCls+" w-28"}/>
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Receipt <span className="text-destructive">*</span></span>
+                              <ReceiptPicker row={row} setter={setMiscRows}/>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setMiscRows(p => [...p,emptyMisc()])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
               </Section>
 
               {/* 1.3 In-Base Entertainment */}
               <Section title="1.3  In-Base Entertainment" badge={inEntTotal > 0 ? fmtAmount(inEntTotal) : undefined}>
-                <div className="flex flex-col gap-2">
-                  {inEntRows.map((row) => (
-                    <div key={row.id} className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <input type="date" value={row.lineDate} onChange={e => updateInEnt(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
-                        <input type="text" placeholder="Venue / Restaurant" value={row.venue} onChange={e => updateInEnt(row.id,"venue",e.target.value)} className={inputCls}/>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span className="text-xs text-muted-foreground">RM</span>
-                          <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateInEnt(row.id,"amountMyr",e.target.value)} className={inputCls+" w-24"}/>
+                <div className="flex flex-col gap-4">
+                  {inEntRows.map((row, idx) => {
+                    const amt = parseFloat(row.amountMyr)||0;
+                    return (
+                      <div key={row.id} className="rounded-lg border border-border bg-card overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b border-border">
+                          <span className="text-xs font-semibold">Item {idx+1}</span>
+                          <div className="flex items-center gap-2">
+                            {amt > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => setInEntRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                          </div>
                         </div>
-                        <ReceiptPicker row={row} setter={setInEntRows}/>
-                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setInEntRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                        <div className="p-4 flex flex-col gap-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Date</span>
+                              <input type="date" value={row.lineDate} onChange={e => updateInEnt(row.id,"lineDate",e.target.value)} className={inputCls}/>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Venue / Restaurant</span>
+                              <input type="text" placeholder="e.g. Restoran Nasi Kandar" value={row.venue} onChange={e => updateInEnt(row.id,"venue",e.target.value)} className={inputCls}/>
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground">Purpose / Description</span>
+                            <input type="text" placeholder="e.g. Team lunch, client discussion" value={row.description} onChange={e => updateInEnt(row.id,"description",e.target.value)} className={inputCls}/>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Amount</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-muted-foreground">RM</span>
+                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateInEnt(row.id,"amountMyr",e.target.value)} className={inputCls+" w-28"}/>
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Receipt <span className="text-destructive">*</span></span>
+                              <ReceiptPicker row={row} setter={setInEntRows}/>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <input type="text" placeholder="Purpose / description" value={row.description} onChange={e => updateInEnt(row.id,"description",e.target.value)} className={inputCls}/>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setInEntRows(p => [...p,emptyInEnt()])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
               </Section>
 
               {/* 1.4 Other Expenses */}
               <Section title="1.4  Other Expenses" badge={otherTotal > 0 ? fmtAmount(otherTotal) : undefined}>
-                <div className="flex flex-col gap-2">
-                  {otherRows.map((row) => (
-                    <div key={row.id} className="flex items-center gap-2 flex-wrap rounded-md border border-border bg-muted/20 px-3 py-2">
-                      <input type="date" value={row.lineDate} onChange={e => updateOther(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
-                      <input type="text" placeholder="Description (CME, Gift, Medical fee, etc.)" value={row.description} onChange={e => updateOther(row.id,"description",e.target.value)} className={inputCls}/>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-xs text-muted-foreground">RM</span>
-                        <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateOther(row.id,"amountMyr",e.target.value)} className={inputCls+" w-24"}/>
+                <div className="flex flex-col gap-4">
+                  {otherRows.map((row, idx) => {
+                    const amt = parseFloat(row.amountMyr)||0;
+                    return (
+                      <div key={row.id} className="rounded-lg border border-border bg-card overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b border-border">
+                          <span className="text-xs font-semibold">Item {idx+1}</span>
+                          <div className="flex items-center gap-2">
+                            {amt > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => setOtherRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                          </div>
+                        </div>
+                        <div className="p-4 flex flex-col gap-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground">Date</span>
+                            <input type="date" value={row.lineDate} onChange={e => updateOther(row.id,"lineDate",e.target.value)} className={inputCls+" w-40"}/>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground">Description</span>
+                            <input type="text" placeholder="e.g. CME conference fee, medical, gift, spare parts…" value={row.description} onChange={e => updateOther(row.id,"description",e.target.value)} className={inputCls}/>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Amount</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-muted-foreground">RM</span>
+                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amountMyr} onChange={e => updateOther(row.id,"amountMyr",e.target.value)} className={inputCls+" w-28"}/>
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Receipt <span className="text-destructive">*</span></span>
+                              <ReceiptPicker row={row} setter={setOtherRows}/>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <ReceiptPicker row={row} setter={setOtherRows}/>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setOtherRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOtherRows(p => [...p,emptyOther()])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
               </Section>
