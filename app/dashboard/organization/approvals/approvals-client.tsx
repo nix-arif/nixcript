@@ -6,7 +6,8 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { ShieldCheckIcon } from "lucide-react";
-import type { ApprovalMember, ApprovalModule } from "@/server/approvals";
+import type { ApprovalMember } from "@/server/approvals";
+import type { ApprovalModule } from "@/lib/approvals/constants";
 import { setApprovalPermission } from "@/server/approvals";
 
 interface Props {

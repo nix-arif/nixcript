@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { member } from "@/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
-import { getApprovalMembers, APPROVAL_MODULES } from "@/server/approvals";
+import { getApprovalMembers } from "@/server/approvals";
+import { APPROVAL_MODULES } from "@/lib/approvals/constants";
 import { ApprovalsClient } from "./approvals-client";
 
 export default async function ApprovalsPage() {
