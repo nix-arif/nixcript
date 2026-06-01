@@ -24,7 +24,7 @@ import type {
 import {
   cancelClaim, submitClaim, createClaimDocumentRecord,
 } from "@/server/claim";
-import { CLAIM_FORM, LINE_CATEGORY } from "@/lib/claim/constants";
+import { CLAIM_FORM, LINE_CATEGORY, TRAVEL_MODE, TRAVEL_MODE_LABELS } from "@/lib/claim/constants";
 import {
   PlusIcon, FileDownIcon, XIcon, ReceiptIcon,
   AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon, LoaderIcon, RouteIcon,
@@ -48,7 +48,18 @@ const CURRENCIES = ["USD", "EUR", "GBP", "SGD", "AUD", "JPY", "CNY", "HKD", "THB
 
 // ── Row types ──────────────────────────────────────────────────────────────
 
-interface TravelRow   { id:string; lineDate:string; fromLocation:string; toLocation:string; distanceKm:string }
+interface TravelRow {
+  id:string; lineDate:string; fromLocation:string; toLocation:string; distanceKm:string;
+  mode:string;          // TRAVEL_MODE value or ""
+  // Daily allowance
+  dailyId:string; dailyDays:string; dailyRatePerDay:string;
+  // Accommodation
+  accomId:string; accomAmount:string; accomFile?:File;
+  // Case allowance
+  caseId:string; caseAmount:string;
+  // Travel entertainment
+  tEntId:string; tEntAmount:string; tEntFile?:File;
+}
 interface MiscRow     { id:string; subType:"TOLL"|"PARKING"|"MOBILE"; lineDate:string; description:string; amountMyr:string; file?:File }
 interface InEntRow    { id:string; lineDate:string; venue:string; description:string; amountMyr:string; file?:File }
 interface OtherLocalRow { id:string; lineDate:string; description:string; amountMyr:string; file?:File }
@@ -59,7 +70,13 @@ interface OvOtherRow  { id:string; lineDate:string; description:string; amountMy
 interface QueuedFile  { file:File; id:string }
 
 const newId = () => crypto.randomUUID();
-const emptyTravel   = (): TravelRow     => ({ id:newId(), lineDate:"", fromLocation:"", toLocation:"", distanceKm:"" });
+const emptyTravel = (): TravelRow => ({
+  id:newId(), lineDate:"", fromLocation:"", toLocation:"", distanceKm:"", mode:"",
+  dailyId:newId(), dailyDays:"", dailyRatePerDay:"",
+  accomId:newId(), accomAmount:"", accomFile:undefined,
+  caseId:newId(), caseAmount:"",
+  tEntId:newId(), tEntAmount:"", tEntFile:undefined,
+});
 const emptyMisc     = (): MiscRow       => ({ id:newId(), subType:"TOLL", lineDate:"", description:"", amountMyr:"" });
 const emptyInEnt    = (): InEntRow      => ({ id:newId(), lineDate:"", venue:"", description:"", amountMyr:"" });
 const emptyOther    = (): OtherLocalRow => ({ id:newId(), lineDate:"", description:"", amountMyr:"" });
@@ -74,6 +91,27 @@ function pickReceiptFile(e: React.ChangeEvent<HTMLInputElement>): File | null {
   if (!ALLOWED_RECEIPT_TYPES.includes(f.type)) { toast.error(`${f.name}: only JPG, PNG, WebP, PDF`); return null; }
   if (f.size > MAX_RECEIPT_SIZE) { toast.error(`${f.name}: max 5 MB`); return null; }
   return f;
+}
+
+function TravelSubFilePicker({ file, onPick, onRemove }: { file?: File; onPick:(f:File)=>void; onRemove:()=>void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      <input ref={ref} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" className="hidden"
+        onChange={e => { const f = pickReceiptFile(e); if (f) onPick(f); }}/>
+      {file ? (
+        <div className="flex items-center gap-1 rounded border border-green-500/40 bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 max-w-30">
+          <span className="text-xs text-green-700 dark:text-green-400 truncate" title={file.name}>{file.name}</span>
+          <button type="button" onClick={onRemove} className="text-green-600 hover:text-destructive shrink-0"><XIcon className="h-3 w-3"/></button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => ref.current?.click()}
+          className="flex items-center gap-1 rounded border border-dashed border-muted-foreground/40 px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary shrink-0">
+          <UploadIcon className="h-3 w-3 shrink-0"/>Receipt
+        </button>
+      )}
+    </div>
+  );
 }
 
 function ReceiptPicker<T extends { id: string; file?: File }>({
@@ -266,7 +304,15 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   }
 
   // ── Totals ────────────────────────────────────────────────────────────────
-  const travelTotal  = travelRows.reduce((s,r) => { const km=parseFloat(r.distanceKm); return s+(isNaN(km)||km<=0?0:km*ratePerKm); }, 0);
+  const travelTotal  = travelRows.reduce((s,r) => {
+    const km     = parseFloat(r.distanceKm);
+    const mileage = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
+    const daily   = (parseFloat(r.dailyDays)||0) * (parseFloat(r.dailyRatePerDay)||0);
+    const accom   = parseFloat(r.accomAmount)||0;
+    const cas     = parseFloat(r.caseAmount)||0;
+    const ent     = parseFloat(r.tEntAmount)||0;
+    return s + mileage + daily + accom + cas + ent;
+  }, 0);
   const miscTotal    = miscRows.reduce((s,r)   => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const inEntTotal   = inEntRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const otherTotal   = otherRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
@@ -303,6 +349,9 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   }
 
   const updateTravel   = updater(setTravelRows);
+  function setTravelFile(rowId: string, field: "accomFile" | "tEntFile", file: File | undefined) {
+    setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, [field]: file } : r));
+  }
   const updateMisc     = updater(setMiscRows);
   const updateInEnt    = updater(setInEntRows);
   const updateOther    = updater(setOtherRows);
@@ -380,17 +429,29 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         if (missingReceipt) { toast.error("Each expense item requires an attached receipt"); setSubmitting(false); return; }
 
         lineItems = [
-          ...travelRows
-            .filter(r => r.lineDate && r.fromLocation.trim() && r.toLocation.trim() && parseFloat(r.distanceKm) > 0)
-            .map(r => ({
-              category: LINE_CATEGORY.TRAVEL,
-              lineDate: r.lineDate,
-              fromLocation: r.fromLocation,
-              toLocation: r.toLocation,
-              distanceKm: parseFloat(r.distanceKm),
-              ratePerUnit: selectedType.ratePerUnit ?? undefined,
-              amountMyr: (parseFloat(r.distanceKm) * ratePerKm).toFixed(2),
-            } satisfies ClaimLineItemInput)),
+          ...travelRows.flatMap(r => {
+            if (!r.lineDate) return [];
+            const items: ClaimLineItemInput[] = [];
+            const km = parseFloat(r.distanceKm);
+            const usesMileage = r.mode !== TRAVEL_MODE.FLIGHT && r.mode !== TRAVEL_MODE.COMPANY_CAR;
+            if (usesMileage && km > 0 && r.fromLocation.trim() && r.toLocation.trim()) {
+              items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation, toLocation: r.toLocation, distanceKm: km, ratePerUnit: selectedType.ratePerUnit ?? undefined, description: r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined, amountMyr: (km * ratePerKm).toFixed(2) });
+            }
+            const days = parseFloat(r.dailyDays); const rate = parseFloat(r.dailyRatePerDay);
+            if (days > 0 && rate > 0) {
+              items.push({ id: r.dailyId, category: LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, lineDate: r.lineDate, distanceKm: days, ratePerUnit: rate.toFixed(2), description: `${days} day(s) @ RM${rate.toFixed(2)}/day`, amountMyr: (days * rate).toFixed(2) });
+            }
+            if (parseFloat(r.accomAmount) > 0) {
+              items.push({ id: r.accomId, category: LINE_CATEGORY.TRAVEL_ACCOMMODATION, lineDate: r.lineDate, amountMyr: r.accomAmount });
+            }
+            if (parseFloat(r.caseAmount) > 0) {
+              items.push({ id: r.caseId, category: LINE_CATEGORY.TRAVEL_CASE_ALLOWANCE, lineDate: r.lineDate, amountMyr: r.caseAmount });
+            }
+            if (parseFloat(r.tEntAmount) > 0) {
+              items.push({ id: r.tEntId, category: LINE_CATEGORY.TRAVEL_ENTERTAINMENT, lineDate: r.lineDate, amountMyr: r.tEntAmount });
+            }
+            return items;
+          }),
           ...miscValid.map(r => ({ id: r.id, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
           ...inEntValid.map(r => ({ id: r.id, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
           ...otherValid.map(r => ({ id: r.id, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
@@ -430,6 +491,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
       // Build upload queue: line-item receipts + any global files
       type UploadJob = { file: File; lineItemId?: string };
       const uploadJobs: UploadJob[] = [
+        ...travelRows.filter(r => r.accomFile).map(r => ({ file: r.accomFile!, lineItemId: r.accomId })),
+        ...travelRows.filter(r => r.tEntFile).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId })),
         ...miscRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
         ...inEntRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
         ...otherRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
@@ -606,42 +669,110 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
 
               {/* 1.1 Travel */}
               <Section title="1.1  Travel Expenses" badge={travelTotal > 0 ? fmtAmount(travelTotal) : undefined}>
-                <div className="flex flex-col gap-2">
-                  {travelRows.map((row, idx) => (
-                    <div key={row.id} className="rounded-md border border-border bg-muted/20 p-3 flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground w-4 shrink-0">{idx+1}.</span>
-                        <input type="date" value={row.lineDate} onChange={e => updateTravel(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
-                        <div className="flex items-center gap-1 ml-auto">
-                          <input type="number" min="0.1" step="0.1" placeholder="km" value={row.distanceKm} onChange={e => updateTravel(row.id,"distanceKm",e.target.value)} className={inputCls+" w-16 text-right"}/>
-                          <span className="text-xs text-muted-foreground shrink-0">km</span>
-                          <span className="text-xs font-semibold text-green-700 dark:text-green-400 w-20 text-right shrink-0">
-                            {parseFloat(row.distanceKm)>0 ? fmtAmount(parseFloat(row.distanceKm)*ratePerKm) : "—"}
-                          </span>
+                <div className="flex flex-col gap-3">
+                  {travelRows.map((row, idx) => {
+                    const km = parseFloat(row.distanceKm);
+                    const mileageAmt = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
+                    const dailyAmt   = (parseFloat(row.dailyDays)||0)*(parseFloat(row.dailyRatePerDay)||0);
+                    const accomAmt   = parseFloat(row.accomAmount)||0;
+                    const caseAmt    = parseFloat(row.caseAmount)||0;
+                    const tEntAmt    = parseFloat(row.tEntAmount)||0;
+                    const tripTotal  = mileageAmt+dailyAmt+accomAmt+caseAmt+tEntAmt;
+                    const showMileage = row.mode !== TRAVEL_MODE.FLIGHT && row.mode !== TRAVEL_MODE.COMPANY_CAR;
+                    return (
+                      <div key={row.id} className="rounded-md border border-border bg-muted/20 p-3 flex flex-col gap-2.5">
+                        {/* Trip header */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-muted-foreground w-4 shrink-0">{idx+1}.</span>
+                          <input type="date" value={row.lineDate} onChange={e => updateTravel(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
+                          <Select value={row.mode} onValueChange={v => updateTravel(row.id,"mode",v)}>
+                            <SelectTrigger className="h-7 text-xs w-32 shrink-0"><SelectValue placeholder="Mode…"/></SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(TRAVEL_MODE_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          {tripTotal > 0 && <span className="text-xs font-semibold text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tripTotal)}</span>}
+                          <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => remover(setTravelRows,1)(row.id)} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
                         </div>
-                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => remover(setTravelRows,1)(row.id)} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
+
+                        {/* From → To + mileage */}
+                        <div className="flex items-center gap-1.5 pl-5 flex-wrap">
+                          <MapPinIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
+                          <div className="relative flex-1 min-w-28">
+                            <input type="text" placeholder="From city" value={row.fromLocation} onChange={e => updateTravel(row.id,"fromLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.toLocation.trim() && showMileage) calculateDistance(row.id, e.target.value, row.toLocation); }} className={inputCls}/>
+                          </div>
+                          <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
+                          <div className="relative flex-1 min-w-28">
+                            <input type="text" placeholder="To city" value={row.toLocation} onChange={e => updateTravel(row.id,"toLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.fromLocation.trim() && showMileage) calculateDistance(row.id, row.fromLocation, e.target.value); }} className={inputCls}/>
+                          </div>
+                          {calculatingRows.has(row.id) && <LoaderIcon className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0"/>}
+                          {showMileage && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              <input type="number" min="0.1" step="0.1" placeholder="km" value={row.distanceKm} onChange={e => updateTravel(row.id,"distanceKm",e.target.value)} className={inputCls+" w-16 text-right"}/>
+                              <span className="text-xs text-muted-foreground">km</span>
+                              {mileageAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 w-16 text-right">{fmtAmount(mileageAmt)}</span>}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Sub-items */}
+                        <div className="pl-5 flex flex-col gap-1.5 border-t border-border/60 pt-2">
+                          {/* Daily allowance */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-muted-foreground w-36 shrink-0">Daily allowance</span>
+                            <div className="flex items-center gap-1">
+                              <input type="number" min="1" step="1" placeholder="days" value={row.dailyDays} onChange={e => updateTravel(row.id,"dailyDays",e.target.value)} className={inputCls+" w-14 text-right"}/>
+                              <span className="text-xs text-muted-foreground">×</span>
+                              <span className="text-xs text-muted-foreground">RM</span>
+                              <input type="number" min="0.01" step="0.01" placeholder="rate/day" value={row.dailyRatePerDay} onChange={e => updateTravel(row.id,"dailyRatePerDay",e.target.value)} className={inputCls+" w-24"}/>
+                            </div>
+                            {dailyAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(dailyAmt)}</span>}
+                          </div>
+
+                          {/* Accommodation */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-muted-foreground w-36 shrink-0">Accommodation</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground">RM</span>
+                              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.accomAmount} onChange={e => updateTravel(row.id,"accomAmount",e.target.value)} className={inputCls+" w-24"}/>
+                            </div>
+                            {accomAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(accomAmt)}</span>}
+                            {/* File picker for accommodation */}
+                            <TravelSubFilePicker
+                              file={row.accomFile}
+                              onPick={f => setTravelFile(row.id,"accomFile",f)}
+                              onRemove={() => setTravelFile(row.id,"accomFile",undefined)}
+                            />
+                          </div>
+
+                          {/* Case allowance */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-muted-foreground w-36 shrink-0">Case allowance</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground">RM</span>
+                              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.caseAmount} onChange={e => updateTravel(row.id,"caseAmount",e.target.value)} className={inputCls+" w-24"}/>
+                            </div>
+                            {caseAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(caseAmt)}</span>}
+                          </div>
+
+                          {/* Travel entertainment */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-muted-foreground w-36 shrink-0">Travel entertainment</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground">RM</span>
+                              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.tEntAmount} onChange={e => updateTravel(row.id,"tEntAmount",e.target.value)} className={inputCls+" w-24"}/>
+                            </div>
+                            {tEntAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(tEntAmt)}</span>}
+                            <TravelSubFilePicker
+                              file={row.tEntFile}
+                              onPick={f => setTravelFile(row.id,"tEntFile",f)}
+                              onRemove={() => setTravelFile(row.id,"tEntFile",undefined)}
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5 pl-5">
-                        <MapPinIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
-                        <input type="text" placeholder="From city / location" value={row.fromLocation} onChange={e => updateTravel(row.id,"fromLocation",e.target.value)} className={inputCls}/>
-                        <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
-                        <input type="text" placeholder="To city / location" value={row.toLocation} onChange={e => updateTravel(row.id,"toLocation",e.target.value)} className={inputCls}/>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-7 w-7 shrink-0"
-                          title="Auto-calculate distance"
-                          disabled={calculatingRows.has(row.id) || !row.fromLocation.trim() || !row.toLocation.trim()}
-                          onClick={() => calculateDistance(row.id, row.fromLocation, row.toLocation)}
-                        >
-                          {calculatingRows.has(row.id)
-                            ? <LoaderIcon className="h-3.5 w-3.5 animate-spin"/>
-                            : <RouteIcon className="h-3.5 w-3.5"/>}
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setTravelRows(p => [...p,emptyTravel()])}><PlusIcon className="h-3.5 w-3.5"/>Add Trip</Button>
               </Section>
