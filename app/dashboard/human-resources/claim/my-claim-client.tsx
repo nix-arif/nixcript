@@ -664,136 +664,150 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
 
               {/* 1.1 Travel */}
               <Section title="1.1  Travel Expenses" badge={travelTotal > 0 ? fmtAmount(travelTotal) : undefined}>
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-4">
                   {travelRows.map((row, idx) => {
-                    const km = parseFloat(row.distanceKm);
+                    const km         = parseFloat(row.distanceKm);
                     const mileageAmt = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
-                    const dailyAmt   = (parseFloat(row.breakfastDays)||0)*mealBreakfastRate + (parseFloat(row.lunchDays)||0)*mealLunchRate + (parseFloat(row.dinnerDays)||0)*mealDinnerRate;
+                    const bfDays = parseFloat(row.breakfastDays)||0;
+                    const lnDays = parseFloat(row.lunchDays)||0;
+                    const dnDays = parseFloat(row.dinnerDays)||0;
+                    const dailyAmt   = bfDays*mealBreakfastRate + lnDays*mealLunchRate + dnDays*mealDinnerRate;
                     const accomAmt   = parseFloat(row.accomAmount)||0;
                     const caseAmt    = parseFloat(row.caseAmount)||0;
                     const tEntAmt    = parseFloat(row.tEntAmount)||0;
                     const tripTotal  = mileageAmt+dailyAmt+accomAmt+caseAmt+tEntAmt;
                     const showMileage = row.mode !== TRAVEL_MODE.FLIGHT && row.mode !== TRAVEL_MODE.COMPANY_CAR;
+                    const labelCls = "text-xs text-muted-foreground w-32 shrink-0 pt-1.5";
                     return (
-                      <div key={row.id} className="rounded-md border border-border bg-muted/20 p-3 flex flex-col gap-2.5">
-                        {/* Trip header */}
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs text-muted-foreground w-4 shrink-0">{idx+1}.</span>
-                          <input type="date" value={row.lineDate} onChange={e => updateTravel(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
-                          <Select value={row.mode} onValueChange={v => updateTravel(row.id,"mode",v)}>
-                            <SelectTrigger className="h-7 text-xs w-32 shrink-0"><SelectValue placeholder="Mode…"/></SelectTrigger>
-                            <SelectContent>
-                              {Object.entries(TRAVEL_MODE_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                          <input type="text" placeholder="Purpose of trip" value={row.purpose} onChange={e => updateTravel(row.id,"purpose",e.target.value)} className={inputCls}/>
-                          {tripTotal > 0 && <span className="text-xs font-semibold text-green-700 dark:text-green-400 shrink-0">{fmtAmount(tripTotal)}</span>}
-                          <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => remover(setTravelRows,1)(row.id)} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
+                      <div key={row.id} className="rounded-lg border border-border bg-card overflow-hidden">
+                        {/* ── Card header ─────────────────────────────────── */}
+                        <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b border-border">
+                          <span className="text-xs font-semibold text-foreground">Trip {idx+1}</span>
+                          <div className="flex items-center gap-2">
+                            {tripTotal > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(tripTotal)}</span>}
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => remover(setTravelRows,1)(row.id)} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
+                          </div>
                         </div>
 
-                        {/* From → To + mileage */}
-                        <div className="flex items-center gap-1.5 pl-5 flex-wrap">
-                          <MapPinIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
-                          <div className="relative flex-1 min-w-28">
-                            <input type="text" placeholder="From city" value={row.fromLocation} onChange={e => updateTravel(row.id,"fromLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.toLocation.trim() && showMileage) calculateDistance(row.id, e.target.value, row.toLocation); }} className={inputCls}/>
-                          </div>
-                          <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
-                          <div className="relative flex-1 min-w-28">
-                            <input type="text" placeholder="To city" value={row.toLocation} onChange={e => updateTravel(row.id,"toLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.fromLocation.trim() && showMileage) calculateDistance(row.id, row.fromLocation, e.target.value); }} className={inputCls}/>
-                          </div>
-                          {calculatingRows.has(row.id) && <LoaderIcon className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0"/>}
-                          {showMileage && (
-                            <div className="flex items-center gap-1 shrink-0">
-                              <input type="number" min="0.1" step="0.1" placeholder="km" value={row.distanceKm} onChange={e => updateTravel(row.id,"distanceKm",e.target.value)} className={inputCls+" w-16 text-right"}/>
-                              <span className="text-xs text-muted-foreground">km</span>
-                              {mileageAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 w-16 text-right">{fmtAmount(mileageAmt)}</span>}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Sub-items */}
-                        <div className="pl-5 flex flex-col gap-1.5 border-t border-border/60 pt-2">
-                            {/* Daily allowance */}
-                          {hasMealRates ? (
+                        {/* ── Trip details ─────────────────────────────────── */}
+                        <div className="p-4 flex flex-col gap-3">
+                          {/* Date + Mode */}
+                          <div className="grid grid-cols-2 gap-3">
                             <div className="flex flex-col gap-1">
-                              <span className="text-xs text-muted-foreground w-36 shrink-0">Daily allowance</span>
-                              <div className="flex items-center gap-3 flex-wrap pl-1">
-                                {mealBreakfastRate > 0 && (
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-xs text-muted-foreground w-16 shrink-0">Breakfast</span>
-                                    <input type="number" min="0" step="1" placeholder="0" value={row.breakfastDays} onChange={e => updateTravel(row.id,"breakfastDays",e.target.value)} className={inputCls+" w-12 text-right"}/>
-                                    <span className="text-xs text-muted-foreground">d</span>
-                                    <span className="text-xs text-muted-foreground">× RM{mealBreakfastRate.toFixed(2)}</span>
-                                    {(parseFloat(row.breakfastDays)||0) > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">= {fmtAmount((parseFloat(row.breakfastDays)||0)*mealBreakfastRate)}</span>}
-                                  </div>
-                                )}
-                                {mealLunchRate > 0 && (
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-xs text-muted-foreground w-16 shrink-0">Lunch</span>
-                                    <input type="number" min="0" step="1" placeholder="0" value={row.lunchDays} onChange={e => updateTravel(row.id,"lunchDays",e.target.value)} className={inputCls+" w-12 text-right"}/>
-                                    <span className="text-xs text-muted-foreground">d</span>
-                                    <span className="text-xs text-muted-foreground">× RM{mealLunchRate.toFixed(2)}</span>
-                                    {(parseFloat(row.lunchDays)||0) > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">= {fmtAmount((parseFloat(row.lunchDays)||0)*mealLunchRate)}</span>}
-                                  </div>
-                                )}
-                                {mealDinnerRate > 0 && (
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-xs text-muted-foreground w-16 shrink-0">Dinner</span>
-                                    <input type="number" min="0" step="1" placeholder="0" value={row.dinnerDays} onChange={e => updateTravel(row.id,"dinnerDays",e.target.value)} className={inputCls+" w-12 text-right"}/>
-                                    <span className="text-xs text-muted-foreground">d</span>
-                                    <span className="text-xs text-muted-foreground">× RM{mealDinnerRate.toFixed(2)}</span>
-                                    {(parseFloat(row.dinnerDays)||0) > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">= {fmtAmount((parseFloat(row.dinnerDays)||0)*mealDinnerRate)}</span>}
-                                  </div>
-                                )}
-                                {dailyAmt > 0 && <span className="text-xs font-semibold text-green-700 dark:text-green-400 ml-auto">Total {fmtAmount(dailyAmt)}</span>}
-                              </div>
+                              <span className="text-xs text-muted-foreground">Date</span>
+                              <input type="date" value={row.lineDate} onChange={e => updateTravel(row.id,"lineDate",e.target.value)} className={inputCls}/>
                             </div>
-                          ) : (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground">Mode of transport</span>
+                              <Select value={row.mode} onValueChange={v => updateTravel(row.id,"mode",v)}>
+                                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select mode…"/></SelectTrigger>
+                                <SelectContent>
+                                  {Object.entries(TRAVEL_MODE_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          {/* Purpose */}
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground">Purpose of travel</span>
+                            <input type="text" placeholder="e.g. Client visit, site inspection, training…" value={row.purpose} onChange={e => updateTravel(row.id,"purpose",e.target.value)} className={inputCls}/>
+                          </div>
+
+                          {/* Route + mileage */}
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground flex items-center gap-1"><MapPinIcon className="h-3 w-3"/>Route</span>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground w-36 shrink-0">Daily allowance</span>
-                              <span className="text-xs text-muted-foreground italic">No meal rates configured — set in Claim Types settings</span>
+                              <input type="text" placeholder="From city / location" value={row.fromLocation} onChange={e => updateTravel(row.id,"fromLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.toLocation.trim() && showMileage) calculateDistance(row.id, e.target.value, row.toLocation); }} className={inputCls}/>
+                              <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
+                              <input type="text" placeholder="To city / location" value={row.toLocation} onChange={e => updateTravel(row.id,"toLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.fromLocation.trim() && showMileage) calculateDistance(row.id, row.fromLocation, e.target.value); }} className={inputCls}/>
+                              {calculatingRows.has(row.id) && <LoaderIcon className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0"/>}
                             </div>
-                          )}
-
-                          {/* Accommodation */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-muted-foreground w-36 shrink-0">Accommodation</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-muted-foreground">RM</span>
-                              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.accomAmount} onChange={e => updateTravel(row.id,"accomAmount",e.target.value)} className={inputCls+" w-24"}/>
-                            </div>
-                            {accomAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(accomAmt)}</span>}
-                            {/* File picker for accommodation */}
-                            <TravelSubFilePicker
-                              file={row.accomFile}
-                              onPick={f => setTravelFile(row.id,"accomFile",f)}
-                              onRemove={() => setTravelFile(row.id,"accomFile",undefined)}
-                            />
+                            {showMileage && (
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-xs text-muted-foreground">Distance</span>
+                                <input type="number" min="0.1" step="0.1" placeholder="km" value={row.distanceKm} onChange={e => updateTravel(row.id,"distanceKm",e.target.value)} className={inputCls+" w-24"}/>
+                                <span className="text-xs text-muted-foreground">km</span>
+                                {mileageAmt > 0 && (
+                                  <span className="text-xs text-muted-foreground">× RM{ratePerKm.toFixed(2)}/km =
+                                    <strong className="text-green-700 dark:text-green-400 ml-1">{fmtAmount(mileageAmt)}</strong>
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
 
-                          {/* Case allowance */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-muted-foreground w-36 shrink-0">Case allowance</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-muted-foreground">RM</span>
-                              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.caseAmount} onChange={e => updateTravel(row.id,"caseAmount",e.target.value)} className={inputCls+" w-24"}/>
-                            </div>
-                            {caseAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(caseAmt)}</span>}
-                          </div>
+                          {/* ── Sub-expenses ──────────────────────────────── */}
+                          <div className="flex flex-col gap-0 border-t border-border/60 pt-3">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Associated Expenses</p>
 
-                          {/* Travel entertainment */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-muted-foreground w-36 shrink-0">Travel entertainment</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-muted-foreground">RM</span>
-                              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.tEntAmount} onChange={e => updateTravel(row.id,"tEntAmount",e.target.value)} className={inputCls+" w-24"}/>
+                            {/* Daily allowance */}
+                            <div className="flex gap-3 py-2 border-b border-border/40">
+                              <span className={labelCls}>Daily allowance</span>
+                              {hasMealRates ? (
+                                <div className="flex flex-col gap-1.5 flex-1">
+                                  {mealBreakfastRate > 0 && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-muted-foreground w-14 shrink-0">Breakfast</span>
+                                      <input type="number" min="0" step="1" placeholder="0" value={row.breakfastDays} onChange={e => updateTravel(row.id,"breakfastDays",e.target.value)} className={inputCls+" w-14 text-right"}/>
+                                      <span className="text-xs text-muted-foreground shrink-0">day(s) × RM{mealBreakfastRate.toFixed(2)}</span>
+                                      {bfDays > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(bfDays*mealBreakfastRate)}</span>}
+                                    </div>
+                                  )}
+                                  {mealLunchRate > 0 && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-muted-foreground w-14 shrink-0">Lunch</span>
+                                      <input type="number" min="0" step="1" placeholder="0" value={row.lunchDays} onChange={e => updateTravel(row.id,"lunchDays",e.target.value)} className={inputCls+" w-14 text-right"}/>
+                                      <span className="text-xs text-muted-foreground shrink-0">day(s) × RM{mealLunchRate.toFixed(2)}</span>
+                                      {lnDays > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(lnDays*mealLunchRate)}</span>}
+                                    </div>
+                                  )}
+                                  {mealDinnerRate > 0 && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-muted-foreground w-14 shrink-0">Dinner</span>
+                                      <input type="number" min="0" step="1" placeholder="0" value={row.dinnerDays} onChange={e => updateTravel(row.id,"dinnerDays",e.target.value)} className={inputCls+" w-14 text-right"}/>
+                                      <span className="text-xs text-muted-foreground shrink-0">day(s) × RM{mealDinnerRate.toFixed(2)}</span>
+                                      {dnDays > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(dnDays*mealDinnerRate)}</span>}
+                                    </div>
+                                  )}
+                                  {dailyAmt > 0 && <div className="flex justify-end"><span className="text-xs font-semibold text-green-700 dark:text-green-400">Subtotal {fmtAmount(dailyAmt)}</span></div>}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-muted-foreground italic pt-1.5">No meal rates configured — set in Claim Types</span>
+                              )}
                             </div>
-                            {tEntAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(tEntAmt)}</span>}
-                            <TravelSubFilePicker
-                              file={row.tEntFile}
-                              onPick={f => setTravelFile(row.id,"tEntFile",f)}
-                              onRemove={() => setTravelFile(row.id,"tEntFile",undefined)}
-                            />
+
+                            {/* Accommodation */}
+                            <div className="flex items-center gap-3 py-2 border-b border-border/40">
+                              <span className={labelCls}>Accommodation</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-muted-foreground">RM</span>
+                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.accomAmount} onChange={e => updateTravel(row.id,"accomAmount",e.target.value)} className={inputCls+" w-28"}/>
+                              </div>
+                              <TravelSubFilePicker file={row.accomFile} onPick={f => setTravelFile(row.id,"accomFile",f)} onRemove={() => setTravelFile(row.id,"accomFile",undefined)}/>
+                              {accomAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
+                            </div>
+
+                            {/* Case allowance */}
+                            <div className="flex items-center gap-3 py-2 border-b border-border/40">
+                              <span className={labelCls}>Case allowance</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-muted-foreground">RM</span>
+                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.caseAmount} onChange={e => updateTravel(row.id,"caseAmount",e.target.value)} className={inputCls+" w-28"}/>
+                              </div>
+                              {caseAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(caseAmt)}</span>}
+                            </div>
+
+                            {/* Travel entertainment */}
+                            <div className="flex items-center gap-3 py-2">
+                              <span className={labelCls}>Entertainment</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-muted-foreground">RM</span>
+                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.tEntAmount} onChange={e => updateTravel(row.id,"tEntAmount",e.target.value)} className={inputCls+" w-28"}/>
+                              </div>
+                              <TravelSubFilePicker file={row.tEntFile} onPick={f => setTravelFile(row.id,"tEntFile",f)} onRemove={() => setTravelFile(row.id,"tEntFile",undefined)}/>
+                              {tEntAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tEntAmt)}</span>}
+                            </div>
                           </div>
                         </div>
                       </div>
