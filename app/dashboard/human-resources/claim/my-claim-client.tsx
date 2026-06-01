@@ -23,8 +23,8 @@ import type {
 } from "@/server/claim";
 import {
   cancelClaim, submitClaim, createClaimDocumentRecord,
-  CLAIM_FORM, LINE_CATEGORY,
 } from "@/server/claim";
+import { CLAIM_FORM, LINE_CATEGORY } from "@/lib/claim/constants";
 import {
   PlusIcon, FileDownIcon, XIcon, ReceiptIcon,
   AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon,

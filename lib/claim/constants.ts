@@ -1,0 +1,21 @@
+export const CLAIM_FORM = {
+  LOCAL: "LOCAL",
+  OVERSEAS: "OVERSEAS",
+  ENTERTAINMENT_FORM: "ENTERTAINMENT_FORM",
+} as const;
+
+export type ClaimFormType = (typeof CLAIM_FORM)[keyof typeof CLAIM_FORM];
+
+export const LINE_CATEGORY = {
+  TRAVEL: "TRAVEL",
+  TOLL: "TOLL",
+  PARKING: "PARKING",
+  MOBILE: "MOBILE",
+  IN_BASE_ENT: "IN_BASE_ENT",
+  OTHER_LOCAL: "OTHER_LOCAL",
+  OVERSEAS_MYR: "OVERSEAS_MYR",
+  OVERSEAS_FX: "OVERSEAS_FX",
+  OVERSEAS_OTHER: "OVERSEAS_OTHER",
+} as const;
+
+export type LineCategoryType = (typeof LINE_CATEGORY)[keyof typeof LINE_CATEGORY];

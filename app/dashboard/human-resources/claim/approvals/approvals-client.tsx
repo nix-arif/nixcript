@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { ClaimApplicationWithDetails } from "@/server/claim";
-import { approveClaim, rejectClaim, CLAIM_FORM, LINE_CATEGORY } from "@/server/claim";
+import { approveClaim, rejectClaim } from "@/server/claim";
+import { CLAIM_FORM, LINE_CATEGORY } from "@/lib/claim/constants";
 import {
   CheckIcon, XIcon, FileDownIcon, CheckCircle2Icon, ClipboardCheckIcon,
   ArrowRightIcon, MapPinIcon,

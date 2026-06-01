@@ -16,6 +16,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, sql } from "drizzle-orm";
+import { CLAIM_FORM, LINE_CATEGORY, type ClaimFormType, type LineCategoryType } from "@/lib/claim/constants";
 
 /* =========================
    TYPES
@@ -27,29 +28,7 @@ export type ClaimDocumentRow = typeof claimDocument.$inferSelect;
 export type ClaimLineItemRow = typeof claimLineItem.$inferSelect;
 export type ClaimEntertainmentDetailRow = typeof claimEntertainmentDetail.$inferSelect;
 
-// Form type discriminators — matches claimType.category
-export const CLAIM_FORM = {
-  LOCAL: "LOCAL",
-  OVERSEAS: "OVERSEAS",
-  ENTERTAINMENT_FORM: "ENTERTAINMENT_FORM",
-} as const;
-export type ClaimFormType = (typeof CLAIM_FORM)[keyof typeof CLAIM_FORM];
-
-// Line item sub-categories
-export const LINE_CATEGORY = {
-  // LOCAL sub-sections
-  TRAVEL: "TRAVEL",            // 1.1 Travel Expenses (km-based)
-  TOLL: "TOLL",                // 1.2.1
-  PARKING: "PARKING",          // 1.2.2
-  MOBILE: "MOBILE",            // 1.2.3
-  IN_BASE_ENT: "IN_BASE_ENT",  // 1.3 In-Base Entertainment
-  OTHER_LOCAL: "OTHER_LOCAL",  // 1.4 Other Expenses
-  // OVERSEAS sub-sections
-  OVERSEAS_MYR: "OVERSEAS_MYR",      // 2.1 Travel in MYR
-  OVERSEAS_FX: "OVERSEAS_FX",        // 2.2 Travel in Foreign Currency
-  OVERSEAS_OTHER: "OVERSEAS_OTHER",  // 2.3 Other Expenses
-} as const;
-export type LineCategoryType = (typeof LINE_CATEGORY)[keyof typeof LINE_CATEGORY];
+export type { ClaimFormType, LineCategoryType };
 
 export type ClaimLineItemInput = {
   category: LineCategoryType;
