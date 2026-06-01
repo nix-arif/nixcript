@@ -28,7 +28,6 @@ export type ClaimDocumentRow = typeof claimDocument.$inferSelect;
 export type ClaimLineItemRow = typeof claimLineItem.$inferSelect;
 export type ClaimEntertainmentDetailRow = typeof claimEntertainmentDetail.$inferSelect;
 
-export type { ClaimFormType, LineCategoryType };
 
 export type ClaimLineItemInput = {
   category: LineCategoryType;
