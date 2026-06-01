@@ -51,8 +51,9 @@ const CURRENCIES = ["USD", "EUR", "GBP", "SGD", "AUD", "JPY", "CNY", "HKD", "THB
 interface TravelRow {
   id:string; lineDate:string; fromLocation:string; toLocation:string; distanceKm:string;
   mode:string;          // TRAVEL_MODE value or ""
-  // Daily allowance
-  dailyId:string; dailyDays:string; dailyRatePerDay:string;
+  purpose:string;
+  // Daily allowance (meal)
+  dailyId:string; breakfastDays:string; lunchDays:string; dinnerDays:string;
   // Accommodation
   accomId:string; accomAmount:string; accomFile?:File;
   // Case allowance
@@ -63,7 +64,7 @@ interface TravelRow {
 interface MiscRow     { id:string; subType:"TOLL"|"PARKING"|"MOBILE"; lineDate:string; description:string; amountMyr:string; file?:File }
 interface InEntRow    { id:string; lineDate:string; venue:string; description:string; amountMyr:string; file?:File }
 interface OtherLocalRow { id:string; lineDate:string; description:string; amountMyr:string; file?:File }
-interface HotelRow     { id:string; lineDate:string; hotelName:string; nights:string; receiptPerNight:string; file?:File }
+
 interface OvMyrRow    { id:string; lineDate:string; destination:string; description:string; amountMyr:string }
 interface OvFxRow     { id:string; lineDate:string; destination:string; currency:string; amountForeign:string; exchangeRate:string }
 interface OvOtherRow  { id:string; lineDate:string; description:string; amountMyr:string }
@@ -71,8 +72,8 @@ interface QueuedFile  { file:File; id:string }
 
 const newId = () => crypto.randomUUID();
 const emptyTravel = (): TravelRow => ({
-  id:newId(), lineDate:"", fromLocation:"", toLocation:"", distanceKm:"", mode:"",
-  dailyId:newId(), dailyDays:"", dailyRatePerDay:"",
+  id:newId(), lineDate:"", fromLocation:"", toLocation:"", distanceKm:"", mode:"", purpose:"",
+  dailyId:newId(), breakfastDays:"", lunchDays:"", dinnerDays:"",
   accomId:newId(), accomAmount:"", accomFile:undefined,
   caseId:newId(), caseAmount:"",
   tEntId:newId(), tEntAmount:"", tEntFile:undefined,
@@ -153,7 +154,7 @@ function ReceiptPicker<T extends { id: string; file?: File }>({
     </div>
   );
 }
-const emptyHotel    = (): HotelRow     => ({ id:newId(), lineDate:"", hotelName:"", nights:"1", receiptPerNight:"" });
+
 const emptyOvMyr    = (): OvMyrRow      => ({ id:newId(), lineDate:"", destination:"", description:"", amountMyr:"" });
 const emptyOvFx     = (): OvFxRow       => ({ id:newId(), lineDate:"", destination:"", currency:"USD", amountForeign:"", exchangeRate:"" });
 const emptyOvOther  = (): OvOtherRow    => ({ id:newId(), lineDate:"", description:"", amountMyr:"" });
@@ -275,7 +276,6 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const [miscRows,   setMiscRows]   = useState<MiscRow[]>([]);
   const [inEntRows,  setInEntRows]  = useState<InEntRow[]>([]);
   const [otherRows,  setOtherRows]  = useState<OtherLocalRow[]>([]);
-  const [hotelRows,  setHotelRows]  = useState<HotelRow[]>([]);
 
   // OVERSEAS
   const [ovMyrRows,   setOvMyrRows]   = useState<OvMyrRow[]>([]);
@@ -293,21 +293,17 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const canApply = permissions.includes("claim:apply") || permissions.includes("*");
   const selectedType = claimTypes.find(t => t.id === selectedTypeId) ?? null;
   const formType = selectedType?.category as typeof CLAIM_FORM[keyof typeof CLAIM_FORM] | undefined;
-  const ratePerKm    = selectedType?.ratePerUnit ? parseFloat(selectedType.ratePerUnit) : 0;
-  const hotelCap     = selectedType?.hotelCapPerNight ? parseFloat(selectedType.hotelCapPerNight) : Infinity;
-
-  function hotelNightAmt(r: HotelRow): number {
-    const receipt = parseFloat(r.receiptPerNight);
-    const nights  = parseFloat(r.nights);
-    if (isNaN(receipt) || receipt <= 0 || isNaN(nights) || nights <= 0) return 0;
-    return parseFloat((Math.min(receipt, hotelCap) * nights).toFixed(2));
-  }
+  const ratePerKm        = selectedType?.ratePerUnit ? parseFloat(selectedType.ratePerUnit) : 0;
+  const mealBreakfastRate = selectedType?.mealBreakfastRate ? parseFloat(selectedType.mealBreakfastRate) : 0;
+  const mealLunchRate     = selectedType?.mealLunchRate     ? parseFloat(selectedType.mealLunchRate)     : 0;
+  const mealDinnerRate    = selectedType?.mealDinnerRate    ? parseFloat(selectedType.mealDinnerRate)    : 0;
+  const hasMealRates      = mealBreakfastRate > 0 || mealLunchRate > 0 || mealDinnerRate > 0;
 
   // ── Totals ────────────────────────────────────────────────────────────────
   const travelTotal  = travelRows.reduce((s,r) => {
     const km     = parseFloat(r.distanceKm);
     const mileage = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
-    const daily   = (parseFloat(r.dailyDays)||0) * (parseFloat(r.dailyRatePerDay)||0);
+    const daily   = (parseFloat(r.breakfastDays)||0)*mealBreakfastRate + (parseFloat(r.lunchDays)||0)*mealLunchRate + (parseFloat(r.dinnerDays)||0)*mealDinnerRate;
     const accom   = parseFloat(r.accomAmount)||0;
     const cas     = parseFloat(r.caseAmount)||0;
     const ent     = parseFloat(r.tEntAmount)||0;
@@ -316,17 +312,17 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const miscTotal    = miscRows.reduce((s,r)   => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const inEntTotal   = inEntRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const otherTotal   = otherRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
-  const hotelTotal   = hotelRows.reduce((s,r)  => s + hotelNightAmt(r), 0);
+
   const ovMyrTotal   = ovMyrRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const ovFxTotal    = ovFxRows.reduce((s,r)   => s+fxMyr(r.amountForeign,r.exchangeRate), 0);
   const ovOtherTotal = ovOtherRows.reduce((s,r)=> { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
-  const localTotal   = travelTotal+miscTotal+inEntTotal+otherTotal+hotelTotal;
+  const localTotal   = travelTotal+miscTotal+inEntTotal+otherTotal;
   const overseasTotal= ovMyrTotal+ovFxTotal+ovOtherTotal;
 
   // ── Reset ─────────────────────────────────────────────────────────────────
   function resetForm() {
     setSelectedTypeId(""); setClaimPeriod(""); setNote(""); setQueuedFiles([]);
-    setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]); setHotelRows([]);
+    setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     setEntDate(""); setEntRest(""); setEntCust(""); setEntDeptOrg(""); setEntPurpose(""); setEntAmount("");
   }
@@ -334,7 +330,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   function handleTypeChange(id: string) {
     setSelectedTypeId(id);
     setClaimPeriod(""); setNote(""); setQueuedFiles([]);
-    setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]); setHotelRows([]);
+    setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     setEntDate(""); setEntRest(""); setEntCust(""); setEntDeptOrg(""); setEntPurpose(""); setEntAmount("");
   }
@@ -355,7 +351,6 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const updateMisc     = updater(setMiscRows);
   const updateInEnt    = updater(setInEntRows);
   const updateOther    = updater(setOtherRows);
-  const updateHotel    = updater(setHotelRows);
   const updateOvMyr    = updater(setOvMyrRows);
   const updateOvFx     = updater(setOvFxRows);
   const updateOvOther  = updater(setOvOtherRows);
@@ -424,8 +419,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         const miscValid  = miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0);
         const inEntValid = inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0);
         const otherValid = otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0);
-        const hotelValid = hotelRows.filter(r => r.lineDate && r.hotelName.trim() && parseFloat(r.receiptPerNight) > 0 && parseFloat(r.nights) > 0);
-        const missingReceipt = [...miscValid, ...inEntValid, ...otherValid, ...hotelValid].find(r => !r.file);
+        const missingReceipt = [...miscValid, ...inEntValid, ...otherValid].find(r => !r.file);
         if (missingReceipt) { toast.error("Each expense item requires an attached receipt"); setSubmitting(false); return; }
 
         lineItems = [
@@ -435,11 +429,18 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
             const km = parseFloat(r.distanceKm);
             const usesMileage = r.mode !== TRAVEL_MODE.FLIGHT && r.mode !== TRAVEL_MODE.COMPANY_CAR;
             if (usesMileage && km > 0 && r.fromLocation.trim() && r.toLocation.trim()) {
-              items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation, toLocation: r.toLocation, distanceKm: km, ratePerUnit: selectedType.ratePerUnit ?? undefined, description: r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined, amountMyr: (km * ratePerKm).toFixed(2) });
+              items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation, toLocation: r.toLocation, distanceKm: km, ratePerUnit: selectedType.ratePerUnit ?? undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: (km * ratePerKm).toFixed(2) });
             }
-            const days = parseFloat(r.dailyDays); const rate = parseFloat(r.dailyRatePerDay);
-            if (days > 0 && rate > 0) {
-              items.push({ id: r.dailyId, category: LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, lineDate: r.lineDate, distanceKm: days, ratePerUnit: rate.toFixed(2), description: `${days} day(s) @ RM${rate.toFixed(2)}/day`, amountMyr: (days * rate).toFixed(2) });
+            const bf = parseFloat(r.breakfastDays)||0;
+            const ln = parseFloat(r.lunchDays)||0;
+            const dn = parseFloat(r.dinnerDays)||0;
+            const dailyTotal = bf*mealBreakfastRate + ln*mealLunchRate + dn*mealDinnerRate;
+            if (dailyTotal > 0) {
+              const parts = [];
+              if (bf > 0) parts.push(`Breakfast ×${bf}d`);
+              if (ln > 0) parts.push(`Lunch ×${ln}d`);
+              if (dn > 0) parts.push(`Dinner ×${dn}d`);
+              items.push({ id: r.dailyId, category: LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, lineDate: r.lineDate, description: parts.join(", "), amountMyr: dailyTotal.toFixed(2) });
             }
             if (parseFloat(r.accomAmount) > 0) {
               items.push({ id: r.accomId, category: LINE_CATEGORY.TRAVEL_ACCOMMODATION, lineDate: r.lineDate, amountMyr: r.accomAmount });
@@ -455,12 +456,6 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
           ...miscValid.map(r => ({ id: r.id, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
           ...inEntValid.map(r => ({ id: r.id, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
           ...otherValid.map(r => ({ id: r.id, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
-          ...hotelValid.map(r => {
-            const nights  = parseFloat(r.nights);
-            const receipt = parseFloat(r.receiptPerNight);
-            const capped  = Math.min(receipt, hotelCap);
-            return { id: r.id, category: LINE_CATEGORY.OUTSTATION_HOTEL, lineDate: r.lineDate, description: `${r.hotelName} (${r.nights} night${parseFloat(r.nights)>1?"s":""})`, distanceKm: nights, ratePerUnit: capped.toFixed(2), amountMyr: (capped * nights).toFixed(2) } satisfies ClaimLineItemInput;
-          }),
         ];
         if (lineItems.length === 0) { toast.error("Add at least one expense item"); setSubmitting(false); return; }
       } else if (formType === CLAIM_FORM.OVERSEAS) {
@@ -496,7 +491,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         ...miscRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
         ...inEntRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
         ...otherRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
-        ...hotelRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
+
         ...queuedFiles.map(qf => ({ file: qf.file })),
       ];
 
@@ -673,7 +668,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                   {travelRows.map((row, idx) => {
                     const km = parseFloat(row.distanceKm);
                     const mileageAmt = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
-                    const dailyAmt   = (parseFloat(row.dailyDays)||0)*(parseFloat(row.dailyRatePerDay)||0);
+                    const dailyAmt   = (parseFloat(row.breakfastDays)||0)*mealBreakfastRate + (parseFloat(row.lunchDays)||0)*mealLunchRate + (parseFloat(row.dinnerDays)||0)*mealDinnerRate;
                     const accomAmt   = parseFloat(row.accomAmount)||0;
                     const caseAmt    = parseFloat(row.caseAmount)||0;
                     const tEntAmt    = parseFloat(row.tEntAmount)||0;
@@ -691,7 +686,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                               {Object.entries(TRAVEL_MODE_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
                             </SelectContent>
                           </Select>
-                          {tripTotal > 0 && <span className="text-xs font-semibold text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tripTotal)}</span>}
+                          <input type="text" placeholder="Purpose of trip" value={row.purpose} onChange={e => updateTravel(row.id,"purpose",e.target.value)} className={inputCls}/>
+                          {tripTotal > 0 && <span className="text-xs font-semibold text-green-700 dark:text-green-400 shrink-0">{fmtAmount(tripTotal)}</span>}
                           <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => remover(setTravelRows,1)(row.id)} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
                         </div>
 
@@ -717,17 +713,47 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
 
                         {/* Sub-items */}
                         <div className="pl-5 flex flex-col gap-1.5 border-t border-border/60 pt-2">
-                          {/* Daily allowance */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-muted-foreground w-36 shrink-0">Daily allowance</span>
-                            <div className="flex items-center gap-1">
-                              <input type="number" min="1" step="1" placeholder="days" value={row.dailyDays} onChange={e => updateTravel(row.id,"dailyDays",e.target.value)} className={inputCls+" w-14 text-right"}/>
-                              <span className="text-xs text-muted-foreground">×</span>
-                              <span className="text-xs text-muted-foreground">RM</span>
-                              <input type="number" min="0.01" step="0.01" placeholder="rate/day" value={row.dailyRatePerDay} onChange={e => updateTravel(row.id,"dailyRatePerDay",e.target.value)} className={inputCls+" w-24"}/>
+                            {/* Daily allowance */}
+                          {hasMealRates ? (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted-foreground w-36 shrink-0">Daily allowance</span>
+                              <div className="flex items-center gap-3 flex-wrap pl-1">
+                                {mealBreakfastRate > 0 && (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-xs text-muted-foreground w-16 shrink-0">Breakfast</span>
+                                    <input type="number" min="0" step="1" placeholder="0" value={row.breakfastDays} onChange={e => updateTravel(row.id,"breakfastDays",e.target.value)} className={inputCls+" w-12 text-right"}/>
+                                    <span className="text-xs text-muted-foreground">d</span>
+                                    <span className="text-xs text-muted-foreground">× RM{mealBreakfastRate.toFixed(2)}</span>
+                                    {(parseFloat(row.breakfastDays)||0) > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">= {fmtAmount((parseFloat(row.breakfastDays)||0)*mealBreakfastRate)}</span>}
+                                  </div>
+                                )}
+                                {mealLunchRate > 0 && (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-xs text-muted-foreground w-16 shrink-0">Lunch</span>
+                                    <input type="number" min="0" step="1" placeholder="0" value={row.lunchDays} onChange={e => updateTravel(row.id,"lunchDays",e.target.value)} className={inputCls+" w-12 text-right"}/>
+                                    <span className="text-xs text-muted-foreground">d</span>
+                                    <span className="text-xs text-muted-foreground">× RM{mealLunchRate.toFixed(2)}</span>
+                                    {(parseFloat(row.lunchDays)||0) > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">= {fmtAmount((parseFloat(row.lunchDays)||0)*mealLunchRate)}</span>}
+                                  </div>
+                                )}
+                                {mealDinnerRate > 0 && (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-xs text-muted-foreground w-16 shrink-0">Dinner</span>
+                                    <input type="number" min="0" step="1" placeholder="0" value={row.dinnerDays} onChange={e => updateTravel(row.id,"dinnerDays",e.target.value)} className={inputCls+" w-12 text-right"}/>
+                                    <span className="text-xs text-muted-foreground">d</span>
+                                    <span className="text-xs text-muted-foreground">× RM{mealDinnerRate.toFixed(2)}</span>
+                                    {(parseFloat(row.dinnerDays)||0) > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">= {fmtAmount((parseFloat(row.dinnerDays)||0)*mealDinnerRate)}</span>}
+                                  </div>
+                                )}
+                                {dailyAmt > 0 && <span className="text-xs font-semibold text-green-700 dark:text-green-400 ml-auto">Total {fmtAmount(dailyAmt)}</span>}
+                              </div>
                             </div>
-                            {dailyAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(dailyAmt)}</span>}
-                          </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground w-36 shrink-0">Daily allowance</span>
+                              <span className="text-xs text-muted-foreground italic">No meal rates configured — set in Claim Types settings</span>
+                            </div>
+                          )}
 
                           {/* Accommodation */}
                           <div className="flex items-center gap-2 flex-wrap">
@@ -846,53 +872,6 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
               </Section>
 
               {/* 1.5 Outstation Hotel */}
-              <Section
-                title="1.5  Outstation Hotel"
-                badge={hotelTotal > 0 ? fmtAmount(hotelTotal) : undefined}
-              >
-                {selectedType?.hotelCapPerNight && (
-                  <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-md px-3 py-2">
-                    <InfoIcon className="h-3.5 w-3.5 shrink-0"/>
-                    Hotel cap: <strong>RM {parseFloat(selectedType.hotelCapPerNight).toFixed(2)}/night</strong>. Receipts above this amount will be capped automatically.
-                  </div>
-                )}
-                <div className="flex flex-col gap-2">
-                  {hotelRows.map((row) => {
-                    const receipt = parseFloat(row.receiptPerNight);
-                    const nights  = parseFloat(row.nights);
-                    const capped  = isNaN(receipt) || receipt <= 0 ? 0 : Math.min(receipt, hotelCap);
-                    const isCapped = !isNaN(receipt) && receipt > 0 && isFinite(hotelCap) && receipt > hotelCap;
-                    const rowTotal = isNaN(nights) || nights <= 0 ? 0 : capped * nights;
-                    return (
-                      <div key={row.id} className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <input type="date" value={row.lineDate} onChange={e => updateHotel(row.id,"lineDate",e.target.value)} className={inputCls+" w-36"}/>
-                          <input type="text" placeholder="Hotel name" value={row.hotelName} onChange={e => updateHotel(row.id,"hotelName",e.target.value)} className={inputCls}/>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <input type="number" min="1" step="1" placeholder="1" value={row.nights} onChange={e => updateHotel(row.id,"nights",e.target.value)} className={inputCls+" w-14 text-right"}/>
-                            <span className="text-xs text-muted-foreground">night(s)</span>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <span className="text-xs text-muted-foreground">RM</span>
-                            <input type="number" min="0.01" step="0.01" placeholder="receipt/night" value={row.receiptPerNight} onChange={e => updateHotel(row.id,"receiptPerNight",e.target.value)} className={inputCls+" w-28"}/>
-                          </div>
-                          {rowTotal > 0 && (
-                            <div className="flex flex-col shrink-0">
-                              <span className="text-xs font-semibold text-green-700 dark:text-green-400">{fmtAmount(rowTotal)}</span>
-                              {isCapped && (
-                                <span className="text-xs text-amber-600 dark:text-amber-400">capped @ RM {hotelCap.toFixed(2)}/night</span>
-                              )}
-                            </div>
-                          )}
-                          <ReceiptPicker row={row} setter={setHotelRows}/>
-                          <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setHotelRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setHotelRows(p => [...p, emptyHotel()])}><PlusIcon className="h-3.5 w-3.5"/>Add Hotel</Button>
-              </Section>
 
               {localTotal > 0 && (
                 <div className="flex justify-between items-center py-2 border-t border-border">

@@ -22,8 +22,6 @@ export const LINE_CATEGORY = {
   IN_BASE_ENT: "IN_BASE_ENT",
   // 1.4 Other
   OTHER_LOCAL: "OTHER_LOCAL",
-  // 1.5 Outstation hotel
-  OUTSTATION_HOTEL: "OUTSTATION_HOTEL",
   // 2.x Overseas
   OVERSEAS_MYR: "OVERSEAS_MYR",
   OVERSEAS_FX: "OVERSEAS_FX",

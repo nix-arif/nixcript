@@ -20,6 +20,14 @@ async function main() {
   `;
   console.log("Added: claim_document.line_item_id");
 
+  // Add meal rate columns to claim_type
+  await sql`ALTER TABLE claim_type ADD COLUMN IF NOT EXISTS meal_breakfast_rate text`;
+  console.log("Added: claim_type.meal_breakfast_rate");
+  await sql`ALTER TABLE claim_type ADD COLUMN IF NOT EXISTS meal_lunch_rate text`;
+  console.log("Added: claim_type.meal_lunch_rate");
+  await sql`ALTER TABLE claim_type ADD COLUMN IF NOT EXISTS meal_dinner_rate text`;
+  console.log("Added: claim_type.meal_dinner_rate");
+
   console.log("Done.");
 }
 

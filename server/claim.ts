@@ -220,6 +220,9 @@ export async function createClaimType(data: {
   maxAmountPerClaim?: string;
   maxAmountPerYear?: string;
   hotelCapPerNight?: string;
+  mealBreakfastRate?: string;
+  mealLunchRate?: string;
+  mealDinnerRate?: string;
   description?: string;
   sortOrder?: number;
 }): Promise<ClaimTypeRow> {
@@ -236,6 +239,9 @@ export async function createClaimType(data: {
     maxAmountPerClaim: data.maxAmountPerClaim?.trim() || null,
     maxAmountPerYear: data.maxAmountPerYear?.trim() || null,
     hotelCapPerNight: data.hotelCapPerNight?.trim() || null,
+    mealBreakfastRate: data.mealBreakfastRate?.trim() || null,
+    mealLunchRate: data.mealLunchRate?.trim() || null,
+    mealDinnerRate: data.mealDinnerRate?.trim() || null,
     isActive: true,
     description: data.description?.trim() ?? null,
     sortOrder: data.sortOrder ?? 0,
@@ -257,6 +263,9 @@ export async function updateClaimType(
     maxAmountPerClaim: string | null;
     maxAmountPerYear: string | null;
     hotelCapPerNight: string | null;
+    mealBreakfastRate: string | null;
+    mealLunchRate: string | null;
+    mealDinnerRate: string | null;
     description: string;
     isActive: boolean;
     sortOrder: number;
@@ -301,6 +310,9 @@ export async function seedDefaultClaimTypes(): Promise<void> {
       unitType: "AMOUNT",
       ratePerUnit: "0.50",
       hotelCapPerNight: "200.00",
+      mealBreakfastRate: "10.00",
+      mealLunchRate: "15.00",
+      mealDinnerRate: "20.00",
       requiresReceipt: false,
       sortOrder: 1,
       description: "Travel, miscellaneous, in-base entertainment and other local expenses.",
@@ -340,6 +352,9 @@ export async function seedDefaultClaimTypes(): Promise<void> {
     maxAmountPerClaim: (d as { maxAmountPerClaim?: string }).maxAmountPerClaim ?? null,
     maxAmountPerYear: null,
     hotelCapPerNight: (d as { hotelCapPerNight?: string }).hotelCapPerNight ?? null,
+    mealBreakfastRate: (d as { mealBreakfastRate?: string }).mealBreakfastRate ?? null,
+    mealLunchRate: (d as { mealLunchRate?: string }).mealLunchRate ?? null,
+    mealDinnerRate: (d as { mealDinnerRate?: string }).mealDinnerRate ?? null,
     isActive: true,
     description: d.description,
     sortOrder: d.sortOrder,

@@ -69,6 +69,9 @@ interface FormState {
   maxAmountPerClaim: string;
   maxAmountPerYear: string;
   hotelCapPerNight: string;
+  mealBreakfastRate: string;
+  mealLunchRate: string;
+  mealDinnerRate: string;
   description: string;
   sortOrder: string;
 }
@@ -83,6 +86,9 @@ const emptyForm = (): FormState => ({
   maxAmountPerClaim: "",
   maxAmountPerYear: "",
   hotelCapPerNight: "",
+  mealBreakfastRate: "",
+  mealLunchRate: "",
+  mealDinnerRate: "",
   description: "",
   sortOrder: "0",
 });
@@ -98,6 +104,9 @@ function formFromRow(row: ClaimTypeRow): FormState {
     maxAmountPerClaim: row.maxAmountPerClaim ?? "",
     maxAmountPerYear: row.maxAmountPerYear ?? "",
     hotelCapPerNight: row.hotelCapPerNight ?? "",
+    mealBreakfastRate: row.mealBreakfastRate ?? "",
+    mealLunchRate: row.mealLunchRate ?? "",
+    mealDinnerRate: row.mealDinnerRate ?? "",
     description: row.description ?? "",
     sortOrder: String(row.sortOrder),
   };
@@ -157,6 +166,9 @@ export function ClaimTypesClient({ claimTypes }: Props) {
         maxAmountPerClaim: form.maxAmountPerClaim || undefined,
         maxAmountPerYear: form.maxAmountPerYear || undefined,
         hotelCapPerNight: form.hotelCapPerNight || undefined,
+        mealBreakfastRate: form.mealBreakfastRate || undefined,
+        mealLunchRate: form.mealLunchRate || undefined,
+        mealDinnerRate: form.mealDinnerRate || undefined,
         description: form.description || undefined,
         sortOrder: parseInt(form.sortOrder, 10) || 0,
       };
@@ -167,6 +179,9 @@ export function ClaimTypesClient({ claimTypes }: Props) {
           maxAmountPerClaim: form.maxAmountPerClaim || null,
           maxAmountPerYear: form.maxAmountPerYear || null,
           hotelCapPerNight: form.hotelCapPerNight || null,
+          mealBreakfastRate: form.mealBreakfastRate || null,
+          mealLunchRate: form.mealLunchRate || null,
+          mealDinnerRate: form.mealDinnerRate || null,
         });
         toast.success("Claim type updated");
       } else {
@@ -466,6 +481,45 @@ export function ClaimTypesClient({ claimTypes }: Props) {
                   onChange={(e) => set("hotelCapPerNight", e.target.value)}
                   placeholder="e.g. 200.00"
                 />
+              </div>
+            )}
+
+            {/* Meal rates — only for LOCAL */}
+            {isLocal && (
+              <div className="flex flex-col gap-2">
+                <Label>
+                  Daily meal allowance rates{" "}
+                  <span className="text-muted-foreground font-normal text-xs">(optional — set fixed per-meal rates for outstation travel)</span>
+                </Label>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-muted-foreground">Breakfast (RM)</span>
+                    <Input
+                      type="number" min="0" step="0.01"
+                      value={form.mealBreakfastRate}
+                      onChange={(e) => set("mealBreakfastRate", e.target.value)}
+                      placeholder="e.g. 10.00"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-muted-foreground">Lunch (RM)</span>
+                    <Input
+                      type="number" min="0" step="0.01"
+                      value={form.mealLunchRate}
+                      onChange={(e) => set("mealLunchRate", e.target.value)}
+                      placeholder="e.g. 15.00"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-muted-foreground">Dinner (RM)</span>
+                    <Input
+                      type="number" min="0" step="0.01"
+                      value={form.mealDinnerRate}
+                      onChange={(e) => set("mealDinnerRate", e.target.value)}
+                      placeholder="e.g. 20.00"
+                    />
+                  </div>
+                </div>
               </div>
             )}
 
