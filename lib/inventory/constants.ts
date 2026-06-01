@@ -4,6 +4,7 @@ export const MOVEMENT_TYPE = {
   STOCK_OUT:  "STOCK_OUT",
   ADJUSTMENT: "ADJUSTMENT",
   RETURN:     "RETURN",
+  TRANSFER:   "TRANSFER",
 } as const;
 
 export const MOVEMENT_LABELS: Record<string, string> = {
@@ -12,6 +13,7 @@ export const MOVEMENT_LABELS: Record<string, string> = {
   STOCK_OUT:  "Stock Out",
   ADJUSTMENT: "Adjustment",
   RETURN:     "Return",
+  TRANSFER:   "Transfer",
 };
 
 export const REF_TYPE = {

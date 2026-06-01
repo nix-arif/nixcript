@@ -74,6 +74,7 @@ export function MovementsClient({ movements }: { movements: MovementWithMeta[] }
             <TableRow className="bg-muted/40">
               <TableHead className="w-40">Date</TableHead>
               <TableHead className="w-32">Product</TableHead>
+              <TableHead className="w-28">Warehouse</TableHead>
               <TableHead className="w-28">Type</TableHead>
               <TableHead className="w-24 text-right">Qty</TableHead>
               <TableHead className="w-24 text-right">Balance</TableHead>
@@ -85,7 +86,7 @@ export function MovementsClient({ movements }: { movements: MovementWithMeta[] }
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-10 text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-10 text-sm text-muted-foreground">
                   No movements found.
                 </TableCell>
               </TableRow>
@@ -95,6 +96,10 @@ export function MovementsClient({ movements }: { movements: MovementWithMeta[] }
                 <TableRow key={m.id}>
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(m.createdAt)}</TableCell>
                   <TableCell className="font-mono text-xs font-medium">{m.productCode}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {m.warehouseLabel}
+                    {m.warehouseTo && <span className="text-muted-foreground"> → {m.warehouseTo}</span>}
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={`text-xs gap-1 ${TYPE_STYLE[m.movementType] ?? ""}`}>
                       {qty > 0 ? <TrendingUpIcon className="h-3 w-3"/> : <TrendingDownIcon className="h-3 w-3"/>}

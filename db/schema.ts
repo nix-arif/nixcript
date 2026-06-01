@@ -596,6 +596,7 @@ export const stockLevel = pgTable(
     productId: text("product_id")
       .notNull()
       .references(() => product.id, { onDelete: "cascade" }),
+    warehouseLabel: text("warehouse_label").notNull().default("Default"),
     quantity: text("quantity").notNull().default("0"),
     reservedQty: text("reserved_qty").notNull().default("0"),
     unitCost: text("unit_cost"),
@@ -604,8 +605,9 @@ export const stockLevel = pgTable(
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },
   (t) => [
-    uniqueIndex("stock_level_product_org_uidx").on(t.productId, t.organizationId),
+    uniqueIndex("stock_level_product_wh_uidx").on(t.productId, t.organizationId, t.warehouseLabel),
     index("stock_level_org_idx").on(t.organizationId),
+    index("stock_level_wh_idx").on(t.organizationId, t.warehouseLabel),
   ],
 );
 
@@ -620,7 +622,9 @@ export const stockMovement = pgTable(
       .notNull()
       .references(() => product.id, { onDelete: "cascade" }),
     productCode: text("product_code").notNull(),
-    // STOCK_IN | STOCK_OUT | ADJUSTMENT | RETURN | OPENING
+    warehouseLabel: text("warehouse_label").notNull().default("Default"),
+    warehouseTo: text("warehouse_to"),      // only for TRANSFER movements
+    // STOCK_IN | STOCK_OUT | ADJUSTMENT | RETURN | OPENING | TRANSFER
     movementType: text("movement_type").notNull(),
     quantity: text("quantity").notNull(),   // signed: positive = in, negative = out
     balanceAfter: text("balance_after").notNull(),

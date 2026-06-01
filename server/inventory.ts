@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, product, user } from "@/db/schema";
+import { stockLevel, stockMovement, product, user, organizationProfile } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -29,6 +29,8 @@ export type MovementWithMeta = StockMovementRow & {
   createdByName: string | null;
 };
 
+export type Warehouse = { label: string; address: string };
+
 /* =========================
    HELPERS
 ========================= */
@@ -52,6 +54,18 @@ async function requireAccess(permission: string) {
    QUERIES
 ========================= */
 
+export async function getWarehouses(): Promise<Warehouse[]> {
+  const { orgId } = await requireAccess("inventory:read");
+  const [profile] = await db
+    .select({ warehouseAddresses: organizationProfile.warehouseAddresses })
+    .from(organizationProfile)
+    .where(eq(organizationProfile.organizationId, orgId))
+    .limit(1);
+  const addresses = (profile?.warehouseAddresses as Warehouse[] | null) ?? [];
+  if (addresses.length === 0) return [{ label: "Default", address: "" }];
+  return addresses;
+}
+
 export async function getInventory(): Promise<StockWithProduct[]> {
   const { orgId } = await requireAccess("inventory:read");
 
@@ -65,7 +79,7 @@ export async function getInventory(): Promise<StockWithProduct[]> {
     .from(stockLevel)
     .innerJoin(product, eq(stockLevel.productId, product.id))
     .where(eq(stockLevel.organizationId, orgId))
-    .orderBy(asc(product.productCode));
+    .orderBy(asc(stockLevel.warehouseLabel), asc(product.productCode));
 
   return rows.map(({ sl, productCode, description, uom }) => {
     const qty      = parseFloat(sl.quantity);
@@ -107,6 +121,7 @@ export async function getStockMovements(productId?: string): Promise<MovementWit
 
 export async function adjustStock(data: {
   productId: string;
+  warehouseLabel: string;
   movementType: string;
   quantity: number;
   unitCost?: string;
@@ -125,32 +140,35 @@ export async function adjustStock(data: {
     .limit(1);
   if (!prod) throw new Error("Product not found");
 
-  // Signed quantity: OUT movements are negative
-  const isOut = [MOVEMENT_TYPE.STOCK_OUT].includes(data.movementType as never);
+  const isOut = data.movementType === MOVEMENT_TYPE.STOCK_OUT;
   const signed = isOut ? -Math.abs(data.quantity) : Math.abs(data.quantity);
 
-  // Upsert stock level
   const existing = await db
     .select()
     .from(stockLevel)
-    .where(and(eq(stockLevel.productId, data.productId), eq(stockLevel.organizationId, orgId)))
+    .where(and(
+      eq(stockLevel.productId, data.productId),
+      eq(stockLevel.organizationId, orgId),
+      eq(stockLevel.warehouseLabel, data.warehouseLabel),
+    ))
     .limit(1);
 
   let newBalance: number;
   if (existing[0]) {
     newBalance = parseFloat(existing[0].quantity) + signed;
-    if (newBalance < 0) throw new Error("Insufficient stock — balance would go negative");
+    if (newBalance < 0) throw new Error(`Insufficient stock in ${data.warehouseLabel} — balance would go negative`);
     await db
       .update(stockLevel)
       .set({ quantity: newBalance.toFixed(4), updatedAt: new Date() })
       .where(eq(stockLevel.id, existing[0].id));
   } else {
     newBalance = signed;
-    if (newBalance < 0) throw new Error("Insufficient stock — balance would go negative");
+    if (newBalance < 0) throw new Error(`Insufficient stock in ${data.warehouseLabel} — balance would go negative`);
     await db.insert(stockLevel).values({
       id: nanoid(),
       organizationId: orgId,
       productId: data.productId,
+      warehouseLabel: data.warehouseLabel,
       quantity: newBalance.toFixed(4),
       reservedQty: "0",
       updatedAt: new Date(),
@@ -162,6 +180,8 @@ export async function adjustStock(data: {
     organizationId: orgId,
     productId: data.productId,
     productCode: prod.productCode,
+    warehouseLabel: data.warehouseLabel,
+    warehouseTo: null,
     movementType: data.movementType,
     quantity: signed.toFixed(4),
     balanceAfter: newBalance.toFixed(4),
@@ -177,31 +197,82 @@ export async function adjustStock(data: {
   revalidatePath("/dashboard/inventory");
 }
 
-export async function setReorderPoint(productId: string, reorderPoint: string | null, maxStock: string | null): Promise<void> {
-  const { orgId } = await requireAccess("inventory:manage");
+export async function transferStock(data: {
+  productId: string;
+  fromWarehouse: string;
+  toWarehouse: string;
+  quantity: number;
+  notes?: string;
+}): Promise<void> {
+  const { orgId, userId } = await requireAccess("inventory:adjust");
 
-  const existing = await db
-    .select({ id: stockLevel.id })
+  if (data.quantity <= 0) throw new Error("Quantity must be greater than zero");
+  if (data.fromWarehouse === data.toWarehouse) throw new Error("Source and destination warehouses must differ");
+
+  const [prod] = await db
+    .select({ productCode: product.productCode })
+    .from(product)
+    .where(and(eq(product.id, data.productId), eq(product.organizationId, orgId)))
+    .limit(1);
+  if (!prod) throw new Error("Product not found");
+
+  // Deduct from source
+  const [fromLevel] = await db
+    .select()
     .from(stockLevel)
-    .where(and(eq(stockLevel.productId, productId), eq(stockLevel.organizationId, orgId)))
+    .where(and(eq(stockLevel.productId, data.productId), eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, data.fromWarehouse)))
     .limit(1);
 
-  if (existing[0]) {
-    await db
-      .update(stockLevel)
-      .set({ reorderPoint: reorderPoint ?? null, maxStock: maxStock ?? null, updatedAt: new Date() })
-      .where(eq(stockLevel.id, existing[0].id));
+  if (!fromLevel || parseFloat(fromLevel.quantity) < data.quantity) {
+    throw new Error(`Insufficient stock in ${data.fromWarehouse}`);
+  }
+
+  const fromNew = parseFloat(fromLevel.quantity) - data.quantity;
+  await db.update(stockLevel).set({ quantity: fromNew.toFixed(4), updatedAt: new Date() }).where(eq(stockLevel.id, fromLevel.id));
+
+  // Add to destination
+  const [toLevel] = await db
+    .select()
+    .from(stockLevel)
+    .where(and(eq(stockLevel.productId, data.productId), eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, data.toWarehouse)))
+    .limit(1);
+
+  let toNew: number;
+  if (toLevel) {
+    toNew = parseFloat(toLevel.quantity) + data.quantity;
+    await db.update(stockLevel).set({ quantity: toNew.toFixed(4), updatedAt: new Date() }).where(eq(stockLevel.id, toLevel.id));
   } else {
-    await db.insert(stockLevel).values({
-      id: nanoid(),
-      organizationId: orgId,
-      productId,
-      quantity: "0",
-      reservedQty: "0",
-      reorderPoint: reorderPoint ?? null,
-      maxStock: maxStock ?? null,
-      updatedAt: new Date(),
-    });
+    toNew = data.quantity;
+    await db.insert(stockLevel).values({ id: nanoid(), organizationId: orgId, productId: data.productId, warehouseLabel: data.toWarehouse, quantity: toNew.toFixed(4), reservedQty: "0", updatedAt: new Date() });
+  }
+
+  const now = new Date();
+  await db.insert(stockMovement).values([
+    { id: nanoid(), organizationId: orgId, productId: data.productId, productCode: prod.productCode, warehouseLabel: data.fromWarehouse, warehouseTo: data.toWarehouse, movementType: MOVEMENT_TYPE.TRANSFER, quantity: (-data.quantity).toFixed(4), balanceAfter: fromNew.toFixed(4), unitCost: null, referenceType: REF_TYPE.MANUAL, referenceId: null, referenceNo: null, notes: data.notes?.trim() || null, createdBy: userId, createdAt: now },
+    { id: nanoid(), organizationId: orgId, productId: data.productId, productCode: prod.productCode, warehouseLabel: data.toWarehouse, warehouseTo: null, movementType: MOVEMENT_TYPE.TRANSFER, quantity: data.quantity.toFixed(4), balanceAfter: toNew.toFixed(4), unitCost: null, referenceType: REF_TYPE.MANUAL, referenceId: null, referenceNo: null, notes: data.notes?.trim() || null, createdBy: userId, createdAt: now },
+  ]);
+
+  revalidatePath("/dashboard/inventory");
+}
+
+export async function setReorderPoint(
+  productId: string,
+  warehouseLabel: string,
+  reorderPoint: string | null,
+  maxStock: string | null,
+): Promise<void> {
+  const { orgId } = await requireAccess("inventory:manage");
+
+  const [existing] = await db
+    .select({ id: stockLevel.id })
+    .from(stockLevel)
+    .where(and(eq(stockLevel.productId, productId), eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, warehouseLabel)))
+    .limit(1);
+
+  if (existing) {
+    await db.update(stockLevel).set({ reorderPoint: reorderPoint ?? null, maxStock: maxStock ?? null, updatedAt: new Date() }).where(eq(stockLevel.id, existing.id));
+  } else {
+    await db.insert(stockLevel).values({ id: nanoid(), organizationId: orgId, productId, warehouseLabel, quantity: "0", reservedQty: "0", reorderPoint: reorderPoint ?? null, maxStock: maxStock ?? null, updatedAt: new Date() });
   }
   revalidatePath("/dashboard/inventory");
 }

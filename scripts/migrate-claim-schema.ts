@@ -29,6 +29,20 @@ async function main() {
   await sql`ALTER TABLE claim_type ADD COLUMN IF NOT EXISTS meal_dinner_rate text`;
   console.log("Added: claim_type.meal_dinner_rate");
 
+  // Add warehouse columns to inventory tables (idempotent)
+  await sql`ALTER TABLE stock_level ADD COLUMN IF NOT EXISTS warehouse_label text NOT NULL DEFAULT 'Default'`;
+  console.log("Added: stock_level.warehouse_label");
+  await sql`ALTER TABLE stock_movement ADD COLUMN IF NOT EXISTS warehouse_label text NOT NULL DEFAULT 'Default'`;
+  await sql`ALTER TABLE stock_movement ADD COLUMN IF NOT EXISTS warehouse_to text`;
+  console.log("Added: stock_movement.warehouse_label + warehouse_to");
+
+  // Re-create unique constraint to include warehouse
+  await sql`ALTER TABLE stock_level DROP CONSTRAINT IF EXISTS stock_level_product_org_uidx`;
+  await sql`DROP INDEX IF EXISTS stock_level_product_org_uidx`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS stock_level_product_wh_uidx ON stock_level (product_id, organization_id, warehouse_label)`;
+  await sql`CREATE INDEX IF NOT EXISTS stock_level_wh_idx ON stock_level (organization_id, warehouse_label)`;
+  console.log("Updated: stock_level unique constraint");
+
   // Inventory tables
   await sql`
     CREATE TABLE IF NOT EXISTS stock_level (
