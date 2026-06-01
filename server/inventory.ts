@@ -62,8 +62,9 @@ export async function getWarehouses(): Promise<Warehouse[]> {
     .where(eq(organizationProfile.organizationId, orgId))
     .limit(1);
   const addresses = (profile?.warehouseAddresses as Warehouse[] | null) ?? [];
-  if (addresses.length === 0) return [{ label: "Default", address: "" }];
-  return addresses;
+  const valid = addresses.filter(w => w.label?.trim());
+  if (valid.length === 0) return [{ label: "Default", address: "" }];
+  return valid;
 }
 
 export async function getInventory(): Promise<StockWithProduct[]> {
