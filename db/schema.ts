@@ -627,13 +627,18 @@ export const stockMovement = pgTable(
     // STOCK_IN | STOCK_OUT | ADJUSTMENT | RETURN | OPENING | TRANSFER
     movementType: text("movement_type").notNull(),
     quantity: text("quantity").notNull(),   // signed: positive = in, negative = out
-    balanceAfter: text("balance_after").notNull(),
+    balanceAfter: text("balance_after"),    // set at approval time
     unitCost: text("unit_cost"),
     // PURCHASE_ORDER | SALES_ORDER | DELIVERY_ORDER | MANUAL
     referenceType: text("reference_type").notNull().default("MANUAL"),
     referenceId: text("reference_id"),
     referenceNo: text("reference_no"),
     notes: text("notes"),
+    // PENDING | APPROVED | REJECTED
+    status: text("status").notNull().default("PENDING"),
+    reviewedBy: text("reviewed_by").references(() => user.id),
+    reviewedAt: timestamp("reviewed_at"),
+    reviewComment: text("review_comment"),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

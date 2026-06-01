@@ -80,13 +80,14 @@ export function MovementsClient({ movements }: { movements: MovementWithMeta[] }
               <TableHead className="w-24 text-right">Balance</TableHead>
               <TableHead className="w-28">Reference</TableHead>
               <TableHead>Notes</TableHead>
+              <TableHead className="w-24">Status</TableHead>
               <TableHead className="w-32">By</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-10 text-sm text-muted-foreground">
+                <TableCell colSpan={10} className="text-center py-10 text-sm text-muted-foreground">
                   No movements found.
                 </TableCell>
               </TableRow>
@@ -109,9 +110,14 @@ export function MovementsClient({ movements }: { movements: MovementWithMeta[] }
                   <TableCell className={`text-right font-semibold tabular-nums text-sm ${qty >= 0 ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}>
                     {fmt(m.quantity)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-xs text-muted-foreground">{parseFloat(m.balanceAfter).toLocaleString("en-MY", { maximumFractionDigits: 4 })}</TableCell>
+                  <TableCell className="text-right tabular-nums text-xs text-muted-foreground">{m.balanceAfter ? parseFloat(m.balanceAfter).toLocaleString("en-MY", { maximumFractionDigits: 4 }) : "—"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{m.referenceNo ?? "—"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground max-w-48 truncate" title={m.notes ?? ""}>{m.notes ?? "—"}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={`text-xs ${m.status === "APPROVED" ? "text-green-700 border-green-300 bg-green-50 dark:text-green-400" : m.status === "REJECTED" ? "text-red-700 border-red-300 bg-red-50 dark:text-red-400" : "text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-400"}`}>
+                      {m.status}
+                    </Badge>
+                  </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{m.createdByName ?? "—"}</TableCell>
                 </TableRow>
               );

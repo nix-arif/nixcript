@@ -29,6 +29,19 @@ async function main() {
   await sql`ALTER TABLE claim_type ADD COLUMN IF NOT EXISTS meal_dinner_rate text`;
   console.log("Added: claim_type.meal_dinner_rate");
 
+  // Add approval columns to stock_movement
+  await sql`ALTER TABLE stock_movement ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'APPROVED'`;
+  await sql`ALTER TABLE stock_movement ADD COLUMN IF NOT EXISTS reviewed_by text REFERENCES "user"(id)`;
+  await sql`ALTER TABLE stock_movement ADD COLUMN IF NOT EXISTS reviewed_at timestamp`;
+  await sql`ALTER TABLE stock_movement ADD COLUMN IF NOT EXISTS review_comment text`;
+  // Make balance_after nullable
+  await sql`ALTER TABLE stock_movement ALTER COLUMN balance_after DROP NOT NULL`;
+  console.log("Added: stock_movement approval columns");
+
+  // Seed inventory:approve permission
+  await sql`INSERT INTO permission (id, key, label) VALUES (${nanoid()}, 'inventory:approve', 'Approve / Reject Stock Movements') ON CONFLICT (key) DO NOTHING`;
+  console.log("Seeded: inventory:approve permission");
+
   // Add warehouse columns to inventory tables (idempotent)
   await sql`ALTER TABLE stock_level ADD COLUMN IF NOT EXISTS warehouse_label text NOT NULL DEFAULT 'Default'`;
   console.log("Added: stock_level.warehouse_label");

@@ -36,6 +36,15 @@ export const APPROVAL_MODULES = [
       { key: "sales-order:recall",  label: "Recall Sales Order" },
     ],
   },
+  {
+    id: "inventory",
+    title: "Inventory",
+    description: "Who can approve or reject stock movement submissions.",
+    permissions: [
+      { key: "inventory:approve", label: "Approve / Reject Stock Movements" },
+      { key: "inventory:manage",  label: "Manage Inventory Settings" },
+    ],
+  },
 ] as const;
 
 export type ApprovalModule = typeof APPROVAL_MODULES[number];

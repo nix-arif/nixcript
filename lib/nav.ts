@@ -97,8 +97,9 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(WarehouseIcon),
     items: [
-      { title: "Stock Overview",    url: "/dashboard/inventory",           permission: "inventory:read" },
-      { title: "Movement History",  url: "/dashboard/inventory/movements", permission: "inventory:read" },
+      { title: "Stock Overview",    url: "/dashboard/inventory",             permission: "inventory:read"    },
+      { title: "Pending Approvals", url: "/dashboard/inventory/approvals",  permission: "inventory:approve" },
+      { title: "Movement History",  url: "/dashboard/inventory/movements",  permission: "inventory:read"    },
     ],
   },
   {
