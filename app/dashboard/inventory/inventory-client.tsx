@@ -45,6 +45,9 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
       const r = await searchProducts(q);
       setResults(r);
       setOpen(r.length > 0);
+      // Auto-select exact product code match (case-insensitive)
+      const exact = r.find(p => p.productCode.toLowerCase() === q.trim().toLowerCase());
+      if (exact) select(exact);
     }, 300);
   }
 
@@ -63,6 +66,13 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
     onChange("", "");
   }
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && results.length > 0) {
+      e.preventDefault();
+      select(results[0]);
+    }
+  }
+
   return (
     <div className="relative">
       {selectedLabel ? (
@@ -75,6 +85,7 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
           placeholder="Type product code or name…"
           value={query}
           onChange={e => handleInput(e.target.value)}
+          onKeyDown={handleKeyDown}
           autoComplete="off"
         />
       )}
