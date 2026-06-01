@@ -157,10 +157,12 @@ export function MembersClient({
   members,
   deletedMembers,
   departments,
+  currentUserId,
 }: {
   members: OrgMember[];
   deletedMembers: DeletedMember[];
   departments: Department[];
+  currentUserId: string;
 }) {
   const router = useRouter();
   const [tab, setTab]                           = useState<Tab>("active");
@@ -410,7 +412,7 @@ export function MembersClient({
 
                       {/* Remove */}
                       <TableCell className="pt-2">
-                        {!isOwner && (
+                        {!isOwner && m.userId !== currentUserId && (
                           <Button
                             variant="ghost"
                             size="sm"

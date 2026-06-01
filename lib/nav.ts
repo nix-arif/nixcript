@@ -98,6 +98,7 @@ export const navConfig: NavGroup[] = [
     items: [
       { title: "Members",              url: "/dashboard/organization/members",              permission: "member:read"               },
       { title: "Departments",          url: "/dashboard/organization/departments",          permission: "department:read"           },
+      { title: "Approvals",            url: "/dashboard/organization/approvals",            permission: "permission:read"           },
       { title: "Roles",                url: "/dashboard/organization/roles",                permission: "organization-role:update"  },
       { title: "Organization Profile", url: "/dashboard/organization/organization-profile", permission: "organization-profile:update" },
       { title: "Document Settings",    url: "/dashboard/organization/document-settings",    permission: "organization-profile:update" },

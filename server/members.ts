@@ -211,6 +211,7 @@ export async function removeMember(memberId: string) {
 
   if (!m) throw new Error("Member not found");
   if (m.role === "owner") throw new Error("Cannot remove the organization owner");
+  if (m.userId === actorId) throw new Error("You cannot remove yourself from the organization");
 
   // Clear all permissions — they lose access immediately
   await db

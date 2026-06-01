@@ -4,11 +4,18 @@ import { getDepartments } from "@/server/departments";
 import { MembersClient } from "./members-client";
 
 export default async function MembersPage() {
-  await requirePermission("member:read");
+  const session = await requirePermission("member:read");
   const [members, deletedMembers, departments] = await Promise.all([
     getOrgMembers(),
     getDeletedMembers(),
     getDepartments(),
   ]);
-  return <MembersClient members={members} deletedMembers={deletedMembers} departments={departments} />;
+  return (
+    <MembersClient
+      members={members}
+      deletedMembers={deletedMembers}
+      departments={departments}
+      currentUserId={session.user.id}
+    />
+  );
 }
