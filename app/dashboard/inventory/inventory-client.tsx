@@ -20,7 +20,8 @@ import {
   PackageIcon, PlusIcon, MinusIcon, SettingsIcon, AlertTriangleIcon, ArrowRightIcon,
 } from "lucide-react";
 import type { StockWithProduct } from "@/server/inventory";
-import { adjustStock, setReorderPoint, MOVEMENT_TYPE } from "@/server/inventory";
+import { adjustStock, setReorderPoint } from "@/server/inventory";
+import { MOVEMENT_TYPE } from "@/lib/inventory/constants";
 
 interface Product { id: string; productCode: string; description: string | null; uom: string | null }
 interface Props {

@@ -8,6 +8,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
 /* =========================
    TYPES
@@ -15,29 +16,6 @@ import { revalidatePath } from "next/cache";
 
 export type StockLevelRow    = typeof stockLevel.$inferSelect;
 export type StockMovementRow = typeof stockMovement.$inferSelect;
-
-export const MOVEMENT_TYPE = {
-  OPENING:    "OPENING",
-  STOCK_IN:   "STOCK_IN",
-  STOCK_OUT:  "STOCK_OUT",
-  ADJUSTMENT: "ADJUSTMENT",
-  RETURN:     "RETURN",
-} as const;
-
-export const MOVEMENT_LABELS: Record<string, string> = {
-  OPENING:    "Opening Balance",
-  STOCK_IN:   "Stock In",
-  STOCK_OUT:  "Stock Out",
-  ADJUSTMENT: "Adjustment",
-  RETURN:     "Return",
-};
-
-export const REF_TYPE = {
-  MANUAL:         "MANUAL",
-  PURCHASE_ORDER: "PURCHASE_ORDER",
-  SALES_ORDER:    "SALES_ORDER",
-  DELIVERY_ORDER: "DELIVERY_ORDER",
-} as const;
 
 export type StockWithProduct = StockLevelRow & {
   productCode: string;

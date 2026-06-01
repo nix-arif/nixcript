@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import { ArrowLeftIcon, TrendingUpIcon, TrendingDownIcon, SlidersHorizontalIcon } from "lucide-react";
 import type { MovementWithMeta } from "@/server/inventory";
-import { MOVEMENT_LABELS } from "@/server/inventory";
+import { MOVEMENT_LABELS } from "@/lib/inventory/constants";
 
 const TYPE_STYLE: Record<string, string> = {
   STOCK_IN:   "text-green-700 border-green-300 bg-green-50 dark:text-green-400 dark:border-green-700 dark:bg-green-900/20",
