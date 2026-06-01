@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
-async function geocode(query: string): Promise<{ lat: number; lon: number } | null> {
+async function geocode(query: string): Promise<{ lat: number; lon: number; displayName: string } | null> {
   const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query + ", Malaysia")}&format=json&limit=1`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "NixScript-ClaimSystem/1.0" },
-  });
+  const res = await fetch(url, { headers: { "User-Agent": "NixScript-ClaimSystem/1.0" } });
   if (!res.ok) return null;
   const data = await res.json();
   if (!data[0]) return null;
-  return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+  return {
+    lat: parseFloat(data[0].lat),
+    lon: parseFloat(data[0].lon),
+    displayName: (data[0].display_name as string).split(",")[0].trim(),
+  };
 }
 
 async function getRoadDistanceKm(
@@ -41,7 +43,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Could not calculate road distance" }, { status: 422 });
     }
 
-    return NextResponse.json({ distanceKm });
+    return NextResponse.json({
+      distanceKm,
+      resolvedFrom: fromCoords.displayName,
+      resolvedTo:   toCoords.displayName,
+    });
   } catch {
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }

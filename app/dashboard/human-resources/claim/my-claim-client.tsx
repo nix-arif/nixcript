@@ -53,6 +53,7 @@ interface TravelRow {
   mode:string;          // TRAVEL_MODE value or ""
   purpose:string;
   flightFile?: File;    // required when mode = FLIGHT
+  resolvedFrom?: string; resolvedTo?: string; // display names from geocoding
   // Daily allowance (meal)
   dailyId:string; breakfastDays:string; lunchDays:string; dinnerDays:string;
   // Accommodation
@@ -383,8 +384,13 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.error ?? "Could not calculate distance"); return; }
-      updateTravel(rowId, "distanceKm", String(data.distanceKm));
-      toast.success(`${data.distanceKm} km — RM ${(data.distanceKm * ratePerKm).toFixed(2)}`);
+      setTravelRows(prev => prev.map(r => r.id === rowId ? {
+        ...r,
+        distanceKm: String(data.distanceKm),
+        resolvedFrom: data.resolvedFrom,
+        resolvedTo: data.resolvedTo,
+      } : r));
+      toast.success(`${data.distanceKm} km (road distance)`);
     } catch {
       toast.error("Distance lookup failed");
     } finally {
@@ -727,17 +733,31 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                               <input type="text" placeholder="From city / location" value={row.fromLocation} onChange={e => updateTravel(row.id,"fromLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.toLocation.trim() && showMileage) calculateDistance(row.id, e.target.value, row.toLocation); }} className={inputCls}/>
                               <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
                               <input type="text" placeholder="To city / location" value={row.toLocation} onChange={e => updateTravel(row.id,"toLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.fromLocation.trim() && showMileage) calculateDistance(row.id, row.fromLocation, e.target.value); }} className={inputCls}/>
-                              {calculatingRows.has(row.id) && <LoaderIcon className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0"/>}
                             </div>
                             {showMileage && (
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-xs text-muted-foreground">Distance</span>
-                                <input type="number" placeholder="auto" value={row.distanceKm} readOnly className={inputCls+" w-24 bg-muted cursor-not-allowed text-muted-foreground"}/>
-                                <span className="text-xs text-muted-foreground">km</span>
-                                {mileageAmt > 0 && (
-                                  <span className="text-xs text-muted-foreground">× RM{ratePerKm.toFixed(2)}/km =
-                                    <strong className="text-green-700 dark:text-green-400 ml-1">{fmtAmount(mileageAmt)}</strong>
-                                  </span>
+                              <div className="flex flex-col gap-1 mt-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-muted-foreground w-16 shrink-0">Distance</span>
+                                  <input type="number" placeholder="auto-calculated" value={row.distanceKm} readOnly className={inputCls+" w-36 bg-muted cursor-not-allowed text-muted-foreground"}/>
+                                  <span className="text-xs text-muted-foreground">km</span>
+                                  {mileageAmt > 0 && (
+                                    <span className="text-xs text-muted-foreground">× RM{ratePerKm.toFixed(2)}/km =
+                                      <strong className="text-green-700 dark:text-green-400 ml-1">{fmtAmount(mileageAmt)}</strong>
+                                    </span>
+                                  )}
+                                  {calculatingRows.has(row.id) && <LoaderIcon className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0"/>}
+                                </div>
+                                {row.resolvedFrom && row.resolvedTo && row.distanceKm && (
+                                  <p className="text-xs text-muted-foreground flex items-center gap-1 pl-0">
+                                    <InfoIcon className="h-3 w-3 shrink-0"/>
+                                    Road distance: <strong className="text-foreground mx-0.5">{row.resolvedFrom}</strong> → <strong className="text-foreground mx-0.5">{row.resolvedTo}</strong> = {row.distanceKm} km via OpenStreetMap routing
+                                  </p>
+                                )}
+                                {!row.distanceKm && !calculatingRows.has(row.id) && row.fromLocation.trim() && row.toLocation.trim() && (
+                                  <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                                    <InfoIcon className="h-3 w-3 shrink-0"/>
+                                    Distance is auto-calculated — tab out of the city fields above to trigger
+                                  </p>
                                 )}
                               </div>
                             )}
