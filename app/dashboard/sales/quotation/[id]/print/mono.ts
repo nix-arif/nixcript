@@ -1103,6 +1103,150 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     }
   }
 
+  // ── Catalogue pages ──────────────────────────────────────────────────────
+  if (Number(q.includeCatalogue)) {
+    const r2ImgBase = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
+    const seenCodes = new Set<string>();
+    const catItems = items.filter(it => {
+      if (!it.productCode || seenCodes.has(it.productCode)) return false;
+      seenCodes.add(it.productCode);
+      return true;
+    });
+
+    if (catItems.length > 0) {
+      const imageCache = new Map<string, PDFImage>();
+      for (const item of catItems) {
+        if (!item.productCode) continue;
+        for (const ext of ["jpg", "jpeg", "png", "webp"]) {
+          try {
+            const url = `${r2ImgBase}/${encodeURIComponent(item.productCode)}.${ext}`;
+            const res = await fetch(url);
+            if (!res.ok) continue;
+            const buf = await res.arrayBuffer();
+            let img: PDFImage;
+            try { img = await pdfDoc.embedJpg(buf); }
+            catch { img = await pdfDoc.embedPng(buf); }
+            imageCache.set(item.productCode, img);
+            break;
+          } catch { /* try next ext */ }
+        }
+      }
+
+      const C_CAT_LINE = rgb(0.88, 0.88, 0.88);
+      const C_CAT_ALT  = rgb(0.97, 0.97, 0.97);
+      const CAT_HDR_H    = 64;
+      const CAT_COLHDR_H = 20;
+      const CAT_FOOT_H   = 32;
+      const CAT_COL_NO   = 26;
+      const ROWS_PER_PG  = 5;
+      const rowsAvail    = H - MT - CAT_HDR_H - CAT_COLHDR_H - MB - CAT_FOOT_H;
+      const CAT_ROW_H    = Math.floor(rowsAvail / ROWS_PER_PG);
+      const CAT_IMG_SZ   = CAT_ROW_H - 12;
+      const CAT_COL_IMG  = CAT_IMG_SZ + 22;
+      const CAT_COL_DET  = CW - CAT_COL_NO - CAT_COL_IMG;
+      const totalCatPgs  = Math.ceil(catItems.length / ROWS_PER_PG);
+
+      for (let pi = 0; pi < totalCatPgs; pi++) {
+        const catPage  = pdfDoc.addPage([W, H]);
+        const pageRows = catItems.slice(pi * ROWS_PER_PG, (pi + 1) * ROWS_PER_PG);
+
+        // Header strip
+        catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H, color: rgb(0.97, 0.97, 0.97) });
+        catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: 4, height: CAT_HDR_H, color: accentColor });
+        catPage.drawText("PRODUCT CATALOGUE", { x: ML, y: H - 22, size: 13, font: fontB, color: accentColor });
+        if (q.title) {
+          catPage.drawText(trunc(q.title, fontB, 8.5, CW / 2), { x: ML, y: H - 36, size: 8.5, font: fontB, color: C_TEXT });
+          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, { x: ML, y: H - 46, size: 7, font: fontR, color: C_FAINT });
+        } else {
+          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, { x: ML, y: H - 37, size: 8, font: fontR, color: C_FAINT });
+        }
+        const pgLabel = `Page ${pi + 1} / ${totalCatPgs}`;
+        catPage.drawText(pgLabel, { x: W - MR - fontR.widthOfTextAtSize(pgLabel, 8), y: H - 28, size: 8, font: fontR, color: C_MUTED });
+
+        // Column header row
+        const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
+        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: accentColor });
+        const colDefs: { label: string; x: number; w: number }[] = [
+          { label: "#",               x: ML,                               w: CAT_COL_NO  },
+          { label: "Image",           x: ML + CAT_COL_NO,                  w: CAT_COL_IMG },
+          { label: "Product Details", x: ML + CAT_COL_NO + CAT_COL_IMG,   w: CAT_COL_DET },
+        ];
+        for (const col of colDefs) {
+          const tw = fontB.widthOfTextAtSize(col.label, 7);
+          catPage.drawText(col.label, { x: col.x + (col.w - tw) / 2, y: colHdrY + 6, size: 7, font: fontB, color: C_WHITE });
+        }
+
+        // Vertical separators
+        const tableTopY    = colHdrY;
+        const tableBottomY = tableTopY - pageRows.length * CAT_ROW_H;
+        for (const col of colDefs.slice(1)) {
+          catPage.drawLine({ start: { x: col.x, y: tableBottomY }, end: { x: col.x, y: tableTopY }, thickness: 0.3, color: C_CAT_LINE });
+        }
+
+        // Product rows
+        let rowTopY = colHdrY;
+        for (let ri = 0; ri < pageRows.length; ri++) {
+          const item    = pageRows[ri];
+          const rowY    = rowTopY - CAT_ROW_H;
+          const globalN = pi * ROWS_PER_PG + ri + 1;
+
+          if (ri % 2 === 1) catPage.drawRectangle({ x: ML, y: rowY, width: CW, height: CAT_ROW_H, color: C_CAT_ALT });
+          catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_CAT_LINE });
+
+          const noStr = String(globalN);
+          catPage.drawText(noStr, { x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2, y: rowY + CAT_ROW_H / 2 - 4, size: 8, font: fontR, color: C_FAINT });
+
+          const imgColX = ML + CAT_COL_NO;
+          const img = item.productCode ? imageCache.get(item.productCode) : undefined;
+          if (img) {
+            const scale = Math.min(CAT_IMG_SZ / img.height, CAT_IMG_SZ / img.width, 1);
+            const iw = img.width * scale;
+            const ih = img.height * scale;
+            catPage.drawImage(img, { x: imgColX + (CAT_COL_IMG - iw) / 2, y: rowY + (CAT_ROW_H - ih) / 2, width: iw, height: ih });
+          } else {
+            catPage.drawRectangle({ x: imgColX + (CAT_COL_IMG - CAT_IMG_SZ) / 2, y: rowY + (CAT_ROW_H - CAT_IMG_SZ) / 2, width: CAT_IMG_SZ, height: CAT_IMG_SZ, color: C_CAT_LINE });
+          }
+
+          const detX    = ML + CAT_COL_NO + CAT_COL_IMG + 8;
+          const detMaxW = CAT_COL_DET - 16;
+          let   detY    = rowY + CAT_ROW_H - 16;
+
+          if (item.productCode) {
+            catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: accentColor });
+            detY -= 11;
+          }
+          if (item.description) {
+            for (const line of wrap(String(item.description), fontR, 8, detMaxW).slice(0, 4)) {
+              catPage.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_TEXT });
+              detY -= 10;
+            }
+          }
+          if (item.uom) {
+            catPage.drawText(item.uom, { x: detX, y: detY, size: 8, font: fontR, color: C_FAINT });
+            detY -= 11;
+          }
+          if (item.hasCert) {
+            detY -= 5;
+            if (item.mdaRegNo) {
+              catPage.drawText(`MDA Reg No: ${item.mdaRegNo}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MUTED });
+              detY -= 10;
+            }
+            if (item.mdaValidity) {
+              catPage.drawText(`MDA Validity: ${fmtD(item.mdaValidity)}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MUTED });
+            }
+          }
+          rowTopY = rowY;
+        }
+
+        catPage.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_CAT_LINE, borderWidth: 0.4 });
+
+        hLine(catPage, MB + 22);
+        catPage.drawText("Product Catalogue  ·  Computer generated document.", { x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_FAINT });
+        catPage.drawText(q.quotationNo, { x: W - MR - fontR.widthOfTextAtSize(q.quotationNo, 7.5), y: MB + 10, size: 7.5, font: fontR, color: C_FAINT });
+      }
+    }
+  }
+
   // ── Append company documents ──────────────────────────────────────────────
   const docAppends: { incl: number | null; url: string | null }[] = [
     { incl: q.inclMof,              url: orgMofCertUrl         ?? null },
