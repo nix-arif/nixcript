@@ -417,11 +417,28 @@ export async function getPoForPrint(id: string) {
 
 // ── Mutations ──────────────────────────────────────────────────────────────
 
+export async function getExistingDraftPo(): Promise<{ id: string; poNo: string } | null> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  const [row] = await db
+    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo })
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.status, "draft")))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Promise<PurchaseOrderRow> {
   const { orgId, userId } = await requireAccess("purchase-order:create");
 
   if (!input.salesOrderId) throw new Error("A linked sales order is required");
   if (!input.supplierId) throw new Error("Supplier is required");
+
+  const existingDraft = await db
+    .select({ id: purchaseOrder.id })
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.status, "draft")))
+    .limit(1);
+  if (existingDraft.length > 0) throw new Error("A draft purchase order already exists. Send or delete it before creating a new one.");
 
   // Build supplier snapshot
   let supplierSnapshot: PurchaseOrderRow["supplierSnapshot"] = null;
@@ -501,7 +518,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
 }
 
 export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Promise<PurchaseOrderRow> {
-  const { orgId } = await requireAccess("purchase-order:update");
+  const { orgId, userId } = await requireAccess("purchase-order:update");
 
   const [existing] = await db
     .select()
@@ -509,6 +526,7 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
     .where(and(eq(purchaseOrder.id, input.id), eq(purchaseOrder.organizationId, orgId)));
 
   if (!existing) throw new Error("Purchase order not found");
+  if (existing.createdBy !== userId) throw new Error("Only the creator can edit this purchase order");
   if (!EDITABLE_STATUSES.has(existing.status)) throw new Error("Only draft purchase orders can be edited");
 
   if (
@@ -613,7 +631,7 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
 }
 
 export async function deletePurchaseOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-order:delete");
+  const { orgId, userId } = await requireAccess("purchase-order:delete");
 
   const [existing] = await db
     .select()
@@ -621,6 +639,7 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
     .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
 
   if (!existing) throw new Error("Purchase order not found");
+  if (existing.createdBy !== userId) throw new Error("Only the creator can delete this purchase order");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled purchase orders can be deleted");
 
   if (existing.supplierQuotationKey) {
