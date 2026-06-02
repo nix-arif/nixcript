@@ -5,6 +5,8 @@ import {
   salesOrder,
   salesOrderItem,
   salesOrderCounter,
+  purchaseOrder,
+  deliveryOrder,
   customer,
   customerCompany,
   quotation,
@@ -524,11 +526,45 @@ export async function deleteSalesOrder(id: string): Promise<void> {
   if (existing.status === "submitted" || existing.status === "confirmed" || existing.status === "fulfilled")
     throw new Error("Only draft or cancelled orders can be deleted");
 
+  // Delete R2 supplier quotation file if present
   if (existing.supplierQuotationKey) {
     await deleteSupplierQuotationFile(existing.supplierQuotationKey);
   }
 
+  // Unlink any POs that reference this SO (set salesOrderId → null)
+  await db
+    .update(purchaseOrder)
+    .set({ salesOrderId: null })
+    .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.salesOrderId, id)));
+
+  // Unlink any DOs that reference this SO
+  await db
+    .update(deliveryOrder)
+    .set({ salesOrderId: null, salesOrderNo: null })
+    .where(and(eq(deliveryOrder.organizationId, orgId), eq(deliveryOrder.salesOrderId, id)));
+
+  // Delete the SO (items cascade)
   await db.delete(salesOrder).where(eq(salesOrder.id, id));
+
+  // Release the running number: decrement the counter if this was the latest number for the year
+  const soYear = parseInt(existing.soNo.match(/\d{4}/)?.[0] ?? "0", 10);
+  const soNum  = parseInt(existing.soNo.split("-").pop() ?? "0", 10);
+
+  if (soYear > 0 && soNum > 0) {
+    const [counter] = await db
+      .select()
+      .from(salesOrderCounter)
+      .where(eq(salesOrderCounter.organizationId, orgId))
+      .limit(1);
+
+    if (counter && counter.year === soYear && counter.lastNumber === soNum && soNum > 1) {
+      await db
+        .update(salesOrderCounter)
+        .set({ lastNumber: soNum - 1 })
+        .where(eq(salesOrderCounter.organizationId, orgId));
+    }
+  }
+
   revalidatePath("/dashboard/sales/order");
 }
 
