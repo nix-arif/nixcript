@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
       organizationId: ownerOrgId,
       productCode: row.productCode.trim(),
       description: row.description || null,
-      unitPrice: row.unitPrice || null,
+      sellingUnitPrice: row.sellingUnitPrice || row.unitPrice || null,
       uom: row.uom || null,
       supplier: row.supplier || null,
       brand: row.brand || null,

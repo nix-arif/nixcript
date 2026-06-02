@@ -23,7 +23,7 @@ type SpreadsheetRow = {
   description?: string;
   qty?: string | number;
   uom?: string;
-  unitPrice?: string | number;
+  sellingUnitPrice?: string | number;
   totalPrice?: string | number;
 };
 
@@ -56,7 +56,7 @@ function mapSpreadsheetRow(row: Record<string, any>): SpreadsheetRow | null {
     description: get("description", "desc", "item name", "name"),
     qty: get("qty", "quantity", "kuantiti"),
     uom: get("uom", "oum", "unit"),
-    unitPrice: get("unitprice", "unit price", "harga unit"),
+    sellingUnitPrice: get("sellingunitprice", "selling unit price", "unitprice", "unit price", "harga unit"),
     totalPrice: get("totalprice", "total price", "jumlah"),
   };
 }

@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 type ProductRow = {
   productCode: string;
   description?: string;
-  unitPrice?: string;
+  sellingUnitPrice?: string;
   uom?: string;
   supplier?: string;
   brand?: string;
@@ -62,7 +62,7 @@ function mapRow(row: Record<string, any>): ProductRow {
       get("productcode", "product code", "code", "item code", "kod produk") ??
       "",
     description: get("description", "desc", "name", "item name"),
-    unitPrice: get("unitprice", "unit price", "price", "harga"),
+    sellingUnitPrice: get("sellingunitprice", "selling unit price", "unitprice", "unit price", "price", "harga"),
     uom: get("uom", "oum", "unit", "unit of measure"),
     supplier: get("supplier", "vendor", "pembekal"),
     brand: get("brand", "jenama", "make"),
@@ -115,8 +115,8 @@ const PREVIEW_COLS = [
     width: "w-48",
   },
   {
-    key: "unitPrice" as keyof ProductRow,
-    label: "Price",
+    key: "sellingUnitPrice" as keyof ProductRow,
+    label: "Selling Price",
     mono: false,
     width: "w-20",
   },
