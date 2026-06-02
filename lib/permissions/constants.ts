@@ -103,6 +103,7 @@ export const ALL_PERMISSIONS = [
   { key: "inventory:adjust",  label: "Submit Stock Movement" },
   { key: "inventory:approve", label: "Approve / Reject Stock Movements" },
   { key: "inventory:manage",  label: "Manage Inventory Settings" },
+  { key: "inventory:request", label: "Request Stock Allocation" },
 
   // Claim management
   { key: "claim:read:own", label: "View Own Claims" },

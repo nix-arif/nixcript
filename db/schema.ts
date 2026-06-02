@@ -661,6 +661,64 @@ export const stockMovementRelations = relations(stockMovement, ({ one }) => ({
   createdByUser: one(user, { fields: [stockMovement.createdBy], references: [user.id] }),
 }));
 
+// ── Staff stock requests ──────────────────────────────────────────────────
+
+export const stockRequest = pgTable(
+  "stock_request",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    requestedBy: text("requested_by").notNull().references(() => user.id),
+    productId: text("product_id").notNull().references(() => product.id),
+    productCode: text("product_code").notNull(),
+    warehouseFrom: text("warehouse_from").notNull().default("Default"),
+    qty: text("qty").notNull(),
+    notes: text("notes"),
+    // pending | approved | rejected | fulfilled
+    status: text("status").notNull().default("pending"),
+    approvedBy: text("approved_by").references(() => user.id),
+    approvedQty: text("approved_qty"),
+    approvedAt: timestamp("approved_at"),
+    approvedNotes: text("approved_notes"),
+    fulfilledAt: timestamp("fulfilled_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("stock_request_org_idx").on(t.organizationId),
+    index("stock_request_user_idx").on(t.requestedBy, t.organizationId),
+    index("stock_request_status_idx").on(t.status, t.organizationId),
+  ],
+);
+
+export const staffStockLimit = pgTable(
+  "staff_stock_limit",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => user.id),
+    productId: text("product_id").notNull().references(() => product.id),
+    maxQty: text("max_qty").notNull(),
+    setBy: text("set_by").notNull().references(() => user.id),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("staff_stock_limit_uidx").on(t.organizationId, t.userId, t.productId),
+    index("staff_stock_limit_org_idx").on(t.organizationId),
+  ],
+);
+
+export const stockRequestRelations = relations(stockRequest, ({ one }) => ({
+  organization: one(organization, { fields: [stockRequest.organizationId], references: [organization.id] }),
+  requestedByUser: one(user, { fields: [stockRequest.requestedBy], references: [user.id] }),
+  product: one(product, { fields: [stockRequest.productId], references: [product.id] }),
+}));
+
+export const staffStockLimitRelations = relations(staffStockLimit, ({ one }) => ({
+  organization: one(organization, { fields: [staffStockLimit.organizationId], references: [organization.id] }),
+  user: one(user, { fields: [staffStockLimit.userId], references: [user.id] }),
+  product: one(product, { fields: [staffStockLimit.productId], references: [product.id] }),
+}));
+
 export const organizationProfile = pgTable("organization_profile", {
   id: text("id").primaryKey(),
   organizationId: text("organization_id")
@@ -2552,4 +2610,8 @@ export const schema = {
   stockMovement,
   stockLevelRelations,
   stockMovementRelations,
+  stockRequest,
+  staffStockLimit,
+  stockRequestRelations,
+  staffStockLimitRelations,
 };

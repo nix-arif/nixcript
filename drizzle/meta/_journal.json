@@ -29,6 +29,13 @@
       "when": 1780356683015,
       "tag": "0003_add-product-id-to-do-item",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780362696180,
+      "tag": "0004_add-stock-request-and-staff-limit",
+      "breakpoints": true
     }
   ]
 }
