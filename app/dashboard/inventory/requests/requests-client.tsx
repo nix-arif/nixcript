@@ -11,7 +11,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlusIcon, CheckIcon, XIcon, SettingsIcon, PackageIcon } from "lucide-react";
 import {
   createStockRequest, approveStockRequest, rejectStockRequest,
@@ -208,6 +207,11 @@ export function StockRequestsClient({
   }
 
   const pendingCount = requests.filter((r) => r.status === "pending").length;
+  const tabs = ["allocations", "requests", ...(canManage ? ["limits"] : [])] as const;
+  type Tab = typeof tabs[number];
+  const [activeTab, setActiveTab] = useState<Tab>("allocations");
+
+  const TAB_LABEL: Record<string, string> = { allocations: "Current Allocations", requests: "Requests", limits: "Holding Limits" };
 
   return (
     <div className="p-6 flex flex-col gap-6">
@@ -233,17 +237,29 @@ export function StockRequestsClient({
         </div>
       </div>
 
-      <Tabs defaultValue="allocations">
-        <TabsList>
-          <TabsTrigger value="allocations">Current Allocations</TabsTrigger>
-          <TabsTrigger value="requests">
-            Requests {pendingCount > 0 && <Badge variant="destructive" className="ml-1.5 h-4 px-1.5 text-[10px]">{pendingCount}</Badge>}
-          </TabsTrigger>
-          {canManage && <TabsTrigger value="limits">Holding Limits</TabsTrigger>}
-        </TabsList>
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-border">
+        {tabs.map((t) => (
+          <button
+            key={t}
+            onClick={() => setActiveTab(t)}
+            className={`px-4 py-2 text-sm font-medium flex items-center gap-1.5 border-b-2 transition-colors ${
+              activeTab === t
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {TAB_LABEL[t]}
+            {t === "requests" && pendingCount > 0 && (
+              <Badge variant="destructive" className="h-4 px-1.5 text-[10px]">{pendingCount}</Badge>
+            )}
+          </button>
+        ))}
+      </div>
 
-        {/* ── Allocations tab ──────────────────────────────────────────── */}
-        <TabsContent value="allocations" className="mt-4">
+      {/* ── Allocations tab ──────────────────────────────────────────── */}
+      {activeTab === "allocations" && (
+        <div>
           {allocations.length === 0 ? (
             <div className="rounded-lg border border-border py-16 text-center text-sm text-muted-foreground">
               No field stock currently allocated.
@@ -287,10 +303,12 @@ export function StockRequestsClient({
               </Table>
             </div>
           )}
-        </TabsContent>
+        </div>
+      )}
 
-        {/* ── Requests tab ─────────────────────────────────────────────── */}
-        <TabsContent value="requests" className="mt-4">
+      {/* ── Requests tab ─────────────────────────────────────────────── */}
+      {activeTab === "requests" && (
+        <div>
           {requests.length === 0 ? (
             <div className="rounded-lg border border-border py-16 text-center text-sm text-muted-foreground">
               No stock requests yet.
@@ -348,46 +366,46 @@ export function StockRequestsClient({
               </Table>
             </div>
           )}
-        </TabsContent>
+        </div>
+      )}
 
-        {/* ── Limits tab ───────────────────────────────────────────────── */}
-        {canManage && (
-          <TabsContent value="limits" className="mt-4">
-            {limits.length === 0 ? (
-              <div className="rounded-lg border border-border py-16 text-center text-sm text-muted-foreground">
-                No holding limits set. Use "Set Limit" to restrict how much stock a staff member can hold.
-              </div>
-            ) : (
-              <div className="rounded-lg border border-border overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/40">
-                      <TableHead>Staff</TableHead>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right w-28">Max Qty</TableHead>
-                      <TableHead className="w-8" />
+      {/* ── Limits tab ───────────────────────────────────────────────── */}
+      {activeTab === "limits" && canManage && (
+        <div>
+          {limits.length === 0 ? (
+            <div className="rounded-lg border border-border py-16 text-center text-sm text-muted-foreground">
+              No holding limits set. Use "Set Limit" to restrict how much stock a staff member can hold.
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/40">
+                    <TableHead>Staff</TableHead>
+                    <TableHead>Product</TableHead>
+                    <TableHead className="text-right w-28">Max Qty</TableHead>
+                    <TableHead className="w-8" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {limits.map((l) => (
+                    <TableRow key={l.id}>
+                      <TableCell className="text-sm font-medium">{l.userName ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">{l.productCode ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">{fmt(parseFloat(l.maxQty))}</TableCell>
+                      <TableCell>
+                        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteLimit(l.id)}>
+                          <XIcon className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {limits.map((l) => (
-                      <TableRow key={l.id}>
-                        <TableCell className="text-sm font-medium">{l.userName ?? "—"}</TableCell>
-                        <TableCell className="font-mono text-xs">{l.productCode ?? "—"}</TableCell>
-                        <TableCell className="text-right tabular-nums font-semibold">{fmt(parseFloat(l.maxQty))}</TableCell>
-                        <TableCell>
-                          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteLimit(l.id)}>
-                            <XIcon className="h-3.5 w-3.5" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </TabsContent>
-        )}
-      </Tabs>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Request Stock Sheet ──────────────────────────────────────────── */}
       <Sheet open={reqOpen} onOpenChange={(o) => { if (!reqSaving) setReqOpen(o); }}>
