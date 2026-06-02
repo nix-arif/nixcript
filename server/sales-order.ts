@@ -663,7 +663,7 @@ async function notifyAndEmail(params: {
 // ── Submit (draft → submitted) ─────────────────────────────────────────────
 
 export async function submitSalesOrder(id: string): Promise<void> {
-  const { orgId, userId, session } = await requireAccess("sales-order:create");
+  const { orgId, userId, session } = await requireAccess("sales-order:update");
 
   const [so] = await db
     .select({

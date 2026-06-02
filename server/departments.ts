@@ -3,21 +3,25 @@
 import { db } from "@/db";
 import { department } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 import { DEFAULT_DEPARTMENTS } from "@/lib/permissions/constants";
 import { and, eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { revalidatePath } from "next/cache";
 
-async function getActiveOrgId() {
+async function requireAccess(permission: string) {
   const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
-  return orgId;
+  const perms = await getUserPermissions(session.user.id, orgId);
+  if (!hasAccess(perms, permission)) throw new Error("Forbidden");
+  return { orgId, userId: session.user.id };
 }
 
 export async function getDepartments() {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("department:read");
 
   let rows = await db
     .select()
@@ -52,7 +56,7 @@ export async function getDepartments() {
 export type Department = Awaited<ReturnType<typeof getDepartments>>[number];
 
 export async function createDepartment(name: string) {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("department:create");
   const trimmed = name.toLowerCase().trim().replace(/\s+/g, "-");
 
   const existing = await db
@@ -74,7 +78,7 @@ export async function createDepartment(name: string) {
 }
 
 export async function deleteDepartment(id: string) {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("department:delete");
 
   const [dept] = await db
     .select()

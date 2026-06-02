@@ -3,10 +3,20 @@
 import { db } from "@/db";
 import { member, product } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
-import { nanoid } from "nanoid";
-import { eq, and, sql, asc, or, ilike, isNotNull, inArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
+import { nanoid } from "nanoid";
+import { eq, and, sql, asc, or, ilike, isNotNull, inArray } from "drizzle-orm";
+
+async function requireAccess(permission: string) {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) throw new Error("No active organization");
+  const perms = await getUserPermissions(session.user.id, orgId);
+  if (!hasAccess(perms, permission)) throw new Error("Forbidden");
+  return { orgId, userId: session.user.id };
+}
 
 type ProductRow = {
   productCode: string;
@@ -28,11 +38,7 @@ type ProductRow = {
 };
 
 export async function seedProducts(rows: ProductRow[]) {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
-
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
+  const { orgId } = await requireAccess("product:seed");
 
   const validRows = rows.filter((r) => r.productCode?.trim());
   if (!validRows.length) throw new Error("No valid rows to seed");
@@ -87,11 +93,7 @@ export async function seedProducts(rows: ProductRow[]) {
 }
 
 export async function searchProducts(query: string, brand?: string) {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
-
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
+  const { orgId } = await requireAccess("product:read");
 
   if (query.trim().length < 3) return [];
 
@@ -132,11 +134,7 @@ export async function searchProducts(query: string, brand?: string) {
 }
 
 export async function getProducts(page = 1, limit = 50) {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
-
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
+  const { orgId } = await requireAccess("product:read");
 
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   const offset = (page - 1) * limit;
@@ -180,10 +178,7 @@ async function getAllOwnerOrgIds(
 }
 
 export async function getProductDetailsByCodes(codes: string[]) {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
+  const { orgId } = await requireAccess("product:read");
   if (!codes.length) return [];
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   const rows = await db
@@ -207,10 +202,7 @@ export async function getProductDetailsByCodes(codes: string[]) {
 }
 
 export async function getProductPriceDetails(codes: string[]) {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
+  const { orgId } = await requireAccess("product:read");
   if (!codes.length) return [];
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   const rows = await db
@@ -232,11 +224,7 @@ export async function getProductPriceDetails(codes: string[]) {
 }
 
 export async function getDistinctBrands() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
-
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
+  const { orgId } = await requireAccess("product:read");
 
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
 

@@ -3,29 +3,27 @@
 import { db } from "@/db";
 import { department, member, memberDepartment, user, userPermission } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { grantDepartmentPermissions } from "@/lib/permissions/grant-defaults";
 import { nanoid } from "nanoid";
 
-async function getActiveOrgId() {
+async function requireAccess(permission: string) {
   const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
-  return orgId;
-}
-
-async function getCurrentUserId() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
-  return session.user.id;
+  const perms = await getUserPermissions(session.user.id, orgId);
+  if (!hasAccess(perms, permission)) throw new Error("Forbidden");
+  return { orgId, userId: session.user.id };
 }
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
 export async function getOrgMembers() {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("member:read");
 
   const members = await db
     .select({
@@ -70,7 +68,7 @@ export type OrgMember = Awaited<ReturnType<typeof getOrgMembers>>[number];
 // ── Deleted members ────────────────────────────────────────────────────────
 
 export async function getDeletedMembers() {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("member:read");
 
   const members = await db
     .select({
@@ -123,7 +121,7 @@ export async function addMemberToDepartment(
   departmentId: string,
   deptRole: "manager" | "member",
 ) {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("member:invite");
 
   const [m] = await db
     .select({ userId: member.userId })
@@ -139,7 +137,7 @@ export async function addMemberToDepartment(
 }
 
 export async function removeMemberFromDepartment(memberId: string, departmentId: string) {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("member:invite");
 
   await db
     .delete(memberDepartment)
@@ -200,8 +198,7 @@ export async function removeMemberFromDepartment(memberId: string, departmentId:
 // ── Soft-delete member ─────────────────────────────────────────────────────
 
 export async function removeMember(memberId: string) {
-  const orgId   = await getActiveOrgId();
-  const actorId = await getCurrentUserId();
+  const { orgId, userId: actorId } = await requireAccess("member:remove");
 
   const [m] = await db
     .select()
@@ -230,7 +227,7 @@ export async function removeMember(memberId: string) {
 // ── Restore deleted member ─────────────────────────────────────────────────
 
 export async function restoreMember(memberId: string) {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("member:invite");
 
   const [m] = await db
     .select()
@@ -284,7 +281,7 @@ export async function restoreMember(memberId: string) {
 // ── Permanent delete (hard delete) ────────────────────────────────────────
 
 export async function permanentlyDeleteMember(memberId: string) {
-  const orgId = await getActiveOrgId();
+  const { orgId } = await requireAccess("member:remove");
 
   const [m] = await db
     .select()
