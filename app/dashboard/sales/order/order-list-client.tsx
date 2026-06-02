@@ -226,7 +226,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                         <PencilIcon className="w-3.5 h-3.5" />
                       </Button>
                     )}
-                    {can("sales-order:delete") && DELETABLE_STATUSES.has(o.status) && (
+                    {can("sales-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
                       <Button
                         variant="ghost"
                         size="icon"

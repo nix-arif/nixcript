@@ -410,7 +410,7 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
 }
 
 export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<SalesOrderRow> {
-  const { orgId } = await requireAccess("sales-order:update");
+  const { orgId, userId } = await requireAccess("sales-order:update");
 
   const [existing] = await db
     .select()
@@ -418,6 +418,7 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
     .where(and(eq(salesOrder.id, input.id), eq(salesOrder.organizationId, orgId)));
 
   if (!existing) throw new Error("Sales order not found");
+  if (existing.createdBy !== userId) throw new Error("Only the creator can edit this sales order");
   if (existing.status === "submitted" || existing.status === "confirmed")
     throw new Error("Cannot edit a submitted or confirmed sales order");
 
@@ -525,7 +526,7 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
 }
 
 export async function deleteSalesOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("sales-order:delete");
+  const { orgId, userId } = await requireAccess("sales-order:delete");
 
   const [existing] = await db
     .select()
@@ -533,6 +534,7 @@ export async function deleteSalesOrder(id: string): Promise<void> {
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
   if (!existing) throw new Error("Sales order not found");
+  if (existing.createdBy !== userId) throw new Error("Only the creator can delete this sales order");
   if (existing.status === "submitted" || existing.status === "confirmed" || existing.status === "fulfilled")
     throw new Error("Only draft or cancelled orders can be deleted");
 
