@@ -57,6 +57,16 @@ function calcTotals(items: LineItem[], sstPct: string) {
 }
 
 const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
+
+function detectCurrency(items: { currency?: string | null }[]): string {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    const c = item.currency;
+    if (c) counts[c] = (counts[c] ?? 0) + 1;
+  }
+  const [top] = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  return top?.[0] ?? "MYR";
+}
 const fmt = (n: number, currency: string) => `${currency} ${n.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
 function toDateInput(d: Date | string | null | undefined): string {
@@ -338,6 +348,8 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
                     try {
                       const soItems = await getSalesOrderItemsForPo(so.id);
                       if (soItems.length > 0) {
+                        const detected = detectCurrency(soItems);
+                        setCurrency(detected);
                         setItems(soItems.map((si) => ({
                           _key: crypto.randomUUID(),
                           rowNo: si.rowNo,
@@ -347,7 +359,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
                           qty: si.qty,
                           uom: si.uom ?? "",
                           unitPrice: si.unitPrice ?? "0",
-                          currency: si.currency ?? "MYR",
+                          currency: detected,
                           totalPrice: si.totalPrice ?? "0",
                           imageKey: si.imageKey ?? undefined,
                         })));
