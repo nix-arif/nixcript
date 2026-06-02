@@ -144,6 +144,7 @@ export interface PurchaseOrderItemInput {
   qty?: string;
   uom?: string;
   unitPrice?: string;
+  currency?: string;
   totalPrice?: string;
   imageKey?: string;
 }
@@ -238,6 +239,7 @@ export interface SoItemForPo {
   qty: string;
   uom: string | null;
   unitPrice: string | null;
+  currency: string | null;
   totalPrice: string | null;
   imageKey: string | null;
 }
@@ -256,14 +258,17 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemForPo
   const imageMap: Record<string, string | null> = {};
   const costMap: Record<string, string | null> = {};
 
+  const currencyMap: Record<string, string | null> = {};
+
   if (codes.length > 0) {
     const prods = await db
-      .select({ productCode: product.productCode, imageKey: product.imageKey, costUnitPrice: product.costUnitPrice })
+      .select({ productCode: product.productCode, imageKey: product.imageKey, costUnitPrice: product.costUnitPrice, costPriceCurrency: product.costPriceCurrency })
       .from(product)
       .where(inArray(product.productCode, codes));
     for (const p of prods) {
       imageMap[p.productCode] = p.imageKey ?? null;
       costMap[p.productCode] = p.costUnitPrice ?? null;
+      currencyMap[p.productCode] = p.costPriceCurrency ?? null;
     }
   }
 
@@ -280,6 +285,7 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemForPo
       qty: i.qty ?? "1",
       uom: i.uom ?? null,
       unitPrice,
+      currency: i.productCode ? (currencyMap[i.productCode] ?? null) : null,
       totalPrice: (qty * price).toFixed(2),
       imageKey: i.productCode ? (imageMap[i.productCode] ?? null) : null,
     };
@@ -467,6 +473,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
         qty: item.qty ?? "1",
         uom: item.uom ?? null,
         unitPrice: item.unitPrice ?? "0",
+        currency: item.currency ?? "MYR",
         totalPrice: item.totalPrice ?? "0",
         imageKey: item.imageKey ?? null,
       })),
@@ -576,6 +583,7 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
         qty: item.qty ?? "1",
         uom: item.uom ?? null,
         unitPrice: item.unitPrice ?? "0",
+        currency: item.currency ?? "MYR",
         totalPrice: item.totalPrice ?? "0",
         imageKey: item.imageKey ?? null,
       })),
@@ -682,8 +690,8 @@ export async function receivePurchaseOrder(id: string, warehouseLabel = "Default
   await Promise.all(
     items
       .filter((item) => item.productId)
-      .map((item) =>
-        createApprovedMovement({
+      .map(async (item) => {
+        await createApprovedMovement({
           orgId,
           userId,
           productId: item.productId!,
@@ -695,8 +703,18 @@ export async function receivePurchaseOrder(id: string, warehouseLabel = "Default
           referenceId: id,
           referenceNo: po.poNo,
           notes: `PO receipt: ${item.productCode ?? ""}`.trim(),
-        }),
-      ),
+        });
+        // Write PO price back to product cost fields
+        if (item.unitPrice) {
+          await db
+            .update(product)
+            .set({
+              costUnitPrice: item.unitPrice,
+              ...(item.currency ? { costPriceCurrency: item.currency } : {}),
+            })
+            .where(eq(product.id, item.productId!));
+        }
+      }),
   );
 }
 

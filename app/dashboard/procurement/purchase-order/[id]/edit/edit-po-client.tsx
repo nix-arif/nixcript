@@ -103,10 +103,11 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
           qty: i.qty ?? "1",
           uom: i.uom ?? "",
           unitPrice: i.unitPrice ?? "0",
+          currency: i.currency ?? "MYR",
           totalPrice: i.totalPrice ?? "0",
           imageKey: i.imageKey ?? undefined,
         }))
-      : [{ _key: crypto.randomUUID(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", totalPrice: "0" }],
+      : [{ _key: crypto.randomUUID(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", currency: "MYR", totalPrice: "0" }],
   );
 
   // PDF
@@ -154,7 +155,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
   }
 
   function addLine() {
-    setItems((prev) => [...prev, { _key: crypto.randomUUID(), rowNo: prev.length + 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", totalPrice: "0" }]);
+    setItems((prev) => [...prev, { _key: crypto.randomUUID(), rowNo: prev.length + 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", currency: "MYR", totalPrice: "0" }]);
   }
 
   function removeLine(key: string) {
@@ -338,6 +339,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
                           qty: si.qty,
                           uom: si.uom ?? "",
                           unitPrice: si.unitPrice ?? "0",
+                          currency: si.currency ?? "MYR",
                           totalPrice: si.totalPrice ?? "0",
                           imageKey: si.imageKey ?? undefined,
                         })));
@@ -496,7 +498,10 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
                   </div>
 
                   <div className="col-span-3 space-y-1.5">
-                    <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right" />
+                    <div className="flex gap-1">
+                      <Input value={item.currency ?? "MYR"} onChange={(e) => updateItem(item._key, { currency: e.target.value.toUpperCase().slice(0, 3) })} className="h-7 text-xs w-14 shrink-0 font-mono" maxLength={3} />
+                      <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right flex-1" />
+                    </div>
                     <div className="h-7 px-3 flex items-center justify-end text-xs text-muted-foreground font-mono bg-muted/30 rounded-md">
                       {fmt(parseFloat(item.totalPrice || "0"))}
                     </div>

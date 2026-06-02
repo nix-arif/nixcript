@@ -1481,6 +1481,7 @@ export const purchaseOrderItem = pgTable(
     qty: text("qty").notNull().default("1"),
     uom: text("uom"),
     unitPrice: text("unit_price").default("0"),
+    currency: text("currency").default("MYR"),
     totalPrice: text("total_price").default("0"),
 
     imageKey: text("image_key"), // optional R2 key for product image

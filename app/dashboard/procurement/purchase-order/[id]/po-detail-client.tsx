@@ -167,6 +167,7 @@ export function PurchaseOrderDetailClient({
                       <th className="text-left pb-2 pr-3">Description</th>
                       <th className="text-right pb-2 pr-3 w-12">Qty</th>
                       <th className="text-left pb-2 pr-3 w-12">UOM</th>
+                      <th className="text-left pb-2 pr-3 w-12">Ccy</th>
                       <th className="text-right pb-2 pr-3 w-24">Unit price</th>
                       <th className="text-right pb-2 w-24">Total</th>
                     </tr>
@@ -179,8 +180,9 @@ export function PurchaseOrderDetailClient({
                         <td className="py-2 pr-3">{item.description || "—"}</td>
                         <td className="py-2 pr-3 text-right tabular-nums">{item.qty}</td>
                         <td className="py-2 pr-3 text-muted-foreground">{item.uom || "—"}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{fmt(item.unitPrice)}</td>
-                        <td className="py-2 text-right tabular-nums font-medium">{fmt(item.totalPrice)}</td>
+                        <td className="py-2 pr-3 font-mono text-muted-foreground">{item.currency || "MYR"}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{Number(item.unitPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2 text-right tabular-nums font-medium">{Number(item.totalPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
                       </tr>
                     ))}
                   </tbody>

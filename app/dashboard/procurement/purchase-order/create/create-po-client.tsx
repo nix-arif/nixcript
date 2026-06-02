@@ -52,6 +52,7 @@ const newLine = (rowNo: number): LineItem => ({
   qty: "1",
   uom: "",
   unitPrice: "0",
+  currency: "MYR",
   totalPrice: "0",
   imageKey: undefined,
 });
@@ -111,6 +112,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
           qty: si.qty,
           uom: si.uom ?? "",
           unitPrice: si.unitPrice ?? "0",
+          currency: si.currency ?? "MYR",
           totalPrice: si.totalPrice ?? "0",
           imageKey: si.imageKey ?? undefined,
         })));
@@ -364,6 +366,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
                           qty: si.qty,
                           uom: si.uom ?? "",
                           unitPrice: si.unitPrice ?? "0",
+                          currency: si.currency ?? "MYR",
                           totalPrice: si.totalPrice ?? "0",
                           imageKey: si.imageKey ?? undefined,
                         })));
@@ -528,7 +531,10 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
                   </div>
 
                   <div className="col-span-3 space-y-1.5">
-                    <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right" />
+                    <div className="flex gap-1">
+                      <Input value={item.currency ?? "MYR"} onChange={(e) => updateItem(item._key, { currency: e.target.value.toUpperCase().slice(0, 3) })} className="h-7 text-xs w-14 shrink-0 font-mono" maxLength={3} />
+                      <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right flex-1" />
+                    </div>
                     <div className="h-7 px-3 flex items-center justify-end text-xs text-muted-foreground font-mono bg-muted/30 rounded-md">
                       {fmt(parseFloat(item.totalPrice || "0"))}
                     </div>
