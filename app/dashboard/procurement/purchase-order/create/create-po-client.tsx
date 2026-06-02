@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createPurchaseOrder,
+  sendPurchaseOrder,
   getSalesOrderItemsForPo,
   getPoSupplierQuotationUploadUrl,
   getPoItemImageUploadUrl,
@@ -216,31 +217,50 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
     if (pdfRef.current) pdfRef.current.value = "";
   }
 
-  async function handleSave() {
-    if (!selectedSo) { toast.error("A linked sales order is required"); return; }
-    if (!supplierId) { toast.error("Supplier is required"); return; }
-    const hasItems = items.some((i) => i.description || i.productCode);
-    if (!hasItems) { toast.error("Add at least one item"); return; }
-    if (items.some((i) => i._imageUploading)) { toast.error("Please wait for image uploads to finish"); return; }
+  async function buildAndCreate() {
+    if (!selectedSo) { toast.error("A linked sales order is required"); return null; }
+    if (!supplierId) { toast.error("Supplier is required"); return null; }
+    if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
+    if (items.some((i) => i._imageUploading)) { toast.error("Please wait for image uploads to finish"); return null; }
 
+    const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
+    return createPurchaseOrder({
+      supplierId,
+      salesOrderId: selectedSo!.id,
+      customerPoIds: selectedCpos.map((c) => c.id),
+      supplierQuotationKey: pdfKey,
+      subtotal: subtotal.toFixed(2),
+      sstPct,
+      sst: sstAmt.toFixed(2),
+      grandTotal: grand.toFixed(2),
+      notes: notes || undefined,
+      expectedDeliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
+      deliveryAddress: deliveryAddress || undefined,
+      items: items.map(({ _key, _imageFile, _imageUploading, ...rest }) => rest),
+    });
+  }
+
+  async function handleSave() {
     setSaving(true);
     try {
-      const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
-      await createPurchaseOrder({
-        supplierId,
-        salesOrderId: selectedSo!.id,
-        customerPoIds: selectedCpos.map((c) => c.id),
-        supplierQuotationKey: pdfKey,
-        subtotal: subtotal.toFixed(2),
-        sstPct,
-        sst: sstAmt.toFixed(2),
-        grandTotal: grand.toFixed(2),
-        notes: notes || undefined,
-        expectedDeliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
-        deliveryAddress: deliveryAddress || undefined,
-        items: items.map(({ _key, _imageFile, _imageUploading, ...rest }) => rest),
-      });
+      const po = await buildAndCreate();
+      if (!po) return;
       toast.success("Purchase order created");
+      router.push("/dashboard/procurement/purchase-order");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveAndSend() {
+    setSaving(true);
+    try {
+      const po = await buildAndCreate();
+      if (!po) return;
+      await sendPurchaseOrder(po.id);
+      toast.success("Purchase order created and sent");
       router.push("/dashboard/procurement/purchase-order");
     } catch (e: any) {
       toast.error(e.message);
@@ -571,8 +591,11 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
 
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
-          <Button onClick={handleSave} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
-            {saving ? "Creating…" : "Create purchase order"}
+          <Button onClick={handleSaveAndSend} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
+            {saving ? "Creating…" : "Create & Submit"}
+          </Button>
+          <Button variant="outline" onClick={handleSave} disabled={saving || pdfUploading || loadingSoItems}>
+            Save as Draft
           </Button>
           <Button variant="outline" onClick={() => router.push("/dashboard/procurement/purchase-order")}>Cancel</Button>
         </div>
