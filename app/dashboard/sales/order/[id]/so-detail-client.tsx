@@ -53,11 +53,13 @@ export function SalesOrderDetailClient({
   linkedQuotation,
   permissions,
   currentUserId,
+  draftRedirected,
 }: {
   order: SalesOrderWithItems;
   linkedQuotation: QuotationBasic | null;
   permissions: string[];
   currentUserId: string;
+  draftRedirected?: boolean;
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -144,6 +146,12 @@ export function SalesOrderDetailClient({
 
   return (
     <div className="p-6 space-y-6">
+      {draftRedirected && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 px-4 py-3 text-sm text-amber-800 dark:text-amber-300 flex items-center gap-2">
+          <span className="font-medium">Draft already exists.</span>
+          You can only have one draft SO at a time. Submit or delete this one before creating a new order.
+        </div>
+      )}
       <PageHeader
         title={order.soNo}
         description={fmtDate(order.createdAt)}
