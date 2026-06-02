@@ -1014,7 +1014,7 @@ export const quotationItem = pgTable(
       .references(() => quotation.id, { onDelete: "cascade" }),
 
     // Spreadsheet row data
-    rowNo: integer("row_no").notNull(),
+    rowNo: text("row_no").notNull(),
     sku: text("sku"),
     productCode: text("product_code"),
     description: text("description"),

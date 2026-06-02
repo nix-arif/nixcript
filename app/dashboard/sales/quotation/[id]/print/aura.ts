@@ -161,7 +161,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const C_QTY  = 28;
   const C_UOM  = 34;
   const C_UP   = 64;
-  const C_DISC = showDisc ? 34 : 0;
+  const C_DISC = showDisc ? 55 : 0;
   const C_TOT  = showTP ? 68 : 0;
   const C_DESC = CW - C_NO - C_CODE - C_QTY - C_UOM - C_UP - C_DISC - C_TOT;
 
@@ -205,8 +205,9 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLineH  = 0;
+    const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
     const rowH = Math.max(
-      RH_MIN,
+      hasItemDisc ? RH_MIN + 8 : RH_MIN,
       codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
     );
     return { item, descLines, extraLine, isGreenRow, rowH };
@@ -347,7 +348,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       { label: "Qty",         x: X_QTY,  w: C_QTY,  align: "c" },
       { label: "UOM",         x: X_UOM,  w: C_UOM,  align: "c" },
       { label: "Unit Price",  x: X_UP,   w: C_UP,   align: "r" as const },
-      ...(showDisc ? [{ label: "Disc%", x: X_DISC, w: C_DISC, align: "c" as const }] : []),
+      ...(showDisc ? [{ label: "Discount", x: X_DISC, w: C_DISC, align: "c" as const }] : []),
       ...(showTP   ? [{ label: "Total", x: X_TOT,  w: C_TOT,  align: "r" as const }] : []),
     ];
 
@@ -420,13 +421,22 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         x: X_UP + (C_UP - upW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
       });
 
-      // Disc%
+      // Discount amount + percentage
       if (showDisc) {
-        const disc  = Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—";
-        const discW = fontR.widthOfTextAtSize(disc, FS_CODE);
-        page.drawText(disc, {
-          x: X_DISC + (C_DISC - discW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_LITE,
-        });
+        const itemDiscAmt = Number(item.discountAmt ?? 0);
+        const itemDiscPct = Number(item.discountPct ?? 0);
+        if (itemDiscAmt > 0) {
+          const amtStr  = `RM ${itemDiscAmt.toFixed(2)}`;
+          const amtStrW = fontR.widthOfTextAtSize(amtStr, FS_CODE);
+          page.drawText(amtStr, { x: X_DISC + (C_DISC - amtStrW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK });
+          const pctStr  = `(${itemDiscPct}%)`;
+          const pctStrW = fontR.widthOfTextAtSize(pctStr, FS_CODE - 1.5);
+          page.drawText(pctStr, { x: X_DISC + (C_DISC - pctStrW) / 2, y: textBaseline - 9, size: FS_CODE - 1.5, font: fontR, color: C_LITE });
+        } else {
+          const dash  = "—";
+          const dashW = fontR.widthOfTextAtSize(dash, FS_CODE);
+          page.drawText(dash, { x: X_DISC + (C_DISC - dashW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_LITE });
+        }
       }
 
       // Total

@@ -75,7 +75,7 @@ function parseSheet1(ws: XLSX.WorkSheet): GovRawItem[] {
   const raw = XLSX.utils.sheet_to_json(ws, { defval: "" }) as Record<string, any>[];
   return raw
     .map((row, i) => ({
-      rowNo: i + 1,
+      rowNo: String(i + 1),
       productCode: extractField(row, ["product code", "productcode", "code", "item code", "itemcode", "kod produk", "kodproduk"]),
       description: extractField(row, ["description", "desc", "penerangan", "keterangan", "item description"]),
       qty: extractField(row, ["qty", "quantity", "kuantiti"]),

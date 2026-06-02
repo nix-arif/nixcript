@@ -454,14 +454,15 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   const CODE_LINE_H = LH - 2;
   const rowInfos: RowInfo[] = items.map(item => {
-    const descLines  = wrap(item.description ?? "—", fontR, FS_BODY, C_DESCA - TABLE_PAD * 2);
+    const descLines  = wrap((item.description ?? "—").toUpperCase(), fontR, FS_BODY, C_DESCA - TABLE_PAD * 2);
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLineH  = 0;
+    const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
     const rowH = Math.max(
-      RH_MIN,
+      hasItemDisc ? 22 : RH_MIN,
       codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
     );
     return { item, descLines, extraLine, isGreenRow, rowH };
@@ -484,7 +485,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
   const SUMMARY_ROW_H = TABLE_HDR_H;             // subtotal & grand total rows inside the table
   const BTM_TABLE_H   = TABLE_HDR_H + 42;         // 2-col footer table (header + 3 right-col rows)
-  const TOTALS_H      = (discAmt > 0 ? 3 : 2) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
+  const TOTALS_H      = (2 + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 1 : 0)) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
   const TOT_PAD       = 5;                        // inner padding for summary / footer rows
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 30;
@@ -770,14 +771,18 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       page.drawText("RM", { x: X_UP + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
       page.drawText(upNum, { x: X_UP + C_UP - TABLE_PAD - upNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
 
-      // Discount amount
+      // Discount amount + percentage
       if (showDisc) {
-        const discAmt = Number(item.discountAmt ?? 0);
-        if (discAmt > 0) {
-          const discNum  = fmtAcct(discAmt);
+        const itemDiscAmt = Number(item.discountAmt ?? 0);
+        const itemDiscPct = Number(item.discountPct ?? 0);
+        if (itemDiscAmt > 0) {
+          const discNum  = fmtAcct(itemDiscAmt);
           const discNumW = fontR.widthOfTextAtSize(discNum, FS_BODY);
           page.drawText("RM", { x: X_DISC + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
           page.drawText(discNum, { x: X_DISC + C_DISC - TABLE_PAD - discNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+          const pctStr  = `(${itemDiscPct}%)`;
+          const pctStrW = fontR.widthOfTextAtSize(pctStr, FS_BODY - 1);
+          page.drawText(pctStr, { x: X_DISC + (C_DISC - pctStrW) / 2, y: textBaseline - 9, size: FS_BODY - 1, font: fontR, color: C_BLACK });
         } else {
           const dash  = "—";
           const dashW = fontR.widthOfTextAtSize(dash, FS_BODY);
@@ -824,6 +829,24 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       page.drawText(subStr, { x: X_UP + (amtAreaW - subStrW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
       curY = subRowY;
 
+      // ── Subtotal × N sets row ───────────────────────────────────────────────
+      if (sets > 1) {
+        const snsRowY = curY - SUMMARY_ROW_H;
+        page.drawLine({ start: { x: ML,     y: snsRowY }, end: { x: W - MR, y: snsRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: ML,     y: curY    }, end: { x: ML,     y: snsRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: W - MR, y: curY    }, end: { x: W - MR, y: snsRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: snsRowY }, thickness: 0.3, color: C_BLACK });
+        page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: snsRowY }, thickness: 0.3, color: C_BLACK });
+        page.drawText(`SUBTOTAL × ${sets} SETS`, { x: X_NO + TOT_PAD, y: snsRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+        const snsQtyStr = fmtQty(totalQtyPerSet * sets);
+        const snsQtyW   = fontR.widthOfTextAtSize(snsQtyStr, FS_BODY);
+        page.drawText(snsQtyStr, { x: X_QTY + ((C_QTY + C_UOM) - snsQtyW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        const snsStr  = fmtM(subtotal);
+        const snsStrW = fontR.widthOfTextAtSize(snsStr, FS_BODY);
+        page.drawText(snsStr, { x: X_UP + (amtAreaW - snsStrW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        curY = snsRowY;
+      }
+
       // ── Overall discount row ────────────────────────────────────────────────
       if (discAmt > 0) {
         const odRowY = curY - SUMMARY_ROW_H;
@@ -833,6 +856,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: odRowY }, thickness: 0.3, color: C_BLACK });
         page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: odRowY }, thickness: 0.3, color: C_BLACK });
         page.drawText("OVERALL DISCOUNT", { x: X_NO + TOT_PAD, y: odRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+        const odPctStr  = `(${q.overallDiscountPct}%)`;
+        const odPctW    = fontR.widthOfTextAtSize(odPctStr, FS_BODY);
+        page.drawText(odPctStr, { x: X_QTY + ((C_QTY + C_UOM) - odPctW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
         const odStr  = `- ${fmtM(discAmt)}`;
         const odStrW = fontR.widthOfTextAtSize(odStr, FS_BODY);
         page.drawText(odStr, { x: X_UP + (amtAreaW - odStrW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
@@ -840,7 +866,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       }
 
       // ── Grand total row (accent fill) ───────────────────────────────────────
-      const gtLabel       = sets > 1 ? `GRAND TOTAL × ${sets} SETS` : "GRAND TOTAL";
+      const gtLabel       = sets > 1 ? `TOTAL BEFORE TAX × ${sets} SETS` : "TOTAL BEFORE TAX";
       const totalQtyAllSets = totalQtyPerSet * sets;
       const gtRowY        = curY - SUMMARY_ROW_H;
       page.drawRectangle({ x: ML, y: gtRowY, width: CW, height: SUMMARY_ROW_H, color: accentColor });
@@ -858,7 +884,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       const gtQtyW   = fontB.widthOfTextAtSize(gtQtyStr, FS_BODY);
       page.drawText(gtQtyStr, { x: X_QTY + ((C_QTY + C_UOM) - gtQtyW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
       // Amount cols 6-7 merged — centered in merged area
-      const gtAmtStr = fmtM(grand);
+      const gtAmtStr = fmtM(afterDisc);
       const gtAmtW   = fontB.widthOfTextAtSize(gtAmtStr, FS_BODY);
       page.drawText(gtAmtStr, { x: X_UP + (amtAreaW - gtAmtW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
       curY = gtRowY;

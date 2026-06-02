@@ -91,10 +91,6 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
   const [finalizing, setFinalizing] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [pdfLoading, setPdfLoading] = useState(false);
-  const [pdfGroupLoading, setPdfGroupLoading] = useState(false);
-  const [pdfGroupProgress, setPdfGroupProgress] = useState("");
-  const [mdaLoading, setMdaLoading] = useState(false);
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
   const [markupRows, setMarkupRows] = useState<MarkupRow[]>([]);
 
@@ -131,48 +127,13 @@ export function QuotationDetailClient({ group, initialId }: Props) {
     }
   };
 
-  const downloadPdf = async (url: string, filename: string, setLoading: (v: boolean) => void) => {
-    setLoading(true);
-    try {
-      const res = await fetch(url);
-      if (!res.ok) { toast.error("Failed to generate PDF"); return; }
-      const blob = await res.blob();
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-    } catch {
-      toast.error("Failed to generate PDF");
-    } finally {
-      setLoading(false);
-    }
+  const downloadPdf = (url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  const handleDownloadAll = async () => {
-    setPdfGroupLoading(true);
-    try {
-      for (let i = 0; i < siblings.length; i++) {
-        const s = siblings[i];
-        setPdfGroupProgress(`${i + 1}/${siblings.length}`);
-        const res = await fetch(`/api/quotation/${s.id}/pdf`);
-        if (!res.ok) { toast.error(`Failed: ${s.quotationNo}`); continue; }
-        const blob = await res.blob();
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `${s.quotationNo}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-      }
-    } catch {
-      toast.error("Failed to generate PDFs");
-    } finally {
-      setPdfGroupLoading(false);
-      setPdfGroupProgress("");
+  const handleDownloadAll = () => {
+    for (const s of siblings) {
+      window.open(`/api/quotation/${s.id}/pdf`, "_blank", "noopener,noreferrer");
     }
   };
 
@@ -374,63 +335,38 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               Edit
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 h-8"
-            disabled={pdfLoading || pdfGroupLoading}
-            onClick={() =>
-              downloadPdf(
-                `/api/quotation/${q.id}/pdf`,
-                `${q.quotationNo}.pdf`,
-                setPdfLoading,
-              )
-            }
-          >
-            {pdfLoading ? (
-              <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <PrinterIcon className="w-3.5 h-3.5" />
-            )}
-            {pdfLoading ? "Generating…" : "Download PDF"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 h-8"
-            disabled={mdaLoading}
-            onClick={() =>
-              downloadPdf(
-                `/api/quotation/${q.id}/mda-certs`,
-                `${q.quotationNo}-mda-certs.pdf`,
-                setMdaLoading,
-              )
-            }
-          >
-            {mdaLoading ? (
-              <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <ShieldCheckIcon className="w-3.5 h-3.5" />
-            )}
-            {mdaLoading ? "Generating…" : "MDA Certs"}
-          </Button>
-          {siblings.length > 1 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 h-8"
-              disabled={pdfLoading || pdfGroupLoading}
-              onClick={handleDownloadAll}
-            >
-              {pdfGroupLoading ? (
-                <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              ) : (
+          {!isDraft && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 h-8"
+                onClick={() => downloadPdf(`/api/quotation/${q.id}/pdf`)}
+              >
                 <PrinterIcon className="w-3.5 h-3.5" />
+                Download PDF
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 h-8"
+                onClick={() => downloadPdf(`/api/quotation/${q.id}/mda-certs`)}
+              >
+                <ShieldCheckIcon className="w-3.5 h-3.5" />
+                MDA Certs
+              </Button>
+              {siblings.length > 1 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-8"
+                  onClick={handleDownloadAll}
+                >
+                  <PrinterIcon className="w-3.5 h-3.5" />
+                  Download All ({siblings.length})
+                </Button>
               )}
-              {pdfGroupLoading
-                ? `Generating ${pdfGroupProgress}…`
-                : `Download All (${siblings.length})`}
-            </Button>
+            </>
           )}
           {isDraft && (
             <Button

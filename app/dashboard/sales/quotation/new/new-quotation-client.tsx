@@ -43,6 +43,30 @@ type Step = 1 | 2 | 3 | 4;
 const fmt = (v: string | number) =>
   Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 });
 
+function parseRoman(s: string): number {
+  const map: Record<string, number> = { I:1, V:5, X:10, L:50, C:100, D:500, M:1000 };
+  const str = s.toUpperCase().trim();
+  if (!/^[IVXLCDM]+$/.test(str)) return NaN;
+  let result = 0;
+  for (let i = 0; i < str.length; i++) {
+    const cur = map[str[i]];
+    const next = map[str[i + 1]];
+    result += next > cur ? -cur : cur;
+  }
+  return result > 0 ? result : NaN;
+}
+
+function parseRowNo(raw: any, fallback: number): string {
+  const str = String(raw ?? "").trim();
+  // No value — use sequential fallback
+  if (!str || str === "0") return String(fallback);
+  // Already a clean string (e.g. "1a", "1b", "2c", "III") — keep as-is
+  // but normalise Roman numerals to their arabic equivalent for ordering
+  const roman = parseRoman(str);
+  if (!isNaN(roman) && /^[IVXLCDMivxlcdm]+$/i.test(str)) return String(roman);
+  return str;
+}
+
 function Field({
   label,
   children,
@@ -274,7 +298,7 @@ export function NewQuotationClient({
 
         const rows: SpreadsheetRow[] = json
           .map((row: any, i: number) => ({
-            rowNo: i + 1,
+            rowNo: parseRowNo(row["No"] ?? row["no"] ?? row["NO"] ?? row["#"], i + 1),
             sku: String(row["SKU"] ?? row["sku"] ?? "").trim(),
             productCode: String(
               row["Product Code"] ??
@@ -840,7 +864,7 @@ export function NewQuotationClient({
               <label className="block cursor-pointer">
                 <input
                   type="file"
-                  accept=".xlsx,.xls,.csv"
+                  accept=".xlsx,.xls,.csv,.ods"
                   className="hidden"
                   onChange={handleFileUpload}
                 />
@@ -868,7 +892,7 @@ export function NewQuotationClient({
                         <UploadIcon className="w-3 h-3" /> Replace file
                         <input
                           type="file"
-                          accept=".xlsx,.xls,.csv"
+                          accept=".xlsx,.xls,.csv,.ods"
                           className="hidden"
                           onChange={handleFileUpload}
                         />
@@ -885,7 +909,7 @@ export function NewQuotationClient({
                     <label className="cursor-pointer block">
                       <input
                         type="file"
-                        accept=".xlsx,.xls,.csv"
+                        accept=".xlsx,.xls,.csv,.ods"
                         className="hidden"
                         onChange={handleFileUpload}
                       />
@@ -897,7 +921,7 @@ export function NewQuotationClient({
                             : "Drop spreadsheet here or click to browse"}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          .xlsx or .csv
+                          .xlsx, .csv or .ods
                         </div>
                       </div>
                     </label>

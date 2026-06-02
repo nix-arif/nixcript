@@ -272,7 +272,7 @@ export async function getOrgMembersForQuotation() {
 
 // ── Match spreadsheet rows to product DB ──────────────────────────────────
 export type SpreadsheetRow = {
-  rowNo: number;
+  rowNo: string;
   sku?: string;
   productCode?: string;
   description?: string;
@@ -1679,7 +1679,7 @@ export type UpdateQuotationInput = {
   inclLampiran12: boolean;
   inclLampiran13: boolean;
   items: {
-    rowNo: number;
+    rowNo: string;
     sku?: string | null;
     productCode?: string | null;
     description?: string | null;
@@ -1860,7 +1860,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
 // ── Government bulk quotation creation ───────────────────────────────────────
 
 export type GovRawItem = {
-  rowNo: number;
+  rowNo: string;
   productCode?: string;
   description?: string;
   qty?: string;

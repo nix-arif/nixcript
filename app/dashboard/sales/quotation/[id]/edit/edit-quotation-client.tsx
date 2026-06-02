@@ -171,8 +171,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
   // ── Document options ─────────────────────────────────────────────────────
   const [includeCatalogue, setIncludeCatalogue] = useState(!!Number(q.includeCatalogue));
   const [includeMdaCerts, setIncludeMdaCerts] = useState(!!Number(q.includeMdaCerts));
-  const [showTotalPrice, setShowTotalPrice] = useState(!!Number(q.showTotalPrice));
-  const [showItemizeDiscount, setShowItemizeDiscount] = useState(!!Number(q.showItemizeDiscount));
+  const [showProductCode, setShowProductCode] = useState(!!Number(q.showProductCode ?? 1));
   const [inclMof, setInclMof] = useState(!!Number(q.inclMof));
   const [inclSsm, setInclSsm] = useState(!!Number(q.inclSsm));
   const [inclTcc, setInclTcc] = useState(!!Number(q.inclTcc));
@@ -184,7 +183,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
   const [saving, setSaving] = useState(false);
 
   // ── Computed totals ──────────────────────────────────────────────────────
-  const sets = Number(q.sets ?? 1);
+  const [sets, setSets] = useState(Number(q.sets ?? 1));
   const subtotalPerSet = items.reduce((s, it) => {
     return s + Number(it.qty) * Number(it.unitPrice) * (1 - Number(it.discountPct) / 100);
   }, 0);
@@ -208,7 +207,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
     setItems((prev) =>
       prev
         .filter((it) => it._key !== key)
-        .map((it, i) => ({ ...it, rowNo: i + 1 })),
+        .map((it, i) => ({ ...it, rowNo: String(i + 1) })),
     );
   };
 
@@ -217,7 +216,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
       ...prev,
       {
         _key: nanoid(),
-        rowNo: prev.length + 1,
+        rowNo: String(prev.length + 1),
         qty: "1",
         unitPrice: "0",
         discountPct: "0",
@@ -240,6 +239,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
     try {
       const payload: UpdateQuotationInput = {
         title,
+        sets,
         customerId: customerId || null,
         customerCompanyId: customerCompanyId || null,
         salesPersonId: salesPersonId || null,
@@ -253,8 +253,9 @@ export function EditQuotationClient({ data, customers, members }: Props) {
         sstPct: sstPct,
         includeCatalogue,
         includeMdaCerts,
-        showTotalPrice,
-        showItemizeDiscount,
+        showTotalPrice: true,
+        showItemizeDiscount: items.some((it) => Number(it.discountPct) > 0),
+        showProductCode,
         inclMof,
         inclSsm,
         inclTcc,
@@ -336,6 +337,23 @@ export function EditQuotationClient({ data, customers, members }: Props) {
                   placeholder="e.g. Loose Items"
                   className="h-9 text-sm"
                 />
+              </Field>
+
+              <Field label="Number of sets">
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min="1"
+                    value={sets}
+                    onChange={(e) => setSets(Math.max(1, Number(e.target.value) || 1))}
+                    className="h-9 text-sm w-28"
+                  />
+                  {sets > 1 && (
+                    <span className="text-xs text-muted-foreground">
+                      All item quantities × {sets} sets
+                    </span>
+                  )}
+                </div>
               </Field>
 
               <Field label="Customer">
@@ -715,20 +733,19 @@ export function EditQuotationClient({ data, customers, members }: Props) {
             <div className="p-4 space-y-4">
               <div className="space-y-2.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Display</p>
-                <OptionToggle label="Product catalogue"  checked={includeCatalogue}    onChange={setIncludeCatalogue} />
-                <OptionToggle label="MDA certificates"   checked={includeMdaCerts}     onChange={setIncludeMdaCerts} />
-                <OptionToggle label="Show total prices"  checked={showTotalPrice}      onChange={setShowTotalPrice} />
-                <OptionToggle label="Itemize discount"   checked={showItemizeDiscount} onChange={setShowItemizeDiscount} />
+                <OptionToggle label="Product code"     checked={showProductCode}  onChange={setShowProductCode} />
+                <OptionToggle label="MDA certificates" checked={includeMdaCerts}  onChange={setIncludeMdaCerts} />
               </div>
               <div className="space-y-2.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Attached Documents</p>
-                <OptionToggle label="MOF Certificate"                 checked={inclMof}              onChange={setInclMof} />
-                <OptionToggle label="SSM"                             checked={inclSsm}              onChange={setInclSsm} />
-                <OptionToggle label="TCC (Tax Compliance Certificate)" checked={inclTcc}             onChange={setInclTcc} />
-                <OptionToggle label="Bank Statement"                  checked={inclBankStatement}    onChange={setInclBankStatement} />
-                <OptionToggle label="MDA Establishment"               checked={inclMdaEstablishment} onChange={setInclMdaEstablishment} />
-                <OptionToggle label="Lampiran 12"                     checked={inclLampiran12}       onChange={setInclLampiran12} />
-                <OptionToggle label="Lampiran 13"                     checked={inclLampiran13}       onChange={setInclLampiran13} />
+                <OptionToggle label="Product catalogue"                checked={includeCatalogue}     onChange={setIncludeCatalogue} />
+                <OptionToggle label="MOF Certificate"                  checked={inclMof}              onChange={setInclMof} />
+                <OptionToggle label="SSM"                              checked={inclSsm}              onChange={setInclSsm} />
+                <OptionToggle label="TCC (Tax Compliance Certificate)" checked={inclTcc}              onChange={setInclTcc} />
+                <OptionToggle label="Bank Statement"                   checked={inclBankStatement}    onChange={setInclBankStatement} />
+                <OptionToggle label="MDA Establishment"                checked={inclMdaEstablishment} onChange={setInclMdaEstablishment} />
+                <OptionToggle label="Lampiran 12"                      checked={inclLampiran12}       onChange={setInclLampiran12} />
+                <OptionToggle label="Lampiran 13"                      checked={inclLampiran13}       onChange={setInclLampiran13} />
               </div>
             </div>
           </div>
