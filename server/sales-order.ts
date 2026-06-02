@@ -303,6 +303,17 @@ export async function getSalesOrderForPrint(id: string) {
 export async function createSalesOrder(input: CreateSalesOrderInput): Promise<SalesOrderRow> {
   const { orgId, userId, session } = await requireAccess("sales-order:create");
 
+  // Enforce one draft at a time per organisation
+  const [existingDraft] = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "draft")))
+    .limit(1);
+
+  if (existingDraft) {
+    throw new Error(`A draft sales order already exists (${existingDraft.soNo}). Submit or delete it before creating a new one.`);
+  }
+
   // Build customer snapshot
   let customerSnapshot: SalesOrderRow["customerSnapshot"] = null;
   if (input.customerId) {
