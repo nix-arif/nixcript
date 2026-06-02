@@ -16,7 +16,7 @@ export default async function EditQuotationPage({ params }: Props) {
   const [data, customers, members] = await Promise.all([
     getQuotationDetail(id),
     getCustomers(),
-    getOrgMembersForQuotation(),
+    getOrgMembersForQuotation().catch(() => []),
   ]);
 
   if (!data) notFound();

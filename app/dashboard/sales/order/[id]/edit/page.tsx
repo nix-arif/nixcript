@@ -9,7 +9,7 @@ export default async function EditSalesOrderPage({ params }: { params: Promise<{
   const { id } = await params;
   const [order, members] = await Promise.all([
     getSalesOrderDetail(id),
-    getOrgMembers(),
+    getOrgMembers().catch(() => []),
   ]);
   if (!order) notFound();
   if (order.createdBy !== session.user.id) redirect(`/dashboard/sales/order/${id}`);
