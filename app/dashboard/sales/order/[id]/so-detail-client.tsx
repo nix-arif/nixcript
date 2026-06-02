@@ -162,12 +162,12 @@ export function SalesOrderDetailClient({
             )}
             {status === "draft" ? (
               <>
-                {isOwner && can("sales-order:update") && (
+                {can("sales-order:update") && (
                   <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/order/${order.id}/edit`)} className="gap-1.5">
                     <PencilIcon className="w-3.5 h-3.5" /> Edit
                   </Button>
                 )}
-                {isOwner && can("sales-order:delete") && (
+                {can("sales-order:delete") && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                     <TrashIcon className="w-3.5 h-3.5" /> Delete
                   </Button>
@@ -176,7 +176,7 @@ export function SalesOrderDetailClient({
             ) : status === "cancelled" ? (
               <>
                 <StatusBadge status={status} />
-                {isOwner && can("sales-order:delete") && (
+                {can("sales-order:delete") && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                     <TrashIcon className="w-3.5 h-3.5" /> Delete
                   </Button>
