@@ -1,8 +1,15 @@
 import { getQuotationDetail } from "@/server/quotation";
-import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, Color, StandardFonts } from "pdf-lib";
 import {
   wrap, trunc, fmtD, fmtM, hLine, sanitizeText, C_WHITE,
 } from "./_pdf-header";
+
+function hexToColor(hex: string | null | undefined): Color | null {
+  if (!hex) return null;
+  const h = hex.replace("#", "");
+  if (h.length !== 6) return null;
+  return rgb(parseInt(h.slice(0,2),16)/255, parseInt(h.slice(2,4),16)/255, parseInt(h.slice(4,6),16)/255);
+}
 
 type Data = NonNullable<Awaited<ReturnType<typeof getQuotationDetail>>>;
 
@@ -33,6 +40,10 @@ function estimateMonoHeaderH(opts: {
   phone: string | null;
   email: string | null;
   website: string | null;
+  oldSsmNo: string | null;
+  newSsmNo: string | null;
+  mdaEstablishmentNo: string | null;
+  taxNo: string | null;
   nameSize: number;
   logoHMax: number;
   logoWMax: number;
@@ -52,7 +63,9 @@ function estimateMonoHeaderH(opts: {
   let h = 0;
   if (logoImg && (headerLayout === "logo-top" || headerLayout === "centered")) h += logoLh + 4;
 
-  h += nameSize + 8; // name + 8pt gap (SSM/MDA/Tax are inline at 4pt — no extra lines)
+  h += nameSize + 8; // name + gap
+  const hasSsmMdaTax = !!(opts.oldSsmNo || opts.newSsmNo || opts.mdaEstablishmentNo || opts.taxNo);
+  if (hasSsmMdaTax) h += 10; // SSM/MDA/Tax line below name
 
   const textZoneW = (headerLayout === "logo-right" && logoImg) ? CW - logoLw - 8
     : (headerLayout === "standard" && logoImg) ? CW - logoLw - 8
@@ -135,32 +148,27 @@ function drawMonoHeader(opts: {
     x: textX, y: nameY, size: nameSize, font: nameFont, color: C_BLACK,
   });
 
-  // SSM / MDA Est / Tax No — 4pt, right-aligned, same baseline as company name
+  cy -= nameSize + 8;
+
+  // SSM / MDA Est / Tax No — 6pt, black, below org name
   const regParts: string[] = [];
   if (newSsmNo || oldSsmNo) regParts.push(newSsmNo && oldSsmNo ? `SSM: ${newSsmNo} (${oldSsmNo})` : `SSM: ${newSsmNo ?? oldSsmNo}`);
   if (mdaEstablishmentNo) regParts.push(`MDA Est: ${mdaEstablishmentNo}`);
   if (taxNo) regParts.push(`Tax No: ${taxNo}`);
 
   if (regParts.length > 0) {
-    const regSz  = 4;
+    const regSz  = 6;
     const regText = regParts.join("   ·   ");
-    const maxRegW = textZoneW * 0.42;
-    const regStr  = fontR.widthOfTextAtSize(regText, regSz) <= maxRegW
-      ? regText
-      : trunc(regText, fontR, regSz, maxRegW);
-    page.drawText(regStr, {
-      x: W - MR - fontR.widthOfTextAtSize(regStr, regSz),
-      y: nameY,
-      size: regSz, font: fontR, color: C_MUTED,
+    page.drawText(trunc(regText, fontR, regSz, textZoneW), {
+      x: textX, y: cy, size: regSz, font: fontR, color: C_BLACK,
     });
+    cy -= 10;
   }
-
-  cy -= nameSize + 8;
 
   // Address
   if (companyAddress) {
     for (const line of wrap(companyAddress, fontR, 8, textZoneW).slice(0, 3)) {
-      page.drawText(line, { x: textX, y: cy, size: 8, font: fontR, color: C_MUTED });
+      page.drawText(line, { x: textX, y: cy, size: 8, font: fontR, color: C_BLACK });
       cy -= 10;
     }
   }
@@ -174,14 +182,15 @@ function drawMonoHeader(opts: {
 
   if (contactParts.length > 0) {
     page.drawText(trunc(contactParts.join("  ·  "), fontR, 7.5, textZoneW), {
-      x: textX, y: cy, size: 7.5, font: fontR, color: C_MUTED,
+      x: textX, y: cy, size: 7.5, font: fontR, color: C_BLACK,
     });
   }
 }
 
 // ── Mono info box height estimator ─────────────────────────────────────────
-const INFO_BOX_HDR_H = 22; // height of the column-header row inside the box
-const INFO_BOX_PAD   = 8;  // top + bottom inner padding
+const INFO_BOX_HDR_H   = 22; // height of the column-header row inside the box
+const INFO_BOX_PAD     = 10; // bottom reserve
+const CONTENT_PAD_Y    = 10; // top y-padding below header separator
 
 function estimateMonoInfoBoxH(opts: {
   cust: any;
@@ -221,18 +230,21 @@ function drawMonoInfoBox(opts: {
   createdAt: Date | string | null;
   validUntil: Date | string | null;
   title: string | null;
+  accentColor: Color;
 }): void {
   const {
     page, startY, boxH, fontR, fontB, cust,
     attentionNameSize, attentionNameBold,
     detailFontSize, detailFontBold,
     quotationNo, createdAt, validUntil, title,
+    accentColor,
   } = opts;
 
   const nameFont   = attentionNameBold ? fontB : fontR;
   const detailFont = detailFontBold    ? fontB : fontR;
   const DIVX       = ML + CW * 0.5;
   const PAD        = 8;
+  const CONTENT_PAD_Y = 10;
 
   // Outer box
   page.drawRectangle({
@@ -240,7 +252,13 @@ function drawMonoInfoBox(opts: {
     borderColor: C_BLACK, borderWidth: 0.8,
   });
 
-  // Vertical centre divider
+  // Header row — accent fill
+  page.drawRectangle({
+    x: ML, y: startY - INFO_BOX_HDR_H, width: CW, height: INFO_BOX_HDR_H,
+    color: accentColor,
+  });
+
+  // Vertical centre divider (full height)
   page.drawLine({
     start: { x: DIVX, y: startY - boxH },
     end:   { x: DIVX, y: startY },
@@ -254,18 +272,18 @@ function drawMonoInfoBox(opts: {
     thickness: 0.5, color: C_BLACK,
   });
 
-  // Column header labels (vertically centred in header row)
-  const lblY = startY - INFO_BOX_HDR_H / 2 - 3.5; // 7pt/2 baseline offset
+  // Column header labels (vertically centred in header row) — white text on accent
+  const lblY = startY - INFO_BOX_HDR_H / 2 - 3.5;
   page.drawText("CUSTOMER DETAIL", {
-    x: ML + PAD, y: lblY, size: 7, font: fontB, color: C_BLACK,
+    x: ML + PAD, y: lblY, size: 7, font: fontB, color: C_WHITE,
   });
   page.drawText("QUOTATION DETAIL", {
-    x: DIVX + PAD, y: lblY, size: 7, font: fontB, color: C_BLACK,
+    x: DIVX + PAD, y: lblY, size: 7, font: fontB, color: C_WHITE,
   });
 
   // ── LEFT: customer detail ────────────────────────────────────────────────
   const leftW = DIVX - ML - PAD * 2;
-  let ly = startY - INFO_BOX_HDR_H - PAD;
+  let ly = startY - INFO_BOX_HDR_H - CONTENT_PAD_Y;
 
   if (cust) {
     const custName = [cust.title, cust.name].filter(Boolean).join(" ");
@@ -306,7 +324,7 @@ function drawMonoInfoBox(opts: {
 
   // ── RIGHT: quotation detail ──────────────────────────────────────────────
   const rightW = W - MR - DIVX - PAD * 2;
-  let ry = startY - INFO_BOX_HDR_H - PAD;
+  let ry = startY - INFO_BOX_HDR_H - CONTENT_PAD_Y;
 
   const detailRows: [string, string][] = [
     ["Quotation No", quotationNo],
@@ -356,6 +374,8 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const itemDiscPerSet = items.reduce((s, i) => s + Number(i.discountAmt ?? 0), 0);
   const rawSubtotalPerSet = subtotalPerSet + itemDiscPerSet;
   const afterDisc      = subtotal - discAmt;
+
+  const accentColor = hexToColor(data.orgBrandColor) ?? C_HDR_BG;
 
   const pdfDoc = await PDFDocument.create();
   const fontR  = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -444,6 +464,8 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     companyAddress: orgCompanyAddress, phone: orgPhone, email: orgEmail,
     website: orgWebsite, nameSize, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
     headerLayout: hLayout, logoImg, fontR,
+    oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
+    mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
   }) + 6;
 
   const DIVIDER_GAP   = 10;
@@ -549,6 +571,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         detailFontSize: detailFSz, detailFontBold: !!(data.orgDetailFontBold ?? 0),
         quotationNo: q.quotationNo, createdAt: q.createdAt,
         validUntil: q.validUntil, title: q.title ?? null,
+        accentColor,
       });
       curY -= INFO_BLOCK + DIVIDER_GAP + 4;
 
@@ -578,7 +601,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     ];
 
     const tHdrY = curY - TABLE_HDR_H;
-    page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: TABLE_HDR_H, color: C_HDR_BG });
+    page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: TABLE_HDR_H, color: accentColor });
 
     for (const col of thdrs) {
       const tw = fontB.widthOfTextAtSize(col.label.toUpperCase(), 7.5);
