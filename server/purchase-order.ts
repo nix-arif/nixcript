@@ -17,7 +17,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, notInArray, sql } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -173,6 +173,23 @@ export interface UpdatePurchaseOrderInput extends Omit<CreatePurchaseOrderInput,
 
 export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: string; customerName: string | null }[]> {
   const { orgId } = await requireAccess("purchase-order:read");
+
+  // Exclude SOs that already have an active (non-cancelled) PO
+  const linkedSoIds = (
+    await db
+      .select({ salesOrderId: purchaseOrder.salesOrderId })
+      .from(purchaseOrder)
+      .where(
+        and(
+          eq(purchaseOrder.organizationId, orgId),
+          sql`${purchaseOrder.salesOrderId} is not null`,
+          sql`${purchaseOrder.status} != 'cancelled'`,
+        ),
+      )
+  )
+    .map((r) => r.salesOrderId)
+    .filter((id): id is string => !!id);
+
   const rows = await db
     .select({
       id: salesOrder.id,
@@ -180,8 +197,15 @@ export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: stri
       customerSnapshot: salesOrder.customerSnapshot,
     })
     .from(salesOrder)
-    .where(and(eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "confirmed")))
+    .where(
+      and(
+        eq(salesOrder.organizationId, orgId),
+        eq(salesOrder.status, "confirmed"),
+        linkedSoIds.length > 0 ? notInArray(salesOrder.id, linkedSoIds) : undefined,
+      ),
+    )
     .orderBy(desc(salesOrder.createdAt));
+
   return rows.map((r) => {
     const snap = r.customerSnapshot as any;
     return { id: r.id, soNo: r.soNo, customerName: snap?.name ?? null };
