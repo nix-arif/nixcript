@@ -617,6 +617,158 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
   );
 }
 
+// ── Template: Ember ───────────────────────────────────────────────────────
+// Transparent background. Brand colour used minimally — thin top rule,
+// quotation number accent, column headers, and grand-total border only.
+// Company and client info sit side-by-side in a plain header.
+function TemplateEmber({ entry }: { entry: GroupItem }) {
+  const { quotation: q, items, orgName, orgLogoUrl, orgBrandColor,
+    orgCompanyName, orgCompanyAddress, orgTaxNo, orgPhone, orgBankingInfo } = entry;
+  const cust    = q.customerSnapshot as any;
+  const primary = orgBrandColor ?? "#b45309";
+
+  const showTP    = !!Number(q.showTotalPrice);
+  const sets      = Number(q.sets ?? 1);
+  const subtotal  = Number(q.subtotal  ?? 0);
+  const discAmt   = Number(q.overallDiscountAmt ?? 0);
+  const sstAmt    = Number(q.sst       ?? 0);
+  const grand     = Number(q.grandTotal ?? 0);
+  const afterDisc = subtotal - discAmt;
+  const bank = (orgBankingInfo as any[]).find(b => b.isPrimary) ?? (orgBankingInfo as any[])[0] ?? null;
+
+  return (
+    <div style={{ background: "transparent", width: "100%", fontFamily: "'Segoe UI', Arial, sans-serif", fontSize: "12px", color: "#1a1a1a" }}>
+
+      {/* Thin accent rule at the very top */}
+      <div style={{ height: "3px", background: primary }} />
+
+      {/* ── Header: company left · quotation right ── */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 28px 14px" }}>
+        <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+          {orgLogoUrl && (
+            <img src={orgLogoUrl} alt="" style={{ height: "46px", width: "auto", objectFit: "contain", flexShrink: 0 }} />
+          )}
+          <div>
+            <div style={{ fontWeight: "700", fontSize: "14px", color: "#111", letterSpacing: "-0.2px" }}>{orgCompanyName ?? orgName}</div>
+            {orgCompanyAddress && <div style={{ color: "#666", fontSize: "10.5px", marginTop: "2px", maxWidth: "300px", lineHeight: "1.4" }}>{orgCompanyAddress}</div>}
+            {(orgTaxNo || orgPhone) && (
+              <div style={{ color: "#888", fontSize: "10px", marginTop: "2px" }}>
+                {[orgTaxNo && `Tax: ${orgTaxNo}`, orgPhone].filter(Boolean).join("  ·  ")}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: "9px", textTransform: "uppercase", letterSpacing: "2px", color: "#aaa" }}>Quotation</div>
+          <div style={{ fontWeight: "800", fontSize: "19px", fontFamily: "monospace", color: primary, marginTop: "2px", letterSpacing: "0.5px" }}>{q.quotationNo}</div>
+          {q.title && q.title !== "Loose Items" && (
+            <div style={{ fontSize: "11px", color: "#555", marginTop: "2px" }}>{q.title}</div>
+          )}
+          <div style={{ fontSize: "10px", color: "#888", marginTop: "4px" }}>
+            <span>{fmtDate(q.createdAt)}</span>
+            <span style={{ margin: "0 4px", color: "#ccc" }}>·</span>
+            <span>Valid: {fmtDate(q.validUntil)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Thin separator */}
+      <div style={{ height: "1px", background: "#e5e5e5", margin: "0 28px" }} />
+
+      {/* ── Client info + meta — plain, no background ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "24px", padding: "12px 28px 14px" }}>
+        <div>
+          <div style={{ fontSize: "8.5px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.2px", color: primary, marginBottom: "5px" }}>Attention To</div>
+          {cust ? (
+            <div style={{ lineHeight: "1.55" }}>
+              <div style={{ fontWeight: "700", fontSize: "13px", color: "#111" }}>{[cust.title, cust.name].filter(Boolean).join(" ")}</div>
+              {(cust.position || cust.department) && <div style={{ color: "#444", fontSize: "11px" }}>{[cust.position, cust.department].filter(Boolean).join(", ")}</div>}
+              {cust.organizationName && <div style={{ color: "#444", fontSize: "11px" }}>{cust.organizationName}</div>}
+              {cust.organizationAddress && <div style={{ color: "#777", fontSize: "10.5px" }}>{cust.organizationAddress}</div>}
+              {(cust.email || cust.contactNo) && <div style={{ color: "#888", fontSize: "10.5px" }}>{[cust.email, cust.contactNo].filter(Boolean).join("  ·  ")}</div>}
+            </div>
+          ) : <div style={{ color: "#aaa" }}>—</div>}
+        </div>
+        <div style={{ fontSize: "10.5px", display: "flex", flexDirection: "column", gap: "3px", textAlign: "right" }}>
+          {([["Sales Person", q.salesPersonName ?? "—"], ["Prepared By", q.preparedByName ?? "—"]] as [string,string][]).map(([l, v]) => (
+            <div key={l}><span style={{ color: "#aaa", marginRight: "6px" }}>{l}</span><span style={{ fontWeight: "500", color: "#333" }}>{v}</span></div>
+          ))}
+        </div>
+      </div>
+
+      {/* Thin separator */}
+      <div style={{ height: "1px", background: "#e5e5e5", margin: "0 28px" }} />
+
+      {/* ── Items — borderless rows ── */}
+      <div style={{ margin: "14px 28px 0" }}>
+        <div style={{ display: "grid", gridTemplateColumns: `28px 90px 1fr 44px 48px 80px 44px${showTP ? " 90px" : ""}`, borderBottom: `1.5px solid ${primary}`, paddingBottom: "5px", marginBottom: "2px" }}>
+          {["#", "Code", "Description / MDA", "Qty", "UOM", "Unit Price", "Disc", ...(showTP ? ["Total"] : [])].map((h, i) => (
+            <div key={h} style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.7px", color: primary, textAlign: ["Unit Price","Total","#"].includes(h) ? "right" : "left", paddingRight: i === 1 ? "8px" : "0" }}>{h}</div>
+          ))}
+        </div>
+        {items.map((item, i) => (
+          <div key={item.id} style={{ display: "grid", gridTemplateColumns: `28px 90px 1fr 44px 48px 80px 44px${showTP ? " 90px" : ""}`, padding: "6px 0", borderBottom: "1px solid #f0f0f0", alignItems: "start" }}>
+            <div style={{ color: "#ccc", textAlign: "right", paddingRight: "8px", paddingTop: "1px", fontSize: "10px" }}>{item.rowNo}</div>
+            <div style={{ fontFamily: "monospace", fontSize: "10px", color: "#666", paddingRight: "8px", paddingTop: "1px" }}>{item.productCode ?? "—"}</div>
+            <div>
+              <div style={{ fontWeight: "500" }}>{item.description ?? "—"}</div>
+              {item.hasCert && item.mdaRegNo && <div style={{ fontSize: "9.5px", color: "#059669", marginTop: "1px" }}>MDA: {item.mdaRegNo}{item.mdaValidity ? ` · Exp: ${fmtDate(item.mdaValidity, true)}` : ""}</div>}
+              {!item.hasCert && <div style={{ fontSize: "9.5px", color: "#d97706", marginTop: "1px" }}>No MDA certificate</div>}
+            </div>
+            <div style={{ textAlign: "center", color: "#333" }}>{item.qty}</div>
+            <div style={{ textAlign: "center", color: "#888" }}>{item.uom || "—"}</div>
+            <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</div>
+            <div style={{ textAlign: "center", color: "#888" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</div>
+            {showTP && <div style={{ textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Totals + bank ── */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", padding: "14px 28px 0" }}>
+        {bank ? (
+          <div style={{ fontSize: "11px" }}>
+            <div style={{ fontSize: "8.5px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.2px", color: primary, marginBottom: "5px" }}>Payment To</div>
+            {[["Bank", bank.bankName], ["Account", bank.accountHolder], ["Acc No.", bank.accountNo]].map(([l, v]) => (
+              <div key={l} style={{ marginBottom: "1px" }}><span style={{ color: "#aaa", marginRight: "6px" }}>{l}:</span><span style={{ fontWeight: "500", color: "#333" }}>{v}</span></div>
+            ))}
+          </div>
+        ) : <div />}
+        <div style={{ minWidth: "210px" }}>
+          {[
+            [`Subtotal`, fmtMoney(subtotal / Math.max(sets, 1))],
+            ...(discAmt > 0 ? [[`Discount (${q.overallDiscountPct}%)`, `- ${fmtMoney(discAmt)}`], [`After Discount`, fmtMoney(afterDisc)]] : []),
+            ...(sstAmt > 0 ? [[`SST (${q.sstPct}%)`, fmtMoney(sstAmt)]] : []),
+          ].map(([l, v]) => (
+            <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: "16px", fontSize: "11px", color: "#666", marginBottom: "3px" }}>
+              <span>{l}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{v}</span>
+            </div>
+          ))}
+          {/* Grand total — accent left border only, no fill */}
+          <div style={{ marginTop: "8px", borderTop: `2px solid ${primary}`, paddingTop: "8px", display: "flex", justifyContent: "space-between", gap: "16px" }}>
+            <span style={{ fontWeight: "700", fontSize: "13px", color: "#111" }}>
+              {sets > 1 ? `Grand Total × ${sets} Sets` : "Grand Total"}
+            </span>
+            <span style={{ fontWeight: "800", fontSize: "15px", color: primary, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grand)}</span>
+          </div>
+        </div>
+      </div>
+
+      {q.notes && (
+        <div style={{ margin: "14px 28px 0", padding: "10px 14px", borderLeft: `2px solid ${primary}`, background: "#fafafa", fontSize: "11px", color: "#444" }}>
+          <div style={{ fontSize: "8.5px", fontWeight: "700", color: primary, textTransform: "uppercase", letterSpacing: "1px", marginBottom: "3px" }}>Notes</div>
+          {q.notes}
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", margin: "14px 28px 20px", paddingTop: "10px", borderTop: "1px solid #ebebeb", fontSize: "10px", color: "#bbb" }}>
+        <span><span style={{ color: "#666", fontWeight: "500" }}>Computer generated document.</span> No signature required.</span>
+        <span style={{ fontFamily: "monospace", color: "#aaa" }}>{q.quotationNo} · {new Date().toLocaleDateString("en-MY")}</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Number to words (Malaysian currency) ──────────────────────────────────
 function numberToWords(n: number): string {
   const ONES = ["","ONE","TWO","THREE","FOUR","FIVE","SIX","SEVEN","EIGHT","NINE",
@@ -953,6 +1105,7 @@ function QuotationPage({ entry }: { entry: GroupItem }) {
   if (t === "aura")   return <TemplateAffirma entry={entry} />;
   if (t === "zinc")   return <TemplateModern  entry={entry} />;
   if (t === "mono")   return <TemplateMono    entry={entry} />;
+  if (t === "ember")  return <TemplateEmber   entry={entry} />;
   return <TemplateAffirma entry={entry} />;
 }
 

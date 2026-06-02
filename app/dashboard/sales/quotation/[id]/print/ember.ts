@@ -34,7 +34,7 @@ const LOGO_W_MAX   = 90;
 const B_PADX       = ML;
 const B_PADT       = 14;
 const B_PADB       = 12;
-const B_FS_DET     = 8.5;
+const B_FS_DET     = 7.5;
 const B_LH         = 11;
 const B_DASH_H     = 14;   // vertical space around dashed divider
 const TABLE_PAD    = 6;
@@ -209,7 +209,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   // The band is split into:  top = company section  |  bottom = customer section
   // Right 38% of band = quotation metadata (no, date, valid)
   const RIGHT_X    = ML + Math.round(CW * 0.60); // left/right divider in band
-  const CO_TEXT_X  = ML + (logoImg ? LOGO_W_MAX + 10 : 6);
+  const CO_TEXT_X  = ML + (logoImg ? LOGO_W_MAX + 10 : 6) - 20;
   const CO_TEXT_W  = RIGHT_X - CO_TEXT_X - 10;
   const RIGHT_W    = W - MR - RIGHT_X;
 
@@ -342,9 +342,10 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
     // ── Page 1: full header band ───────────────────────────────────────────
     if (isFirst) {
-      page.drawRectangle({ x: 0, y: H - BAND_H, width: W, height: BAND_H, color: accent });
+      // Thin accent rule at top of page only
+      page.drawRectangle({ x: 0, y: H - 3, width: W, height: 3, color: accent });
 
-      // Logo (top-left of band, vertically centred in company section)
+      // Logo
       if (logoImg) {
         const scale = Math.min(LOGO_H_MAX / logoImg.height, LOGO_W_MAX / logoImg.width, 1);
         const lw = logoImg.width  * scale;
@@ -353,35 +354,35 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         page.drawImage(logoImg, { x: ML, y: logoY, width: lw, height: lh });
       }
 
-      // Company text
+      // Company name — brand colour; info lines — black
       let cty = H - B_PADT - nameSize;
       page.drawText(trunc(dispName, nameFont, nameSize, CO_TEXT_W), {
-        x: CO_TEXT_X, y: cty, size: nameSize, font: nameFont, color: C_WHITE,
+        x: CO_TEXT_X, y: cty, size: nameSize, font: nameFont, color: accent,
       });
-      cty -= nameSize + 4;
+      cty -= nameSize - 1;
       for (const line of coAddrLines) {
-        page.drawText(line, { x: CO_TEXT_X, y: cty, size: B_FS_DET, font: fontR, color: C_BAND_SEC });
+        page.drawText(line, { x: CO_TEXT_X, y: cty, size: B_FS_DET, font: fontR, color: C_DARK });
         cty -= B_LH;
       }
       if (coContactStr) {
         page.drawText(trunc(coContactStr, fontR, B_FS_DET, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty, size: B_FS_DET, font: fontR, color: C_BAND_SEC,
+          x: CO_TEXT_X, y: cty, size: B_FS_DET, font: fontR, color: C_DARK,
         });
         cty -= B_LH;
       }
       if (coSsmStr) {
-        page.drawText(trunc(coSsmStr, fontR, 7.5, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty, size: 7.5, font: fontR, color: C_BAND_MUTE,
+        page.drawText(trunc(coSsmStr, fontR, 6, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty, size: 6, font: fontR, color: C_DARK,
         });
         cty -= B_LH;
       }
       if (coMdaStr) {
-        page.drawText(trunc(coMdaStr, fontR, 7.5, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty, size: 7.5, font: fontR, color: C_BAND_MUTE,
+        page.drawText(trunc(coMdaStr, fontR, 6, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty, size: 6, font: fontR, color: C_DARK,
         });
       }
 
-      // Right column — quotation label + number (company section)
+      // Right: quotation label + number — number in accent colour only
       const qlW   = QL_FONT.widthOfTextAtSize(QL_TEXT, QL_SIZE);
       const qlAlign = (data.orgQuotationLabelAlign ?? "right") as "left" | "center" | "right";
       const qlX   = qlAlign === "left"   ? ML
@@ -389,50 +390,46 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
                   :                        W - MR - qlW;
       page.drawText(QL_TEXT, {
         x: qlX, y: H - B_PADT - QL_SIZE,
-        size: QL_SIZE, font: QL_FONT, color: C_BAND_MUTE,
+        size: QL_SIZE, font: QL_FONT, color: C_LITE,
       });
       const qNoSize = 12;
       const qNoW    = fontB.widthOfTextAtSize(q.quotationNo, qNoSize);
       page.drawText(q.quotationNo, {
         x: W - MR - qNoW, y: H - B_PADT - QL_SIZE - 5 - qNoSize,
-        size: qNoSize, font: fontB, color: C_WHITE,
+        size: qNoSize, font: fontB, color: accent,
       });
 
-      // Dashed divider
+      // Light separator between company and customer sections
       const dashY = H - B_PADT - CO_SECTION_H - B_DASH_H / 2;
-      page.drawLine({
-        start: { x: ML, y: dashY }, end: { x: W - MR, y: dashY },
-        thickness: 0.5, color: C_WHITE, opacity: 0.22,
-        dashArray: [4, 4], dashPhase: 0,
-      });
+      hLine(page, dashY, ML, W - MR, C_LINE, 0.5);
 
-      // Customer section (below dashed divider)
+      // Customer section
       const cuTop = H - B_PADT - CO_SECTION_H - B_DASH_H;
       let cuLY = cuTop;
 
       page.drawText("ATTENTION TO", {
-        x: ML, y: cuLY, size: 7, font: fontB, color: C_BAND_MUTE,
+        x: ML, y: cuLY, size: 7, font: fontB, color: C_LITE,
       });
       cuLY -= 7 + 4;
 
       if (custName) {
         page.drawText(trunc(custName, fontB, attnNameSz, RIGHT_X - ML - 10), {
-          x: ML, y: cuLY, size: attnNameSz, font: fontB, color: C_WHITE,
+          x: ML, y: cuLY, size: attnNameSz, font: fontB, color: C_DARK,
         });
         cuLY -= attnNameSz + 3;
       }
       if (cust?.organizationName) {
         page.drawText(trunc(cust.organizationName, fontR, B_FS_DET, RIGHT_X - ML - 10), {
-          x: ML, y: cuLY, size: B_FS_DET, font: fontR, color: C_BAND_SEC,
+          x: ML, y: cuLY, size: B_FS_DET, font: fontR, color: C_MID,
         });
         cuLY -= B_LH;
       }
       if (cust?.organizationAddress) {
         const addrLine = wrap(cust.organizationAddress, fontR, B_FS_DET, RIGHT_X - ML - 10)[0] ?? "";
-        page.drawText(addrLine, { x: ML, y: cuLY, size: B_FS_DET, font: fontR, color: C_BAND_MUTE });
+        page.drawText(addrLine, { x: ML, y: cuLY, size: B_FS_DET, font: fontR, color: C_LITE });
       }
 
-      // Right column — dates (customer section)
+      // Right: dates — dark values
       let cuRY = cuTop;
       const dateRows: [string, string][] = [
         ["Date",        fmtD(q.createdAt)],
@@ -441,9 +438,9 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         ...(q.preparedByName   ? [["Prepared", q.preparedByName]   as [string, string]] : []),
       ];
       for (const [lbl, val] of dateRows) {
-        page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY, size: 8, font: fontR, color: C_BAND_MUTE });
+        page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY, size: 8, font: fontR, color: C_LITE });
         const vw = fontB.widthOfTextAtSize(val, 8);
-        page.drawText(val, { x: W - MR - vw, y: cuRY, size: 8, font: fontB, color: C_WHITE });
+        page.drawText(val, { x: W - MR - vw, y: cuRY, size: 8, font: fontB, color: C_DARK });
         cuRY -= B_LH + 1;
       }
 
@@ -461,16 +458,17 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
 
     } else {
-      // ── Slim continuation band ─────────────────────────────────────────────
-      page.drawRectangle({ x: 0, y: H - SLIM_BAND_H, width: W, height: SLIM_BAND_H, color: accent });
+      // ── Slim continuation header ───────────────────────────────────────────
+      page.drawRectangle({ x: 0, y: H - 3, width: W, height: 3, color: accent });
       page.drawText(trunc(dispName, nameFont, 9, CW * 0.55), {
-        x: ML, y: H - SLIM_BAND_H + 12, size: 9, font: nameFont, color: C_WHITE,
+        x: ML, y: H - SLIM_BAND_H + 12, size: 9, font: nameFont, color: C_DARK,
       });
       const contStr = `${q.quotationNo}  ·  continued`;
       page.drawText(contStr, {
         x: W - MR - fontR.widthOfTextAtSize(contStr, 8),
-        y: H - SLIM_BAND_H + 12, size: 8, font: fontR, color: C_BAND_MUTE,
+        y: H - SLIM_BAND_H + 12, size: 8, font: fontR, color: C_LITE,
       });
+      hLine(page, H - SLIM_BAND_H, ML, W - MR, C_LINE, 0.5);
       curY = H - SLIM_BAND_H;
     }
 
@@ -642,16 +640,17 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
       ty -= 8;
 
-      // Grand total — full-width accent band
-      page.drawRectangle({ x: ML, y: ty - GRAND_BAND_H, width: CW, height: GRAND_BAND_H, color: accent });
+      // Grand total — accent top border only, no fill
+      hLine(page, ty, ML, W - MR, accent, 1.5);
       page.drawText("GRAND TOTAL", {
-        x: ML + 12, y: ty - GRAND_BAND_H + 9, size: 8, font: fontB, color: C_WHITE,
+        x: ML + 12, y: ty - GRAND_BAND_H + 9, size: 8, font: fontB, color: C_DARK,
       });
       const gtStr = fmtM(grand);
       const gtW   = fontB.widthOfTextAtSize(gtStr, 14);
       page.drawText(gtStr, {
-        x: W - MR - gtW - 10, y: ty - GRAND_BAND_H + 7, size: 14, font: fontB, color: C_WHITE,
+        x: W - MR - gtW - 10, y: ty - GRAND_BAND_H + 7, size: 14, font: fontB, color: accent,
       });
+      hLine(page, ty - GRAND_BAND_H, ML, W - MR, C_LINE, 0.5);
       curY = ty - GRAND_BAND_H - 14;
 
       curY -= 14;
@@ -725,27 +724,28 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         const catPage  = pdfDoc.addPage([W, H]);
         const pageRows = catItems.slice(pi * ROWS_PER_PG, (pi + 1) * ROWS_PER_PG);
 
-        catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H, color: accent });
+        catPage.drawRectangle({ x: 0, y: H - 3, width: W, height: 3, color: accent });
         catPage.drawText("PRODUCT CATALOGUE", {
-          x: ML, y: H - 22, size: 13, font: fontB, color: C_WHITE,
+          x: ML, y: H - 22, size: 13, font: fontB, color: C_DARK,
         });
         if (q.title) {
           catPage.drawText(trunc(q.title, fontB, 8.5, CW / 2), {
-            x: ML, y: H - 36, size: 8.5, font: fontB, color: C_WHITE,
+            x: ML, y: H - 36, size: 8.5, font: fontB, color: C_DARK,
           });
           catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, {
-            x: ML, y: H - 48, size: 7, font: fontR, color: C_BAND_MUTE,
+            x: ML, y: H - 48, size: 7, font: fontR, color: C_LITE,
           });
         } else {
           catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, {
-            x: ML, y: H - 36, size: 8, font: fontR, color: C_BAND_MUTE,
+            x: ML, y: H - 36, size: 8, font: fontR, color: C_LITE,
           });
         }
         const pgLabel = `Page ${pi + 1} / ${totalCatPgs}`;
         catPage.drawText(pgLabel, {
           x: W - MR - fontR.widthOfTextAtSize(pgLabel, 8),
-          y: H - 28, size: 8, font: fontR, color: C_WHITE,
+          y: H - 28, size: 8, font: fontR, color: C_MID,
         });
+        hLine(catPage, H - CAT_HDR_H, ML, W - MR, C_LINE, 0.5);
 
         const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
         catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: C_OFF });
