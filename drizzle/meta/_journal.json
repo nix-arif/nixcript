@@ -36,6 +36,13 @@
       "when": 1780362696180,
       "tag": "0004_add-stock-request-and-staff-limit",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1748830800000,
+      "tag": "0005_product-price-columns",
+      "breakpoints": true
     }
   ]
 }

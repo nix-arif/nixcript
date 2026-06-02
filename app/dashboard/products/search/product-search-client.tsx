@@ -913,8 +913,8 @@ function ProductSlideOver({
                   Unit price
                 </div>
                 <div className="text-base font-medium">
-                  {p.unitPrice
-                    ? `RM ${Number(p.unitPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+                  {p.sellingUnitPrice
+                    ? `RM ${Number(p.sellingUnitPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
                     : "—"}
                 </div>
               </div>
@@ -1019,10 +1019,10 @@ function ProductCard({
           {highlight(p.description ?? "—", query)}
         </div>
         <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
-          {p.unitPrice && (
+          {p.sellingUnitPrice && (
             <span className="font-medium text-foreground">
               RM{" "}
-              {Number(p.unitPrice).toLocaleString("en-MY", {
+              {Number(p.sellingUnitPrice).toLocaleString("en-MY", {
                 minimumFractionDigits: 2,
               })}
             </span>

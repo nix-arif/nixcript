@@ -340,9 +340,9 @@ export async function matchSpreadsheetToProducts(
       ? { value: row.uom, source: "sheet" as const }
       : { value: dbProduct?.uom ?? "", source: "db" as const };
 
-    // For price: spreadsheet wins, else db unitPrice, else 0
+    // For price: spreadsheet wins, else db sellingUnitPrice, else 0
     const sheetPrice = row.unitPrice?.replace(/[^0-9.]/g, "");
-    const dbPrice = dbProduct?.unitPrice ?? "";
+    const dbPrice = dbProduct?.sellingUnitPrice ?? "";
     const unitPrice =
       sheetPrice && Number(sheetPrice) > 0
         ? { value: sheetPrice, source: "sheet" as const }
@@ -1891,7 +1891,7 @@ function buildGovItem(
   const description = raw.description?.trim() || dbProduct?.description || "";
   const qty = raw.qty?.trim() || "1";
   const uom = raw.uom?.trim() || dbProduct?.uom || "";
-  const unitPrice = raw.unitPrice?.trim() || dbProduct?.unitPrice || "0";
+  const unitPrice = raw.unitPrice?.trim() || dbProduct?.sellingUnitPrice || "0";
 
   const hasCert = !!(dbProduct?.mdaPdfFile);
   const hasPrice = !!(unitPrice && Number(unitPrice) > 0);

@@ -23,7 +23,7 @@ type ParsedRow = {
 type ProductDetail = {
   productCode: string;
   description: string | null;
-  unitPrice: string | null;
+  sellingUnitPrice: string | null;
   uom: string | null;
   mdaRegistrationNo: string | null;
 };
@@ -101,7 +101,7 @@ export function ItemsPriceClient() {
           row.no,
           row.productCode,
           d?.description ?? "",
-          d?.unitPrice ? Number(d.unitPrice) : "",
+          d?.sellingUnitPrice ? Number(d.sellingUnitPrice) : "",
           d?.uom ?? "",
           d?.mdaRegistrationNo ?? "",
         ];
@@ -260,8 +260,8 @@ export function ItemsPriceClient() {
                         {d?.description ?? <span className="italic text-muted-foreground/40">—</span>}
                       </td>
                       <td className="px-3 py-2 text-right font-mono tabular-nums">
-                        {d?.unitPrice
-                          ? Number(d.unitPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })
+                        {d?.sellingUnitPrice
+                          ? Number(d.sellingUnitPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })
                           : <span className="italic text-muted-foreground/40">—</span>}
                       </td>
                       <td className="px-3 py-2 text-muted-foreground">

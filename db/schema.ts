@@ -538,7 +538,10 @@ export const product = pgTable(
     // Product details
     productCode: text("product_code").notNull(),
     description: text("description"),
-    unitPrice: text("unit_price"),
+    sellingUnitPrice: text("selling_unit_price"),
+    sellingPriceCurrency: text("selling_price_currency").notNull().default("MYR"),
+    costUnitPrice: text("cost_unit_price"),
+    costSellingPrice: text("cost_selling_price"),
     uom: text("uom"),
     supplier: text("supplier"),
     brand: text("brand"),

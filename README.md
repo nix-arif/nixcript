@@ -90,4 +90,34 @@ Available = On Hand − Reserved
 Low stock badge = quantity is at or below the reorder point
 Set reorder alerts (inventory:manage): click the ⚙ icon on any row → set the reorder point (e.g. 50 units). The row turns amber when stock hits that level.
 
-Movement History → full audit trail of every stock in/out/transfer with who did it and when.
+## Movement History → full audit trail of every stock in/out/transfer with who did it and when.
+
+How it works
+Manager setup (one-time)
+
+Go to Inventory → Field Stock → Holding Limits tab
+Click Set Limit → pick a staff member, a product, and the max qty they're allowed to hold
+Staff without a limit set can still request — no cap enforced
+Staff requesting stock
+
+Go to Inventory → Field Stock
+Click Request Stock → pick the source warehouse, search for the product, enter qty and reason
+If they'd exceed their holding limit, the request is blocked immediately with a clear error
+Status shows Pending
+Manager approving
+
+Go to Field Stock → Requests tab — pending badge shows the count
+Click ✓ on a request → adjust approved qty if needed → Approve & Transfer Stock
+Stock is instantly transferred from the source warehouse to "Field - [Staff Name]" virtual warehouse
+Limit is re-checked at approval too
+Viewing allocations
+
+Field Stock → Current Allocations tab shows all staff holdings with utilisation %
+The "Field - [Name]" warehouse also appears on the main Stock Overview page like any other warehouse
+Staff using stock with a customer
+
+Create a Delivery Order, pick items, link to Sales Order
+When marking as Delivered, STOCK_OUT comes from the staff's "Field - [Name]" warehouse (select it as the warehouse)
+Returning unused stock
+
+Go to Stock Overview → Transfer → move from "Field - [Name]" back to main warehouse

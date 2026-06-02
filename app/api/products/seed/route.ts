@@ -93,7 +93,7 @@
 //         target: [product.productCode, product.organizationId],
 //         set: {
 //           description: sql`COALESCE(EXCLUDED.description, ${product.description})`,
-//           unitPrice: sql`COALESCE(EXCLUDED.unit_price, ${product.unitPrice})`,
+//           sellingUnitPrice: sql`COALESCE(EXCLUDED.selling_unit_price, ${product.sellingUnitPrice})`,
 //           uom: sql`COALESCE(EXCLUDED.uom, ${product.uom})`,
 //           supplier: sql`COALESCE(EXCLUDED.supplier, ${product.supplier})`,
 //           brand: sql`COALESCE(EXCLUDED.brand, ${product.brand})`,
@@ -236,7 +236,7 @@ export async function POST(req: NextRequest) {
         target: [product.productCode, product.organizationId],
         set: {
           description: sql`COALESCE(EXCLUDED.description, ${product.description})`,
-          unitPrice: sql`COALESCE(EXCLUDED.unit_price, ${product.unitPrice})`,
+          sellingUnitPrice: sql`COALESCE(EXCLUDED.selling_unit_price, ${product.sellingUnitPrice})`,
           uom: sql`COALESCE(EXCLUDED.uom, ${product.uom})`,
           supplier: sql`COALESCE(EXCLUDED.supplier, ${product.supplier})`,
           brand: sql`COALESCE(EXCLUDED.brand, ${product.brand})`,
