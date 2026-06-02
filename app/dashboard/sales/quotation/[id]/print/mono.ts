@@ -1132,8 +1132,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         }
       }
 
-      const C_CAT_LINE = rgb(0.88, 0.88, 0.88);
-      const C_CAT_ALT  = rgb(0.97, 0.97, 0.97);
+      const C_CAT_LINE = rgb(0.88, 0.88, 0.88); // kept for image placeholder only
       const CAT_HDR_H    = 64;
       const CAT_COLHDR_H = 20;
       const CAT_FOOT_H   = 32;
@@ -1150,46 +1149,45 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         const catPage  = pdfDoc.addPage([W, H]);
         const pageRows = catItems.slice(pi * ROWS_PER_PG, (pi + 1) * ROWS_PER_PG);
 
-        // Header strip — white background, all black text
+        // Header — white, all text black, all caps
         catPage.drawText("PRODUCT CATALOGUE", { x: ML, y: H - 22, size: 13, font: fontB, color: C_BLACK });
         if (q.title) {
-          catPage.drawText(trunc(q.title, fontB, 8.5, CW / 2), { x: ML, y: H - 36, size: 8.5, font: fontB, color: C_BLACK });
-          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, { x: ML, y: H - 46, size: 7, font: fontR, color: C_BLACK });
+          catPage.drawText(trunc((q.title ?? "").toUpperCase(), fontB, 8.5, CW / 2), { x: ML, y: H - 36, size: 8.5, font: fontB, color: C_BLACK });
+          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`.toUpperCase(), { x: ML, y: H - 46, size: 7, font: fontR, color: C_BLACK });
         } else {
-          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, { x: ML, y: H - 37, size: 8, font: fontR, color: C_BLACK });
+          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`.toUpperCase(), { x: ML, y: H - 37, size: 8, font: fontR, color: C_BLACK });
         }
-        const pgLabel = `Page ${pi + 1} / ${totalCatPgs}`;
+        const pgLabel = `PAGE ${pi + 1} / ${totalCatPgs}`;
         catPage.drawText(pgLabel, { x: W - MR - fontR.widthOfTextAtSize(pgLabel, 8), y: H - 28, size: 8, font: fontR, color: C_BLACK });
 
-        // Column header row — white fill, black border, black text
+        // Column header row — no fill, black border, black text, all caps
         const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
-        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: C_WHITE, borderColor: C_BLACK, borderWidth: 0.4 });
+        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, borderColor: C_BLACK, borderWidth: 0.8 });
         const colDefs: { label: string; x: number; w: number }[] = [
           { label: "#",               x: ML,                               w: CAT_COL_NO  },
-          { label: "Image",           x: ML + CAT_COL_NO,                  w: CAT_COL_IMG },
-          { label: "Product Details", x: ML + CAT_COL_NO + CAT_COL_IMG,   w: CAT_COL_DET },
+          { label: "IMAGE",           x: ML + CAT_COL_NO,                  w: CAT_COL_IMG },
+          { label: "PRODUCT DETAILS", x: ML + CAT_COL_NO + CAT_COL_IMG,   w: CAT_COL_DET },
         ];
         for (const col of colDefs) {
           const tw = fontB.widthOfTextAtSize(col.label, 7);
           catPage.drawText(col.label, { x: col.x + (col.w - tw) / 2, y: colHdrY + 6, size: 7, font: fontB, color: C_BLACK });
         }
 
-        // Vertical separators
+        // Vertical separators — black
         const tableTopY    = colHdrY;
         const tableBottomY = tableTopY - pageRows.length * CAT_ROW_H;
         for (const col of colDefs.slice(1)) {
-          catPage.drawLine({ start: { x: col.x, y: tableBottomY }, end: { x: col.x, y: tableTopY }, thickness: 0.3, color: C_CAT_LINE });
+          catPage.drawLine({ start: { x: col.x, y: tableBottomY }, end: { x: col.x, y: tableTopY }, thickness: 0.4, color: C_BLACK });
         }
 
-        // Product rows
+        // Product rows — no fill, black row borders, all text black and all caps
         let rowTopY = colHdrY;
         for (let ri = 0; ri < pageRows.length; ri++) {
           const item    = pageRows[ri];
           const rowY    = rowTopY - CAT_ROW_H;
           const globalN = pi * ROWS_PER_PG + ri + 1;
 
-          if (ri % 2 === 1) catPage.drawRectangle({ x: ML, y: rowY, width: CW, height: CAT_ROW_H, color: C_CAT_ALT });
-          catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_CAT_LINE });
+          catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.4, color: C_BLACK });
 
           const noStr = String(globalN);
           catPage.drawText(noStr, { x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2, y: rowY + CAT_ROW_H / 2 - 4, size: 8, font: fontR, color: C_BLACK });
@@ -1202,7 +1200,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
             const ih = img.height * scale;
             catPage.drawImage(img, { x: imgColX + (CAT_COL_IMG - iw) / 2, y: rowY + (CAT_ROW_H - ih) / 2, width: iw, height: ih });
           } else {
-            catPage.drawRectangle({ x: imgColX + (CAT_COL_IMG - CAT_IMG_SZ) / 2, y: rowY + (CAT_ROW_H - CAT_IMG_SZ) / 2, width: CAT_IMG_SZ, height: CAT_IMG_SZ, color: C_CAT_LINE });
+            catPage.drawRectangle({ x: imgColX + (CAT_COL_IMG - CAT_IMG_SZ) / 2, y: rowY + (CAT_ROW_H - CAT_IMG_SZ) / 2, width: CAT_IMG_SZ, height: CAT_IMG_SZ, borderColor: C_BLACK, borderWidth: 0.4 });
           }
 
           const detX    = ML + CAT_COL_NO + CAT_COL_IMG + 8;
@@ -1210,37 +1208,37 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
           let   detY    = rowY + CAT_ROW_H - 16;
 
           if (item.productCode) {
-            catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: C_BLACK });
+            catPage.drawText(trunc(item.productCode.toUpperCase(), fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: C_BLACK });
             detY -= 11;
           }
           if (item.description) {
-            for (const line of wrap(String(item.description), fontR, 8, detMaxW).slice(0, 4)) {
+            for (const line of wrap(String(item.description).toUpperCase(), fontR, 8, detMaxW).slice(0, 4)) {
               catPage.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
               detY -= 10;
             }
           }
           if (item.uom) {
-            catPage.drawText(item.uom, { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
+            catPage.drawText(item.uom.toUpperCase(), { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
             detY -= 11;
           }
           if (item.hasCert) {
             detY -= 5;
             if (item.mdaRegNo) {
-              catPage.drawText(`MDA Reg No: ${item.mdaRegNo}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
+              catPage.drawText(`MDA REG NO: ${item.mdaRegNo.toUpperCase()}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
               detY -= 10;
             }
             if (item.mdaValidity) {
-              catPage.drawText(`MDA Validity: ${fmtD(item.mdaValidity)}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
+              catPage.drawText(`MDA VALIDITY: ${fmtD(item.mdaValidity).toUpperCase()}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
             }
           }
           rowTopY = rowY;
         }
 
-        catPage.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_CAT_LINE, borderWidth: 0.4 });
+        catPage.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_BLACK, borderWidth: 0.8 });
 
         hLine(catPage, MB + 22);
-        catPage.drawText("Product Catalogue  ·  Computer generated document.", { x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_BLACK });
-        catPage.drawText(q.quotationNo, { x: W - MR - fontR.widthOfTextAtSize(q.quotationNo, 7.5), y: MB + 10, size: 7.5, font: fontR, color: C_BLACK });
+        catPage.drawText("PRODUCT CATALOGUE  ·  COMPUTER GENERATED DOCUMENT.", { x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_BLACK });
+        catPage.drawText(q.quotationNo.toUpperCase(), { x: W - MR - fontR.widthOfTextAtSize(q.quotationNo.toUpperCase(), 7.5), y: MB + 10, size: 7.5, font: fontR, color: C_BLACK });
       }
     }
   }
