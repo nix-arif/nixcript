@@ -2,19 +2,17 @@ export const APPROVAL_MODULES = [
   {
     id: "leave",
     title: "Leave Management",
-    description: "Who can approve or reject leave applications and configure leave types.",
+    description: "Who can approve or reject leave applications.",
     permissions: [
       { key: "leave:approve", label: "Approve / Reject Leave" },
-      { key: "leave:manage",  label: "Manage Leave Types" },
     ],
   },
   {
     id: "claim",
     title: "Claim Management",
-    description: "Who can approve or reject expense claims and configure claim types & rates.",
+    description: "Who can approve or reject expense claims.",
     permissions: [
       { key: "claim:approve", label: "Approve / Reject Claims" },
-      { key: "claim:manage",  label: "Manage Claim Types & Rates" },
     ],
   },
   {
@@ -42,7 +40,6 @@ export const APPROVAL_MODULES = [
     description: "Who can approve or reject stock movement submissions.",
     permissions: [
       { key: "inventory:approve", label: "Approve / Reject Stock Movements" },
-      { key: "inventory:manage",  label: "Manage Inventory Settings" },
     ],
   },
 ] as const;

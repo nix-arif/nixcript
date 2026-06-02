@@ -10,13 +10,10 @@ export const ALL_PERMISSIONS = [
   { key: "quotation:delete", label: "Delete Quotation" },
 
   // Sales Order
-  { key: "sales-order:read",    label: "View Sales Orders" },
-  { key: "sales-order:create",  label: "Create Sales Order" },
-  { key: "sales-order:update",  label: "Update Sales Order" },
-  { key: "sales-order:delete",  label: "Delete Sales Order" },
-  { key: "sales-order:approve", label: "Approve Sales Order" },
-  { key: "sales-order:reject",  label: "Reject Sales Order" },
-  { key: "sales-order:recall",  label: "Recall Sales Order" },
+  { key: "sales-order:read",   label: "View Sales Orders" },
+  { key: "sales-order:create", label: "Create Sales Order" },
+  { key: "sales-order:update", label: "Update Sales Order" },
+  { key: "sales-order:delete", label: "Delete Sales Order" },
 
   // Customer PO
   { key: "customer-po:read",   label: "View Customer POs" },
@@ -79,8 +76,6 @@ export const ALL_PERMISSIONS = [
   { key: "payslip:read:own", label: "View Own Payslip" },
   { key: "payslip:read:all", label: "View All Payslips" },
   { key: "payslip:create",   label: "Create Payslip" },
-  { key: "payslip:approve",  label: "Approve Payroll Period" },
-  { key: "payslip:publish",  label: "Publish Payslips" },
 
   // Organization profile
   { key: "organization-profile:read",   label: "View Organization Profile" },
@@ -101,18 +96,32 @@ export const ALL_PERMISSIONS = [
   // Inventory
   { key: "inventory:read",    label: "View Inventory" },
   { key: "inventory:adjust",  label: "Submit Stock Movement" },
-  { key: "inventory:approve", label: "Approve / Reject Stock Movements" },
   { key: "inventory:manage",  label: "Manage Inventory Settings" },
   { key: "inventory:request", label: "Request Stock Allocation" },
+
+  // Leave management
+  { key: "leave:manage", label: "Manage Leave Types & Entitlements" },
 
   // Claim management
   { key: "claim:read:own", label: "View Own Claims" },
   { key: "claim:apply",    label: "Submit Claim Application" },
-  { key: "claim:approve",  label: "Approve / Reject Claims" },
   { key: "claim:manage",   label: "Manage Claim Types" },
 ] as const;
 
-export type PermissionKey = (typeof ALL_PERMISSIONS)[number]["key"];
+// Approval-only keys (managed exclusively via Org Approvals, not in ALL_PERMISSIONS)
+export const APPROVAL_ONLY_KEYS = [
+  "leave:approve",
+  "claim:approve",
+  "payslip:approve",
+  "payslip:publish",
+  "sales-order:approve",
+  "sales-order:reject",
+  "sales-order:recall",
+  "inventory:approve",
+] as const;
+
+export type ApprovalOnlyKey = (typeof APPROVAL_ONLY_KEYS)[number];
+export type PermissionKey = (typeof ALL_PERMISSIONS)[number]["key"] | ApprovalOnlyKey;
 
 // ── Default departments ────────────────────────────────────────────────────
 
