@@ -29,9 +29,7 @@ export const APPROVAL_MODULES = [
     title: "Sales Orders",
     description: "Who can approve, reject or recall sales orders.",
     permissions: [
-      { key: "sales-order:approve", label: "Approve Sales Order" },
-      { key: "sales-order:reject",  label: "Reject Sales Order" },
-      { key: "sales-order:recall",  label: "Recall Sales Order" },
+      { key: "sales-order:approve", label: "Approve / Reject / Recall Sales Orders" },
     ],
   },
   {

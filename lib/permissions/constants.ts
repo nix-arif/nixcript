@@ -115,8 +115,6 @@ export const APPROVAL_ONLY_KEYS = [
   "payslip:approve",
   "payslip:publish",
   "sales-order:approve",
-  "sales-order:reject",
-  "sales-order:recall",
   "inventory:approve",
 ] as const;
 
@@ -169,7 +167,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     manager: [
       "quotation:read", "quotation:create", "quotation:update", "quotation:delete",
       "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
-      "sales-order:approve", "sales-order:reject", "sales-order:recall",
+      "sales-order:approve",
       "customer-po:read", "customer-po:create", "customer-po:update", "customer-po:delete",
       "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
@@ -208,7 +206,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     manager: [
       "quotation:read", "quotation:create", "quotation:update", "quotation:delete",
       "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
-      "sales-order:approve", "sales-order:reject", "sales-order:recall",
+      "sales-order:approve",
       "customer-po:read", "customer-po:create", "customer-po:update", "customer-po:delete",
       "delivery-order:read",
       "invoice:read",

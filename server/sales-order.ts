@@ -736,7 +736,7 @@ export async function approveSalesOrder(id: string): Promise<void> {
 // ── Reject (submitted → draft) ────────────────────────────────────────────
 
 export async function rejectSalesOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("sales-order:reject");
+  const { orgId, session } = await requireAccess("sales-order:approve");
 
   const [so] = await db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
@@ -773,7 +773,7 @@ export async function rejectSalesOrder(id: string): Promise<void> {
 // ── Recall (confirmed → draft) ────────────────────────────────────────────
 
 export async function recallSalesOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("sales-order:recall");
+  const { orgId, session } = await requireAccess("sales-order:approve");
 
   const [so] = await db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
