@@ -6,7 +6,9 @@ import { toast } from "sonner";
 import {
   deletePurchaseOrder,
   submitPurchaseOrder,
-  confirmPurchaseOrder,
+  approvePurchaseOrder,
+  rejectPurchaseOrder,
+  recallPurchaseOrder,
   fulfillPurchaseOrder,
   cancelPurchaseOrder,
   type PurchaseOrderWithItems,
@@ -16,7 +18,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   BuildingIcon, CalendarIcon, PackageIcon,
-  SendIcon, CheckIcon, XIcon, ArchiveIcon, PrinterIcon,
+  SendIcon, CheckIcon, XIcon, ArchiveIcon, PrinterIcon, RotateCcwIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -108,9 +110,11 @@ export function PurchaseOrderDetailClient({
             <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/procurement/purchase-order")} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.open(`/api/purchase-order/${order.id}/pdf`, "_blank")}>
-              <PrinterIcon className="w-3.5 h-3.5" /> PDF
-            </Button>
+            {status === "confirmed" && (
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.open(`/api/purchase-order/${order.id}/pdf`, "_blank")}>
+                <PrinterIcon className="w-3.5 h-3.5" /> PDF
+              </Button>
+            )}
             {isDraft ? (
               <>
                 {isOwner && can("purchase-order:update") && (
@@ -213,28 +217,48 @@ export function PurchaseOrderDetailClient({
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Status</h2>
             <div className="mb-3"><StatusBadge status={status} /></div>
             <div className="flex flex-col gap-2">
+              {/* Creator: submit draft */}
               {isDraft && can("purchase-order:update") && isOwner && (
                 <Button size="sm" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
-                  onClick={() => act("submit", () => submitPurchaseOrder(order.id), "submitted", "Purchase order submitted")}>
+                  onClick={() => act("submit", () => submitPurchaseOrder(order.id), "submitted", "Purchase order submitted for approval")}>
                   <SendIcon className="w-3.5 h-3.5" />
-                  {actioning === "submit" ? "Submitting…" : "Submit"}
+                  {actioning === "submit" ? "Submitting…" : "Submit for Approval"}
                 </Button>
               )}
-              {status === "submitted" && can("purchase-order:update") && (
+              {/* Approver: approve submitted */}
+              {status === "submitted" && can("purchase-order:approve") && (
                 <Button size="sm" className="w-full gap-1.5 h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white" disabled={!!actioning}
-                  onClick={() => act("confirm", () => confirmPurchaseOrder(order.id), "confirmed", "Purchase order confirmed")}>
+                  onClick={() => act("approve", () => approvePurchaseOrder(order.id), "confirmed", "Purchase order approved")}>
                   <CheckIcon className="w-3.5 h-3.5" />
-                  {actioning === "confirm" ? "Confirming…" : "Confirm"}
+                  {actioning === "approve" ? "Approving…" : "Approve"}
                 </Button>
               )}
-              {(status === "submitted" || status === "confirmed") && can("purchase-order:update") && (
+              {/* Approver: reject submitted → back to draft */}
+              {status === "submitted" && can("purchase-order:approve") && (
+                <Button size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs text-destructive hover:text-destructive border-destructive/30" disabled={!!actioning}
+                  onClick={() => act("reject", () => rejectPurchaseOrder(order.id), "draft", "Purchase order returned for revision")}>
+                  <XIcon className="w-3.5 h-3.5" />
+                  {actioning === "reject" ? "Returning…" : "Return for Revision"}
+                </Button>
+              )}
+              {/* Approver: recall confirmed → back to draft */}
+              {status === "confirmed" && can("purchase-order:approve") && (
+                <Button size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
+                  onClick={() => act("recall", () => recallPurchaseOrder(order.id), "draft", "Purchase order recalled")}>
+                  <RotateCcwIcon className="w-3.5 h-3.5" />
+                  {actioning === "recall" ? "Recalling…" : "Recall"}
+                </Button>
+              )}
+              {/* Approver: mark confirmed PO as fulfilled */}
+              {status === "confirmed" && can("purchase-order:approve") && (
                 <Button size="sm" className="w-full gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white" disabled={!!actioning}
                   onClick={() => act("fulfill", () => fulfillPurchaseOrder(order.id), "fulfilled", "Purchase order fulfilled")}>
                   <ArchiveIcon className="w-3.5 h-3.5" />
                   {actioning === "fulfill" ? "Fulfilling…" : "Mark Fulfilled"}
                 </Button>
               )}
-              {isLocked && status !== "fulfilled" && can("purchase-order:update") && (
+              {/* Approver: cancel (submitted or confirmed) */}
+              {isLocked && status !== "fulfilled" && can("purchase-order:approve") && (
                 <Button size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs text-destructive hover:text-destructive border-destructive/30" disabled={!!actioning}
                   onClick={() => act("cancel", () => cancelPurchaseOrder(order.id), "cancelled", "Purchase order cancelled")}>
                   <XIcon className="w-3.5 h-3.5" />

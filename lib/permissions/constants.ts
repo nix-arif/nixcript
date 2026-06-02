@@ -115,6 +115,7 @@ export const APPROVAL_ONLY_KEYS = [
   "payslip:approve",
   "payslip:publish",
   "sales-order:approve",
+  "purchase-order:approve",
   "inventory:approve",
 ] as const;
 

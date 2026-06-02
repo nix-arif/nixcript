@@ -24,8 +24,10 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } fro
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { revalidatePath } from "next/cache";
 import { createApprovedMovement } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
+import { createNotification, getPoApprovers } from "@/server/notifications";
 
 // ── R2 supplier-quotation bucket ───────────────────────────────────────────
 const s3 = new S3Client({
@@ -680,17 +682,88 @@ async function getPoForWorkflow(id: string, orgId: string) {
 }
 
 export async function submitPurchaseOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-order:update");
+  const { orgId, userId, session } = await requireAccess("purchase-order:update");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "draft") throw new Error("Only draft purchase orders can be submitted");
   await db.update(purchaseOrder).set({ status: "submitted" }).where(eq(purchaseOrder.id, id));
+
+  revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
+  revalidatePath("/dashboard/procurement/purchase-order");
+
+  const actorName = session.user.name;
+  getPoApprovers(orgId).then((approverIds) => {
+    const targets = approverIds.filter((uid) => uid !== userId);
+    if (targets.length === 0) return;
+    Promise.all(
+      targets.map((recipientId) =>
+        createNotification({
+          organizationId: orgId,
+          userId: recipientId,
+          type: "po:submitted",
+          title: `PO ${po.poNo} pending approval`,
+          body: `${actorName} submitted ${po.poNo} for approval.`,
+          link: `/dashboard/procurement/purchase-order/${po.id}`,
+        }),
+      ),
+    );
+  }).catch(console.error);
 }
 
-export async function confirmPurchaseOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-order:update");
+export async function approvePurchaseOrder(id: string): Promise<void> {
+  const { orgId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
-  if (po.status !== "submitted") throw new Error("Only submitted purchase orders can be confirmed");
+  if (po.status !== "submitted") throw new Error("Only submitted purchase orders can be approved");
   await db.update(purchaseOrder).set({ status: "confirmed" }).where(eq(purchaseOrder.id, id));
+
+  revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
+  revalidatePath("/dashboard/procurement/purchase-order");
+
+  createNotification({
+    organizationId: orgId,
+    userId: po.createdBy,
+    type: "po:approved",
+    title: `PO ${po.poNo} approved`,
+    body: `Your purchase order ${po.poNo} has been approved by ${session.user.name}.`,
+    link: `/dashboard/procurement/purchase-order/${po.id}`,
+  }).catch(console.error);
+}
+
+export async function rejectPurchaseOrder(id: string): Promise<void> {
+  const { orgId, session } = await requireAccess("purchase-order:approve");
+  const po = await getPoForWorkflow(id, orgId);
+  if (po.status !== "submitted") throw new Error("Only submitted purchase orders can be rejected");
+  await db.update(purchaseOrder).set({ status: "draft" }).where(eq(purchaseOrder.id, id));
+
+  revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
+  revalidatePath("/dashboard/procurement/purchase-order");
+
+  createNotification({
+    organizationId: orgId,
+    userId: po.createdBy,
+    type: "po:rejected",
+    title: `PO ${po.poNo} returned for revision`,
+    body: `Your purchase order ${po.poNo} was returned for revision by ${session.user.name}.`,
+    link: `/dashboard/procurement/purchase-order/${po.id}`,
+  }).catch(console.error);
+}
+
+export async function recallPurchaseOrder(id: string): Promise<void> {
+  const { orgId, session } = await requireAccess("purchase-order:approve");
+  const po = await getPoForWorkflow(id, orgId);
+  if (po.status !== "confirmed") throw new Error("Only confirmed purchase orders can be recalled");
+  await db.update(purchaseOrder).set({ status: "draft" }).where(eq(purchaseOrder.id, id));
+
+  revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
+  revalidatePath("/dashboard/procurement/purchase-order");
+
+  createNotification({
+    organizationId: orgId,
+    userId: po.createdBy,
+    type: "po:recalled",
+    title: `PO ${po.poNo} recalled`,
+    body: `Purchase order ${po.poNo} has been recalled by ${session.user.name}.`,
+    link: `/dashboard/procurement/purchase-order/${po.id}`,
+  }).catch(console.error);
 }
 
 export async function fulfillPurchaseOrder(id: string, warehouseLabel = "Default"): Promise<void> {

@@ -83,6 +83,47 @@ export async function getSoApprovers(organizationId: string): Promise<string[]> 
   return all;
 }
 
+// ── Internal: find users who can approve POs in an org ─────────────────────
+// Owners always can. Managers of procurement/management departments also can.
+
+export async function getPoApprovers(organizationId: string): Promise<string[]> {
+  const owners = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, organizationId), eq(member.role, "owner")));
+
+  const depts = await db
+    .select({ id: department.id })
+    .from(department)
+    .where(and(
+      eq(department.organizationId, organizationId),
+      inArray(department.name, ["management", "logistic"]),
+    ));
+
+  const deptIds = depts.map((d) => d.id);
+  let managerUserIds: string[] = [];
+
+  if (deptIds.length > 0) {
+    const managers = await db
+      .select({ userId: member.userId })
+      .from(member)
+      .innerJoin(
+        memberDepartment,
+        and(
+          eq(memberDepartment.memberId, member.id),
+          eq(memberDepartment.organizationId, organizationId),
+          eq(memberDepartment.role, "manager"),
+          inArray(memberDepartment.departmentId, deptIds),
+        ),
+      )
+      .where(eq(member.organizationId, organizationId));
+
+    managerUserIds = managers.map((m) => m.userId);
+  }
+
+  return [...new Set([...owners.map((o) => o.userId), ...managerUserIds])];
+}
+
 // ── Queries ────────────────────────────────────────────────────────────────
 
 export async function getNotifications() {
