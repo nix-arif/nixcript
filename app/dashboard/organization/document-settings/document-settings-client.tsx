@@ -153,6 +153,9 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
   // ── Template ───────────────────────────────────────────────────────────
   const [pdfTemplate, setPdfTemplate] = useState(data.pdfTemplate ?? "affirma");
 
+  // Mono is black & white — previews should reflect the actual output colour
+  const previewColor = pdfTemplate === "mono" ? "#000000" : brandColor;
+
   // ── Header ────────────────────────────────────────────────────────────
   const [headerLayout,         setHeaderLayout]         = useState(data.headerLayout         ?? "standard");
   const [orgNameSize,          setOrgNameSize]          = useState(data.orgNameSize          ?? "medium");
@@ -397,9 +400,9 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
       id: "standard", label: "Standard", desc: "Logo left of name",
       preview: (
         <div className="flex items-center gap-1.5 h-6">
-          <div className="w-4 h-4 rounded-sm shrink-0" style={{ backgroundColor: brandColor }} />
+          <div className="w-4 h-4 rounded-sm shrink-0" style={{ backgroundColor: previewColor }} />
           <div className="flex flex-col gap-0.5 flex-1">
-            <div className="h-1.5 rounded-sm w-3/4" style={{ backgroundColor: brandColor, opacity: 0.8 }} />
+            <div className="h-1.5 rounded-sm w-3/4" style={{ backgroundColor: previewColor, opacity: 0.8 }} />
             <div className="h-1 rounded-sm w-1/2 bg-muted-foreground/30" />
           </div>
         </div>
@@ -410,10 +413,10 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
       preview: (
         <div className="flex items-center justify-between gap-1 h-6">
           <div className="flex flex-col gap-0.5 flex-1">
-            <div className="h-1.5 rounded-sm w-3/4" style={{ backgroundColor: brandColor, opacity: 0.8 }} />
+            <div className="h-1.5 rounded-sm w-3/4" style={{ backgroundColor: previewColor, opacity: 0.8 }} />
             <div className="h-1 rounded-sm w-1/2 bg-muted-foreground/30" />
           </div>
-          <div className="w-4 h-4 rounded-sm shrink-0" style={{ backgroundColor: brandColor }} />
+          <div className="w-4 h-4 rounded-sm shrink-0" style={{ backgroundColor: previewColor }} />
         </div>
       ),
     },
@@ -421,8 +424,8 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
       id: "logo-top", label: "Logo Top", desc: "Logo above name",
       preview: (
         <div className="flex flex-col items-start gap-0.5 h-6">
-          <div className="w-5 h-2.5 rounded-sm" style={{ backgroundColor: brandColor }} />
-          <div className="h-1.5 rounded-sm w-2/3" style={{ backgroundColor: brandColor, opacity: 0.8 }} />
+          <div className="w-5 h-2.5 rounded-sm" style={{ backgroundColor: previewColor }} />
+          <div className="h-1.5 rounded-sm w-2/3" style={{ backgroundColor: previewColor, opacity: 0.8 }} />
         </div>
       ),
     },
@@ -430,8 +433,8 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
       id: "centered", label: "Centered", desc: "Logo and name centered",
       preview: (
         <div className="flex flex-col items-center gap-0.5 h-6">
-          <div className="w-5 h-2.5 rounded-sm" style={{ backgroundColor: brandColor }} />
-          <div className="h-1.5 rounded-sm w-2/3" style={{ backgroundColor: brandColor, opacity: 0.8 }} />
+          <div className="w-5 h-2.5 rounded-sm" style={{ backgroundColor: previewColor }} />
+          <div className="h-1.5 rounded-sm w-2/3" style={{ backgroundColor: previewColor, opacity: 0.8 }} />
         </div>
       ),
     },
@@ -439,7 +442,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
       id: "text-only", label: "Text Only", desc: "No logo",
       preview: (
         <div className="flex flex-col items-start gap-0.5 h-6 justify-center">
-          <div className="h-2 rounded-sm w-3/4" style={{ backgroundColor: brandColor, opacity: 0.8 }} />
+          <div className="h-2 rounded-sm w-3/4" style={{ backgroundColor: previewColor, opacity: 0.8 }} />
           <div className="h-1 rounded-sm w-1/2 bg-muted-foreground/30" />
         </div>
       ),
@@ -510,34 +513,30 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
           </Row>
 
           {/* Brand color */}
-          <Row label={pdfTemplate === "mono" ? "Accent colour (Mono ignores this)" : "Brand colour"}>
+          <Row label="Brand colour">
             <div className="flex items-center gap-3">
               <input
                 type="color" value={brandColor}
                 onChange={(e) => setBrandColor(e.target.value)}
-                className={cn(
-                  "w-10 h-10 rounded-lg border border-border cursor-pointer bg-transparent p-0.5",
-                  pdfTemplate === "mono" && "opacity-40 pointer-events-none",
-                )}
+                className="w-10 h-10 rounded-lg border border-border cursor-pointer bg-transparent p-0.5"
               />
               <Input
                 value={brandColor}
                 onChange={(e) => setBrandColor(e.target.value)}
                 placeholder="#1a56db"
-                className={cn("h-9 text-sm font-mono w-28", pdfTemplate === "mono" && "opacity-40")}
+                className="h-9 text-sm font-mono w-28"
                 maxLength={7}
-                disabled={pdfTemplate === "mono"}
               />
               <div
                 className="h-9 flex-1 rounded-lg border border-border"
-                style={{ backgroundColor: brandColor, opacity: pdfTemplate === "mono" ? 0.2 : 1 }}
+                style={{ backgroundColor: brandColor }}
               />
             </div>
             <p className="text-[11px] text-muted-foreground mt-1.5">
               {pdfTemplate === "slate"
                 ? "Used for lines, borders, and accent bars in Slate."
                 : pdfTemplate === "mono"
-                ? "Mono uses black and white only."
+                ? "Fills the table header, customer detail, and quotation detail header rows in Mono."
                 : "Accent colour used across headers, column labels, and highlights."}
             </p>
           </Row>
@@ -631,7 +630,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
               <p style={{
                 fontSize: ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string, number>)[orgNameSize] ?? 13,
                 fontWeight: orgNameBold ? 700 : 400,
-                color: brandColor,
+                color: previewColor,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -690,7 +689,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
                         <div className={cn("flex w-full", pos === "left" ? "justify-start" : pos === "center" ? "justify-center" : "justify-end")}>
                           <div
                             className="h-1 rounded-sm w-10"
-                            style={{ backgroundColor: active ? brandColor : "rgb(203 213 225 / 0.5)" }}
+                            style={{ backgroundColor: active ? previewColor : "rgb(203 213 225 / 0.5)" }}
                           />
                         </div>
                         <div className="h-0.5 rounded-sm w-full bg-muted-foreground/10" />
@@ -714,7 +713,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
               <span style={{
                 fontSize: ({ small: 9, normal: 11, large: 14 } as Record<string, number>)[quotationLabelSize] ?? 11,
                 fontWeight: quotationLabelBold ? 700 : 400,
-                color: brandColor,
+                color: previewColor,
               }}>
                 {quotationLabelUppercase ? "QUOTATION" : "Quotation"}
               </span>

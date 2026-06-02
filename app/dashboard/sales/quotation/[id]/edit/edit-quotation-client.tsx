@@ -132,6 +132,9 @@ export function EditQuotationClient({ data, customers, members }: Props) {
     return String(Math.max(1, diff));
   });
   const [notes, setNotes] = useState(q.notes ?? "");
+  const [deliveryTerm, setDeliveryTerm] = useState(q.deliveryTerm ?? "EX-STOCK SUBJECT PRIOR SALES, OTHERWISE 8 – 12 WEEKS");
+  const [paymentTerm, setPaymentTerm] = useState(q.paymentTerm ?? "30 days");
+  const [returnPolicy, setReturnPolicy] = useState(q.returnPolicy ?? "GOODS ONCE SOLD WILL NOT TAKEN BACK");
 
   // ── Items state ─────────────────────────────────────────────────────────
   const [items, setItems] = useState<EditItem[]>(() =>
@@ -243,6 +246,9 @@ export function EditQuotationClient({ data, customers, members }: Props) {
         salesPersonName: salesPersonName || null,
         validDays: Number(validDays) || 30,
         notes: notes || null,
+        deliveryTerm: deliveryTerm || null,
+        paymentTerm: paymentTerm || null,
+        returnPolicy: returnPolicy || null,
         overallDiscountPct: overallDiscount,
         sstPct: sstPct,
         includeCatalogue,
@@ -438,6 +444,29 @@ export function EditQuotationClient({ data, customers, members }: Props) {
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Additional notes..."
                   rows={3}
+                  className="text-sm resize-none"
+                />
+              </Field>
+              <Field label="Delivery" className="col-span-2">
+                <Textarea
+                  value={deliveryTerm}
+                  onChange={(e) => setDeliveryTerm(e.target.value)}
+                  rows={2}
+                  className="text-sm resize-none"
+                />
+              </Field>
+              <Field label="Payment Terms">
+                <Input
+                  value={paymentTerm}
+                  onChange={(e) => setPaymentTerm(e.target.value)}
+                  className="h-9 text-sm"
+                />
+              </Field>
+              <Field label="Return Policy" className="col-span-2">
+                <Textarea
+                  value={returnPolicy}
+                  onChange={(e) => setReturnPolicy(e.target.value)}
+                  rows={2}
                   className="text-sm resize-none"
                 />
               </Field>

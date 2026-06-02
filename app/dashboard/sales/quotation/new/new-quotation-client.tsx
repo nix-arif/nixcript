@@ -125,6 +125,9 @@ export function NewQuotationClient({
   const [salesPersonName, setSalesPersonName] = useState("");
   const [validDays, setValidDays] = useState("30");
   const [notes, setNotes] = useState("");
+  const [deliveryTerm, setDeliveryTerm] = useState("EX-STOCK SUBJECT PRIOR SALES, OTHERWISE 8 – 12 WEEKS");
+  const [paymentTerm, setPaymentTerm] = useState("30 days");
+  const [returnPolicy, setReturnPolicy] = useState("GOODS ONCE SOLD WILL NOT TAKEN BACK");
 
   // Step 2 state
   const [fileName, setFileName] = useState("");
@@ -414,6 +417,9 @@ export function NewQuotationClient({
         salesPersonName,
         validDays: Number(validDays),
         notes,
+        deliveryTerm: deliveryTerm || undefined,
+        paymentTerm: paymentTerm || undefined,
+        returnPolicy: returnPolicy || undefined,
         items: finalItems,
         overallDiscountPct: applyTotalDiscount ? (overallDiscount || "0") : "0",
         sstPct: applySST ? sstPct || "8" : "0",
@@ -742,6 +748,29 @@ export function NewQuotationClient({
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="e.g. As per discussion on 12 May 2025..."
+                  rows={2}
+                  className="text-sm resize-none"
+                />
+              </Field>
+              <Field label="Delivery">
+                <Textarea
+                  value={deliveryTerm}
+                  onChange={(e) => setDeliveryTerm(e.target.value)}
+                  rows={2}
+                  className="text-sm resize-none"
+                />
+              </Field>
+              <Field label="Payment Terms">
+                <Input
+                  value={paymentTerm}
+                  onChange={(e) => setPaymentTerm(e.target.value)}
+                  className="h-9 text-sm"
+                />
+              </Field>
+              <Field label="Return Policy">
+                <Textarea
+                  value={returnPolicy}
+                  onChange={(e) => setReturnPolicy(e.target.value)}
                   rows={2}
                   className="text-sm resize-none"
                 />

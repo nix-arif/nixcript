@@ -951,6 +951,9 @@ export const quotation = pgTable(
     preparedByName: text("prepared_by_name"),
     validUntil: timestamp("valid_until"),
     notes: text("notes"),
+    deliveryTerm: text("delivery_term"),
+    paymentTerm: text("payment_term"),
+    returnPolicy: text("return_policy"),
 
     // Pricing
     subtotal: text("subtotal").notNull().default("0"),

@@ -617,103 +617,145 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
   );
 }
 
+// ── Number to words (Malaysian currency) ──────────────────────────────────
+function numberToWords(n: number): string {
+  const ONES = ["","ONE","TWO","THREE","FOUR","FIVE","SIX","SEVEN","EIGHT","NINE",
+    "TEN","ELEVEN","TWELVE","THIRTEEN","FOURTEEN","FIFTEEN","SIXTEEN","SEVENTEEN","EIGHTEEN","NINETEEN"];
+  const TENS = ["","","TWENTY","THIRTY","FORTY","FIFTY","SIXTY","SEVENTY","EIGHTY","NINETY"];
+  function h(x: number): string {
+    if (x === 0) return "";
+    if (x < 20) return ONES[x];
+    if (x < 100) return TENS[Math.floor(x/10)] + (x%10 ? "-"+ONES[x%10] : "");
+    return ONES[Math.floor(x/100)]+" HUNDRED"+(x%100 ? " AND "+h(x%100) : "");
+  }
+  const ringgit = Math.floor(n);
+  const sen = Math.round((n - ringgit) * 100);
+  let w = "";
+  if (ringgit >= 1000000) w += h(Math.floor(ringgit/1000000))+" MILLION ";
+  const thou = Math.floor((ringgit%1000000)/1000);
+  if (thou > 0) w += h(thou)+" THOUSAND ";
+  const rem = ringgit%1000;
+  if (rem > 0) w += h(rem)+" ";
+  w = (w.trim() || "ZERO")+" RINGGIT";
+  if (sen > 0) w += " AND "+h(sen)+" SEN";
+  return w+" ONLY";
+}
+
 // ── Template: Mono ────────────────────────────────────────────────────────
-// Plain black & white. No coloured backgrounds. Fully bordered table.
+// Black & white with accent header rows. Fully bordered table.
 function TemplateMono({ entry }: { entry: GroupItem }) {
-  const { quotation: q, items, orgName, orgLogoUrl,
+  const { quotation: q, items, orgName, orgLogoUrl, orgBrandColor,
     orgCompanyName, orgCompanyAddress, orgTaxNo, orgPhone, orgBankingInfo } = entry;
   const cust = q.customerSnapshot as any;
+  const primary = orgBrandColor ?? "#000000";
 
   const showTP  = !!Number(q.showTotalPrice);
+  const sets    = Number(q.sets ?? 1);
   const subtotal = Number(q.subtotal ?? 0);
   const discAmt  = Number(q.overallDiscountAmt ?? 0);
   const sstAmt   = Number(q.sst ?? 0);
   const grand    = Number(q.grandTotal ?? 0);
   const afterDisc = subtotal - discAmt;
   const bank = (orgBankingInfo as any[]).find(b => b.isPrimary) ?? (orgBankingInfo as any[])[0] ?? null;
+  const totalQtyPerSet = items.reduce((s, i) => s + parseFloat(i.qty || "0"), 0);
+  const fmtQty = (n: number) => n % 1 === 0 ? String(n) : n.toFixed(2);
 
   const border = "1px solid #000";
   const borderLight = "1px solid #ccc";
+
+  const detailRows: [string, string][] = [
+    ["Quotation No", q.quotationNo],
+    ["Date",         fmtDate(q.createdAt)],
+    ["Valid Until",  fmtDate(q.validUntil)],
+    ...(q.title ? [["Subject", q.title]] as [string, string][] : []),
+  ];
 
   return (
     <div style={{ background: "white", width: "100%", fontFamily: "Arial, sans-serif", fontSize: "12px", color: "#111" }}>
 
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 28px 14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 28px 10px" }}>
         <div style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
           {orgLogoUrl
-            ? <img src={orgLogoUrl} alt="" style={{ height: "44px", width: "auto", objectFit: "contain", flexShrink: 0 }} />
+            ? <img src={orgLogoUrl} alt="" style={{ height: "53px", width: "auto", objectFit: "contain", flexShrink: 0 }} />
             : null}
           <div>
             <div style={{ fontWeight: "700", fontSize: "15px", color: "#000" }}>{orgCompanyName ?? orgName}</div>
-            {orgCompanyAddress && <div style={{ color: "#555", fontSize: "10.5px", marginTop: "2px", maxWidth: "300px" }}>{orgCompanyAddress}</div>}
+            {orgCompanyAddress && <div style={{ color: "#000", fontSize: "10.5px", marginTop: "2px", maxWidth: "300px" }}>{orgCompanyAddress}</div>}
             {(orgTaxNo || orgPhone) && (
-              <div style={{ color: "#777", fontSize: "10px", marginTop: "1px" }}>
+              <div style={{ color: "#000", fontSize: "10px", marginTop: "1px" }}>
                 {[orgTaxNo && `Tax: ${orgTaxNo}`, orgPhone].filter(Boolean).join("  ·  ")}
               </div>
             )}
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontWeight: "700", fontSize: "11px", letterSpacing: "1.5px", color: "#000", textTransform: "uppercase" }}>Quotation</div>
-          <div style={{ fontWeight: "700", fontSize: "17px", fontFamily: "monospace", color: "#000", marginTop: "2px" }}>{q.quotationNo}</div>
-          <div style={{ fontSize: "10.5px", color: "#555", marginTop: "5px" }}>
-            <div>Date: {fmtDate(q.createdAt)}</div>
-            <div>Valid: {fmtDate(q.validUntil)}</div>
-            {q.title && <div style={{ color: "#333", fontWeight: "500", marginTop: "1px" }}>{q.title}</div>}
-          </div>
-        </div>
+        <div style={{ fontWeight: "700", fontSize: "17px", fontFamily: "monospace", color: "#000", marginTop: "2px" }}>{q.quotationNo}</div>
+      </div>
+
+      {/* Document label sits just above the divider line */}
+      <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 28px 3px" }}>
+        <span style={{ fontWeight: "700", fontSize: "9px", letterSpacing: "1.5px", color: "#000", textTransform: "uppercase" }}>Quotation</span>
       </div>
 
       {/* Divider */}
       <div style={{ borderTop: "1.5px solid #000", margin: "0 28px" }} />
 
-      {/* Info row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", margin: "0 28px", padding: "12px 0 14px" }}>
-        <div style={{ paddingRight: "16px" }}>
-          <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", marginBottom: "5px" }}>Attention To</div>
-          {cust ? (
-            <div style={{ lineHeight: "1.6" }}>
-              <div style={{ fontWeight: "600" }}>{[cust.title, cust.name].filter(Boolean).join(" ")}</div>
-              {cust.position && <div style={{ color: "#444" }}>{cust.position}{cust.department ? `, ${cust.department}` : ""}</div>}
-              {cust.organizationName && <div style={{ color: "#444" }}>{cust.organizationName}</div>}
-              {cust.organizationAddress && <div style={{ color: "#666", fontSize: "10.5px" }}>{cust.organizationAddress}</div>}
-              {(cust.email || cust.contactNo) && <div style={{ color: "#666", fontSize: "10.5px" }}>{[cust.email, cust.contactNo].filter(Boolean).join("  ·  ")}</div>}
-            </div>
-          ) : <div style={{ color: "#999" }}>—</div>}
+      {/* Info box — bordered with accent header row */}
+      <div style={{ margin: "10px 28px 14px", border: "1px solid #000" }}>
+        {/* Header row — accent background, black text */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", background: primary }}>
+          <div style={{ padding: "5px 10px", fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", borderRight: "1px solid rgba(0,0,0,0.2)" }}>
+            Customer Detail
+          </div>
+          <div style={{ padding: "5px 10px", fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000" }}>
+            Quotation Detail
+          </div>
         </div>
-        <div>
-          <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", marginBottom: "5px" }}>Details</div>
-          <table style={{ fontSize: "10.5px", borderCollapse: "collapse", width: "100%" }}>
-            <tbody>
-              {([
-                ["Sales Person", q.salesPersonName ?? "—"],
-                ["Prepared By",  q.preparedByName  ?? "—"],
-              ] as [string, string][]).map(([l, v]) => (
-                <tr key={l}>
-                  <td style={{ color: "#666", paddingRight: "10px", paddingBottom: "2px", whiteSpace: "nowrap" }}>{l}</td>
-                  <td style={{ fontWeight: "500" }}>{v}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Content row */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+          {/* Left: customer — 10px (7.5pt), all caps, all black */}
+          <div style={{ padding: "8px 10px", borderRight: "1px solid #000", fontSize: "10px", lineHeight: "1.6", color: "#000", textTransform: "uppercase" }}>
+            {cust ? (
+              <>
+                <div style={{ color: "#000", fontSize: "10px" }}>{[cust.title, cust.name].filter(Boolean).join(" ")}</div>
+                {cust.position && <div style={{ color: "#000" }}>{cust.position}{cust.department ? `, ${cust.department}` : ""}</div>}
+                {cust.organizationName && <div style={{ color: "#000" }}>{cust.organizationName}</div>}
+                {cust.organizationAddress && <div style={{ color: "#000" }}>{cust.organizationAddress}</div>}
+                {(cust.email || cust.contactNo) && <div style={{ color: "#000" }}>{[cust.email, cust.contactNo].filter(Boolean).join("  ·  ")}</div>}
+              </>
+            ) : <div style={{ color: "#000" }}>—</div>}
+          </div>
+          {/* Right: quotation detail — 10px (7.5pt), all caps, all black */}
+          <div style={{ padding: "8px 10px", fontSize: "10px", color: "#000", textTransform: "uppercase" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <tbody>
+                {detailRows.map(([l, v]) => (
+                  <tr key={l}>
+                    <td style={{ color: "#000", paddingBottom: "3px", whiteSpace: "nowrap", paddingRight: "5px", fontSize: "10px" }}>{l}</td>
+                    <td style={{ color: "#000", paddingBottom: "3px", paddingLeft: "2px", paddingRight: "4px", whiteSpace: "nowrap" }}>:</td>
+                    <td style={{ color: "#000", paddingBottom: "3px", fontSize: "10px" }}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
       {/* Items — bordered table */}
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", border }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "10px", border }}>
         <thead>
-          <tr style={{ background: "#000" }}>
-            {["#", "Code", "Description / MDA", "Qty", "UOM", "Unit Price", "Disc%", ...(showTP ? ["Total"] : [])].map((h, i) => (
+          <tr style={{ background: primary }}>
+            {["#", "Catalog No", "Name of Product / Service", "Qty", "UOM", "Unit Price", "Disc%", ...(showTP ? ["Total"] : [])].map((h, i) => (
               <th
                 key={h}
                 style={{
                   padding: "7px 8px",
-                  color: "white",
+                  color: "#000",
                   fontWeight: "700",
-                  fontSize: "9.5px",
+                  textTransform: "uppercase",
                   textAlign: ["Unit Price","Total"].includes(h) ? "right" : h === "#" ? "center" : "left",
-                  borderRight: i < (showTP ? 7 : 6) ? "1px solid #444" : "none",
+                  borderRight: i < (showTP ? 7 : 6) ? "1px solid #000" : "none",
                 }}
               >{h}</th>
             ))}
@@ -721,52 +763,172 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
         </thead>
         <tbody>
           {items.map((item, i) => (
-            <tr key={item.id} style={{ borderBottom: borderLight }}>
-              <td style={{ padding: "6px 8px", textAlign: "center", color: "#999", borderRight: borderLight }}>{item.rowNo}</td>
-              <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: "9.5px", color: "#555", borderRight: borderLight, whiteSpace: "nowrap" }}>{item.productCode ?? "—"}</td>
-              <td style={{ padding: "6px 8px", borderRight: borderLight }}>
-                <div style={{ fontWeight: "500" }}>{item.description ?? "—"}</div>
-                {item.hasCert && item.mdaRegNo && <div style={{ fontSize: "9px", color: "#166534", marginTop: "1px" }}>MDA: {item.mdaRegNo}{item.mdaValidity ? ` · Exp: ${fmtDate(item.mdaValidity, true)}` : ""}</div>}
-                {!item.hasCert && <div style={{ fontSize: "9px", color: "#92400e", marginTop: "1px" }}>No MDA certificate</div>}
+            <tr key={item.id} style={{ borderBottom: border, color: "#000", textTransform: "uppercase" }}>
+              <td style={{ padding: "6px 8px", textAlign: "center", borderRight: border }}>{item.rowNo}</td>
+              <td style={{ padding: "6px 8px", fontFamily: "monospace", borderRight: border, whiteSpace: "nowrap" }}>{item.productCode ?? "—"}</td>
+              <td style={{ padding: "6px 8px", borderRight: border }}>
+                <div>{item.description ?? "—"}</div>
+                {item.hasCert && item.mdaRegNo && <div style={{ marginTop: "1px" }}>MDA: {item.mdaRegNo}{item.mdaValidity ? ` · Exp: ${fmtDate(item.mdaValidity, true)}` : ""}</div>}
+                {!item.hasCert && <div style={{ marginTop: "1px" }}>No MDA certificate</div>}
               </td>
-              <td style={{ padding: "6px 8px", textAlign: "center", borderRight: borderLight }}>{item.qty}</td>
-              <td style={{ padding: "6px 8px", textAlign: "center", color: "#666", borderRight: borderLight }}>{item.uom || "—"}</td>
-              <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", borderRight: borderLight }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</td>
-              <td style={{ padding: "6px 8px", textAlign: "center", color: "#666", borderRight: showTP ? borderLight : "none" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</td>
-              {showTP && <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</td>}
+              <td style={{ padding: "6px 8px", textAlign: "center", borderRight: border }}>{item.qty}</td>
+              <td style={{ padding: "6px 8px", textAlign: "center", borderRight: border }}>{item.uom || "—"}</td>
+              <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", borderRight: border }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</td>
+              <td style={{ padding: "6px 8px", textAlign: "center", borderRight: showTP ? border : "none" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</td>
+              {showTP && <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</td>}
             </tr>
           ))}
+
+          {/* Subtotal row: label cols 1-3 | qty merged cols 4-5 | amount cols 6-7 centered */}
+          {(() => {
+            const totalCols = 7 + (showTP ? 1 : 0);
+            const subLabel  = sets > 1 ? `SUBTOTAL × 1 SET` : "SUBTOTAL";
+            return (
+              <tr style={{ borderTop: border, color: "#000", textTransform: "uppercase" }}>
+                <td colSpan={3} style={{ padding: "6px 8px", fontWeight: "700", borderRight: border }}>{subLabel}</td>
+                <td colSpan={2} style={{ padding: "6px 8px", textAlign: "center", borderRight: border }}>{fmtQty(totalQtyPerSet)}</td>
+                <td colSpan={totalCols - 5} style={{ padding: "6px 8px", textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
+                  {fmtMoney(subtotal / Math.max(sets, 1))}
+                </td>
+              </tr>
+            );
+          })()}
+
+          {/* Grand total row: label cols 1-3 | qty×sets merged cols 4-5 | amount cols 6-7 centered (accent) */}
+          {(() => {
+            const totalCols       = 7 + (showTP ? 1 : 0);
+            const gtLabel         = sets > 1 ? `GRAND TOTAL × ${sets} SETS` : "GRAND TOTAL";
+            const totalQtyAllSets = totalQtyPerSet * sets;
+            return (
+              <tr style={{ background: primary, textTransform: "uppercase" }}>
+                <td colSpan={3} style={{ padding: "6px 8px", fontWeight: "700", color: "#000", borderRight: border }}>{gtLabel}</td>
+                <td colSpan={2} style={{ padding: "6px 8px", textAlign: "center", fontWeight: "700", color: "#000", borderRight: border }}>{fmtQty(totalQtyAllSets)}</td>
+                <td colSpan={totalCols - 5} style={{ padding: "6px 8px", textAlign: "center", fontWeight: "700", color: "#000", fontVariantNumeric: "tabular-nums" }}>
+                  {fmtMoney(grand)}
+                </td>
+              </tr>
+            );
+          })()}
         </tbody>
       </table>
 
-      {/* Totals + bank */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "14px 28px 0" }}>
-        {bank ? (
-          <div style={{ fontSize: "11px" }}>
-            <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", marginBottom: "5px" }}>Payment To</div>
-            {[["Bank", bank.bankName], ["Account Name", bank.accountHolder], ["Account No.", bank.accountNo]].map(([l, v]) => (
-              <div key={l} style={{ marginBottom: "2px" }}><span style={{ color: "#777", marginRight: "6px" }}>{l}:</span><span style={{ fontWeight: "500" }}>{v}</span></div>
-            ))}
-          </div>
-        ) : <div />}
+      {/* 2-column footer table: Total in Words | Amount Summary */}
+      <table style={{ margin: "8px 28px 0", border: "1px solid #000", borderCollapse: "collapse", width: "calc(100% - 56px)", fontSize: "10px" }}>
+        <thead>
+          <tr style={{ background: primary }}>
+            <th style={{ padding: "5px 8px", fontWeight: "700", color: "#000", textAlign: "left", width: "65%", borderRight: "1px solid rgba(0,0,0,0.2)", textTransform: "uppercase" }}>Total in Words</th>
+            <th style={{ padding: "5px 8px", fontWeight: "700", color: "#000", textAlign: "left", textTransform: "uppercase" }}>Amount Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td rowSpan={3} style={{ padding: "6px 8px", color: "#000", borderRight: "1px solid #000", verticalAlign: "middle", textTransform: "uppercase" }}>{numberToWords(grand)}</td>
+            <td style={{ padding: "4px 8px", color: "#000", textAlign: "right", fontVariantNumeric: "tabular-nums", borderBottom: "1px solid #000", textTransform: "uppercase" }}>{fmtMoney(afterDisc)}</td>
+          </tr>
+          <tr>
+            <td style={{ padding: "4px 8px", color: "#000", borderBottom: "1px solid #000", textTransform: "uppercase" }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>SST ({q.sstPct ?? "0"}%)</span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtMoney(sstAmt)}</span>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style={{ padding: "4px 8px", color: "#000", fontWeight: "700", textTransform: "uppercase" }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>Total After Tax</span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grand)}</span>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
-        <div style={{ minWidth: "210px" }}>
-          {[
-            ["Subtotal", fmtMoney(subtotal)],
-            ...(discAmt > 0 ? [[`Discount (${q.overallDiscountPct}%)`, `- ${fmtMoney(discAmt)}`], ["After Discount", fmtMoney(afterDisc)]] : []),
-            ...(sstAmt > 0 ? [[`SST (${q.sstPct}%)`, fmtMoney(sstAmt)]] : []),
-          ].map(([l, v]) => (
-            <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: "16px", fontSize: "11px", color: "#555", marginBottom: "3px" }}>
-              <span>{l}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{v}</span>
-            </div>
-          ))}
-          <div style={{ borderTop: "1.5px solid #000", marginTop: "6px", paddingTop: "6px", display: "flex", justifyContent: "space-between", gap: "16px" }}>
-            <span style={{ fontWeight: "700", fontSize: "12px" }}>Grand Total</span>
-            <span style={{ fontWeight: "700", fontSize: "14px", fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grand)}</span>
-          </div>
-          <div style={{ borderTop: "1.5px solid #000", marginTop: "4px" }} />
-        </div>
-      </div>
+      {bank && (
+        <table style={{ margin: "0 28px 0", border: "1px solid #000", borderTop: "none", borderCollapse: "collapse", width: "calc(100% - 56px)", fontSize: "10px" }}>
+          <thead>
+            <tr style={{ background: primary }}>
+              <th colSpan={2} style={{ padding: "5px 8px", fontWeight: "700", color: "#000", textAlign: "left", textTransform: "uppercase" }}>Bank Detail</th>
+            </tr>
+            <tr style={{ background: "#f0f0f0" }}>
+              <th style={{ padding: "4px 8px", fontWeight: "700", color: "#000", textAlign: "left", width: "50%", borderRight: "1px solid #000", borderBottom: "1px solid #999", textTransform: "uppercase" }}>Bank Info</th>
+              <th style={{ padding: "4px 8px", fontWeight: "700", color: "#000", textAlign: "left", borderBottom: "1px solid #999", textTransform: "uppercase" }}>Account Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ padding: "5px 8px", borderRight: "1px solid #000", verticalAlign: "top", color: "#000", textTransform: "uppercase" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                  <tbody>
+                    {([["Bank Name", bank.bankName ?? "—"], ["Branch", (bank as any).branch ?? "—"]] as [string, string][]).map(([l, v]) => (
+                      <tr key={l}>
+                        <td style={{ color: "#000", paddingBottom: "3px", whiteSpace: "nowrap", paddingRight: "5px" }}>{l}</td>
+                        <td style={{ color: "#000", paddingBottom: "3px", paddingLeft: "2px", paddingRight: "4px", whiteSpace: "nowrap" }}>:</td>
+                        <td style={{ color: "#000", paddingBottom: "3px" }}>{v}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </td>
+              <td style={{ padding: "5px 8px", verticalAlign: "top", color: "#000", textTransform: "uppercase" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                  <tbody>
+                    {([["Account No.", bank.accountNo ?? "—"], ["Account Name", bank.accountHolder ?? "—"]] as [string, string][]).map(([l, v]) => (
+                      <tr key={l}>
+                        <td style={{ color: "#000", paddingBottom: "3px", whiteSpace: "nowrap", paddingRight: "5px" }}>{l}</td>
+                        <td style={{ color: "#000", paddingBottom: "3px", paddingLeft: "2px", paddingRight: "4px", whiteSpace: "nowrap" }}>:</td>
+                        <td style={{ color: "#000", paddingBottom: "3px" }}>{v}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+
+      <table style={{ margin: "0 28px 0", border: "1px solid #000", borderTop: "none", borderCollapse: "collapse", width: "calc(100% - 56px)", fontSize: "10px" }}>
+        <thead>
+          <tr style={{ background: primary }}>
+            <th colSpan={2} style={{ padding: "5px 8px", fontWeight: "700", color: "#000", textAlign: "left", textTransform: "uppercase" }}>Terms & Conditions</th>
+          </tr>
+          <tr style={{ background: "#f0f0f0" }}>
+            <th style={{ padding: "4px 8px", fontWeight: "700", color: "#000", textAlign: "left", width: "50%", borderRight: "1px solid #000", borderBottom: "1px solid #999", textTransform: "uppercase" }}>Pricing & Delivery</th>
+            <th style={{ padding: "4px 8px", fontWeight: "700", color: "#000", textAlign: "left", borderBottom: "1px solid #999", textTransform: "uppercase" }}>Payment & Policy</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={{ padding: "5px 8px", borderRight: "1px solid #000", verticalAlign: "top", color: "#000", textTransform: "uppercase" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                <tbody>
+                  {([["Price Validity", fmtDate(q.validUntil)], ["Delivery", (q as any).deliveryTerm ?? "—"]] as [string, string][]).map(([l, v]) => (
+                    <tr key={l}>
+                      <td style={{ color: "#000", paddingBottom: "3px", whiteSpace: "nowrap", paddingRight: "5px" }}>{l}</td>
+                      <td style={{ color: "#000", paddingBottom: "3px", paddingLeft: "2px", paddingRight: "4px", whiteSpace: "nowrap" }}>:</td>
+                      <td style={{ color: "#000", paddingBottom: "3px" }}>{v}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </td>
+            <td style={{ padding: "5px 8px", verticalAlign: "top", color: "#000", textTransform: "uppercase" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                <tbody>
+                  {([["Payment Term", (q as any).paymentTerm ?? "—"], ["Return Policy", (q as any).returnPolicy ?? "—"]] as [string, string][]).map(([l, v]) => (
+                    <tr key={l}>
+                      <td style={{ color: "#000", paddingBottom: "3px", whiteSpace: "nowrap", paddingRight: "5px" }}>{l}</td>
+                      <td style={{ color: "#000", paddingBottom: "3px", paddingLeft: "2px", paddingRight: "4px", whiteSpace: "nowrap" }}>:</td>
+                      <td style={{ color: "#000", paddingBottom: "3px" }}>{v}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
       {q.notes && (
         <div style={{ margin: "14px 28px 0", padding: "10px 12px", border: "1px solid #000", fontSize: "11px", color: "#333" }}>

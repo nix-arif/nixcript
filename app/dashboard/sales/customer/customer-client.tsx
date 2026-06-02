@@ -287,6 +287,7 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
   };
 
   const openCreate = () => {
+    (document.activeElement as HTMLElement)?.blur();
     reset({ title: "", name: "", contactNo: "", email: "" });
     setLocalCompanies([]);
     setEditCustomer(null);
@@ -295,6 +296,7 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
   };
 
   const openEdit = (c: Customer) => {
+    (document.activeElement as HTMLElement)?.blur();
     reset({
       title: c.title ?? "",
       name: c.name,
@@ -309,6 +311,7 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
   };
 
   const openView = (c: Customer) => {
+    (document.activeElement as HTMLElement)?.blur();
     setViewCustomer(c);
     setEditCustomer(null);
     setSheetOpen(true);
@@ -649,7 +652,7 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
 
       {/* Sheet */}
       <Sheet open={sheetOpen} onOpenChange={closeSheet}>
-        <SheetContent className="w-full max-w-lg! overflow-y-auto px-10">
+        <SheetContent className="w-full max-w-lg! overflow-y-auto px-10" aria-describedby={undefined}>
           <SheetHeader className="mb-5">
             <SheetTitle>
               {isReadOnly

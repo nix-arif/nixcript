@@ -101,23 +101,15 @@ function drawMonoHeader(opts: {
   headerLayout: string;
   logoHMax: number;
   logoWMax: number;
-  docLabelSize: number;
 }): void {
   const {
     page, startY, fontR, fontB, logoImg, companyName, companyAddress,
     phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo,
-    nameSize, nameBold, nameUppercase, headerLayout, logoHMax, logoWMax, docLabelSize,
+    nameSize, nameBold, nameUppercase, headerLayout, logoHMax, logoWMax,
   } = opts;
 
   const nameFont = nameBold ? fontB : fontR;
   const dispName = nameUppercase ? companyName.toUpperCase() : companyName;
-
-  // "QUOTATION" label — top right
-  const qlW = fontB.widthOfTextAtSize("QUOTATION", docLabelSize);
-  page.drawText("QUOTATION", {
-    x: W - MR - qlW, y: startY - docLabelSize,
-    size: docLabelSize, font: fontB, color: C_BLACK,
-  });
 
   let cy    = startY;
   let textX = ML;
@@ -188,28 +180,25 @@ function drawMonoHeader(opts: {
 }
 
 // ── Mono info box height estimator ─────────────────────────────────────────
-const INFO_BOX_HDR_H   = 22; // height of the column-header row inside the box
-const INFO_BOX_PAD     = 10; // bottom reserve
-const CONTENT_PAD_Y    = 10; // top y-padding below header separator
+const INFO_BOX_HDR_H = 22; // height of the column-header row
+const INFO_BOX_PAD   = 10; // bottom reserve
+const CONTENT_PAD_Y  = 10; // top y-padding below header separator
+const INFO_FS        = 7.5;  // content font size — matches table body
+const INFO_LH        = 10; // line height inside the info box
 
-function estimateMonoInfoBoxH(opts: {
-  cust: any;
-  attentionNameSize: number;
-  title: string | null;
-  detailFontSize: number;
-}): number {
-  const { cust, attentionNameSize, title, detailFontSize } = opts;
+function estimateMonoInfoBoxH(opts: { cust: any; title: string | null }): number {
+  const { cust, title } = opts;
 
-  let leftH = attentionNameSize + 4;
+  let leftH = INFO_FS + 4; // name
   if (cust) {
-    if (cust.position || cust.department) leftH += 12;
-    if (cust.organizationName)            leftH += 12;
-    if (cust.organizationAddress)         leftH += 22;
-    if (cust.email || cust.contactNo)     leftH += 11;
+    if (cust.position || cust.department) leftH += INFO_LH;
+    if (cust.organizationName)            leftH += INFO_LH;
+    if (cust.organizationAddress)         leftH += INFO_LH * 2;
+    if (cust.email || cust.contactNo)     leftH += INFO_LH;
   }
 
   const rows   = 3 + (title ? 1 : 0);
-  const rightH = rows * (detailFontSize + 4);
+  const rightH = rows * INFO_LH;
 
   return INFO_BOX_HDR_H + Math.max(leftH, rightH) + INFO_BOX_PAD + 4;
 }
@@ -222,10 +211,6 @@ function drawMonoInfoBox(opts: {
   fontR: PDFFont;
   fontB: PDFFont;
   cust: any;
-  attentionNameSize: number;
-  attentionNameBold: boolean;
-  detailFontSize: number;
-  detailFontBold: boolean;
   quotationNo: string;
   createdAt: Date | string | null;
   validUntil: Date | string | null;
@@ -234,17 +219,12 @@ function drawMonoInfoBox(opts: {
 }): void {
   const {
     page, startY, boxH, fontR, fontB, cust,
-    attentionNameSize, attentionNameBold,
-    detailFontSize, detailFontBold,
     quotationNo, createdAt, validUntil, title,
     accentColor,
   } = opts;
 
-  const nameFont   = attentionNameBold ? fontB : fontR;
-  const detailFont = detailFontBold    ? fontB : fontR;
-  const DIVX       = ML + CW * 0.5;
-  const PAD        = 8;
-  const CONTENT_PAD_Y = 10;
+  const DIVX = ML + CW * 0.5;
+  const PAD  = 8;
 
   // Outer box
   page.drawRectangle({
@@ -272,57 +252,57 @@ function drawMonoInfoBox(opts: {
     thickness: 0.5, color: C_BLACK,
   });
 
-  // Column header labels (vertically centred in header row) — white text on accent
-  const lblY = startY - INFO_BOX_HDR_H / 2 - 3.5;
+  // Column header labels — black text on accent, vertically centred
+  const lblY = startY - INFO_BOX_HDR_H / 2 - INFO_FS / 2 + 1;
   page.drawText("CUSTOMER DETAIL", {
-    x: ML + PAD, y: lblY, size: 7, font: fontB, color: C_WHITE,
+    x: ML + PAD, y: lblY, size: INFO_FS, font: fontB, color: C_BLACK,
   });
   page.drawText("QUOTATION DETAIL", {
-    x: DIVX + PAD, y: lblY, size: 7, font: fontB, color: C_WHITE,
+    x: DIVX + PAD, y: lblY, size: INFO_FS, font: fontB, color: C_BLACK,
   });
 
-  // ── LEFT: customer detail ────────────────────────────────────────────────
+  // ── LEFT: customer detail — all INFO_FS, C_BLACK ─────────────────────────
   const leftW = DIVX - ML - PAD * 2;
   let ly = startY - INFO_BOX_HDR_H - CONTENT_PAD_Y;
+
+  const up = (s: string) => s.toUpperCase();
 
   if (cust) {
     const custName = [cust.title, cust.name].filter(Boolean).join(" ");
     if (custName) {
-      page.drawText(trunc(custName, nameFont, attentionNameSize, leftW), {
-        x: ML + PAD, y: ly, size: attentionNameSize, font: nameFont, color: C_BLACK,
+      page.drawText(trunc(up(custName), fontR, INFO_FS, leftW), {
+        x: ML + PAD, y: ly, size: INFO_FS, font: fontR, color: C_BLACK,
       });
-      ly -= attentionNameSize + 4;
+      ly -= INFO_LH;
     }
     if (cust.position || cust.department) {
-      const pos = [cust.position, cust.department].filter(Boolean).join(", ");
-      page.drawText(trunc(pos, fontR, 9, leftW), {
-        x: ML + PAD, y: ly, size: 9, font: fontR, color: C_BLACK,
+      page.drawText(trunc(up([cust.position, cust.department].filter(Boolean).join(", ")), fontR, INFO_FS, leftW), {
+        x: ML + PAD, y: ly, size: INFO_FS, font: fontR, color: C_BLACK,
       });
-      ly -= 12;
+      ly -= INFO_LH;
     }
     if (cust.organizationName) {
-      page.drawText(trunc(cust.organizationName, fontR, 9, leftW), {
-        x: ML + PAD, y: ly, size: 9, font: fontR, color: C_BLACK,
+      page.drawText(trunc(up(cust.organizationName), fontR, INFO_FS, leftW), {
+        x: ML + PAD, y: ly, size: INFO_FS, font: fontR, color: C_BLACK,
       });
-      ly -= 12;
+      ly -= INFO_LH;
     }
     if (cust.organizationAddress) {
-      for (const l of wrap(cust.organizationAddress, fontR, 8.5, leftW).slice(0, 2)) {
-        page.drawText(l, { x: ML + PAD, y: ly, size: 8.5, font: fontR, color: C_BLACK });
-        ly -= 11;
+      for (const l of wrap(up(cust.organizationAddress), fontR, INFO_FS, leftW).slice(0, 2)) {
+        page.drawText(l, { x: ML + PAD, y: ly, size: INFO_FS, font: fontR, color: C_BLACK });
+        ly -= INFO_LH;
       }
     }
     if (cust.email || cust.contactNo) {
-      const contact = [cust.email, cust.contactNo].filter(Boolean).join("  ·  ");
-      page.drawText(trunc(contact, fontR, 8, leftW), {
-        x: ML + PAD, y: ly, size: 8, font: fontR, color: C_BLACK,
+      page.drawText(trunc(up([cust.email, cust.contactNo].filter(Boolean).join("  ·  ")), fontR, INFO_FS, leftW), {
+        x: ML + PAD, y: ly, size: INFO_FS, font: fontR, color: C_BLACK,
       });
     }
   } else {
-    page.drawText("—", { x: ML + PAD, y: ly, size: 9, font: fontR, color: C_BLACK });
+    page.drawText("—", { x: ML + PAD, y: ly, size: INFO_FS, font: fontR, color: C_BLACK });
   }
 
-  // ── RIGHT: quotation detail ──────────────────────────────────────────────
+  // ── RIGHT: quotation detail — labels left-aligned, ":" at fixed column ───
   const rightW = W - MR - DIVX - PAD * 2;
   let ry = startY - INFO_BOX_HDR_H - CONTENT_PAD_Y;
 
@@ -333,17 +313,44 @@ function drawMonoInfoBox(opts: {
     ...(title ? [["Subject", title]] as [string, string][] : []),
   ];
 
-  for (const [lbl, val] of detailRows) {
-    const lblStr = `${lbl}:`;
-    const lblW   = fontR.widthOfTextAtSize(lblStr + " ", detailFontSize);
-    page.drawText(lblStr, {
-      x: DIVX + PAD, y: ry, size: detailFontSize, font: fontR, color: C_BLACK,
+  const uRows = detailRows.map(([l, v]) => [up(l), up(v)] as [string, string]);
+  const maxLblW  = Math.max(...uRows.map(([l]) => fontR.widthOfTextAtSize(l, INFO_FS)));
+  const colonX   = DIVX + PAD + maxLblW + 5;
+  const colonW   = fontR.widthOfTextAtSize(":", INFO_FS);
+  const valStartX = colonX + colonW + 2;
+
+  for (const [lbl, val] of uRows) {
+    page.drawText(lbl, { x: DIVX + PAD, y: ry, size: INFO_FS, font: fontR, color: C_BLACK });
+    page.drawText(":", { x: colonX, y: ry, size: INFO_FS, font: fontR, color: C_BLACK });
+    page.drawText(trunc(val, fontR, INFO_FS, rightW - maxLblW - colonW - 6), {
+      x: valStartX, y: ry, size: INFO_FS, font: fontR, color: C_BLACK,
     });
-    page.drawText(trunc(val, detailFont, detailFontSize, rightW - lblW), {
-      x: DIVX + PAD + lblW, y: ry, size: detailFontSize, font: detailFont, color: C_BLACK,
-    });
-    ry -= detailFontSize + 4;
+    ry -= INFO_LH;
   }
+}
+
+// ── Number to words (Malaysian currency) ──────────────────────────────────
+function numberToWords(n: number): string {
+  const ONES = ["","ONE","TWO","THREE","FOUR","FIVE","SIX","SEVEN","EIGHT","NINE",
+    "TEN","ELEVEN","TWELVE","THIRTEEN","FOURTEEN","FIFTEEN","SIXTEEN","SEVENTEEN","EIGHTEEN","NINETEEN"];
+  const TENS = ["","","TWENTY","THIRTY","FORTY","FIFTY","SIXTY","SEVENTY","EIGHTY","NINETY"];
+  function h(x: number): string {
+    if (x === 0) return "";
+    if (x < 20) return ONES[x];
+    if (x < 100) return TENS[Math.floor(x/10)] + (x%10 ? "-"+ONES[x%10] : "");
+    return ONES[Math.floor(x/100)]+" HUNDRED"+(x%100 ? " AND "+h(x%100) : "");
+  }
+  const ringgit = Math.floor(n);
+  const sen = Math.round((n - ringgit) * 100);
+  let w = "";
+  if (ringgit >= 1000000) w += h(Math.floor(ringgit/1000000))+" MILLION ";
+  const thou = Math.floor((ringgit%1000000)/1000);
+  if (thou > 0) w += h(thou)+" THOUSAND ";
+  const rem = ringgit%1000;
+  if (rem > 0) w += h(rem)+" ";
+  w = (w.trim() || "ZERO")+" RINGGIT";
+  if (sen > 0) w += " AND "+h(sen)+" SEN";
+  return w+" ONLY";
 }
 
 // ── Main export ────────────────────────────────────────────────────────────
@@ -357,6 +364,11 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     orgMofCertUrl, orgSsmCertUrl, orgMdaCertUrl, orgTccCertUrl,
     orgBankStatementUrl, orgLampiran12Url, orgLampiran13Url,
   } = data;
+
+  const fmtAcct = (n: number) => {
+    const [int, dec] = n.toFixed(2).split(".");
+    return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${dec}`;
+  };
 
   const cust     = q.customerSnapshot as any;
   const bankList = (orgBankingInfo ?? []) as any[];
@@ -396,17 +408,14 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   }
 
   // ── Layout settings ───────────────────────────────────────────────────────
-  const LOGO_H_MAX = 42;
-  const LOGO_W_MAX = 108;
+  const LOGO_H_MAX = 51;   // 42 × 1.2
+  const LOGO_W_MAX = 130;  // 108 × 1.2
 
   const showCode  = !!(data.orgShowCodeColumn ?? 1);
-  const tfs       = data.orgTableFontSize ?? "normal";
-  const FS_DESC   = tfs === "small" ? 8    : tfs === "large" ? 11   : 9.5;
-  const FS_DETAIL = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 8.5;
-  const FS_CODE   = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 9;
-  const FS_NUM    = tfs === "small" ? 7.5  : tfs === "large" ? 9.5  : 8.5;
-  const LH        = tfs === "small" ? 10   : tfs === "large" ? 13.5 : 11.5;
-  const RH_MIN    = tfs === "small" ? 15   : tfs === "large" ? 21   : 17;
+  // All body text matches the 7.5pt table header — uniform, no bold
+  const FS_BODY   = 7.5;
+  const LH        = 10;   // line height for wrapped description
+  const RH_MIN    = 14;   // minimum row height
   const MDA_GAP   = 3;
 
   // ── Column widths ─────────────────────────────────────────────────────────
@@ -432,8 +441,6 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const nameSize  = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string,number>)[data.orgNameSize ?? "medium"] ?? 13;
   const hLayout   = data.orgHeaderLayout ?? "standard";
   const QL_SIZE   = ({ small: 5.5, normal: 7, large: 10 } as Record<string,number>)[data.orgQuotationLabelSize ?? "normal"] ?? 7;
-  const attnNameSz = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string,number>)[data.orgAttentionNameSize ?? "medium"] ?? 13;
-  const detailFSz  = ({ small: 8, normal: 9, large: 10.5 } as Record<string,number>)[data.orgDetailFontSize ?? "normal"] ?? 9;
 
   // ── Pre-compute row heights ───────────────────────────────────────────────
   type RowInfo = {
@@ -446,7 +453,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   const CODE_LINE_H = LH - 2;
   const rowInfos: RowInfo[] = items.map(item => {
-    const descLines  = wrap(item.description ?? "—", fontR, FS_DESC, C_DESCA - TABLE_PAD * 2);
+    const descLines  = wrap(item.description ?? "—", fontR, FS_BODY, C_DESCA - TABLE_PAD * 2);
     const extraLine  = item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (!item.hasCert ? "No MDA certificate" : null);
@@ -470,18 +477,71 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   const DIVIDER_GAP   = 10;
   const TABLE_HDR_H   = 20;
-  const INFO_BLOCK    = estimateMonoInfoBoxH({
-    cust, attentionNameSize: attnNameSz,
-    title: q.title ?? null, detailFontSize: detailFSz,
-  });
+  const INFO_BLOCK    = estimateMonoInfoBoxH({ cust, title: q.title ?? null });
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
-  const TOTALS_H     = 16 + totRowCount * 13 + 6 + 1.5 + 10 + 24 + 8;
+  const SUMMARY_ROW_H = TABLE_HDR_H;             // subtotal & grand total rows inside the table
+  const BTM_TABLE_H   = TABLE_HDR_H + 42;         // 2-col footer table (header + 3 right-col rows)
+  const TOTALS_H      = 2 * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
+  const TOT_PAD       = 5;                        // inner padding for summary / footer rows
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 30;
   const CLOSING_H    = 38;
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H;
+  const SUB_HDR_H = 14;
+  const BPAD      = 8;
+  const BHALF_W   = CW * 0.5 - BPAD * 2;
+  const BCOLON_W  = fontR.widthOfTextAtSize(":", FS_BODY);
+
+  // Bank Detail — pre-wrap values for dynamic height
+  const bLLabels = ["BANK NAME", "BRANCH"];
+  const bRLabels = ["ACCOUNT NO.", "ACCOUNT NAME"];
+  let bLMaxW = 0, bRMaxW = 0;
+  let bPreL: string[][] = [];
+  let bPreR: string[][] = [];
+  let BANK_BOX_H = 0;
+  if (bank) {
+    bLMaxW = Math.max(...bLLabels.map(l => fontR.widthOfTextAtSize(l, FS_BODY)));
+    bRMaxW = Math.max(...bRLabels.map(l => fontR.widthOfTextAtSize(l, FS_BODY)));
+    const bLValW = BHALF_W - bLMaxW - BCOLON_W - 8;
+    const bRValW = BHALF_W - bRMaxW - BCOLON_W - 8;
+    bPreL = [
+      wrap(String((bank as any).bankName      ?? "—").toUpperCase(), fontR, FS_BODY, bLValW),
+      wrap(String((bank as any).branch        ?? "—").toUpperCase(), fontR, FS_BODY, bLValW),
+    ];
+    bPreR = [
+      wrap(String((bank as any).accountNo     ?? "—").toUpperCase(), fontR, FS_BODY, bRValW),
+      wrap(String((bank as any).accountHolder ?? "—").toUpperCase(), fontR, FS_BODY, bRValW),
+    ];
+    const bConH = Math.max(
+      bPreL.reduce((s, ls) => s + ls.length, 0),
+      bPreR.reduce((s, ls) => s + ls.length, 0),
+    ) * INFO_LH + 8;
+    BANK_BOX_H = TABLE_HDR_H + SUB_HDR_H + bConH;
+  }
+
+  // Terms & Conditions — pre-wrap values for dynamic height
+  const tLLabels = ["PRICE VALIDITY", "DELIVERY"];
+  const tRLabels = ["PAYMENT TERM", "RETURN POLICY"];
+  const tLMaxW = Math.max(...tLLabels.map(l => fontR.widthOfTextAtSize(l, FS_BODY)));
+  const tRMaxW = Math.max(...tRLabels.map(l => fontR.widthOfTextAtSize(l, FS_BODY)));
+  const tLValW = BHALF_W - tLMaxW - BCOLON_W - 8;
+  const tRValW = BHALF_W - tRMaxW - BCOLON_W - 8;
+  const tPreL = [
+    wrap(fmtD(q.validUntil).toUpperCase(),                      fontR, FS_BODY, tLValW),
+    wrap(String((q as any).deliveryTerm  ?? "—").toUpperCase(), fontR, FS_BODY, tLValW),
+  ];
+  const tPreR = [
+    wrap(String((q as any).paymentTerm  ?? "—").toUpperCase(), fontR, FS_BODY, tRValW),
+    wrap(String((q as any).returnPolicy ?? "—").toUpperCase(), fontR, FS_BODY, tRValW),
+  ];
+  const tConH = Math.max(
+    tPreL.reduce((s, ls) => s + ls.length, 0),
+    tPreR.reduce((s, ls) => s + ls.length, 0),
+  ) * INFO_LH + 8;
+  const TERMS_BOX_H = TABLE_HDR_H + SUB_HDR_H + tConH;
+
+  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + (bank ? BANK_BOX_H + 8 : 0) + TERMS_BOX_H + 8;
 
   const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - MB - 20;
   const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 20;
@@ -558,17 +618,32 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         nameSize, nameBold: !!(data.orgNameBold ?? 1),
         nameUppercase: !!(data.orgNameUppercase ?? 0),
         headerLayout: hLayout, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
-        docLabelSize: QL_SIZE,
       });
       curY -= HEADER_BLOCK;
+
+      // Document label — sits just above the divider line
+      {
+        const qlFont  = !!(data.orgQuotationLabelBold ?? 1) ? fontB : fontR;
+        const qlText  = !!(data.orgQuotationLabelUppercase ?? 1)
+          ? "QUOTATION"
+          : "Quotation";
+        const qlW     = qlFont.widthOfTextAtSize(qlText, QL_SIZE);
+        const qlAlign = (data.orgQuotationLabelAlign as string | null) ?? "right";
+        const qlX     = qlAlign === "left"   ? ML
+                      : qlAlign === "center" ? ML + (CW - qlW) / 2
+                      :                        W - MR - qlW;
+        page.drawText(qlText, {
+          x: qlX, y: curY + QL_SIZE + 2,
+          size: QL_SIZE, font: qlFont, color: C_BLACK,
+        });
+      }
+
       hLine(page, curY, ML, W - MR, C_BLACK, 1.0);
       curY -= DIVIDER_GAP;
 
       // 2-column bordered info box
       drawMonoInfoBox({
         page, startY: curY, boxH: INFO_BLOCK, fontR, fontB, cust,
-        attentionNameSize: attnNameSz, attentionNameBold: !!(data.orgAttentionNameBold ?? 1),
-        detailFontSize: detailFSz, detailFontBold: !!(data.orgDetailFontBold ?? 0),
         quotationNo: q.quotationNo, createdAt: q.createdAt,
         validUntil: q.validUntil, title: q.title ?? null,
         accentColor,
@@ -590,9 +665,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
     // ── Table header — black fill, white text ─────────────────────────────
     const thdrs: { label: string; x: number; w: number }[] = [
-      { label: "No",          x: X_NO,   w: C_NO   },
-      ...(showCode ? [{ label: "Code",       x: X_CODE, w: C_CODE  }] : []),
-      { label: "Description", x: X_DESC, w: C_DESCA },
+      { label: "No",                          x: X_NO,   w: C_NO   },
+      ...(showCode ? [{ label: "Catalog No", x: X_CODE, w: C_CODE  }] : []),
+      { label: "Name of Product / Service",  x: X_DESC, w: C_DESCA },
       { label: "Qty",         x: X_QTY,  w: C_QTY  },
       { label: "UOM",         x: X_UOM,  w: C_UOM  },
       { label: "Unit Price",  x: X_UP,   w: C_UP   },
@@ -604,9 +679,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: TABLE_HDR_H, color: accentColor });
 
     for (const col of thdrs) {
-      const tw = fontB.widthOfTextAtSize(col.label.toUpperCase(), 7.5);
+      const tw = fontB.widthOfTextAtSize(col.label.toUpperCase(), FS_BODY);
       page.drawText(col.label.toUpperCase(), {
-        x: col.x + (col.w - tw) / 2, y: tHdrY + 6, size: 7.5, font: fontB, color: C_WHITE,
+        x: col.x + (col.w - tw) / 2, y: tHdrY + 6, size: FS_BODY, font: fontB, color: C_BLACK,
       });
     }
 
@@ -614,7 +689,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       page.drawLine({
         start: { x: col.x, y: tHdrY },
         end:   { x: col.x, y: tHdrY + TABLE_HDR_H },
-        thickness: 0.4, color: rgb(0.3, 0.3, 0.3),
+        thickness: 0.4, color: C_BLACK,
       });
     }
 
@@ -642,150 +717,306 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         page.drawLine({
           start: { x: col.x, y: rowY },
           end:   { x: col.x, y: curY },
-          thickness: 0.3, color: rgb(0.75, 0.75, 0.75),
+          thickness: 0.3, color: C_BLACK,
         });
       }
 
       // No
-      const noW = fontR.widthOfTextAtSize(String(item.rowNo), FS_NUM);
+      const noW = fontR.widthOfTextAtSize(String(item.rowNo), FS_BODY);
       page.drawText(String(item.rowNo), {
         x: X_NO + (C_NO - noW) / 2, y: textBaseline,
-        size: FS_NUM, font: fontR, color: C_FAINT,
+        size: FS_BODY, font: fontR, color: C_BLACK,
       });
 
       // Code column or inline code
       let dy = textBaseline;
       if (showCode) {
-        page.drawText(trunc(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2), {
-          x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontR, color: C_MUTED,
+        page.drawText(trunc(item.productCode ?? "—", fontR, FS_BODY, C_CODE - TABLE_PAD * 2), {
+          x: X_CODE + TABLE_PAD, y: dy, size: FS_BODY, font: fontR, color: C_BLACK,
         });
       } else if (item.productCode) {
-        page.drawText(trunc(item.productCode, fontB, FS_CODE - 1, C_DESCA - TABLE_PAD * 2), {
-          x: X_DESC + TABLE_PAD, y: dy, size: FS_CODE - 1, font: fontB, color: C_TEXT,
+        page.drawText(trunc(item.productCode, fontR, FS_BODY, C_DESCA - TABLE_PAD * 2), {
+          x: X_DESC + TABLE_PAD, y: dy, size: FS_BODY, font: fontR, color: C_BLACK,
         });
         dy -= CODE_LINE_H;
       }
 
-      // Description + cert line
+      // Description + cert line — all FS_BODY, all black
       for (const line of descLines) {
-        page.drawText(line, { x: X_DESC + TABLE_PAD, y: dy, size: FS_DESC, font: fontR, color: C_TEXT });
+        page.drawText(line, { x: X_DESC + TABLE_PAD, y: dy, size: FS_BODY, font: fontR, color: C_BLACK });
         dy -= LH;
       }
       if (extraLine) {
         dy -= MDA_GAP;
         page.drawText(extraLine, {
           x: X_DESC + TABLE_PAD, y: dy,
-          size: FS_DETAIL, font: fontR, color: isGreenRow ? C_GREEN : C_AMBER,
+          size: FS_BODY, font: fontR, color: C_BLACK,
         });
       }
 
       // Qty
-      const qtyW = fontR.widthOfTextAtSize(String(item.qty ?? 0), FS_DESC);
+      const qtyW = fontR.widthOfTextAtSize(String(item.qty ?? 0), FS_BODY);
       page.drawText(String(item.qty ?? 0), {
-        x: X_QTY + (C_QTY - qtyW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_TEXT,
+        x: X_QTY + (C_QTY - qtyW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK,
       });
 
       // UOM
       const uom  = item.uom || "—";
-      const uomW = fontR.widthOfTextAtSize(uom, FS_CODE);
+      const uomW = fontR.widthOfTextAtSize(uom, FS_BODY);
       page.drawText(uom, {
-        x: X_UOM + (C_UOM - uomW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_MUTED,
+        x: X_UOM + (C_UOM - uomW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK,
       });
 
-      // Unit Price
-      const up  = `RM ${Number(item.unitPrice ?? 0).toFixed(2)}`;
-      const upW = fontR.widthOfTextAtSize(up, FS_CODE);
-      page.drawText(up, {
-        x: X_UP + C_UP - TABLE_PAD - upW, y: textBaseline, size: FS_CODE, font: fontR, color: C_TEXT,
-      });
+      // Unit Price — "RM" left, value right-aligned (accounting format)
+      const upNum  = fmtAcct(Number(item.unitPrice ?? 0));
+      const upNumW = fontR.widthOfTextAtSize(upNum, FS_BODY);
+      page.drawText("RM", { x: X_UP + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+      page.drawText(upNum, { x: X_UP + C_UP - TABLE_PAD - upNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
 
       // Disc%
       if (showDisc) {
         const disc  = Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—";
-        const discW = fontR.widthOfTextAtSize(disc, FS_CODE);
+        const discW = fontR.widthOfTextAtSize(disc, FS_BODY);
         page.drawText(disc, {
-          x: X_DISC + (C_DISC - discW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_MUTED,
+          x: X_DISC + (C_DISC - discW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK,
         });
       }
 
-      // Total
+      // Total — "RM" left, value right-aligned (accounting format)
       if (showTP) {
-        const tot  = `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`;
-        const totW = fontB.widthOfTextAtSize(tot, FS_DESC);
-        page.drawText(tot, {
-          x: X_TOT + C_TOT - TABLE_PAD - totW, y: textBaseline, size: FS_DESC, font: fontB, color: C_TEXT,
-        });
+        const totNum  = fmtAcct(Number(item.totalPrice ?? 0));
+        const totNumW = fontR.widthOfTextAtSize(totNum, FS_BODY);
+        page.drawText("RM", { x: X_TOT + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+        page.drawText(totNum, { x: X_TOT + C_TOT - TABLE_PAD - totNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
       }
 
       curY = rowY;
     }
 
-    // Close table bottom border
+    // ── On last page: subtotal + grand total rows inside the items table ───────
+    if (isLast) {
+      const totalQtyPerSet = items.reduce((s, i) => s + parseFloat(i.qty ?? "0"), 0);
+      const fmtQty = (n: number) => n % 1 === 0 ? String(n) : n.toFixed(2);
+      const amtAreaW = W - MR - X_UP; // width of merged cols 6-7 amount area
+
+      // ── Subtotal row ────────────────────────────────────────────────────────
+      const subLabel = sets > 1 ? `SUBTOTAL × 1 SET` : "SUBTOTAL";
+      const subRowY  = curY - SUMMARY_ROW_H;
+      // Borders
+      page.drawLine({ start: { x: ML,     y: subRowY }, end: { x: W - MR, y: subRowY }, thickness: 0.8, color: C_BLACK });
+      page.drawLine({ start: { x: ML,     y: curY    }, end: { x: ML,     y: subRowY }, thickness: 0.8, color: C_BLACK });
+      page.drawLine({ start: { x: W - MR, y: curY    }, end: { x: W - MR, y: subRowY }, thickness: 0.8, color: C_BLACK });
+      // Column dividers: after col-3, before amount area (cols 4&5 merged, no X_UOM divider)
+      page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: subRowY }, thickness: 0.3, color: C_BLACK });
+      page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: subRowY }, thickness: 0.3, color: C_BLACK });
+      // Label cols 1-3
+      page.drawText(subLabel, { x: X_NO + TOT_PAD, y: subRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+      // Qty cols 4-5 merged — centered in X_QTY to X_UP
+      const subQtyStr = fmtQty(totalQtyPerSet);
+      const subQtyW   = fontR.widthOfTextAtSize(subQtyStr, FS_BODY);
+      page.drawText(subQtyStr, { x: X_QTY + ((C_QTY + C_UOM) - subQtyW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+      // Amount cols 6-7 — centered in merged area (1-set amount)
+      const subStr  = fmtM(subtotalPerSet);
+      const subStrW = fontR.widthOfTextAtSize(subStr, FS_BODY);
+      page.drawText(subStr, { x: X_UP + (amtAreaW - subStrW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+      curY = subRowY;
+
+      // ── Grand total row (accent fill) ───────────────────────────────────────
+      const gtLabel       = sets > 1 ? `GRAND TOTAL × ${sets} SETS` : "GRAND TOTAL";
+      const totalQtyAllSets = totalQtyPerSet * sets;
+      const gtRowY        = curY - SUMMARY_ROW_H;
+      page.drawRectangle({ x: ML, y: gtRowY, width: CW, height: SUMMARY_ROW_H, color: accentColor });
+      // Borders
+      page.drawLine({ start: { x: ML,     y: gtRowY }, end: { x: W - MR, y: gtRowY }, thickness: 0.8, color: C_BLACK });
+      page.drawLine({ start: { x: ML,     y: curY   }, end: { x: ML,     y: gtRowY }, thickness: 0.8, color: C_BLACK });
+      page.drawLine({ start: { x: W - MR, y: curY   }, end: { x: W - MR, y: gtRowY }, thickness: 0.8, color: C_BLACK });
+      // Column dividers: after col-3, before amount area (cols 4&5 merged, no X_UOM divider)
+      page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: gtRowY }, thickness: 0.3, color: C_BLACK });
+      page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: gtRowY }, thickness: 0.3, color: C_BLACK });
+      // Label cols 1-3
+      page.drawText(gtLabel, { x: X_NO + TOT_PAD, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+      // Qty cols 4-5 merged — centered in X_QTY to X_UP
+      const gtQtyStr = fmtQty(totalQtyAllSets);
+      const gtQtyW   = fontB.widthOfTextAtSize(gtQtyStr, FS_BODY);
+      page.drawText(gtQtyStr, { x: X_QTY + ((C_QTY + C_UOM) - gtQtyW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+      // Amount cols 6-7 merged — centered in merged area
+      const gtAmtStr = fmtM(grand);
+      const gtAmtW   = fontB.widthOfTextAtSize(gtAmtStr, FS_BODY);
+      page.drawText(gtAmtStr, { x: X_UP + (amtAreaW - gtAmtW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+      curY = gtRowY;
+    }
+
+    // Close table bottom border (after summary rows on last page)
     page.drawLine({ start: { x: ML, y: curY }, end: { x: W - MR, y: curY }, thickness: 0.8, color: C_BORDER });
 
-    // ── Last page: totals + notes ──────────────────────────────────────────
+    // ── Last page: footer content ──────────────────────────────────────────
     if (isLast) {
-      curY -= 14;
+      // ── 2-column footer table ───────────────────────────────────────────────
+      curY -= 8;
+      const LEFT_COL_W  = CW * 0.65;
+      const RIGHT_COL_X = ML + LEFT_COL_W;
+      const BTM_HDR_H   = TABLE_HDR_H;
+      const wordsText   = numberToWords(grand);
+      const RIGHT_ROW_H = 14; // height of each right-column sub-row
+      const wordsLines  = wrap(wordsText, fontR, FS_BODY, LEFT_COL_W - TOT_PAD * 2).slice(0, 4);
+      const btmConH     = Math.max(wordsLines.length * INFO_LH + 6, 3 * RIGHT_ROW_H);
+      const btmTotalH   = BTM_HDR_H + btmConH;
 
-      // Bank info (left)
+      // Outer border
+      page.drawRectangle({
+        x: ML, y: curY - btmTotalH, width: CW, height: btmTotalH,
+        borderColor: C_BLACK, borderWidth: 0.8,
+      });
+
+      // Header row — accent fill
+      page.drawRectangle({
+        x: ML, y: curY - BTM_HDR_H, width: CW, height: BTM_HDR_H,
+        color: accentColor,
+      });
+
+      // Vertical divider (full height)
+      page.drawLine({
+        start: { x: RIGHT_COL_X, y: curY - btmTotalH },
+        end:   { x: RIGHT_COL_X, y: curY },
+        thickness: 0.6, color: C_BLACK,
+      });
+
+      // Horizontal separator below header
+      page.drawLine({
+        start: { x: ML,      y: curY - BTM_HDR_H },
+        end:   { x: ML + CW, y: curY - BTM_HDR_H },
+        thickness: 0.5, color: C_BLACK,
+      });
+
+      // Header labels (black text)
+      const btmLblY = curY - BTM_HDR_H / 2 - FS_BODY / 2 + 1;
+      page.drawText("TOTAL IN WORDS", {
+        x: ML + TOT_PAD, y: btmLblY, size: FS_BODY, font: fontB, color: C_BLACK,
+      });
+      page.drawText("AMOUNT SUMMARY", {
+        x: RIGHT_COL_X + TOT_PAD, y: btmLblY, size: FS_BODY, font: fontB, color: C_BLACK,
+      });
+
+      // Content — total in words (left column, vertically centred)
+      const wordsTextH = wordsLines.length * INFO_LH;
+      let wy = (curY - BTM_HDR_H) - Math.floor((btmConH - wordsTextH) / 2);
+      for (const line of wordsLines) {
+        page.drawText(line, { x: ML + TOT_PAD, y: wy, size: FS_BODY, font: fontR, color: C_BLACK });
+        wy -= INFO_LH;
+      }
+
+      // Right column — 3 sub-rows: Taxable Amount | SST | Total After Tax
+      const rTop    = curY - BTM_HDR_H; // top of right content area
+      const rightW  = W - MR - RIGHT_COL_X - TOT_PAD;
+
+      // Row 1: taxable amount — label left, amount right
+      page.drawLine({ start: { x: RIGHT_COL_X, y: rTop - RIGHT_ROW_H }, end: { x: W - MR, y: rTop - RIGHT_ROW_H }, thickness: 0.3, color: C_BLACK });
+      page.drawText("TAXABLE AMOUNT (MYR)", { x: RIGHT_COL_X + TOT_PAD, y: rTop - RIGHT_ROW_H + 4, size: FS_BODY, font: fontR, color: C_BLACK });
+      const taxStr  = fmtM(afterDisc);
+      const taxStrW = fontR.widthOfTextAtSize(taxStr, FS_BODY);
+      page.drawText(taxStr, { x: W - MR - TOT_PAD - taxStrW, y: rTop - RIGHT_ROW_H + 4, size: FS_BODY, font: fontR, color: C_BLACK });
+
+      // Row 2: SST (X%) — label left, amount right
+      const sstLabel = `SST (${q.sstPct ?? "0"}%)`;
+      page.drawLine({ start: { x: RIGHT_COL_X, y: rTop - 2 * RIGHT_ROW_H }, end: { x: W - MR, y: rTop - 2 * RIGHT_ROW_H }, thickness: 0.3, color: C_BLACK });
+      page.drawText(sstLabel, { x: RIGHT_COL_X + TOT_PAD, y: rTop - 2 * RIGHT_ROW_H + 4, size: FS_BODY, font: fontR, color: C_BLACK });
+      const sstValStr = fmtM(sstAmt);
+      const sstValW   = fontR.widthOfTextAtSize(sstValStr, FS_BODY);
+      page.drawText(sstValStr, { x: W - MR - TOT_PAD - sstValW, y: rTop - 2 * RIGHT_ROW_H + 4, size: FS_BODY, font: fontR, color: C_BLACK });
+
+      // Row 3: TOTAL AFTER TAX — label left, grand total right, bold
+      page.drawText("TOTAL AFTER TAX", { x: RIGHT_COL_X + TOT_PAD, y: rTop - 3 * RIGHT_ROW_H + 4, size: FS_BODY, font: fontB, color: C_BLACK });
+      const tatStr  = fmtM(grand);
+      const tatStrW = fontB.widthOfTextAtSize(tatStr, FS_BODY);
+      page.drawText(tatStr, { x: W - MR - TOT_PAD - tatStrW, y: rTop - 3 * RIGHT_ROW_H + 4, size: FS_BODY, font: fontB, color: C_BLACK });
+
+      curY -= btmTotalH;
+
+      // ── Bank Detail table ──────────────────────────────────────────────────
       if (bank) {
-        let by = curY;
-        page.drawText("PAYMENT TO", { x: ML, y: by, size: 7.5, font: fontB, color: C_TEXT });
-        by -= 13;
-        for (const [lbl, val] of [
-          ["Bank", bank.bankName ?? ""],
-          ["Account Name", bank.accountHolder ?? ""],
-          ["Account No.", bank.accountNo ?? ""],
-        ] as [string, string][]) {
-          page.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_FAINT });
-          page.drawText(trunc(String(val), fontB, 9.5, 170), {
-            x: ML + 76, y: by, size: 9.5, font: fontB, color: C_TEXT,
-          });
-          by -= 13;
+        const DIVX2  = ML + CW * 0.5;
+        const bLColX = ML    + BPAD + bLMaxW + 4;
+        const bRColX = DIVX2 + BPAD + bRMaxW + 4;
+        const bValLX = bLColX + BCOLON_W + 3;
+        const bValRX = bRColX + BCOLON_W + 3;
+
+        page.drawRectangle({ x: ML, y: curY - BANK_BOX_H, width: CW, height: BANK_BOX_H, borderColor: C_BLACK, borderWidth: 0.8 });
+        page.drawRectangle({ x: ML, y: curY - TABLE_HDR_H, width: CW, height: TABLE_HDR_H, color: accentColor });
+        page.drawLine({ start: { x: ML, y: curY - TABLE_HDR_H }, end: { x: ML + CW, y: curY - TABLE_HDR_H }, thickness: 0.5, color: C_BLACK });
+        page.drawText("BANK DETAIL", { x: ML + BPAD, y: curY - TABLE_HDR_H / 2 - FS_BODY / 2 + 1, size: FS_BODY, font: fontB, color: C_BLACK });
+
+        const bSubTop  = curY - TABLE_HDR_H;
+        page.drawLine({ start: { x: ML, y: bSubTop - SUB_HDR_H }, end: { x: ML + CW, y: bSubTop - SUB_HDR_H }, thickness: 0.4, color: C_BLACK });
+        page.drawLine({ start: { x: DIVX2, y: curY - BANK_BOX_H }, end: { x: DIVX2, y: curY - TABLE_HDR_H }, thickness: 0.6, color: C_BLACK });
+        const bSubLblY = bSubTop - SUB_HDR_H / 2 - FS_BODY / 2 + 1;
+        page.drawText("BANK INFO",       { x: ML    + BPAD, y: bSubLblY, size: FS_BODY, font: fontB, color: C_BLACK });
+        page.drawText("ACCOUNT DETAILS", { x: DIVX2 + BPAD, y: bSubLblY, size: FS_BODY, font: fontB, color: C_BLACK });
+
+        let bLy = bSubTop - SUB_HDR_H - 8;
+        for (let i = 0; i < bLLabels.length; i++) {
+          page.drawText(bLLabels[i], { x: ML + BPAD, y: bLy, size: FS_BODY, font: fontR, color: C_BLACK });
+          page.drawText(":", { x: bLColX, y: bLy, size: FS_BODY, font: fontR, color: C_BLACK });
+          for (const line of bPreL[i]) {
+            page.drawText(line, { x: bValLX, y: bLy, size: FS_BODY, font: fontR, color: C_BLACK });
+            bLy -= INFO_LH;
+          }
         }
+        let bRy = bSubTop - SUB_HDR_H - 8;
+        for (let i = 0; i < bRLabels.length; i++) {
+          page.drawText(bRLabels[i], { x: DIVX2 + BPAD, y: bRy, size: FS_BODY, font: fontR, color: C_BLACK });
+          page.drawText(":", { x: bRColX, y: bRy, size: FS_BODY, font: fontR, color: C_BLACK });
+          for (const line of bPreR[i]) {
+            page.drawText(line, { x: bValRX, y: bRy, size: FS_BODY, font: fontR, color: C_BLACK });
+            bRy -= INFO_LH;
+          }
+        }
+        curY -= BANK_BOX_H;
       }
 
-      // Totals (right-aligned)
-      const totW  = 220;
-      const totX  = W - MR - totW;
-      let ty      = curY;
-      const totItems: [string, string][] = [];
-      if (showDisc && itemDiscPerSet > 0) {
-        totItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
-        totItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
-        totItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
-      } else {
-        totItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
-      }
-      if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
-      if (discAmt > 0) {
-        totItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
-        totItems.push(["After Discount", fmtM(afterDisc)]);
-      }
-      if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
+      // ── Terms & Conditions table ───────────────────────────────────────────
+      {
+        const DIVX2  = ML + CW * 0.5;
+        const tLColX = ML    + BPAD + tLMaxW + 4;
+        const tRColX = DIVX2 + BPAD + tRMaxW + 4;
+        const tValLX = tLColX + BCOLON_W + 3;
+        const tValRX = tRColX + BCOLON_W + 3;
 
-      for (const [lbl, val] of totItems) {
-        page.drawText(lbl, { x: totX, y: ty, size: 9.5, font: fontR, color: C_MUTED });
-        const vw = fontR.widthOfTextAtSize(val, 9.5);
-        page.drawText(val, { x: W - MR - vw, y: ty, size: 9.5, font: fontR, color: C_TEXT });
-        ty -= 13;
+        page.drawRectangle({ x: ML, y: curY - TERMS_BOX_H, width: CW, height: TERMS_BOX_H, borderColor: C_BLACK, borderWidth: 0.8 });
+        page.drawRectangle({ x: ML, y: curY - TABLE_HDR_H, width: CW, height: TABLE_HDR_H, color: accentColor });
+        page.drawLine({ start: { x: ML, y: curY - TABLE_HDR_H }, end: { x: ML + CW, y: curY - TABLE_HDR_H }, thickness: 0.5, color: C_BLACK });
+        page.drawText("TERMS & CONDITIONS", { x: ML + BPAD, y: curY - TABLE_HDR_H / 2 - FS_BODY / 2 + 1, size: FS_BODY, font: fontB, color: C_BLACK });
+
+        const tSubTop  = curY - TABLE_HDR_H;
+        page.drawLine({ start: { x: ML, y: tSubTop - SUB_HDR_H }, end: { x: ML + CW, y: tSubTop - SUB_HDR_H }, thickness: 0.4, color: C_BLACK });
+        page.drawLine({ start: { x: DIVX2, y: curY - TERMS_BOX_H }, end: { x: DIVX2, y: curY - TABLE_HDR_H }, thickness: 0.6, color: C_BLACK });
+        const tSubLblY = tSubTop - SUB_HDR_H / 2 - FS_BODY / 2 + 1;
+        page.drawText("PRICING & DELIVERY", { x: ML    + BPAD, y: tSubLblY, size: FS_BODY, font: fontB, color: C_BLACK });
+        page.drawText("PAYMENT & POLICY",   { x: DIVX2 + BPAD, y: tSubLblY, size: FS_BODY, font: fontB, color: C_BLACK });
+
+        let tLy = tSubTop - SUB_HDR_H - 8;
+        for (let i = 0; i < tLLabels.length; i++) {
+          page.drawText(tLLabels[i], { x: ML + BPAD, y: tLy, size: FS_BODY, font: fontR, color: C_BLACK });
+          page.drawText(":", { x: tLColX, y: tLy, size: FS_BODY, font: fontR, color: C_BLACK });
+          for (const line of tPreL[i]) {
+            page.drawText(line, { x: tValLX, y: tLy, size: FS_BODY, font: fontR, color: C_BLACK });
+            tLy -= INFO_LH;
+          }
+        }
+        let tRy = tSubTop - SUB_HDR_H - 8;
+        for (let i = 0; i < tRLabels.length; i++) {
+          page.drawText(tRLabels[i], { x: DIVX2 + BPAD, y: tRy, size: FS_BODY, font: fontR, color: C_BLACK });
+          page.drawText(":", { x: tRColX, y: tRy, size: FS_BODY, font: fontR, color: C_BLACK });
+          for (const line of tPreR[i]) {
+            page.drawText(line, { x: tValRX, y: tRy, size: FS_BODY, font: fontR, color: C_BLACK });
+            tRy -= INFO_LH;
+          }
+        }
+        curY -= TERMS_BOX_H + 10;
       }
-
-      ty -= 4;
-      page.drawLine({ start: { x: totX - 8, y: ty }, end: { x: W - MR, y: ty }, thickness: 1.2, color: C_BLACK });
-      ty -= 14;
-      page.drawText("Grand Total", { x: totX, y: ty, size: 11, font: fontB, color: C_BLACK });
-      const gtAmt  = fmtM(grand);
-      const gtAmtW = fontB.widthOfTextAtSize(gtAmt, 12);
-      page.drawText(gtAmt, { x: W - MR - gtAmtW, y: ty, size: 12, font: fontB, color: C_BLACK });
-      ty -= 4;
-      page.drawLine({ start: { x: totX - 8, y: ty }, end: { x: W - MR, y: ty }, thickness: 1.2, color: C_BLACK });
-
-      curY = ty - 20;
 
       // Closing message
       curY -= 10;
-      const closeMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order.";
+      const closeMsg = "We trust the above quotation meets your requirements. Should you have any queries, please do not hesitate to contact us. We look forward to your kind confirmation.";
       for (const cl of wrap(closeMsg, fontR, 8, CW - 40)) {
         const clW = fontR.widthOfTextAtSize(cl, 8);
         page.drawText(cl, { x: (W - clW) / 2, y: curY, size: 8, font: fontR, color: C_FAINT });

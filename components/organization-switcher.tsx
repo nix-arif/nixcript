@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/sidebar";
 import { ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 import CreateOrganizationForm from "./dialog-forms/create-organization-form";
-import Image from "next/image";
 import { authClient } from "@/lib/auth-client";
 import { Spinner } from "./ui/spinner";
 import { useRouter } from "next/navigation";
@@ -249,12 +248,11 @@ export function OrganizationSwitcher() {
               >
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg text-sidebar-primary-foreground bg-transparent!">
                   {displayOrg?.logo ? (
-                    <Image
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
                       src={displayOrg.logo}
                       alt={displayOrg.name}
-                      width={32}
-                      height={32}
-                      className="bg-transparent!"
+                      style={{ width: "auto", height: "32px", objectFit: "contain" }}
                     />
                   ) : (
                     displayOrg?.name[0]

@@ -406,6 +406,9 @@ export type CreateQuotationInput = {
   salesPersonName?: string;
   validDays?: number;
   notes?: string;
+  deliveryTerm?: string;
+  paymentTerm?: string;
+  returnPolicy?: string;
   items: ReviewItem[];
   overallDiscountPct: string;
   sstPct: string;
@@ -540,6 +543,9 @@ export async function createQuotation(input: CreateQuotationInput) {
     preparedById: userId,
     preparedByName: me?.name ?? "",
     notes: input.notes,
+    deliveryTerm: input.deliveryTerm ?? null,
+    paymentTerm: input.paymentTerm ?? null,
+    returnPolicy: input.returnPolicy ?? null,
     subtotal: subtotal.toFixed(2),
     overallDiscountPct: input.overallDiscountPct,
     overallDiscountAmt: ((subtotal * overallDisc) / 100).toFixed(2),
@@ -1653,6 +1659,9 @@ export type UpdateQuotationInput = {
   salesPersonName?: string | null;
   validDays?: number;
   notes?: string | null;
+  deliveryTerm?: string | null;
+  paymentTerm?: string | null;
+  returnPolicy?: string | null;
   overallDiscountPct: string;
   sstPct: string;
   includeCatalogue: boolean;
@@ -1780,6 +1789,9 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       salesPersonName: input.salesPersonName ?? null,
       validUntil,
       notes: input.notes ?? null,
+      deliveryTerm: input.deliveryTerm ?? null,
+      paymentTerm: input.paymentTerm ?? null,
+      returnPolicy: input.returnPolicy ?? null,
       subtotal: subtotal.toFixed(2),
       overallDiscountPct: input.overallDiscountPct,
       overallDiscountAmt: ((subtotal * overallDisc) / 100).toFixed(2),
