@@ -69,7 +69,8 @@ function calcTotals(items: LineItem[], sstPct: string) {
   return { subtotal, sstAmt, grand: subtotal + sstAmt };
 }
 
-const fmt = (n: number) => `RM ${n.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
+const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
+const fmt = (n: number, currency: string) => `${currency} ${n.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
 export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos, initialSoId }: Props) {
   const router = useRouter();
@@ -92,6 +93,12 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [notes, setNotes] = useState("");
   const [sstPct, setSstPct] = useState("0");
+  const [currency, setCurrency] = useState("MYR");
+
+  function handleCurrencyChange(next: string) {
+    setCurrency(next);
+    setItems((prev) => prev.map((i) => ({ ...i, currency: next })));
+  }
 
   // Items
   const [items, setItems] = useState<LineItem[]>([newLine(1)]);
@@ -231,6 +238,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
       salesOrderId: selectedSo!.id,
       customerPoIds: selectedCpos.map((c) => c.id),
       supplierQuotationKey: pdfKey,
+      currency,
       subtotal: subtotal.toFixed(2),
       sstPct,
       sst: sstAmt.toFixed(2),
@@ -448,6 +456,18 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
         {/* ── Header info ── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Order details</h2>
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Currency</Label>
+              <select
+                value={currency}
+                onChange={(e) => handleCurrencyChange(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Expected delivery date</Label>
@@ -536,7 +556,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
                       <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right flex-1" />
                     </div>
                     <div className="h-7 px-3 flex items-center justify-end text-xs text-muted-foreground font-mono bg-muted/30 rounded-md">
-                      {fmt(parseFloat(item.totalPrice || "0"))}
+                      {fmt(parseFloat(item.totalPrice || "0"), currency)}
                     </div>
                   </div>
 
@@ -577,7 +597,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
             <div className="w-64 space-y-2 text-sm">
               <div className="flex justify-between text-muted-foreground">
                 <span>Subtotal</span>
-                <span className="tabular-nums font-mono">{fmt(subtotal)}</span>
+                <span className="tabular-nums font-mono">{fmt(subtotal, currency)}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground shrink-0">SST</span>
@@ -585,11 +605,11 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
                   <Input value={sstPct} onChange={(e) => setSstPct(e.target.value)} className="h-7 w-16 text-xs text-right" />
                   <span className="text-muted-foreground text-xs">%</span>
                 </div>
-                <span className="tabular-nums font-mono text-muted-foreground">{fmt(sstAmt)}</span>
+                <span className="tabular-nums font-mono text-muted-foreground">{fmt(sstAmt, currency)}</span>
               </div>
               <div className="flex justify-between font-semibold border-t border-border pt-2">
                 <span>Grand total</span>
-                <span className="tabular-nums font-mono">{fmt(grand)}</span>
+                <span className="tabular-nums font-mono">{fmt(grand, currency)}</span>
               </div>
             </div>
           </div>

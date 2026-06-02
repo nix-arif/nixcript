@@ -156,6 +156,7 @@ export interface CreatePurchaseOrderInput {
   supplierId: string;
   supplierQuotationKey?: string;
   customerPoIds?: string[];
+  currency?: string;
   sst?: string;
   sstPct?: string;
   subtotal?: string;
@@ -468,6 +469,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
       supplierId: input.supplierId,
       supplierSnapshot: supplierSnapshot ?? null,
       supplierQuotationKey: input.supplierQuotationKey ?? null,
+      currency: input.currency ?? "MYR",
       subtotal: input.subtotal ?? "0",
       sst: input.sst ?? "0",
       sstPct: input.sstPct ?? "0",
@@ -564,6 +566,7 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
       supplierQuotationKey: input.supplierQuotationKey !== undefined
         ? input.supplierQuotationKey
         : existing.supplierQuotationKey,
+      currency: input.currency ?? existing.currency,
       subtotal: input.subtotal ?? existing.subtotal,
       sst: input.sst ?? existing.sst,
       sstPct: input.sstPct ?? existing.sstPct,
@@ -642,6 +645,7 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
 
   if (!existing) throw new Error("Purchase order not found");
   if (existing.createdBy !== userId) throw new Error("Only the creator can delete this purchase order");
+  if (existing.approvedAt) throw new Error("Approved purchase orders cannot be deleted");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled purchase orders can be deleted");
 
   if (existing.supplierQuotationKey) {
@@ -710,10 +714,10 @@ export async function submitPurchaseOrder(id: string): Promise<void> {
 }
 
 export async function approvePurchaseOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("purchase-order:approve");
+  const { orgId, userId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "submitted") throw new Error("Only submitted purchase orders can be approved");
-  await db.update(purchaseOrder).set({ status: "confirmed" }).where(eq(purchaseOrder.id, id));
+  await db.update(purchaseOrder).set({ status: "confirmed", approvedBy: userId, approvedAt: new Date() }).where(eq(purchaseOrder.id, id));
 
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
   revalidatePath("/dashboard/procurement/purchase-order");

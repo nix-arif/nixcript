@@ -1446,7 +1446,8 @@ export const purchaseOrder = pgTable(
     grandTotal: text("grand_total").notNull().default("0"),
 
     notes: text("notes"),
-    status: text("status").notNull().default("draft"), // draft | sent | acknowledged | received | cancelled
+    currency: text("currency").notNull().default("MYR"),
+    status: text("status").notNull().default("draft"), // draft | submitted | confirmed | fulfilled | cancelled
 
     expectedDeliveryDate: timestamp("expected_delivery_date"),
     deliveryAddress: text("delivery_address"),
@@ -1454,6 +1455,8 @@ export const purchaseOrder = pgTable(
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
+    approvedBy: text("approved_by").references(() => user.id),
+    approvedAt: timestamp("approved_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()

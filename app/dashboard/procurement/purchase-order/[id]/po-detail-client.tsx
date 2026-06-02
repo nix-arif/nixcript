@@ -22,8 +22,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const fmt = (v: string | number | null | undefined) =>
-  `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
+const fmt = (v: string | number | null | undefined, currency = "MYR") =>
+  `${currency} ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -122,7 +122,7 @@ export function PurchaseOrderDetailClient({
                     <PencilIcon className="w-3.5 h-3.5" /> Edit
                   </Button>
                 )}
-                {isOwner && can("purchase-order:delete") && (
+                {isOwner && can("purchase-order:delete") && !order.approvedAt && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                     <TrashIcon className="w-3.5 h-3.5" /> Delete
                   </Button>
@@ -131,7 +131,7 @@ export function PurchaseOrderDetailClient({
             ) : isCancelled ? (
               <>
                 <StatusBadge status={status} />
-                {isOwner && can("purchase-order:delete") && (
+                {isOwner && can("purchase-order:delete") && !order.approvedAt && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                     <TrashIcon className="w-3.5 h-3.5" /> Delete
                   </Button>
@@ -273,17 +273,17 @@ export function PurchaseOrderDetailClient({
             <div className="space-y-1.5 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
-                <span className="tabular-nums">{fmt(order.subtotal)}</span>
+                <span className="tabular-nums">{fmt(order.subtotal, order.currency)}</span>
               </div>
               {parseFloat(order.sstPct ?? "0") > 0 && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">SST ({order.sstPct}%)</span>
-                  <span className="tabular-nums">{fmt(order.sst)}</span>
+                  <span className="tabular-nums">{fmt(order.sst, order.currency)}</span>
                 </div>
               )}
               <div className="flex justify-between font-semibold border-t border-border pt-2 mt-2">
                 <span>Grand total</span>
-                <span className="tabular-nums">{fmt(order.grandTotal)}</span>
+                <span className="tabular-nums">{fmt(order.grandTotal, order.currency)}</span>
               </div>
             </div>
           </section>

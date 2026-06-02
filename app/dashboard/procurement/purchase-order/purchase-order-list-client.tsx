@@ -15,8 +15,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const fmt = (v: string | number | null | undefined) =>
-  `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
+const fmt = (v: string | number | null | undefined, currency = "MYR") =>
+  `${currency} ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -176,7 +176,7 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
                           </span>
                         )}
                         <span className="text-[11px] font-semibold text-foreground ml-auto tabular-nums">
-                          {fmt(o.grandTotal)}
+                          {fmt(o.grandTotal, o.currency ?? "MYR")}
                         </span>
                       </div>
                       <div className="flex items-center gap-3 mt-0.5 flex-wrap">
@@ -196,7 +196,7 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
                           <PencilIcon className="w-3.5 h-3.5" />
                         </Button>
                       )}
-                      {can("purchase-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
+                      {can("purchase-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && !o.approvedAt && (
                         <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
                           disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.poNo)}>
                           <TrashIcon className="w-3.5 h-3.5" />
