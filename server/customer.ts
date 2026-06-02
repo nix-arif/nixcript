@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { customer, customerCompany, user } from "@/db/schema";
+import { customer, customerCompany, user, member } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, ilike, or, desc, asc, inArray } from "drizzle-orm";
@@ -36,7 +36,24 @@ export type CustomerCompany = {
 export async function getCustomers(search?: string) {
   const { orgId } = await requireAccess("customer:read");
 
-  const conditions = [eq(customer.organizationId, orgId)];
+  // Collect all org IDs that share the same owner
+  const [ownerMember] = await db
+    .select()
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+    .limit(1);
+
+  let orgIds = [orgId];
+  if (ownerMember) {
+    const ownedMemberships = await db
+      .select({ organizationId: member.organizationId })
+      .from(member)
+      .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
+    const ids = [...new Set(ownedMemberships.map((m) => m.organizationId))];
+    if (ids.length > 0) orgIds = ids;
+  }
+
+  const conditions = [inArray(customer.organizationId, orgIds)];
 
   if (search && search.trim().length > 0) {
     const q = `%${search.trim()}%`;

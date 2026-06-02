@@ -159,6 +159,26 @@ function TemplateCorporate({ entry }: { entry: GroupItem }) {
         </div>
       )}
 
+      {q.status === "final" && (
+        <div style={{ margin: "14px 28px 0", border: "1px solid #e0e0e0", overflow: "hidden" }}>
+          <div style={{ padding: "5px 10px", background: primary, fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "white" }}>Acceptance</div>
+          <div style={{ padding: "10px 12px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "14px" }}>
+              <div style={{ width: "10px", height: "10px", border: "1px solid #bbb", flexShrink: 0, marginTop: "1px" }} />
+              <span style={{ fontSize: "10px", color: "#333" }}>I / We confirm acceptance of the above quotation and agree to the stated terms and conditions.</span>
+            </div>
+            <div style={{ display: "flex", gap: "16px", fontSize: "9px", color: "#aaa" }}>
+              {(["Signature", "Date", "Name / Designation"] as string[]).map((lbl) => (
+                <div key={lbl} style={{ flex: lbl === "Date" ? "0 0 110px" : 1 }}>
+                  <div style={{ borderBottom: "1px solid #ccc", height: "18px", marginBottom: "3px" }} />
+                  {lbl}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 28px 16px", borderTop: `1px solid #e5e5e5`, fontSize: "10px", color: "#aaa" }}>
         <span><span style={{ color: "#555", fontWeight: "500" }}>Computer generated document.</span> No signature required.</span>
         <span>{q.quotationNo} · {new Date().toLocaleDateString("en-MY")}</span>
@@ -293,6 +313,26 @@ function TemplateModern({ entry }: { entry: GroupItem }) {
         <div style={{ margin: "14px 32px 0", padding: "10px 14px", borderLeft: `3px solid ${primary}`, fontSize: "11px", color: "#444" }}>
           <div style={{ fontSize: "9px", fontWeight: "700", color: primary, textTransform: "uppercase", letterSpacing: "1px", marginBottom: "3px" }}>Notes</div>
           {q.notes}
+        </div>
+      )}
+
+      {q.status === "final" && (
+        <div style={{ margin: "14px 32px 0", border: "1px solid #e0e0e0", overflow: "hidden" }}>
+          <div style={{ padding: "5px 10px", background: primary, fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "white" }}>Acceptance</div>
+          <div style={{ padding: "10px 12px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "14px" }}>
+              <div style={{ width: "10px", height: "10px", border: "1px solid #bbb", flexShrink: 0, marginTop: "1px" }} />
+              <span style={{ fontSize: "10px", color: "#333" }}>I / We confirm acceptance of the above quotation and agree to the stated terms and conditions.</span>
+            </div>
+            <div style={{ display: "flex", gap: "16px", fontSize: "9px", color: "#aaa" }}>
+              {(["Signature", "Date", "Name / Designation"] as string[]).map((lbl) => (
+                <div key={lbl} style={{ flex: lbl === "Date" ? "0 0 110px" : 1 }}>
+                  <div style={{ borderBottom: "1px solid #ccc", height: "18px", marginBottom: "3px" }} />
+                  {lbl}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -437,6 +477,26 @@ function TemplateBold({ entry }: { entry: GroupItem }) {
         <div style={{ margin: "0 20px 14px", padding: "10px 14px", background: `${primary}08`, borderLeft: `3px solid ${primary}`, fontSize: "11px", color: "#333" }}>
           <div style={{ fontSize: "9px", fontWeight: "800", color: primary, textTransform: "uppercase", letterSpacing: "1px", marginBottom: "3px" }}>Notes</div>
           {q.notes}
+        </div>
+      )}
+
+      {q.status === "final" && (
+        <div style={{ margin: "0 20px 14px", border: "1px solid #e0e0e0", overflow: "hidden" }}>
+          <div style={{ padding: "5px 10px", background: primary, fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "white" }}>Acceptance</div>
+          <div style={{ padding: "10px 12px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "14px" }}>
+              <div style={{ width: "10px", height: "10px", border: "1px solid #bbb", flexShrink: 0, marginTop: "1px" }} />
+              <span style={{ fontSize: "10px", color: "#333" }}>I / We confirm acceptance of the above quotation and agree to the stated terms and conditions.</span>
+            </div>
+            <div style={{ display: "flex", gap: "16px", fontSize: "9px", color: "#aaa" }}>
+              {(["Signature", "Date", "Name / Designation"] as string[]).map((lbl) => (
+                <div key={lbl} style={{ flex: lbl === "Date" ? "0 0 110px" : 1 }}>
+                  <div style={{ borderBottom: "1px solid #ccc", height: "18px", marginBottom: "3px" }} />
+                  {lbl}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -609,6 +669,26 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
       )}
 
       {/* ── Footer ── */}
+      {q.status === "final" && (
+        <div style={{ margin: "0 28px 14px", border: "1px solid #e0e0e0", overflow: "hidden" }}>
+          <div style={{ padding: "5px 10px", background: navy, fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "white" }}>Acceptance</div>
+          <div style={{ padding: "10px 12px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "14px" }}>
+              <div style={{ width: "10px", height: "10px", border: "1px solid #bbb", flexShrink: 0, marginTop: "1px" }} />
+              <span style={{ fontSize: "10px", color: "#333" }}>I / We confirm acceptance of the above quotation and agree to the stated terms and conditions.</span>
+            </div>
+            <div style={{ display: "flex", gap: "16px", fontSize: "9px", color: "#aaa" }}>
+              {(["Signature", "Date", "Name / Designation"] as string[]).map((lbl) => (
+                <div key={lbl} style={{ flex: lbl === "Date" ? "0 0 110px" : 1 }}>
+                  <div style={{ borderBottom: "1px solid #ccc", height: "18px", marginBottom: "3px" }} />
+                  {lbl}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 28px 18px", borderTop: `1px solid #ebebeb`, fontSize: "10px", color: "#aaa" }}>
         <span><span style={{ color: "#555", fontWeight: "500" }}>Computer generated document.</span> No signature required.</span>
         <span style={{ fontFamily: "monospace" }}>{q.quotationNo} · {new Date().toLocaleDateString("en-MY")}</span>
@@ -758,6 +838,26 @@ function TemplateEmber({ entry }: { entry: GroupItem }) {
         <div style={{ margin: "14px 28px 0", padding: "10px 14px", borderLeft: `2px solid ${primary}`, background: "#fafafa", fontSize: "11px", color: "#444" }}>
           <div style={{ fontSize: "8.5px", fontWeight: "700", color: primary, textTransform: "uppercase", letterSpacing: "1px", marginBottom: "3px" }}>Notes</div>
           {q.notes}
+        </div>
+      )}
+
+      {q.status === "final" && (
+        <div style={{ margin: "0 28px 14px", border: "1px solid #e0e0e0", overflow: "hidden" }}>
+          <div style={{ padding: "5px 10px", background: primary, fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "white" }}>Acceptance</div>
+          <div style={{ padding: "10px 12px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "14px" }}>
+              <div style={{ width: "10px", height: "10px", border: "1px solid #bbb", flexShrink: 0, marginTop: "1px" }} />
+              <span style={{ fontSize: "10px", color: "#333" }}>I / We confirm acceptance of the above quotation and agree to the stated terms and conditions.</span>
+            </div>
+            <div style={{ display: "flex", gap: "16px", fontSize: "9px", color: "#aaa" }}>
+              {(["Signature", "Date", "Name / Designation"] as string[]).map((lbl) => (
+                <div key={lbl} style={{ flex: lbl === "Date" ? "0 0 110px" : 1 }}>
+                  <div style={{ borderBottom: "1px solid #ccc", height: "18px", marginBottom: "3px" }} />
+                  {lbl}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1086,6 +1186,26 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
         <div style={{ margin: "14px 28px 0", padding: "10px 12px", border: "1px solid #000", fontSize: "11px", color: "#333" }}>
           <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: "#000", marginBottom: "4px" }}>Notes</div>
           {q.notes}
+        </div>
+      )}
+
+      {q.status === "final" && (
+        <div style={{ margin: "0 28px 14px", border: "1px solid #000", overflow: "hidden" }}>
+          <div style={{ padding: "5px 10px", background: primary, fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "#000" }}>Acceptance</div>
+          <div style={{ padding: "10px 12px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "14px" }}>
+              <div style={{ width: "10px", height: "10px", border: "1px solid #888", flexShrink: 0, marginTop: "1px" }} />
+              <span style={{ fontSize: "10px", color: "#111" }}>I / We confirm acceptance of the above quotation and agree to the stated terms and conditions.</span>
+            </div>
+            <div style={{ display: "flex", gap: "16px", fontSize: "9px", color: "#555" }}>
+              {(["Signature", "Date", "Name / Designation"] as string[]).map((lbl) => (
+                <div key={lbl} style={{ flex: lbl === "Date" ? "0 0 110px" : 1 }}>
+                  <div style={{ borderBottom: "1px solid #999", height: "18px", marginBottom: "3px" }} />
+                  {lbl}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

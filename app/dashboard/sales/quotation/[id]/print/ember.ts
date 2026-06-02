@@ -271,10 +271,11 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 30;
   const CLOSING_H    = 38;
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H;
+  const ACCEPT_H     = q.status === "final" ? 70 : 0;
+  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
 
   const P1_ROW_AVAIL = H - BAND_H - TITLE_BAR_H - TABLE_HDR_H - MB - 20;
-  const PN_ROW_AVAIL = H - SLIM_BAND_H - TABLE_HDR_H - MB - 20;
+  const PN_ROW_AVAIL = H - BAND_H - TABLE_HDR_H - MB - 20;
 
   // ── Paginate ──────────────────────────────────────────────────────────────
   const pageGroups: number[][] = [];
@@ -413,10 +414,10 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       cuLY -= 7 + 4;
 
       if (custName) {
-        page.drawText(trunc(custName, fontB, attnNameSz, RIGHT_X - ML - 10), {
-          x: ML, y: cuLY, size: attnNameSz, font: fontB, color: C_DARK,
+        page.drawText(trunc(custName, fontB, 10, RIGHT_X - ML - 10), {
+          x: ML, y: cuLY, size: 10, font: fontB, color: C_DARK,
         });
-        cuLY -= attnNameSz + 3;
+        cuLY -= 10 + 1;
       }
       if (cust?.organizationName) {
         page.drawText(trunc(cust.organizationName, fontR, B_FS_DET, RIGHT_X - ML - 10), {
@@ -429,13 +430,11 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         page.drawText(addrLine, { x: ML, y: cuLY, size: B_FS_DET, font: fontR, color: C_LITE });
       }
 
-      // Right: dates — dark values
+      // Right: dates only — sales and prepared by omitted
       let cuRY = cuTop;
       const dateRows: [string, string][] = [
         ["Date",        fmtD(q.createdAt)],
         ["Valid Until", fmtD(q.validUntil)],
-        ...(q.salesPersonName  ? [["Sales",    q.salesPersonName]  as [string, string]] : []),
-        ...(q.preparedByName   ? [["Prepared", q.preparedByName]   as [string, string]] : []),
       ];
       for (const [lbl, val] of dateRows) {
         page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY, size: 8, font: fontR, color: C_LITE });
@@ -458,18 +457,89 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
 
     } else {
-      // ── Slim continuation header ───────────────────────────────────────────
+      // ── Continuation: repeat full header ──────────────────────────────────
       page.drawRectangle({ x: 0, y: H - 3, width: W, height: 3, color: accent });
-      page.drawText(trunc(dispName, nameFont, 9, CW * 0.55), {
-        x: ML, y: H - SLIM_BAND_H + 12, size: 9, font: nameFont, color: C_DARK,
+
+      if (logoImg) {
+        const scale = Math.min(LOGO_H_MAX / logoImg.height, LOGO_W_MAX / logoImg.width, 1);
+        const lw = logoImg.width  * scale;
+        const lh = logoImg.height * scale;
+        const logoY = H - B_PADT - (CO_SECTION_H + lh) / 2;
+        page.drawImage(logoImg, { x: ML, y: logoY, width: lw, height: lh });
+      }
+
+      let cty2 = H - B_PADT - nameSize;
+      page.drawText(trunc(dispName, nameFont, nameSize, CO_TEXT_W), {
+        x: CO_TEXT_X, y: cty2, size: nameSize, font: nameFont, color: accent,
       });
-      const contStr = `${q.quotationNo}  ·  continued`;
-      page.drawText(contStr, {
-        x: W - MR - fontR.widthOfTextAtSize(contStr, 8),
-        y: H - SLIM_BAND_H + 12, size: 8, font: fontR, color: C_LITE,
+      cty2 -= nameSize - 1;
+      for (const line of coAddrLines) {
+        page.drawText(line, { x: CO_TEXT_X, y: cty2, size: B_FS_DET, font: fontR, color: C_DARK });
+        cty2 -= B_LH;
+      }
+      if (coContactStr) {
+        page.drawText(trunc(coContactStr, fontR, B_FS_DET, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty2, size: B_FS_DET, font: fontR, color: C_DARK,
+        });
+        cty2 -= B_LH;
+      }
+      if (coSsmStr) {
+        page.drawText(trunc(coSsmStr, fontR, 6, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty2, size: 6, font: fontR, color: C_DARK,
+        });
+        cty2 -= B_LH;
+      }
+      if (coMdaStr) {
+        page.drawText(trunc(coMdaStr, fontR, 6, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty2, size: 6, font: fontR, color: C_DARK,
+        });
+      }
+
+      const qlW2    = QL_FONT.widthOfTextAtSize(QL_TEXT, QL_SIZE);
+      const qlAlign2 = (data.orgQuotationLabelAlign ?? "right") as "left" | "center" | "right";
+      const qlX2    = qlAlign2 === "left"   ? ML
+                    : qlAlign2 === "center" ? ML + (W - ML - MR - qlW2) / 2
+                    :                         W - MR - qlW2;
+      page.drawText(QL_TEXT, { x: qlX2, y: H - B_PADT - QL_SIZE, size: QL_SIZE, font: QL_FONT, color: C_LITE });
+      const qNoW2 = fontB.widthOfTextAtSize(q.quotationNo, 12);
+      page.drawText(q.quotationNo, {
+        x: W - MR - qNoW2, y: H - B_PADT - QL_SIZE - 5 - 12,
+        size: 12, font: fontB, color: accent,
       });
-      hLine(page, H - SLIM_BAND_H, ML, W - MR, C_LINE, 0.5);
-      curY = H - SLIM_BAND_H;
+
+      const dashY2 = H - B_PADT - CO_SECTION_H - B_DASH_H / 2;
+      hLine(page, dashY2, ML, W - MR, C_LINE, 0.5);
+
+      const cuTop2 = H - B_PADT - CO_SECTION_H - B_DASH_H;
+      let cuLY2 = cuTop2;
+      page.drawText("ATTENTION TO", { x: ML, y: cuLY2, size: 7, font: fontB, color: C_LITE });
+      cuLY2 -= 7 + 4;
+      if (custName) {
+        page.drawText(trunc(custName, fontB, 10, RIGHT_X - ML - 10), {
+          x: ML, y: cuLY2, size: 10, font: fontB, color: C_DARK,
+        });
+        cuLY2 -= 10 + 1;
+      }
+      if (cust?.organizationName) {
+        page.drawText(trunc(cust.organizationName, fontR, B_FS_DET, RIGHT_X - ML - 10), {
+          x: ML, y: cuLY2, size: B_FS_DET, font: fontR, color: C_MID,
+        });
+        cuLY2 -= B_LH;
+      }
+      if (cust?.organizationAddress) {
+        const addrLine2 = wrap(cust.organizationAddress, fontR, B_FS_DET, RIGHT_X - ML - 10)[0] ?? "";
+        page.drawText(addrLine2, { x: ML, y: cuLY2, size: B_FS_DET, font: fontR, color: C_LITE });
+      }
+
+      let cuRY2 = cuTop2;
+      for (const [lbl, val] of [["Date", fmtD(q.createdAt)], ["Valid Until", fmtD(q.validUntil)]] as [string,string][]) {
+        page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY2, size: 8, font: fontR, color: C_LITE });
+        const vw2 = fontB.widthOfTextAtSize(val, 8);
+        page.drawText(val, { x: W - MR - vw2, y: cuRY2, size: 8, font: fontB, color: C_DARK });
+        cuRY2 -= B_LH + 1;
+      }
+
+      curY = H - BAND_H;
     }
 
     // ── Table header ────────────────────────────────────────────────────────
@@ -675,6 +745,22 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         for (const line of nLines) {
           page.drawText(line, { x: ML + 10, y: ny, size: 9.5, font: fontR, color: C_DARK });
           ny -= 12;
+        }
+      }
+
+      if (q.status === "final") {
+        curY -= 10;
+        const ACCEPT_BOX_H = 60;
+        page.drawRectangle({ x: ML, y: curY - ACCEPT_BOX_H, width: CW, height: ACCEPT_BOX_H, borderColor: C_LINE, borderWidth: 0.5 });
+        page.drawRectangle({ x: ML, y: curY - 16, width: CW, height: 16, color: accent });
+        page.drawText("ACCEPTANCE", { x: ML + 8, y: curY - 11, size: 7.5, font: fontB, color: C_WHITE });
+        const cbY = curY - 30;
+        page.drawRectangle({ x: ML + 10, y: cbY, width: 7, height: 7, borderColor: C_LINE, borderWidth: 0.5 });
+        page.drawText("I / We confirm acceptance of the above quotation and agree to the stated terms and conditions.", { x: ML + 20, y: cbY + 1, size: 7.5, font: fontR, color: C_DARK });
+        const sigY = curY - 50;
+        for (const [lx, lw, lbl] of [[ML + 8, 130, "Signature"], [ML + 158, 100, "Date"], [ML + 278, 175, "Name / Designation"]] as [number, number, string][]) {
+          page.drawLine({ start: { x: lx, y: sigY }, end: { x: lx + lw, y: sigY }, thickness: 0.4, color: C_LINE });
+          page.drawText(lbl, { x: lx, y: sigY - 8, size: 6.5, font: fontR, color: C_LITE });
         }
       }
     }

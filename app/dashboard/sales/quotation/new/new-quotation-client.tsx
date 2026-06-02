@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -121,6 +121,9 @@ export function NewQuotationClient({
   const [sets, setSets] = useState(1);
   const [customerId, setCustomerId] = useState("");
   const [customerCompanyId, setCustomerCompanyId] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const customerBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [salesPersonId, setSalesPersonId] = useState("");
   const [salesPersonName, setSalesPersonName] = useState("");
   const [validDays, setValidDays] = useState("30");
@@ -635,29 +638,67 @@ export function NewQuotationClient({
             </div>
             <div className="p-4 space-y-4">
               <Field label="Customer">
-                <Select
-                  onValueChange={(v) => {
-                    setCustomerId(v);
-                    // Pre-select the primary hospital for this customer
-                    const cust = customers.find((c) => c.id === v);
-                    const primary =
-                      cust?.companies.find((co) => co.isPrimary) ??
-                      cust?.companies[0];
-                    setCustomerCompanyId(primary?.id ?? "");
-                  }}
-                  value={customerId}
-                >
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue placeholder="Select customer" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {[c.title, c.name].filter(Boolean).join(" ")}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {(() => {
+                  const trimmed = customerSearch.trim();
+                  const filtered = trimmed.length >= 3
+                    ? customers.filter((c) => {
+                        const full = [c.title, c.name].filter(Boolean).join(" ").toLowerCase();
+                        const t = trimmed.toLowerCase();
+                        return full.includes(t) || (c.email ?? "").toLowerCase().includes(t) || (c.contactNo ?? "").toLowerCase().includes(t);
+                      })
+                    : [];
+                  const selectedLabel = customerId
+                    ? [customers.find((c) => c.id === customerId)?.title, customers.find((c) => c.id === customerId)?.name].filter(Boolean).join(" ")
+                    : "";
+                  return (
+                    <div className="relative">
+                      <Input
+                        className="h-9 text-sm"
+                        placeholder={selectedLabel || "Type 3+ characters to search…"}
+                        value={customerSearch}
+                        onChange={(e) => {
+                          setCustomerSearch(e.target.value);
+                          setCustomerOpen(true);
+                          if (!e.target.value) { setCustomerId(""); setCustomerCompanyId(""); }
+                        }}
+                        onFocus={() => setCustomerOpen(true)}
+                        onBlur={() => {
+                          customerBlurTimer.current = setTimeout(() => setCustomerOpen(false), 150);
+                        }}
+                      />
+                      {customerOpen && (
+                        <div className="absolute z-50 w-full mt-1 bg-background border border-border rounded-md shadow-md max-h-52 overflow-y-auto">
+                          {trimmed.length < 3 ? (
+                            <div className="px-3 py-2 text-xs text-muted-foreground">Type at least 3 characters to search</div>
+                          ) : filtered.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-muted-foreground">No customers found</div>
+                          ) : (
+                            filtered.map((c) => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  if (customerBlurTimer.current) clearTimeout(customerBlurTimer.current);
+                                  const label = [c.title, c.name].filter(Boolean).join(" ");
+                                  setCustomerId(c.id);
+                                  setCustomerSearch(label);
+                                  setCustomerOpen(false);
+                                  const primary = c.companies.find((co) => co.isPrimary) ?? c.companies[0];
+                                  setCustomerCompanyId(primary?.id ?? "");
+                                }}
+                              >
+                                {[c.title, c.name].filter(Boolean).join(" ")}
+                                {c.contactNo && <span className="ml-2 text-xs text-muted-foreground">{c.contactNo}</span>}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </Field>
 
               {/* Hospital / organization selector — always shown when a customer is selected */}

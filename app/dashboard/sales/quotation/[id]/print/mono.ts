@@ -488,6 +488,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 30;
   const CLOSING_H    = 38;
+  const ACCEPT_H     = q.status === "final" ? 70 : 0;
   const SUB_HDR_H = 14;
   const BPAD      = 8;
   const BHALF_W   = CW * 0.5 - BPAD * 2;
@@ -541,7 +542,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   ) * INFO_LH + 8;
   const TERMS_BOX_H = TABLE_HDR_H + SUB_HDR_H + tConH;
 
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + (bank ? BANK_BOX_H + 8 : 0) + TERMS_BOX_H + 8;
+  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + (bank ? BANK_BOX_H + 8 : 0) + TERMS_BOX_H + 8 + ACCEPT_H;
 
   const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - MB - 20;
   const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 20;
@@ -1037,6 +1038,23 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         for (const line of nl) {
           page.drawText(line, { x: ML + 8, y: ny, size: 9.5, font: fontR, color: C_TEXT });
           ny -= 12;
+        }
+      }
+
+      if (q.status === "final") {
+        curY -= 10;
+        const ACCEPT_BOX_H = 60;
+        const C_BOX_LINE = rgb(0.80, 0.80, 0.80);
+        page.drawRectangle({ x: ML, y: curY - ACCEPT_BOX_H, width: CW, height: ACCEPT_BOX_H, borderColor: C_BOX_LINE, borderWidth: 0.5 });
+        page.drawRectangle({ x: ML, y: curY - 16, width: CW, height: 16, color: accentColor });
+        page.drawText("ACCEPTANCE", { x: ML + 8, y: curY - 11, size: 7.5, font: fontB, color: C_WHITE });
+        const cbY = curY - 30;
+        page.drawRectangle({ x: ML + 10, y: cbY, width: 7, height: 7, borderColor: C_BOX_LINE, borderWidth: 0.5 });
+        page.drawText("I / We confirm acceptance of the above quotation and agree to the stated terms and conditions.", { x: ML + 20, y: cbY + 1, size: 7.5, font: fontR, color: C_TEXT });
+        const sigY = curY - 50;
+        for (const [lx, lw, lbl] of [[ML + 8, 130, "Signature"], [ML + 158, 100, "Date"], [ML + 278, 175, "Name / Designation"]] as [number, number, string][]) {
+          page.drawLine({ start: { x: lx, y: sigY }, end: { x: lx + lw, y: sigY }, thickness: 0.4, color: C_BOX_LINE });
+          page.drawText(lbl, { x: lx, y: sigY - 8, size: 6.5, font: fontR, color: C_MUTED });
         }
       }
     }
