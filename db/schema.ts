@@ -541,7 +541,7 @@ export const product = pgTable(
     sellingUnitPrice: text("selling_unit_price"),
     sellingPriceCurrency: text("selling_price_currency").notNull().default("MYR"),
     costUnitPrice: text("cost_unit_price"),
-    costSellingPrice: text("cost_selling_price"),
+    costPriceCurrency: text("cost_price_currency"),
     uom: text("uom"),
     supplier: text("supplier"),
     brand: text("brand"),
