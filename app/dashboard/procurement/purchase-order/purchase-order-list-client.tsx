@@ -22,11 +22,11 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const PO_STATUS: Record<string, { label: string; className: string }> = {
-  draft:        { label: "Draft",        className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
-  sent:         { label: "Sent",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
-  acknowledged: { label: "Acknowledged", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
-  received:     { label: "Received",     className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
-  cancelled:    { label: "Cancelled",    className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
+  draft:     { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  submitted: { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
+  confirmed: { label: "Confirmed",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  fulfilled: { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
+  cancelled: { label: "Cancelled",         className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
 
 function StatusBadge({ status }: { status: string }) {

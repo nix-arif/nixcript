@@ -679,26 +679,26 @@ async function getPoForWorkflow(id: string, orgId: string) {
   return po;
 }
 
-export async function sendPurchaseOrder(id: string): Promise<void> {
+export async function submitPurchaseOrder(id: string): Promise<void> {
   const { orgId } = await requireAccess("purchase-order:update");
   const po = await getPoForWorkflow(id, orgId);
-  if (po.status !== "draft") throw new Error("Only draft purchase orders can be sent");
-  await db.update(purchaseOrder).set({ status: "sent" }).where(eq(purchaseOrder.id, id));
+  if (po.status !== "draft") throw new Error("Only draft purchase orders can be submitted");
+  await db.update(purchaseOrder).set({ status: "submitted" }).where(eq(purchaseOrder.id, id));
 }
 
-export async function acknowledgePurchaseOrder(id: string): Promise<void> {
+export async function confirmPurchaseOrder(id: string): Promise<void> {
   const { orgId } = await requireAccess("purchase-order:update");
   const po = await getPoForWorkflow(id, orgId);
-  if (po.status !== "sent") throw new Error("Only sent purchase orders can be acknowledged");
-  await db.update(purchaseOrder).set({ status: "acknowledged" }).where(eq(purchaseOrder.id, id));
+  if (po.status !== "submitted") throw new Error("Only submitted purchase orders can be confirmed");
+  await db.update(purchaseOrder).set({ status: "confirmed" }).where(eq(purchaseOrder.id, id));
 }
 
-export async function receivePurchaseOrder(id: string, warehouseLabel = "Default"): Promise<void> {
+export async function fulfillPurchaseOrder(id: string, warehouseLabel = "Default"): Promise<void> {
   const { orgId, userId } = await requireAccess("purchase-order:update");
   const po = await getPoForWorkflow(id, orgId);
-  if (po.status !== "acknowledged" && po.status !== "sent") throw new Error("Purchase order must be sent or acknowledged before receiving");
+  if (po.status !== "confirmed" && po.status !== "submitted") throw new Error("Purchase order must be submitted or confirmed before fulfilling");
 
-  await db.update(purchaseOrder).set({ status: "received" }).where(eq(purchaseOrder.id, id));
+  await db.update(purchaseOrder).set({ status: "fulfilled" }).where(eq(purchaseOrder.id, id));
 
   // Auto-create approved STOCK_IN for every item that has a linked productId
   const items = await db
@@ -740,6 +740,6 @@ export async function receivePurchaseOrder(id: string, warehouseLabel = "Default
 export async function cancelPurchaseOrder(id: string): Promise<void> {
   const { orgId } = await requireAccess("purchase-order:update");
   const po = await getPoForWorkflow(id, orgId);
-  if (po.status === "received" || po.status === "cancelled") throw new Error("Cannot cancel a received or already cancelled purchase order");
+  if (po.status === "fulfilled" || po.status === "cancelled") throw new Error("Cannot cancel a fulfilled or already cancelled purchase order");
   await db.update(purchaseOrder).set({ status: "cancelled" }).where(eq(purchaseOrder.id, id));
 }

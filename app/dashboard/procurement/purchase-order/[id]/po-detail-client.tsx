@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   deletePurchaseOrder,
-  sendPurchaseOrder,
-  acknowledgePurchaseOrder,
-  receivePurchaseOrder,
+  submitPurchaseOrder,
+  confirmPurchaseOrder,
+  fulfillPurchaseOrder,
   cancelPurchaseOrder,
   type PurchaseOrderWithItems,
 } from "@/server/purchase-order";
@@ -27,11 +27,11 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const PO_STATUS: Record<string, { label: string; className: string }> = {
-  draft:        { label: "Draft",        className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
-  sent:         { label: "Sent",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
-  acknowledged: { label: "Acknowledged", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
-  received:     { label: "Received",     className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
-  cancelled:    { label: "Cancelled",    className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
+  draft:     { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  submitted: { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
+  confirmed: { label: "Confirmed",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  fulfilled: { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
+  cancelled: { label: "Cancelled",         className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -97,7 +97,7 @@ export function PurchaseOrderDetailClient({
       {draftRedirected && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 px-4 py-3 text-sm text-amber-800 dark:text-amber-300 flex items-center gap-2">
           <span className="font-medium">Draft already exists.</span>
-          You can only have one draft PO at a time. Send or delete this one before creating a new order.
+          You can only have one draft PO at a time. Submit or delete this one before creating a new order.
         </div>
       )}
       <PageHeader
@@ -215,26 +215,26 @@ export function PurchaseOrderDetailClient({
             <div className="flex flex-col gap-2">
               {isDraft && can("purchase-order:update") && isOwner && (
                 <Button size="sm" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
-                  onClick={() => act("send", () => sendPurchaseOrder(order.id), "sent", "Purchase order sent to supplier")}>
+                  onClick={() => act("submit", () => submitPurchaseOrder(order.id), "submitted", "Purchase order submitted")}>
                   <SendIcon className="w-3.5 h-3.5" />
-                  {actioning === "send" ? "Sending…" : "Mark as Sent"}
+                  {actioning === "submit" ? "Submitting…" : "Submit"}
                 </Button>
               )}
-              {status === "sent" && can("purchase-order:update") && (
-                <Button size="sm" className="w-full gap-1.5 h-8 text-xs bg-purple-600 hover:bg-purple-700 text-white" disabled={!!actioning}
-                  onClick={() => act("ack", () => acknowledgePurchaseOrder(order.id), "acknowledged", "Supplier acknowledged")}>
+              {status === "submitted" && can("purchase-order:update") && (
+                <Button size="sm" className="w-full gap-1.5 h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white" disabled={!!actioning}
+                  onClick={() => act("confirm", () => confirmPurchaseOrder(order.id), "confirmed", "Purchase order confirmed")}>
                   <CheckIcon className="w-3.5 h-3.5" />
-                  {actioning === "ack" ? "Updating…" : "Mark Acknowledged"}
+                  {actioning === "confirm" ? "Confirming…" : "Confirm"}
                 </Button>
               )}
-              {(status === "sent" || status === "acknowledged") && can("purchase-order:update") && (
+              {(status === "submitted" || status === "confirmed") && can("purchase-order:update") && (
                 <Button size="sm" className="w-full gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white" disabled={!!actioning}
-                  onClick={() => act("receive", () => receivePurchaseOrder(order.id), "received", "Goods received")}>
+                  onClick={() => act("fulfill", () => fulfillPurchaseOrder(order.id), "fulfilled", "Purchase order fulfilled")}>
                   <ArchiveIcon className="w-3.5 h-3.5" />
-                  {actioning === "receive" ? "Updating…" : "Mark Received"}
+                  {actioning === "fulfill" ? "Fulfilling…" : "Mark Fulfilled"}
                 </Button>
               )}
-              {isLocked && status !== "received" && can("purchase-order:update") && (
+              {isLocked && status !== "fulfilled" && can("purchase-order:update") && (
                 <Button size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs text-destructive hover:text-destructive border-destructive/30" disabled={!!actioning}
                   onClick={() => act("cancel", () => cancelPurchaseOrder(order.id), "cancelled", "Purchase order cancelled")}>
                   <XIcon className="w-3.5 h-3.5" />

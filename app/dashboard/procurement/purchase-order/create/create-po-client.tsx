@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createPurchaseOrder,
-  sendPurchaseOrder,
+  submitPurchaseOrder,
   getSalesOrderItemsForPo,
   getPoSupplierQuotationUploadUrl,
   getPoItemImageUploadUrl,
@@ -261,8 +261,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
     try {
       const po = await buildAndCreate();
       if (!po) return;
-      await sendPurchaseOrder(po.id);
-      toast.success("Purchase order created and sent");
+      await submitPurchaseOrder(po.id);
+      toast.success("Purchase order created and submitted");
       router.push("/dashboard/procurement/purchase-order");
     } catch (e: any) {
       toast.error(e.message);
