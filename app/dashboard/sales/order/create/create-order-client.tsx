@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createSalesOrder,
+  submitSalesOrder,
   type SalesOrderItemInput,
 } from "@/server/sales-order";
 import { getCustomers, getCustomer } from "@/server/customer";
@@ -293,31 +294,51 @@ export function CreateSalesOrderClient({ members }: Props) {
 
   // ── Save ────────────────────────────────────────────────────────────────────
 
-  async function handleSave() {
-    if (!selectedCustomer) { toast.error("Please select a customer"); return; }
-    if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return; }
+  async function buildAndCreate() {
+    if (!selectedCustomer) { toast.error("Please select a customer"); return null; }
+    if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
 
+    const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
+    return createSalesOrder({
+      customerId: selectedCustomer.id,
+      customerCompanyId: custCompanyId,
+      linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
+      salesPersonName: salesPerson || undefined,
+      associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
+      deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
+      deliveryAddress: deliveryAddress || undefined,
+      notes: notes || undefined,
+      subtotal: subtotal.toFixed(2),
+      overallDiscountPct: overallDiscPct,
+      overallDiscountAmt: overallDiscAmt.toFixed(2),
+      sstPct,
+      sst: sstAmt.toFixed(2),
+      grandTotal: grand.toFixed(2),
+      items: items.map(({ _key, ...rest }) => rest),
+    });
+  }
+
+  async function handleSave() {
     setSaving(true);
     try {
-      const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
-      await createSalesOrder({
-        customerId: selectedCustomer.id,
-        customerCompanyId: custCompanyId,
-        linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
-        salesPersonName: salesPerson || undefined,
-        associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
-        deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
-        deliveryAddress: deliveryAddress || undefined,
-        notes: notes || undefined,
-        subtotal: subtotal.toFixed(2),
-        overallDiscountPct: overallDiscPct,
-        overallDiscountAmt: overallDiscAmt.toFixed(2),
-        sstPct,
-        sst: sstAmt.toFixed(2),
-        grandTotal: grand.toFixed(2),
-        items: items.map(({ _key, ...rest }) => rest),
-      });
+      const so = await buildAndCreate();
+      if (!so) return;
       toast.success("Sales order created");
+      router.push("/dashboard/sales/order");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveAndSubmit() {
+    setSaving(true);
+    try {
+      const so = await buildAndCreate();
+      if (!so) return;
+      await submitSalesOrder(so.id);
+      toast.success("Sales order created and submitted for approval");
       router.push("/dashboard/sales/order");
     } catch (e: any) {
       toast.error(e.message);
@@ -704,8 +725,11 @@ export function CreateSalesOrderClient({ members }: Props) {
 
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
-          <Button onClick={handleSave} disabled={saving} className="gap-2">
-            {saving ? "Creating…" : "Create sales order"}
+          <Button onClick={handleSaveAndSubmit} disabled={saving} className="gap-2">
+            {saving ? "Creating…" : "Create & Submit"}
+          </Button>
+          <Button variant="outline" onClick={handleSave} disabled={saving}>
+            Save as Draft
           </Button>
           <Button variant="outline" onClick={() => router.push("/dashboard/sales/order")}>
             Cancel
