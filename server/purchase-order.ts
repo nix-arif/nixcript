@@ -24,6 +24,8 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } fro
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { createApprovedMovement } from "@/lib/inventory/create-movement";
+import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
 // ── R2 supplier-quotation bucket ───────────────────────────────────────────
 const s3 = new S3Client({
@@ -629,11 +631,38 @@ export async function acknowledgePurchaseOrder(id: string): Promise<void> {
   await db.update(purchaseOrder).set({ status: "acknowledged" }).where(eq(purchaseOrder.id, id));
 }
 
-export async function receivePurchaseOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-order:update");
+export async function receivePurchaseOrder(id: string, warehouseLabel = "Default"): Promise<void> {
+  const { orgId, userId } = await requireAccess("purchase-order:update");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "acknowledged" && po.status !== "sent") throw new Error("Purchase order must be sent or acknowledged before receiving");
+
   await db.update(purchaseOrder).set({ status: "received" }).where(eq(purchaseOrder.id, id));
+
+  // Auto-create approved STOCK_IN for every item that has a linked productId
+  const items = await db
+    .select()
+    .from(purchaseOrderItem)
+    .where(eq(purchaseOrderItem.purchaseOrderId, id));
+
+  await Promise.all(
+    items
+      .filter((item) => item.productId)
+      .map((item) =>
+        createApprovedMovement({
+          orgId,
+          userId,
+          productId: item.productId!,
+          warehouseLabel,
+          movementType: MOVEMENT_TYPE.STOCK_IN,
+          quantity: parseFloat(item.qty ?? "1"),
+          unitCost: item.unitPrice ?? undefined,
+          referenceType: REF_TYPE.PURCHASE_ORDER,
+          referenceId: id,
+          referenceNo: po.poNo,
+          notes: `PO receipt: ${item.productCode ?? ""}`.trim(),
+        }),
+      ),
+  );
 }
 
 export async function cancelPurchaseOrder(id: string): Promise<void> {

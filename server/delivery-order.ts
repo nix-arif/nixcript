@@ -16,6 +16,8 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { createApprovedMovement, adjustReservation } from "@/lib/inventory/create-movement";
+import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -63,6 +65,7 @@ const DELETABLE_STATUSES = new Set(["draft"]);
 
 export interface DeliveryOrderItemInput {
   rowNo: number;
+  productId?: string;
   productCode?: string;
   description?: string;
   qty?: string;
@@ -177,6 +180,7 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
         id: nanoid(),
         deliveryOrderId: row.id,
         rowNo: i.rowNo,
+        productId: i.productId ?? null,
         productCode: i.productCode ?? null,
         description: i.description ?? null,
         qty: i.qty ?? "1",
@@ -218,6 +222,7 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
         id: nanoid(),
         deliveryOrderId: input.id,
         rowNo: i.rowNo,
+        productId: i.productId ?? null,
         productCode: i.productCode ?? null,
         description: i.description ?? null,
         qty: i.qty ?? "1",
@@ -244,18 +249,84 @@ export async function updateDeliveryOrderStatus(id: string, status: string): Pro
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
 }
 
-export async function deliverDeliveryOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("delivery-order:update");
+export async function deliverDeliveryOrder(id: string, warehouseLabel = "Default"): Promise<void> {
+  const { orgId, userId } = await requireAccess("delivery-order:update");
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (existing.status !== "draft") throw new Error("Only draft delivery orders can be marked as delivered");
+
   await db.update(deliveryOrder).set({ status: "delivered" }).where(eq(deliveryOrder.id, id));
+
+  const items = await db
+    .select()
+    .from(deliveryOrderItem)
+    .where(eq(deliveryOrderItem.deliveryOrderId, id));
+
+  const itemsWithProduct = items.filter((i) => i.productId);
+
+  // STOCK_OUT for each item that has a productId
+  await Promise.all(
+    itemsWithProduct.map((i) =>
+      createApprovedMovement({
+        orgId,
+        userId,
+        productId: i.productId!,
+        warehouseLabel,
+        movementType: MOVEMENT_TYPE.STOCK_OUT,
+        quantity: parseFloat(i.qty ?? "1"),
+        referenceType: REF_TYPE.DELIVERY_ORDER,
+        referenceId: id,
+        referenceNo: existing.doNo,
+        notes: `DO delivery: ${i.productCode ?? ""}`.trim(),
+      }),
+    ),
+  );
+
+  // Release SO reservation if this DO is linked to a sales order
+  if (existing.salesOrderId) {
+    await Promise.all(
+      itemsWithProduct.map((i) =>
+        adjustReservation({
+          orgId,
+          productId: i.productId!,
+          warehouseLabel,
+          delta: -parseFloat(i.qty ?? "1"),
+        }),
+      ),
+    );
+  }
 }
 
-export async function returnDeliveryOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("delivery-order:update");
+export async function returnDeliveryOrder(id: string, warehouseLabel = "Default"): Promise<void> {
+  const { orgId, userId } = await requireAccess("delivery-order:update");
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (existing.status !== "delivered") throw new Error("Only delivered orders can be marked as returned");
+
   await db.update(deliveryOrder).set({ status: "returned" }).where(eq(deliveryOrder.id, id));
+
+  // RETURN movement — stock comes back in
+  const items = await db
+    .select()
+    .from(deliveryOrderItem)
+    .where(eq(deliveryOrderItem.deliveryOrderId, id));
+
+  await Promise.all(
+    items
+      .filter((i) => i.productId)
+      .map((i) =>
+        createApprovedMovement({
+          orgId,
+          userId,
+          productId: i.productId!,
+          warehouseLabel,
+          movementType: MOVEMENT_TYPE.RETURN,
+          quantity: parseFloat(i.qty ?? "1"),
+          referenceType: REF_TYPE.DELIVERY_ORDER,
+          referenceId: id,
+          referenceNo: existing.doNo,
+          notes: `DO return: ${i.productCode ?? ""}`.trim(),
+        }),
+      ),
+  );
 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createDeliveryOrder, type DeliveryOrderItemInput } from "@/server/delivery-order";
+import { searchProducts } from "@/server/inventory";
 import { getCustomers } from "@/server/customer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,7 @@ import { ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon, BuildingIcon } f
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 interface LineItem extends DeliveryOrderItemInput { _key: string; }
 
-const newLine = (rowNo: number): LineItem => ({ _key: crypto.randomUUID(), rowNo, productCode: "", description: "", qty: "1", uom: "" });
+const newLine = (rowNo: number): LineItem => ({ _key: crypto.randomUUID(), rowNo, productId: undefined, productCode: "", description: "", qty: "1", uom: "" });
 
 export function CreateDeliveryOrderClient() {
   const router = useRouter();
@@ -45,6 +46,53 @@ export function CreateDeliveryOrderClient() {
 
   function updateItem(key: string, patch: Partial<LineItem>) {
     setItems((prev) => prev.map((i) => i._key === key ? { ...i, ...patch } : i));
+  }
+
+  // Inline product search for DO item rows
+  function DoProductCell({ item }: { item: LineItem }) {
+    const [q, setQ] = useState(item.productCode ?? "");
+    const [results, setResults] = useState<{ id: string; productCode: string; description: string | null }[]>([]);
+    const [open, setOpen] = useState(false);
+    const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => { setQ(item.productCode ?? ""); }, [item.productCode]);
+
+    function handleInput(val: string) {
+      setQ(val);
+      updateItem(item._key, { productCode: val, productId: undefined });
+      if (debounce.current) clearTimeout(debounce.current);
+      if (!val.trim()) { setResults([]); setOpen(false); return; }
+      debounce.current = setTimeout(async () => {
+        const r = await searchProducts(val);
+        setResults(r);
+        setOpen(r.length > 0);
+        const exact = r.find((p) => p.productCode.toLowerCase() === val.trim().toLowerCase());
+        if (exact) { updateItem(item._key, { productId: exact.id, productCode: exact.productCode, description: item.description || exact.description || "" }); setOpen(false); }
+      }, 300);
+    }
+
+    function pick(p: { id: string; productCode: string; description: string | null }) {
+      updateItem(item._key, { productId: p.id, productCode: p.productCode, description: item.description || p.description || "" });
+      setQ(p.productCode);
+      setResults([]);
+      setOpen(false);
+    }
+
+    return (
+      <div className="relative">
+        <Input value={q} onChange={(e) => handleInput(e.target.value)} className="h-7 text-xs" placeholder="Code…" />
+        {open && (
+          <div className="absolute z-50 top-full left-0 mt-0.5 w-56 rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto text-xs">
+            {results.map((p) => (
+              <button key={p.id} type="button" className="w-full text-left px-2 py-1.5 hover:bg-accent flex gap-2" onClick={() => pick(p)}>
+                <span className="font-mono font-medium">{p.productCode}</span>
+                <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   }
   function addLine() { setItems((prev) => [...prev, newLine(prev.length + 1)]); }
   function removeLine(key: string) { setItems((prev) => prev.filter((i) => i._key !== key).map((i, idx) => ({ ...i, rowNo: idx + 1 }))); }
@@ -150,7 +198,7 @@ export function CreateDeliveryOrderClient() {
                 {items.map((item) => (
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
-                    <td className="py-1.5 pr-2"><Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="py-1.5 pr-2"><DoProductCell item={item} /></td>
                     <td className="py-1.5 pr-2"><Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} className="h-7 text-xs" /></td>
                     <td className="py-1.5 pr-2"><Input value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" /></td>
                     <td className="py-1.5 pr-2"><Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="unit" /></td>

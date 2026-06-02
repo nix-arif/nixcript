@@ -1606,13 +1606,17 @@ export const deliveryOrderItem = pgTable(
       .notNull()
       .references(() => deliveryOrder.id, { onDelete: "cascade" }),
     rowNo: integer("row_no").notNull(),
+    productId: text("product_id").references(() => product.id),
     productCode: text("product_code"),
     description: text("description"),
     qty: text("qty").notNull().default("1"),
     uom: text("uom"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (t) => [index("delivery_order_item_do_idx").on(t.deliveryOrderId)],
+  (t) => [
+    index("delivery_order_item_do_idx").on(t.deliveryOrderId),
+    index("delivery_order_item_product_idx").on(t.productId),
+  ],
 );
 
 export const deliveryOrderCounter = pgTable("delivery_order_counter", {

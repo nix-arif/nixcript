@@ -22,6 +22,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
+import { adjustReservation } from "@/lib/inventory/create-movement";
 import { Resend } from "resend";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import SoNotificationEmail from "@/components/emails/so-notification";
@@ -534,10 +535,38 @@ export async function deleteSalesOrder(id: string): Promise<void> {
 export async function updateSalesOrderStatus(id: string, status: string): Promise<void> {
   const { orgId } = await requireAccess("sales-order:update");
 
+  const [existing] = await db
+    .select({ status: salesOrder.status })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
+
+  if (!existing) throw new Error("Sales order not found");
+
   await db
     .update(salesOrder)
     .set({ status })
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
+
+  // Release reservation when cancelling a confirmed order
+  if (existing.status === "confirmed" && status === "cancelled") {
+    const soItems = await db
+      .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
+      .from(salesOrderItem)
+      .where(eq(salesOrderItem.salesOrderId, id));
+
+    await Promise.all(
+      soItems
+        .filter((i) => i.productId)
+        .map((i) =>
+          adjustReservation({
+            orgId,
+            productId: i.productId!,
+            warehouseLabel: "Default",
+            delta: -parseFloat(i.qty ?? "1"),
+          }),
+        ),
+    );
+  }
 }
 
 // ── Notification helper ────────────────────────────────────────────────────
@@ -663,6 +692,25 @@ export async function approveSalesOrder(id: string): Promise<void> {
 
   await db.update(salesOrder).set({ status: "confirmed", approvedBy: userId, approvedAt: new Date() }).where(eq(salesOrder.id, id));
 
+  // Reserve stock for all items with a linked productId
+  const soItems = await db
+    .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
+    .from(salesOrderItem)
+    .where(eq(salesOrderItem.salesOrderId, id));
+
+  await Promise.all(
+    soItems
+      .filter((i) => i.productId)
+      .map((i) =>
+        adjustReservation({
+          orgId,
+          productId: i.productId!,
+          warehouseLabel: "Default",
+          delta: parseFloat(i.qty ?? "1"),
+        }),
+      ),
+  );
+
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
 
@@ -736,6 +784,25 @@ export async function recallSalesOrder(id: string): Promise<void> {
   if (so.status !== "confirmed") throw new Error("Only confirmed orders can be recalled");
 
   await db.update(salesOrder).set({ status: "draft", approvedBy: null, approvedAt: null }).where(eq(salesOrder.id, id));
+
+  // Release reserved stock
+  const soItems = await db
+    .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
+    .from(salesOrderItem)
+    .where(eq(salesOrderItem.salesOrderId, id));
+
+  await Promise.all(
+    soItems
+      .filter((i) => i.productId)
+      .map((i) =>
+        adjustReservation({
+          orgId,
+          productId: i.productId!,
+          warehouseLabel: "Default",
+          delta: -parseFloat(i.qty ?? "1"),
+        }),
+      ),
+  );
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");

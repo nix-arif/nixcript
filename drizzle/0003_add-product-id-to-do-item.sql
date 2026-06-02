@@ -1,0 +1,3 @@
+ALTER TABLE "delivery_order_item" ADD COLUMN "product_id" text;--> statement-breakpoint
+ALTER TABLE "delivery_order_item" ADD CONSTRAINT "delivery_order_item_product_id_product_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."product"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "delivery_order_item_product_idx" ON "delivery_order_item" USING btree ("product_id");
