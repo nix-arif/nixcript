@@ -800,6 +800,8 @@ export type QuotationBasic = NonNullable<Awaited<ReturnType<typeof getQuotationB
 export async function searchQuotationsByNo(query: string) {
   const { orgId } = await requireAccess("quotation:read");
 
+  // Match against the running number only (part after the last "-")
+  // e.g. typing "42" matches "BMS-QT-2025-0042", not the prefix
   return db
     .select({
       id: quotation.id,
@@ -813,7 +815,7 @@ export async function searchQuotationsByNo(query: string) {
     .where(
       and(
         eq(quotation.organizationId, orgId),
-        ilike(quotation.quotationNo, `%${query}%`),
+        sql`REGEXP_REPLACE(${quotation.quotationNo}, '^.*-', '') ILIKE ${'%' + query + '%'}`,
         eq(quotation.isDummy, 0),
         eq(quotation.status, "final"),
       ),
