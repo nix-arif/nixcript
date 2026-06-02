@@ -1150,22 +1150,20 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         const catPage  = pdfDoc.addPage([W, H]);
         const pageRows = catItems.slice(pi * ROWS_PER_PG, (pi + 1) * ROWS_PER_PG);
 
-        // Header strip
-        catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H, color: rgb(0.97, 0.97, 0.97) });
-        catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: 4, height: CAT_HDR_H, color: accentColor });
-        catPage.drawText("PRODUCT CATALOGUE", { x: ML, y: H - 22, size: 13, font: fontB, color: accentColor });
+        // Header strip — white background, all black text
+        catPage.drawText("PRODUCT CATALOGUE", { x: ML, y: H - 22, size: 13, font: fontB, color: C_BLACK });
         if (q.title) {
-          catPage.drawText(trunc(q.title, fontB, 8.5, CW / 2), { x: ML, y: H - 36, size: 8.5, font: fontB, color: C_TEXT });
-          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, { x: ML, y: H - 46, size: 7, font: fontR, color: C_FAINT });
+          catPage.drawText(trunc(q.title, fontB, 8.5, CW / 2), { x: ML, y: H - 36, size: 8.5, font: fontB, color: C_BLACK });
+          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, { x: ML, y: H - 46, size: 7, font: fontR, color: C_BLACK });
         } else {
-          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, { x: ML, y: H - 37, size: 8, font: fontR, color: C_FAINT });
+          catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`, { x: ML, y: H - 37, size: 8, font: fontR, color: C_BLACK });
         }
         const pgLabel = `Page ${pi + 1} / ${totalCatPgs}`;
-        catPage.drawText(pgLabel, { x: W - MR - fontR.widthOfTextAtSize(pgLabel, 8), y: H - 28, size: 8, font: fontR, color: C_MUTED });
+        catPage.drawText(pgLabel, { x: W - MR - fontR.widthOfTextAtSize(pgLabel, 8), y: H - 28, size: 8, font: fontR, color: C_BLACK });
 
-        // Column header row
+        // Column header row — white fill, black border, black text
         const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
-        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: accentColor });
+        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: C_WHITE, borderColor: C_BLACK, borderWidth: 0.4 });
         const colDefs: { label: string; x: number; w: number }[] = [
           { label: "#",               x: ML,                               w: CAT_COL_NO  },
           { label: "Image",           x: ML + CAT_COL_NO,                  w: CAT_COL_IMG },
@@ -1173,7 +1171,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         ];
         for (const col of colDefs) {
           const tw = fontB.widthOfTextAtSize(col.label, 7);
-          catPage.drawText(col.label, { x: col.x + (col.w - tw) / 2, y: colHdrY + 6, size: 7, font: fontB, color: C_WHITE });
+          catPage.drawText(col.label, { x: col.x + (col.w - tw) / 2, y: colHdrY + 6, size: 7, font: fontB, color: C_BLACK });
         }
 
         // Vertical separators
@@ -1194,7 +1192,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
           catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_CAT_LINE });
 
           const noStr = String(globalN);
-          catPage.drawText(noStr, { x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2, y: rowY + CAT_ROW_H / 2 - 4, size: 8, font: fontR, color: C_FAINT });
+          catPage.drawText(noStr, { x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2, y: rowY + CAT_ROW_H / 2 - 4, size: 8, font: fontR, color: C_BLACK });
 
           const imgColX = ML + CAT_COL_NO;
           const img = item.productCode ? imageCache.get(item.productCode) : undefined;
@@ -1212,27 +1210,27 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
           let   detY    = rowY + CAT_ROW_H - 16;
 
           if (item.productCode) {
-            catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: accentColor });
+            catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: C_BLACK });
             detY -= 11;
           }
           if (item.description) {
             for (const line of wrap(String(item.description), fontR, 8, detMaxW).slice(0, 4)) {
-              catPage.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_TEXT });
+              catPage.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
               detY -= 10;
             }
           }
           if (item.uom) {
-            catPage.drawText(item.uom, { x: detX, y: detY, size: 8, font: fontR, color: C_FAINT });
+            catPage.drawText(item.uom, { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
             detY -= 11;
           }
           if (item.hasCert) {
             detY -= 5;
             if (item.mdaRegNo) {
-              catPage.drawText(`MDA Reg No: ${item.mdaRegNo}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MUTED });
+              catPage.drawText(`MDA Reg No: ${item.mdaRegNo}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
               detY -= 10;
             }
             if (item.mdaValidity) {
-              catPage.drawText(`MDA Validity: ${fmtD(item.mdaValidity)}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MUTED });
+              catPage.drawText(`MDA Validity: ${fmtD(item.mdaValidity)}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
             }
           }
           rowTopY = rowY;
@@ -1241,8 +1239,8 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         catPage.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_CAT_LINE, borderWidth: 0.4 });
 
         hLine(catPage, MB + 22);
-        catPage.drawText("Product Catalogue  ·  Computer generated document.", { x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_FAINT });
-        catPage.drawText(q.quotationNo, { x: W - MR - fontR.widthOfTextAtSize(q.quotationNo, 7.5), y: MB + 10, size: 7.5, font: fontR, color: C_FAINT });
+        catPage.drawText("Product Catalogue  ·  Computer generated document.", { x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_BLACK });
+        catPage.drawText(q.quotationNo, { x: W - MR - fontR.widthOfTextAtSize(q.quotationNo, 7.5), y: MB + 10, size: 7.5, font: fontR, color: C_BLACK });
       }
     }
   }
