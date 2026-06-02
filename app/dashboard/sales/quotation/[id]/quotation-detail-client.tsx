@@ -734,13 +734,12 @@ export function QuotationDetailClient({ group, initialId }: Props) {
             <div className="p-3 space-y-3 text-xs">
               <div className="space-y-1.5">
                 <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Display</p>
-                <OptionRow label="Product catalogue" enabled={!!Number(q.includeCatalogue)} />
-                <OptionRow label="MDA certificates"  enabled={!!Number(q.includeMdaCerts)} />
-                <OptionRow label="Show total prices" enabled={!!Number(q.showTotalPrice)} />
-                <OptionRow label="Itemize discount"  enabled={!!Number(q.showItemizeDiscount)} />
+                <OptionRow label="Product code"    enabled={!!Number(q.showProductCode)} />
+                <OptionRow label="MDA certificates" enabled={!!Number(q.includeMdaCerts)} />
               </div>
               <div className="space-y-1.5">
                 <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Attached Documents</p>
+                <OptionRow label="Product catalogue"                enabled={!!Number(q.includeCatalogue)} />
                 <OptionRow label="MOF Certificate"                  enabled={!!Number(q.inclMof)} />
                 <OptionRow label="SSM"                              enabled={!!Number(q.inclSsm)} />
                 <OptionRow label="TCC (Tax Compliance Certificate)" enabled={!!Number(q.inclTcc)} />

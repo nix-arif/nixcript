@@ -969,6 +969,7 @@ export const quotation = pgTable(
     showUnitPrice: integer("show_unit_price").notNull().default(1), // kept for compat, always true
     showTotalPrice: integer("show_total_price").notNull().default(1),
     showItemizeDiscount: integer("show_itemize_discount").notNull().default(0),
+    showProductCode: integer("show_product_code").notNull().default(1),
 
     // Attached documents
     inclMof: integer("incl_mof").notNull().default(1),

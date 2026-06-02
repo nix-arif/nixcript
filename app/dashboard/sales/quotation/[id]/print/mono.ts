@@ -411,7 +411,8 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const LOGO_H_MAX = 51;   // 42 × 1.2
   const LOGO_W_MAX = 130;  // 108 × 1.2
 
-  const showCode  = !!(data.orgShowCodeColumn ?? 1);
+  const showCode  = !!Number(q.showProductCode ?? 1);
+  const showMdaCerts = !!Number(q.includeMdaCerts ?? 1);
   // All body text matches the 7.5pt table header — uniform, no bold
   const FS_BODY   = 7.5;
   const LH        = 10;   // line height for wrapped description
@@ -424,7 +425,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const C_QTY  = 28;
   const C_UOM  = 34;
   const C_UP   = 64;
-  const C_DISC = showDisc ? 34 : 0;
+  const C_DISC = showDisc ? 55 : 0;
   const C_TOT  = showTP ? 68 : 0;
   const C_DESCA = CW - C_NO - C_CODE - C_QTY - C_UOM - C_UP - C_DISC - C_TOT;
 
@@ -454,11 +455,11 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const CODE_LINE_H = LH - 2;
   const rowInfos: RowInfo[] = items.map(item => {
     const descLines  = wrap(item.description ?? "—", fontR, FS_BODY, C_DESCA - TABLE_PAD * 2);
-    const extraLine  = item.hasCert && item.mdaRegNo
+    const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
-      : (!item.hasCert ? "No MDA certificate" : null);
+      : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
-    const codeLineH  = !showCode && item.productCode ? CODE_LINE_H : 0;
+    const codeLineH  = 0;
     const rowH = Math.max(
       RH_MIN,
       codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
@@ -483,7 +484,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
   const SUMMARY_ROW_H = TABLE_HDR_H;             // subtotal & grand total rows inside the table
   const BTM_TABLE_H   = TABLE_HDR_H + 42;         // 2-col footer table (header + 3 right-col rows)
-  const TOTALS_H      = 2 * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
+  const TOTALS_H      = (discAmt > 0 ? 3 : 2) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
   const TOT_PAD       = 5;                        // inner padding for summary / footer rows
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 30;
@@ -672,7 +673,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       { label: "Qty",         x: X_QTY,  w: C_QTY  },
       { label: "UOM",         x: X_UOM,  w: C_UOM  },
       { label: "Unit Price",  x: X_UP,   w: C_UP   },
-      ...(showDisc ? [{ label: "Disc%",      x: X_DISC, w: C_DISC  }] : []),
+      ...(showDisc ? [{ label: "Discount",    x: X_DISC, w: C_DISC  }] : []),
       ...(showTP   ? [{ label: "Total",      x: X_TOT,  w: C_TOT   }] : []),
     ];
 
@@ -735,11 +736,6 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         page.drawText(trunc(item.productCode ?? "—", fontR, FS_BODY, C_CODE - TABLE_PAD * 2), {
           x: X_CODE + TABLE_PAD, y: dy, size: FS_BODY, font: fontR, color: C_BLACK,
         });
-      } else if (item.productCode) {
-        page.drawText(trunc(item.productCode, fontR, FS_BODY, C_DESCA - TABLE_PAD * 2), {
-          x: X_DESC + TABLE_PAD, y: dy, size: FS_BODY, font: fontR, color: C_BLACK,
-        });
-        dy -= CODE_LINE_H;
       }
 
       // Description + cert line — all FS_BODY, all black
@@ -774,13 +770,19 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       page.drawText("RM", { x: X_UP + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
       page.drawText(upNum, { x: X_UP + C_UP - TABLE_PAD - upNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
 
-      // Disc%
+      // Discount amount
       if (showDisc) {
-        const disc  = Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—";
-        const discW = fontR.widthOfTextAtSize(disc, FS_BODY);
-        page.drawText(disc, {
-          x: X_DISC + (C_DISC - discW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK,
-        });
+        const discAmt = Number(item.discountAmt ?? 0);
+        if (discAmt > 0) {
+          const discNum  = fmtAcct(discAmt);
+          const discNumW = fontR.widthOfTextAtSize(discNum, FS_BODY);
+          page.drawText("RM", { x: X_DISC + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+          page.drawText(discNum, { x: X_DISC + C_DISC - TABLE_PAD - discNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+        } else {
+          const dash  = "—";
+          const dashW = fontR.widthOfTextAtSize(dash, FS_BODY);
+          page.drawText(dash, { x: X_DISC + (C_DISC - dashW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+        }
       }
 
       // Total — "RM" left, value right-aligned (accounting format)
@@ -821,6 +823,21 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       const subStrW = fontR.widthOfTextAtSize(subStr, FS_BODY);
       page.drawText(subStr, { x: X_UP + (amtAreaW - subStrW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
       curY = subRowY;
+
+      // ── Overall discount row ────────────────────────────────────────────────
+      if (discAmt > 0) {
+        const odRowY = curY - SUMMARY_ROW_H;
+        page.drawLine({ start: { x: ML,     y: odRowY }, end: { x: W - MR, y: odRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: ML,     y: curY   }, end: { x: ML,     y: odRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: W - MR, y: curY   }, end: { x: W - MR, y: odRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: odRowY }, thickness: 0.3, color: C_BLACK });
+        page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: odRowY }, thickness: 0.3, color: C_BLACK });
+        page.drawText("OVERALL DISCOUNT", { x: X_NO + TOT_PAD, y: odRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+        const odStr  = `- ${fmtM(discAmt)}`;
+        const odStrW = fontR.widthOfTextAtSize(odStr, FS_BODY);
+        page.drawText(odStr, { x: X_UP + (amtAreaW - odStrW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        curY = odRowY;
+      }
 
       // ── Grand total row (accent fill) ───────────────────────────────────────
       const gtLabel       = sets > 1 ? `GRAND TOTAL × ${sets} SETS` : "GRAND TOTAL";

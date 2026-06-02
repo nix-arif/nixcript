@@ -157,7 +157,8 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
 
   // ── Table style ──────────────────────────────────────────────────────────
   const tableRowStyle = data.orgTableRowStyle ?? "default";
-  const showCode      = !!(data.orgShowCodeColumn ?? 1);
+  const showCode      = !!Number(q.showProductCode ?? 1);
+  const showMdaCerts = !!Number(q.includeMdaCerts ?? 1);
 
   // ── Column widths ─────────────────────────────────────────────────────────
   const C_NO   = 22;
@@ -203,11 +204,11 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
   const CODE_LINE_H = LH - 2;
   const rowInfos: RowInfo[] = items.map(item => {
     const descLines  = wrap(item.description ?? "—", fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
-    const extraLine  = item.hasCert && item.mdaRegNo
+    const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
-      : (!item.hasCert ? "No MDA certificate" : null);
+      : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
-    const codeLineH  = !showCode && item.productCode ? CODE_LINE_H : 0;
+    const codeLineH  = 0;
     const rowH = Math.max(
       RH_MIN,
       codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
@@ -424,11 +425,6 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
         page.drawText(trunc(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2), {
           x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontR, color: C_MID,
         });
-      } else if (item.productCode) {
-        page.drawText(trunc(item.productCode, fontB, FS_CODE - 1, C_DESC - TABLE_PAD * 2), {
-          x: X_DESC + TABLE_PAD, y: dy, size: FS_CODE - 1, font: fontB, color: accent,
-        });
-        dy -= CODE_LINE_H;
       }
 
       // Description + cert line

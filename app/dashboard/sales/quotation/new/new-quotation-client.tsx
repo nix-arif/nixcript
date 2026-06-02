@@ -38,7 +38,7 @@ import { PageHeader } from "@/components/page-header";
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 type Member = Awaited<ReturnType<typeof getOrgMembersForQuotation>>[number];
 
-type Step = 1 | 2 | 3 | 4 | 5;
+type Step = 1 | 2 | 3 | 4;
 
 const fmt = (v: string | number) =>
   Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 });
@@ -153,8 +153,7 @@ export function NewQuotationClient({
   // Step 5 state
   const [includeCatalogue, setIncludeCatalogue] = useState(true);
   const [includeMdaCerts, setIncludeMdaCerts] = useState(true);
-  const [showTotalPrice, setShowTotalPrice] = useState(true);
-  const [showItemizeDiscount, setShowItemizeDiscount] = useState(false);
+  const [showProductCode, setShowProductCode] = useState(true);
   const [inclMof, setInclMof] = useState(true);
   const [inclSsm, setInclSsm] = useState(true);
   const [inclTcc, setInclTcc] = useState(true);
@@ -428,8 +427,9 @@ export function NewQuotationClient({
         sstPct: applySST ? sstPct || "8" : "0",
         includeCatalogue,
         includeMdaCerts,
-        showTotalPrice,
-        showItemizeDiscount,
+        showTotalPrice: true,
+        showItemizeDiscount: applyItemizeDiscount,
+        showProductCode,
         inclMof,
         inclSsm,
         inclTcc,
@@ -467,7 +467,7 @@ export function NewQuotationClient({
   ).length;
 
   // ── Step indicator ────────────────────────────────────────────────────────
-  const STEPS = ["Setup", "Upload", "Review", "Pricing", "Generate"];
+  const STEPS = ["Setup", "Upload", "Review", "Generate"];
 
   return (
     <div className="p-6">
@@ -1120,15 +1120,16 @@ export function NewQuotationClient({
               <ChevronLeftIcon className="w-4 h-4" /> Back
             </Button>
             <Button onClick={() => setStep(4)} className="gap-2">
-              Next: Pricing <ChevronRightIcon className="w-4 h-4" />
+              Next: Generate <ChevronRightIcon className="w-4 h-4" />
             </Button>
           </div>
         </div>
       )}
 
-      {/* ── STEP 4: Pricing ──────────────────────────────────────────────────── */}
+      {/* ── STEP 4: Generate ────────────────────────────────────────────────── */}
       {step === 4 && (
         <div className="space-y-4">
+          {/* Pricing & discount */}
           <div className="bg-background border border-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-muted/20 border-b border-border">
               <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -1136,7 +1137,6 @@ export function NewQuotationClient({
               </div>
             </div>
             <div className="p-4 space-y-4">
-
               {/* Subtotal rows */}
               <div className="rounded-lg border border-border divide-y divide-border">
                 <div className="flex items-center justify-between px-4 py-2.5 text-sm">
@@ -1153,24 +1153,26 @@ export function NewQuotationClient({
 
               {/* Three checkboxes: itemize disc, total disc, SST */}
               <div className="rounded-lg border border-border divide-y divide-border">
-                {/* Itemize discount */}
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <input
-                    type="checkbox"
-                    id="applyItemDisc"
-                    checked={applyItemizeDiscount}
-                    onChange={(e) => setApplyItemizeDiscount(e.target.checked)}
-                    className="w-4 h-4"
-                  />
-                  <label htmlFor="applyItemDisc" className="text-sm font-medium cursor-pointer flex-1">
-                    Apply itemize discount
-                  </label>
-                  {applyItemizeDiscount && itemDiscTotal > 0 && (
-                    <span className="text-sm text-red-600 dark:text-red-400 font-mono tabular-nums">
-                      − RM {fmt(itemDiscTotal)}
-                    </span>
-                  )}
-                </div>
+                {/* Itemize discount — only shown when items carry discounts */}
+                {applyItemizeDiscount && (
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      id="applyItemDisc"
+                      checked={applyItemizeDiscount}
+                      onChange={(e) => setApplyItemizeDiscount(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <label htmlFor="applyItemDisc" className="text-sm font-medium cursor-pointer flex-1">
+                      Apply itemize discount
+                    </label>
+                    {itemDiscTotal > 0 && (
+                      <span className="text-sm text-red-600 dark:text-red-400 font-mono tabular-nums">
+                        − RM {fmt(itemDiscTotal)}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* Total discount */}
                 <div className="flex items-center gap-3 px-4 py-3">
@@ -1242,9 +1244,7 @@ export function NewQuotationClient({
                   Grand Total
                 </div>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm font-mono tabular-nums">
-                  <span className="text-foreground">
-                    RM {fmt(subtotalNSets)}
-                  </span>
+                  <span className="text-foreground">RM {fmt(subtotalNSets)}</span>
                   {(applyItemizeDiscount || applyTotalDiscount) && totalDisc > 0 && (
                     <>
                       <span className="text-muted-foreground">−</span>
@@ -1276,24 +1276,7 @@ export function NewQuotationClient({
             </div>
           </div>
 
-          <div className="flex justify-between">
-            <Button
-              variant="outline"
-              onClick={() => setStep(3)}
-              className="gap-2"
-            >
-              <ChevronLeftIcon className="w-4 h-4" /> Back
-            </Button>
-            <Button onClick={() => setStep(5)} className="gap-2">
-              Next: Generate <ChevronRightIcon className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ── STEP 5: Generate ────────────────────────────────────────────────── */}
-      {step === 5 && (
-        <div className="space-y-4">
+          {/* Generate options */}
           <div className="bg-background border border-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-muted/20 border-b border-border">
               <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -1311,9 +1294,7 @@ export function NewQuotationClient({
                   <span className="text-muted-foreground">Customer </span>
                   <span className="font-medium">
                     {selectedCustomer
-                      ? [selectedCustomer.title, selectedCustomer.name]
-                          .filter(Boolean)
-                          .join(" ")
+                      ? [selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")
                       : "—"}
                   </span>
                 </div>
@@ -1325,18 +1306,6 @@ export function NewQuotationClient({
                   <span className="text-muted-foreground">Sets </span>
                   <span className="font-medium">{sets}</span>
                 </div>
-                <div className="col-span-2">
-                  <span className="text-muted-foreground">Grand total </span>
-                  <span className="font-medium text-green-600">
-                    RM {fmt(grandTotal)}
-                  </span>
-                  <div className="text-xs text-muted-foreground mt-0.5 font-mono tabular-nums">
-                    RM {fmt(subtotalNSets)}
-                    {totalDisc > 0 && ` − RM ${fmt(totalDisc)} disc`}
-                    {sstAmt > 0 && ` + RM ${fmt(sstAmt)} SST`}
-                    {` = RM ${fmt(grandTotal)}`}
-                  </div>
-                </div>
               </div>
 
               {/* Options */}
@@ -1344,10 +1313,8 @@ export function NewQuotationClient({
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Display</p>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { id: "catalogue",  label: "Product catalogue",  value: includeCatalogue,     set: setIncludeCatalogue },
-                    { id: "certs",      label: "MDA certificates",   value: includeMdaCerts,      set: setIncludeMdaCerts },
-                    { id: "totalprice", label: "Show total prices",  value: showTotalPrice,       set: setShowTotalPrice },
-                    { id: "itemdisc",   label: "Itemize discount",   value: showItemizeDiscount,  set: setShowItemizeDiscount },
+                    { id: "productcode", label: "Product code",   value: showProductCode,  set: setShowProductCode },
+                    { id: "certs",       label: "MDA certificates", value: includeMdaCerts, set: setIncludeMdaCerts },
                   ].map((opt) => (
                     <div key={opt.id} className="flex items-center gap-2.5 p-3 border border-border rounded-lg">
                       <input type="checkbox" id={opt.id} checked={opt.value} onChange={(e) => opt.set(e.target.checked)} className="w-4 h-4" />
@@ -1358,13 +1325,14 @@ export function NewQuotationClient({
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Attached Documents</p>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { id: "mof",      label: "MOF Certificate",                         value: inclMof,              set: setInclMof },
-                    { id: "ssm",      label: "SSM",                                     value: inclSsm,              set: setInclSsm },
-                    { id: "tcc",      label: "TCC (Tax Compliance Certificate)",         value: inclTcc,              set: setInclTcc },
-                    { id: "bank",     label: "Bank Statement",                           value: inclBankStatement,    set: setInclBankStatement },
-                    { id: "mda",      label: "MDA Establishment",                        value: inclMdaEstablishment, set: setInclMdaEstablishment },
-                    { id: "lamp12",   label: "Lampiran 12",                              value: inclLampiran12,       set: setInclLampiran12 },
-                    { id: "lamp13",   label: "Lampiran 13",                              value: inclLampiran13,       set: setInclLampiran13 },
+                    { id: "catalogue", label: "Product catalogue",                value: includeCatalogue,     set: setIncludeCatalogue },
+                    { id: "mof",       label: "MOF Certificate",                  value: inclMof,              set: setInclMof },
+                    { id: "ssm",       label: "SSM",                              value: inclSsm,              set: setInclSsm },
+                    { id: "tcc",       label: "TCC (Tax Compliance Certificate)", value: inclTcc,              set: setInclTcc },
+                    { id: "bank",      label: "Bank Statement",                   value: inclBankStatement,    set: setInclBankStatement },
+                    { id: "mda",       label: "MDA Establishment",                value: inclMdaEstablishment, set: setInclMdaEstablishment },
+                    { id: "lamp12",    label: "Lampiran 12",                      value: inclLampiran12,       set: setInclLampiran12 },
+                    { id: "lamp13",    label: "Lampiran 13",                      value: inclLampiran13,       set: setInclLampiran13 },
                   ].map((opt) => (
                     <div key={opt.id} className="flex items-center gap-2.5 p-3 border border-border rounded-lg">
                       <input type="checkbox" id={opt.id} checked={opt.value} onChange={(e) => opt.set(e.target.checked)} className="w-4 h-4" />
@@ -1378,16 +1346,13 @@ export function NewQuotationClient({
               {noPriceCount > 0 && (
                 <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-xs text-amber-700 dark:text-amber-400">
                   <AlertTriangleIcon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  {noPriceCount} item{noPriceCount > 1 ? "s" : ""} have no price
-                  — they will show RM 0.00 in the quotation.
+                  {noPriceCount} item{noPriceCount > 1 ? "s" : ""} have no price — they will show RM 0.00 in the quotation.
                 </div>
               )}
               {noCertCount > 0 && (
                 <div className="flex items-start gap-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg text-xs text-orange-700 dark:text-orange-400">
                   <AlertCircleIcon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  {noCertCount} item{noCertCount > 1 ? "s" : ""} have no MDA
-                  certificate — certificate page will be omitted for these
-                  items.
+                  {noCertCount} item{noCertCount > 1 ? "s" : ""} have no MDA certificate — certificate page will be omitted for these items.
                 </div>
               )}
 
@@ -1407,7 +1372,7 @@ export function NewQuotationClient({
           <div className="flex justify-start">
             <Button
               variant="outline"
-              onClick={() => setStep(4)}
+              onClick={() => setStep(3)}
               className="gap-2"
             >
               <ChevronLeftIcon className="w-4 h-4" /> Back

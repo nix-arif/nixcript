@@ -157,7 +157,8 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   const nameUpper  = !!(data.orgNameUppercase ?? 0);
   const dispName   = nameUpper ? coName.toUpperCase() : coName;
   const attnNameSz = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string,number>)[data.orgAttentionNameSize ?? "medium"] ?? 13;
-  const showCode   = !!(data.orgShowCodeColumn ?? 1);
+  const showCode   = !!Number(q.showProductCode ?? 1);
+  const showMdaCerts = !!Number(q.includeMdaCerts ?? 1);
   const tableRowStyle = data.orgTableRowStyle ?? "default";
   const QL_TEXT    = !!(data.orgQuotationLabelUppercase ?? 1) ? "QUOTATION" : "Quotation";
   const QL_SIZE    = ({ small: 5.5, normal: 7, large: 10 } as Record<string,number>)[data.orgQuotationLabelSize ?? "normal"] ?? 7;
@@ -254,11 +255,11 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   };
   const rowInfos: RowInfo[] = items.map(item => {
     const descLines = wrap(item.description ?? "—", fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
-    const extraLine = item.hasCert && item.mdaRegNo
+    const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
-      : (!item.hasCert ? "No MDA certificate" : null);
+      : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
-    const codeLineH  = !showCode && item.productCode ? CODE_LINE_H : 0;
+    const codeLineH  = 0;
     const rowH = Math.max(RH_MIN, codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6));
     return { item, descLines, extraLine, isGreenRow, rowH };
   });
@@ -597,11 +598,6 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         page.drawText(trunc(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2), {
           x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontR, color: C_DARK,
         });
-      } else if (item.productCode) {
-        page.drawText(trunc(item.productCode, fontB, FS_CODE - 1, C_DESC - TABLE_PAD * 2), {
-          x: X_DESC + TABLE_PAD, y: dy, size: FS_CODE - 1, font: fontB, color: C_DARK,
-        });
-        dy -= CODE_LINE_H;
       }
 
       for (const line of descLines) {

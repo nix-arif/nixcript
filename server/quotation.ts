@@ -416,6 +416,7 @@ export type CreateQuotationInput = {
   includeMdaCerts: boolean;
   showTotalPrice: boolean;
   showItemizeDiscount: boolean;
+  showProductCode: boolean;
   inclMof: boolean;
   inclSsm: boolean;
   inclTcc: boolean;
@@ -559,6 +560,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     showUnitPrice: 1,
     showTotalPrice: input.showTotalPrice ? 1 : 0,
     showItemizeDiscount: input.showItemizeDiscount ? 1 : 0,
+    showProductCode: input.showProductCode ? 1 : 0,
     inclMof: input.inclMof ? 1 : 0,
     inclSsm: input.inclSsm ? 1 : 0,
     inclTcc: input.inclTcc ? 1 : 0,
@@ -1668,6 +1670,7 @@ export type UpdateQuotationInput = {
   includeMdaCerts: boolean;
   showTotalPrice: boolean;
   showItemizeDiscount: boolean;
+  showProductCode: boolean;
   inclMof: boolean;
   inclSsm: boolean;
   inclTcc: boolean;
@@ -1803,6 +1806,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       showUnitPrice: 1,
       showTotalPrice: input.showTotalPrice ? 1 : 0,
       showItemizeDiscount: input.showItemizeDiscount ? 1 : 0,
+      showProductCode: input.showProductCode ? 1 : 0,
       inclMof: input.inclMof ? 1 : 0,
       inclSsm: input.inclSsm ? 1 : 0,
       inclTcc: input.inclTcc ? 1 : 0,
@@ -2037,6 +2041,7 @@ export async function createGovernmentBatch(
       showUnitPrice: 1,
       showTotalPrice: 1,
       showItemizeDiscount: 0,
+      showProductCode: 1,
       inclMof: file.inclMof ? 1 : 0,
       inclSsm: file.inclSsm ? 1 : 0,
       inclTcc: file.inclTcc ? 1 : 0,
