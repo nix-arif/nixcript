@@ -254,25 +254,36 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemForPo
 
   const codes = items.map((i) => i.productCode).filter((c): c is string => !!c);
   const imageMap: Record<string, string | null> = {};
+  const costMap: Record<string, string | null> = {};
+
   if (codes.length > 0) {
     const prods = await db
-      .select({ productCode: product.productCode, imageKey: product.imageKey })
+      .select({ productCode: product.productCode, imageKey: product.imageKey, costUnitPrice: product.costUnitPrice })
       .from(product)
       .where(inArray(product.productCode, codes));
-    for (const p of prods) imageMap[p.productCode] = p.imageKey ?? null;
+    for (const p of prods) {
+      imageMap[p.productCode] = p.imageKey ?? null;
+      costMap[p.productCode] = p.costUnitPrice ?? null;
+    }
   }
 
-  return items.map((i) => ({
-    rowNo: i.rowNo,
-    productId: i.productId ?? null,
-    productCode: i.productCode ?? null,
-    description: i.description ?? null,
-    qty: i.qty ?? "1",
-    uom: i.uom ?? null,
-    unitPrice: i.unitPrice ?? "0",
-    totalPrice: i.totalPrice ?? "0",
-    imageKey: i.productCode ? (imageMap[i.productCode] ?? null) : null,
-  }));
+  return items.map((i) => {
+    const cost = i.productCode ? (costMap[i.productCode] ?? null) : null;
+    const unitPrice = cost ?? "0";
+    const qty = parseFloat(i.qty ?? "1");
+    const price = parseFloat(unitPrice);
+    return {
+      rowNo: i.rowNo,
+      productId: i.productId ?? null,
+      productCode: i.productCode ?? null,
+      description: i.description ?? null,
+      qty: i.qty ?? "1",
+      uom: i.uom ?? null,
+      unitPrice,
+      totalPrice: (qty * price).toFixed(2),
+      imageKey: i.productCode ? (imageMap[i.productCode] ?? null) : null,
+    };
+  });
 }
 
 export type PurchaseOrderCustomerPoRow = typeof purchaseOrderCustomerPo.$inferSelect;

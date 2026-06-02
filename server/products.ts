@@ -11,7 +11,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 type ProductRow = {
   productCode: string;
   description?: string;
-  unitPrice?: string;
+  sellingUnitPrice?: string;
   uom?: string;
   supplier?: string;
   brand?: string;
@@ -42,7 +42,7 @@ export async function seedProducts(rows: ProductRow[]) {
     organizationId: orgId,
     productCode: row.productCode.trim(),
     description: row.description,
-    unitPrice: row.unitPrice,
+    sellingUnitPrice: row.sellingUnitPrice,
     uom: row.uom,
     supplier: row.supplier,
     brand: row.brand,
