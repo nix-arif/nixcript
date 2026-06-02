@@ -1,10 +1,10 @@
 "use server";
 
 import { db } from "@/db";
-import { supplier } from "@/db/schema";
+import { supplier, member } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, ilike, asc } from "drizzle-orm";
+import { eq, and, ilike, asc, inArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
@@ -24,6 +24,24 @@ async function requireAccess(permission: string) {
 }
 
 
+/** Returns all org IDs owned by the same owner as the given org (includes the org itself). */
+async function getOwnerOrgIds(orgId: string): Promise<string[]> {
+  const [ownerRow] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+    .limit(1);
+
+  if (!ownerRow) return [orgId];
+
+  const rows = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerRow.userId), eq(member.role, "owner")));
+
+  return rows.map((r) => r.organizationId);
+}
+
 export type Supplier = typeof supplier.$inferSelect;
 
 export interface CreateSupplierInput {
@@ -42,23 +60,17 @@ export interface UpdateSupplierInput extends CreateSupplierInput {
 
 export async function getSuppliers(search?: string): Promise<Supplier[]> {
   const { orgId } = await requireAccess("supplier:read");
+  const orgIds = await getOwnerOrgIds(orgId);
 
-  let query = db
+  const baseFilter = orgIds.length === 1
+    ? eq(supplier.organizationId, orgIds[0])
+    : inArray(supplier.organizationId, orgIds);
+
+  return db
     .select()
     .from(supplier)
-    .where(eq(supplier.organizationId, orgId))
-    .$dynamic();
-
-  if (search) {
-    query = query.where(
-      and(
-        eq(supplier.organizationId, orgId),
-        ilike(supplier.name, `%${search}%`),
-      ),
-    );
-  }
-
-  return query.orderBy(asc(supplier.name));
+    .where(search ? and(baseFilter, ilike(supplier.name, `%${search}%`)) : baseFilter)
+    .orderBy(asc(supplier.name));
 }
 
 export async function createSupplier(input: CreateSupplierInput): Promise<Supplier> {
@@ -85,8 +97,12 @@ export async function createSupplier(input: CreateSupplierInput): Promise<Suppli
 
 export async function updateSupplier(input: UpdateSupplierInput): Promise<Supplier> {
   const { orgId } = await requireAccess("supplier:update");
+  const orgIds = await getOwnerOrgIds(orgId);
+  const baseFilter = orgIds.length === 1
+    ? eq(supplier.organizationId, orgIds[0])
+    : inArray(supplier.organizationId, orgIds);
   const [check] = await db.select({ id: supplier.id }).from(supplier)
-    .where(and(eq(supplier.id, input.id), eq(supplier.organizationId, orgId)));
+    .where(and(eq(supplier.id, input.id), baseFilter));
   if (!check) throw new Error("Supplier not found");
 
   const [row] = await db
@@ -108,8 +124,12 @@ export async function updateSupplier(input: UpdateSupplierInput): Promise<Suppli
 
 export async function deleteSupplier(id: string): Promise<void> {
   const { orgId } = await requireAccess("supplier:delete");
+  const orgIds = await getOwnerOrgIds(orgId);
+  const baseFilter = orgIds.length === 1
+    ? eq(supplier.organizationId, orgIds[0])
+    : inArray(supplier.organizationId, orgIds);
   const [check] = await db.select({ id: supplier.id }).from(supplier)
-    .where(and(eq(supplier.id, id), eq(supplier.organizationId, orgId)));
+    .where(and(eq(supplier.id, id), baseFilter));
   if (!check) throw new Error("Supplier not found");
   await db.delete(supplier).where(eq(supplier.id, id));
 }
@@ -118,6 +138,10 @@ export async function lookupSuppliersByName(
   name: string,
 ): Promise<Pick<Supplier, "id" | "name" | "contactPerson" | "contactNo" | "email">[]> {
   const { orgId } = await requireAccess("supplier:read");
+  const orgIds = await getOwnerOrgIds(orgId);
+  const baseFilter = orgIds.length === 1
+    ? eq(supplier.organizationId, orgIds[0])
+    : inArray(supplier.organizationId, orgIds);
 
   return db
     .select({
@@ -128,7 +152,7 @@ export async function lookupSuppliersByName(
       email: supplier.email,
     })
     .from(supplier)
-    .where(and(eq(supplier.organizationId, orgId), ilike(supplier.name, `%${name}%`)))
+    .where(and(baseFilter, ilike(supplier.name, `%${name}%`)))
     .orderBy(asc(supplier.name))
     .limit(20);
 }
