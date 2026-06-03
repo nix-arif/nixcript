@@ -1169,11 +1169,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         for (let ri = 0; ri < pageRows.length; ri++) {
           const item    = pageRows[ri];
           const rowY    = rowTopY - CAT_ROW_H;
-          const globalN = pi * ROWS_PER_PG + ri + 1;
-
           catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.4, color: C_BLACK });
 
-          const noStr = String(globalN);
+          const noStr = sanitizeText(item.rowNo);
           catPage.drawText(noStr, { x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2, y: rowY + CAT_ROW_H / 2 - 4, size: 8, font: fontR, color: C_BLACK });
 
           const imgColX = ML + CAT_COL_NO;
@@ -1191,7 +1189,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
           const detMaxW = CAT_COL_DET - 16;
           let   detY    = rowY + CAT_ROW_H - 16;
 
-          if (item.productCode) {
+          if (showCode && item.productCode) {
             catPage.drawText(trunc(item.productCode.toUpperCase(), fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: C_BLACK });
             detY -= 11;
           }
@@ -1205,7 +1203,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
             catPage.drawText(item.uom.toUpperCase(), { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
             detY -= 11;
           }
-          if (item.hasCert) {
+          if (showMdaCerts && item.hasCert) {
             detY -= 5;
             if (item.mdaRegNo) {
               catPage.drawText(`MDA REG NO: ${item.mdaRegNo.toUpperCase()}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });

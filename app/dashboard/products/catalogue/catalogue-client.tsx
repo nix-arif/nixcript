@@ -70,8 +70,7 @@ export function CatalogueGenerator() {
   const [showCompany, setShowCompany] = useState(true);
   const [showSku, setShowSku] = useState(true);
   const [showProductCode, setShowProductCode] = useState(true);
-  const [showRegNo, setShowRegNo] = useState(true);
-  const [showValidity, setShowValidity] = useState(false);
+  const [includeMdaCerts, setIncludeMdaCerts] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [drag, setDrag] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -131,8 +130,8 @@ export function CatalogueGenerator() {
           options: {
             showSku: showSku && hasSku,
             showProductCode,
-            showRegNo,
-            showValidity,
+            showRegNo: includeMdaCerts,
+            showValidity: includeMdaCerts,
             showCompany,   // controls whether any company name appears
           },
         }),
@@ -320,16 +319,10 @@ export function CatalogueGenerator() {
                     onChange: setShowProductCode,
                   },
                   {
-                    id: "regno",
-                    label: "MDA registration no.",
-                    checked: showRegNo,
-                    onChange: setShowRegNo,
-                  },
-                  {
-                    id: "validity",
-                    label: "MDA validity",
-                    checked: showValidity,
-                    onChange: setShowValidity,
+                    id: "certs",
+                    label: "MDA certificates",
+                    checked: includeMdaCerts,
+                    onChange: setIncludeMdaCerts,
                   },
                 ].map((opt) => (
                   <div key={opt.id} className="flex items-center gap-2">

@@ -689,8 +689,6 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
         for (let ri = 0; ri < pageRows.length; ri++) {
           const item    = pageRows[ri];
           const rowY    = rowTopY - CAT_ROW_H;
-          const globalN = pi * ROWS_PER_PG + ri + 1;
-
           // Alternating background
           if (ri % 2 === 1) {
             catPage.drawRectangle({
@@ -700,7 +698,7 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
           hLine(catPage, rowY, ML, ML + CW, C_LINE, 0.3);
 
           // — No column —
-          const noStr = String(globalN);
+          const noStr = sanitizeText(item.rowNo);
           catPage.drawText(noStr, {
             x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2,
             y: rowY + CAT_ROW_H / 2 - 4,
@@ -733,7 +731,7 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
           const detMaxW = CAT_COL_DET - 16;
           let   detY    = rowY + CAT_ROW_H - 16;
 
-          if (item.productCode) {
+          if (showCode && item.productCode) {
             catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), {
               x: detX, y: detY, size: 8, font: fontB, color: accentColor,
             });
@@ -752,7 +750,7 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
             detY -= 11;
           }
 
-          if (item.hasCert) {
+          if (showMdaCerts && item.hasCert) {
             detY -= 5; // gap between description and MDA details
             if (item.mdaRegNo) {
               catPage.drawText(`MDA Reg No: ${item.mdaRegNo}`, {

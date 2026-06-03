@@ -891,15 +891,13 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         for (let ri = 0; ri < pageRows.length; ri++) {
           const item    = pageRows[ri];
           const rowY    = rowTopY - CAT_ROW_H;
-          const globalN = pi * ROWS_PER_PG + ri + 1;
-
           dashedLine(catPage, rowY, ML, ML + CW, rgb(0.86, 0.86, 0.86));
 
           // No — line-colour badge
           const bx = ML + (CAT_COL_NO - BADGE_SZ) / 2;
           const by = rowY + CAT_ROW_H / 2 - BADGE_SZ / 2;
           catPage.drawRectangle({ x: bx, y: by, width: BADGE_SZ, height: BADGE_SZ, color: accent });
-          const noStr = String(globalN);
+          const noStr = sanitizeText(item.rowNo);
           const noW   = fontB.widthOfTextAtSize(noStr, 7);
           catPage.drawText(noStr, {
             x: bx + (BADGE_SZ - noW) / 2, y: by + 3,
@@ -939,7 +937,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
           const detMaxW = CAT_COL_DET - 16;
           let   detY    = rowY + CAT_ROW_H - 16;
 
-          if (item.productCode) {
+          if (showCode && item.productCode) {
             catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), {
               x: detX, y: detY, size: 8, font: fontB, color: accentT,
             });
@@ -955,7 +953,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
             catPage.drawText(item.uom, { x: detX, y: detY, size: 8, font: fontR, color: C_MID });
             detY -= 11;
           }
-          if (item.hasCert) {
+          if (showMdaCerts && item.hasCert) {
             detY -= 5;
             if (item.mdaRegNo) {
               catPage.drawText(`MDA Reg No: ${item.mdaRegNo}`, {
