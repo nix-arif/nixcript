@@ -297,57 +297,54 @@ export function CatalogueGenerator() {
               )}
             </div>
 
+            {/* Display */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                Display
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: "code",  label: "Product code",     value: showProductCode, set: setShowProductCode },
+                  { id: "certs", label: "MDA certificates", value: includeMdaCerts, set: setIncludeMdaCerts },
+                ].map((opt) => (
+                  <div key={opt.id} className="flex items-center gap-2.5 p-3 border border-border rounded-lg">
+                    <input
+                      type="checkbox"
+                      id={opt.id}
+                      checked={opt.value}
+                      onChange={(e) => opt.set(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <label htmlFor={opt.id} className="text-sm cursor-pointer">{opt.label}</label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Optional columns */}
             <div>
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
                 Optional columns
               </div>
-              <div className="space-y-2.5">
-                {[
-                  {
-                    id: "sku",
-                    label: "SKU",
-                    checked: showSku && hasSku,
-                    onChange: setShowSku,
-                    disabled: !hasSku,
-                    hint: !hasSku ? "No SKU in file" : undefined,
-                  },
-                  {
-                    id: "code",
-                    label: "Product code",
-                    checked: showProductCode,
-                    onChange: setShowProductCode,
-                  },
-                  {
-                    id: "certs",
-                    label: "MDA certificates",
-                    checked: includeMdaCerts,
-                    onChange: setIncludeMdaCerts,
-                  },
-                ].map((opt) => (
-                  <div key={opt.id} className="flex items-center gap-2">
-                    <Checkbox
-                      id={opt.id}
-                      checked={opt.checked}
-                      disabled={opt.disabled}
-                      onCheckedChange={(v) => opt.onChange(v as boolean)}
-                    />
-                    <label
-                      htmlFor={opt.id}
-                      className={cn(
-                        "text-sm cursor-pointer select-none",
-                        opt.disabled && "text-muted-foreground/40",
-                      )}
-                    >
-                      {opt.label}
-                    </label>
-                    {opt.hint && (
-                      <span className="text-xs text-muted-foreground/50">
-                        {opt.hint}
-                      </span>
-                    )}
-                  </div>
-                ))}
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="sku"
+                  checked={showSku && hasSku}
+                  disabled={!hasSku}
+                  onCheckedChange={(v) => setShowSku(v as boolean)}
+                />
+                <label
+                  htmlFor="sku"
+                  className={cn(
+                    "text-sm cursor-pointer select-none",
+                    !hasSku && "text-muted-foreground/40",
+                  )}
+                >
+                  SKU
+                </label>
+                {!hasSku && (
+                  <span className="text-xs text-muted-foreground/50">No SKU in file</span>
+                )}
               </div>
             </div>
 

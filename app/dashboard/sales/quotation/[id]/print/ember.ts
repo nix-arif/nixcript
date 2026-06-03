@@ -885,9 +885,29 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
             });
             detY -= 11;
           }
-          for (const line of wrap(String(item.description ?? ""), fontR, 8, detMaxW).slice(0, 4)) {
-            catPage.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_DARK });
-            detY -= 10;
+          if (item.description) {
+            for (const line of wrap(String(item.description), fontR, 8, detMaxW).slice(0, 4)) {
+              catPage.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_DARK });
+              detY -= 10;
+            }
+          }
+          if (item.uom) {
+            catPage.drawText(item.uom, { x: detX, y: detY, size: 8, font: fontR, color: C_LITE });
+            detY -= 11;
+          }
+          if (showMdaCerts && item.hasCert) {
+            detY -= 5;
+            if (item.mdaRegNo) {
+              catPage.drawText(`MDA Reg No: ${item.mdaRegNo}`, {
+                x: detX, y: detY, size: 7.5, font: fontR, color: C_MID,
+              });
+              detY -= 10;
+            }
+            if (item.mdaValidity) {
+              catPage.drawText(`MDA Validity: ${fmtD(item.mdaValidity)}`, {
+                x: detX, y: detY, size: 7.5, font: fontR, color: C_MID,
+              });
+            }
           }
           rowTopY = rowY;
         }

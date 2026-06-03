@@ -427,7 +427,7 @@ export type CreateQuotationInput = {
 };
 
 function buildItemRows(quotationId: string, items: ReviewItem[]) {
-  return items.map((item) => {
+  return items.map((item, i) => {
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
     const disc = Number(item.discountPct ?? 0);
@@ -436,6 +436,7 @@ function buildItemRows(quotationId: string, items: ReviewItem[]) {
     return {
       id: nanoid(),
       quotationId,
+      sortOrder: i,
       rowNo: item.rowNo,
       sku: item.sku,
       productCode: item.productCode,
@@ -873,7 +874,7 @@ export async function getQuotationForSO(id: string) {
     })
     .from(quotationItem)
     .where(eq(quotationItem.quotationId, id))
-    .orderBy(asc(quotationItem.rowNo));
+    .orderBy(asc(quotationItem.sortOrder));
 
   return { ...q, items };
 }
@@ -1019,7 +1020,7 @@ export async function getQuotationDetail(id: string) {
     .select()
     .from(quotationItem)
     .where(eq(quotationItem.quotationId, id))
-    .orderBy(asc(quotationItem.rowNo));
+    .orderBy(asc(quotationItem.sortOrder));
 
   // Enrich items with product MDA PDF fields
   const certCodes = [...new Set(
@@ -1250,7 +1251,7 @@ export async function getQuotationGroupAllDetails(id: string) {
     .select()
     .from(quotationItem)
     .where(inArray(quotationItem.quotationId, quotationIds))
-    .orderBy(asc(quotationItem.rowNo));
+    .orderBy(asc(quotationItem.sortOrder));
 
   // 5. Customer data (shared across group)
   const customerId = anchor.customerId;
@@ -1384,7 +1385,7 @@ export async function getQuotationGroupForPrint(id: string) {
     .select()
     .from(quotationItem)
     .where(inArray(quotationItem.quotationId, qIds))
-    .orderBy(asc(quotationItem.rowNo));
+    .orderBy(asc(quotationItem.sortOrder));
 
   // Enrich allItems with product MDA PDF fields
   const groupCertCodes = [...new Set(
