@@ -1040,6 +1040,16 @@ export const quotationItem = pgTable(
     priceSource: text("price_source").default("db"), // db | sheet
     uomSource: text("uom_source").default("db"), // db | sheet
 
+    // Sell / rent
+    lineType: text("line_type").notNull().default("sell"), // sell | rent
+    rentalDuration: text("rental_duration"),               // e.g. "12"
+    rentalUnit: text("rental_unit"),                       // day | week | month | year
+
+    // Set grouping
+    setGroupId: text("set_group_id"),    // UUID shared by all items in the same set
+    setGroupLabel: text("set_group_label"), // e.g. "ICU Package"
+    setQty: text("set_qty"),             // how many sets (multiplier), stored per-item
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("quotation_item_quotation_idx").on(t.quotationId)],
@@ -1350,6 +1360,16 @@ export const salesOrderItem = pgTable(
     discountPct: text("discount_pct").default("0"),
     discountAmt: text("discount_amt").default("0"),
     totalPrice: text("total_price").default("0"),
+
+    // Sell / rent
+    lineType: text("line_type").notNull().default("sell"),
+    rentalDuration: text("rental_duration"),
+    rentalUnit: text("rental_unit"),
+
+    // Set grouping
+    setGroupId: text("set_group_id"),
+    setGroupLabel: text("set_group_label"),
+    setQty: text("set_qty"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

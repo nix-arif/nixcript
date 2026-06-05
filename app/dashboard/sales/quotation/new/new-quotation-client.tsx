@@ -189,7 +189,11 @@ export function NewQuotationClient({
 
   // ── Computed totals ──────────────────────────────────────────────────────
   const subtotalPerSet = reviewItems.reduce((s, item) => {
-    return s + Number(item.qty ?? 1) * Number(item.unitPrice ?? 0);
+    const qty = Number(item.qty ?? 1);
+    const price = Number(item.unitPrice ?? 0);
+    const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
+    const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
+    return s + qty * setMul * dur * price;
   }, 0);
   const subtotalNSets = subtotalPerSet * sets;
 
@@ -197,7 +201,9 @@ export function NewQuotationClient({
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
     const disc = Number(item.discountPct ?? 0) / 100;
-    return s + qty * price * disc;
+    const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
+    const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
+    return s + qty * setMul * dur * price * disc;
   }, 0);
   const itemDiscTotal = applyItemizeDiscount ? itemDiscPerSet * sets : 0;
 
@@ -373,43 +379,50 @@ export function NewQuotationClient({
     }
   };
 
-  const updateItemDiscount = (i: number, pct: string) => {
+  function reviewItemTotal(item: ReviewItem): number {
+    const qty = Number(item.qty ?? 1);
+    const price = Number(item.unitPrice ?? 0);
+    const disc = Number(item.discountPct ?? 0) / 100;
+    const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
+    const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
+    return qty * setMul * dur * price * (1 - disc);
+  }
+
+  const updateItemField = (i: number, patch: Partial<ReviewItem>) => {
     setReviewItems((prev) => {
       const next = [...prev];
-      const item = next[i];
-      const qty = Number(item.qty ?? 1);
-      const price = Number(item.unitPrice ?? 0);
-      const disc = Number(pct) / 100;
+      const merged = { ...next[i], ...patch };
+      const total = reviewItemTotal(merged);
+      const qty = Number(merged.qty ?? 1);
+      const price = Number(merged.unitPrice ?? 0);
+      const disc = Number(merged.discountPct ?? 0) / 100;
       next[i] = {
-        ...item,
-        discountPct: pct,
+        ...merged,
         discountAmt: (qty * price * disc).toFixed(2),
-        computedTotal: (qty * price * (1 - disc)).toFixed(2),
+        computedTotal: total.toFixed(2),
       };
       return next;
     });
   };
 
+  const updateItemDiscount = (i: number, pct: string) => updateItemField(i, { discountPct: pct });
+
   const updateItemPrice = (i: number, price: string) => {
     setReviewItems((prev) => {
       const next = [...prev];
       const item = next[i];
-      const qty = Number(item.qty ?? 1);
-      const disc = Number(item.discountPct ?? 0) / 100;
+      const merged = { ...item, unitPrice: price, hasPrice: Number(price) > 0, priceSource: "sheet" as const };
+      const total = reviewItemTotal(merged);
+      const qty = Number(merged.qty ?? 1);
+      const disc = Number(merged.discountPct ?? 0) / 100;
       next[i] = {
-        ...item,
-        unitPrice: price,
-        hasPrice: Number(price) > 0,
-        priceSource: "sheet",
-        computedTotal: (qty * Number(price) * (1 - disc)).toFixed(2),
+        ...merged,
+        discountAmt: (qty * Number(price) * disc).toFixed(2),
+        computedTotal: total.toFixed(2),
         status:
           Number(price) > 0
-            ? item.hasCert
-              ? "ok"
-              : "no_cert"
-            : item.hasCert
-              ? "no_price"
-              : "no_price_no_cert",
+            ? item.hasCert ? "ok" : "no_cert"
+            : item.hasCert ? "no_price" : "no_price_no_cert",
       };
       return next;
     });
@@ -419,17 +432,18 @@ export function NewQuotationClient({
   const handleCreate = async () => {
     setCreating(true);
     try {
-      // Keep per-set qty as-is; only zero out discounts if checkbox is unchecked
+      // Recalculate totals with effective discount
       const finalItems = reviewItems.map((item) => {
-        const qty = Number(item.qty ?? 1);
-        const price = Number(item.unitPrice ?? 0);
         const effectiveDiscPct = applyItemizeDiscount ? Number(item.discountPct ?? 0) : 0;
+        const patched = { ...item, discountPct: String(effectiveDiscPct) };
+        const total = reviewItemTotal(patched);
+        const qty = Number(patched.qty ?? 1);
+        const price = Number(patched.unitPrice ?? 0);
         const disc = effectiveDiscPct / 100;
         return {
-          ...item,
-          discountPct: String(effectiveDiscPct),
+          ...patched,
           discountAmt: (qty * price * disc).toFixed(2),
-          computedTotal: (qty * price * (1 - disc)).toFixed(2),
+          computedTotal: total.toFixed(2),
         };
       });
 
@@ -1023,25 +1037,12 @@ export function NewQuotationClient({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-muted/20">
-                    {[
-                      "#",
-                      "Product code",
-                      "Description",
-                      "Qty",
-                      "UOM",
-                      "Unit price",
-                      "Disc %",
-                      "Total",
-                      "Cert",
-                      "Status",
-                    ].map((h) => (
+                    {["#", "Code", "Description", "Qty", "UOM", "Unit price", "Disc %", "Total", ""].map((h) => (
                       <th
                         key={h}
                         className={cn(
                           "px-3 py-2 text-[10px] font-medium text-muted-foreground border-b border-border",
-                          ["Unit price", "Total"].includes(h)
-                            ? "text-right"
-                            : "text-left",
+                          ["Unit price", "Total"].includes(h) ? "text-right" : "text-left",
                         )}
                       >
                         {h}
@@ -1050,86 +1051,205 @@ export function NewQuotationClient({
                   </tr>
                 </thead>
                 <tbody>
-                  {reviewItems.map((item, i) => {
-                    const st = STATUS_BADGE[item.status];
-                    return (
-                      <tr
-                        key={i}
-                        className={cn(
-                          i < reviewItems.length - 1
-                            ? "border-b border-border"
-                            : "",
-                          i % 2 === 1 ? "bg-muted/10" : "",
-                          item.status === "not_found" ? "opacity-50" : "",
-                        )}
-                      >
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {item.rowNo}
-                        </td>
-                        <td className="px-3 py-2 font-mono">
-                          {item.productCode ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 max-w-[160px] truncate">
-                          {item.description}
-                          {item.descriptionSource === "sheet" && (
-                            <span className="ml-1 text-[9px] text-blue-500">
-                              sheet
-                            </span>
+                  {(() => {
+                    const seenGroupIds = new Set<string>();
+                    const rows: React.ReactNode[] = [];
+                    const groupOrder: string[] = [];
+                    for (const it of reviewItems) {
+                      if (it.setGroupId && !seenGroupIds.has(it.setGroupId)) {
+                        seenGroupIds.add(it.setGroupId);
+                        groupOrder.push(it.setGroupId);
+                      }
+                    }
+
+                    const renderReviewRow = (item: ReviewItem, idx: number, inSet: boolean) => {
+                      const isRent = item.lineType === "rent";
+                      return (
+                        <tr
+                          key={idx}
+                          className={cn(
+                            "border-b border-border/60 last:border-0",
+                            item.status === "not_found" && "opacity-50",
+                            inSet && "bg-blue-50/20 dark:bg-blue-900/5",
                           )}
-                        </td>
-                        <td className="px-3 py-2">{item.qty}</td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {item.uom || "—"}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <input
-                            type="number"
-                            value={item.unitPrice ?? "0"}
-                            onChange={(e) => updateItemPrice(i, e.target.value)}
-                            className="w-20 h-6 border border-input rounded px-1.5 text-right text-xs bg-background"
-                          />
-                          {item.priceSource === "sheet" && (
-                            <span className="ml-1 text-[9px] text-blue-500">
-                              sheet
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            value={item.discountPct ?? "0"}
-                            onChange={(e) =>
-                              updateItemDiscount(i, e.target.value)
-                            }
-                            className="w-14 h-6 border border-input rounded px-1.5 text-right text-xs bg-background"
-                            min="0"
-                            max="100"
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums">
-                          {fmt(item.computedTotal)}
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          {item.hasCert ? (
-                            <CheckCircleIcon className="w-3.5 h-3.5 text-green-600 inline" />
-                          ) : (
-                            <AlertCircleIcon className="w-3.5 h-3.5 text-orange-500 inline" />
-                          )}
-                        </td>
-                        <td className="px-3 py-2">
-                          <div
-                            className={cn(
-                              "flex items-center gap-1",
-                              st.className,
+                        >
+                          {/* # + type toggle */}
+                          <td className="px-3 py-1.5 w-12">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
+                              <button
+                                type="button"
+                                onClick={() => updateItemField(idx, { lineType: isRent ? "sell" : "rent" })}
+                                className={cn(
+                                  "text-[9px] font-bold px-1.5 py-0.5 rounded border transition-colors",
+                                  isRent
+                                    ? "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-400"
+                                    : "bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400",
+                                )}
+                              >
+                                {isRent ? "RENT" : "SELL"}
+                              </button>
+                            </div>
+                          </td>
+
+                          {/* Code */}
+                          <td className="px-3 py-1.5 font-mono text-[11px] text-muted-foreground w-24">
+                            {item.productCode ?? "—"}
+                          </td>
+
+                          {/* Description + rental + set */}
+                          <td className="px-3 py-1.5 max-w-45">
+                            <div className="space-y-0.5">
+                              <div className="truncate">
+                                {item.description}
+                                {item.descriptionSource === "sheet" && (
+                                  <span className="ml-1 text-[9px] text-blue-500">sheet</span>
+                                )}
+                              </div>
+                              {isRent && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[10px] text-amber-600 dark:text-amber-400">rental for</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={item.rentalDuration ?? ""}
+                                    onChange={(e) => updateItemField(idx, { rentalDuration: e.target.value })}
+                                    placeholder="0"
+                                    className="h-5 w-12 border border-amber-200 rounded px-1 text-[10px] bg-background text-right"
+                                  />
+                                  <select
+                                    value={item.rentalUnit ?? "case"}
+                                    onChange={(e) => updateItemField(idx, { rentalUnit: e.target.value })}
+                                    className="h-5 border border-amber-200 rounded px-1 text-[10px] bg-background"
+                                  >
+                                    {["day","week","month","year","case"].map((u) => (
+                                      <option key={u} value={u}>{u}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1">
+                                <span className="text-[9px] text-muted-foreground">Set:</span>
+                                <input
+                                  value={item.setGroupLabel ?? ""}
+                                  onChange={(e) => {
+                                    const newLabel = e.target.value;
+                                    setReviewItems((prev) => {
+                                      const existing = prev.find(
+                                        (x, xi) => x.setGroupLabel === newLabel && xi !== idx && newLabel,
+                                      );
+                                      const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
+                                      return prev.map((x, xi) =>
+                                        xi === idx
+                                          ? { ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || "1" }
+                                          : x,
+                                      );
+                                    });
+                                  }}
+                                  placeholder="(none)"
+                                  className="h-5 w-24 border border-border rounded px-1 text-[9px] bg-background text-muted-foreground"
+                                />
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Qty */}
+                          <td className="px-3 py-1.5 w-14">
+                            <div className="space-y-0.5">
+                              <div className="text-center tabular-nums">{item.qty}</div>
+                              {inSet && (
+                                <div className="text-[9px] text-muted-foreground text-center">/set</div>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* UOM */}
+                          <td className="px-3 py-1.5 text-muted-foreground">{item.uom || "—"}</td>
+
+                          {/* Unit price */}
+                          <td className="px-3 py-1.5 text-right">
+                            <input
+                              type="number"
+                              value={item.unitPrice ?? "0"}
+                              onChange={(e) => updateItemPrice(idx, e.target.value)}
+                              className="w-20 h-6 border border-input rounded px-1.5 text-right text-xs bg-background"
+                            />
+                            {item.priceSource === "sheet" && (
+                              <span className="ml-0.5 text-[9px] text-blue-500">s</span>
                             )}
-                          >
-                            {st.icon}
-                            <span className="text-[10px]">{st.label}</span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          </td>
+
+                          {/* Disc% */}
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="number"
+                              value={item.discountPct ?? "0"}
+                              onChange={(e) => updateItemDiscount(idx, e.target.value)}
+                              className="w-14 h-6 border border-input rounded px-1.5 text-right text-xs bg-background"
+                              min="0"
+                              max="100"
+                            />
+                          </td>
+
+                          {/* Total */}
+                          <td className="px-3 py-1.5 text-right font-mono tabular-nums">
+                            {fmt(item.computedTotal)}
+                          </td>
+
+                          {/* Status */}
+                          <td className="px-3 py-1.5">
+                            <div className={cn("flex items-center gap-1", STATUS_BADGE[item.status].className)}>
+                              {STATUS_BADGE[item.status].icon}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    };
+
+                    // Set groups
+                    for (const gid of groupOrder) {
+                      const gItems = reviewItems.map((it, idx) => ({ it, idx })).filter(({ it }) => it.setGroupId === gid);
+                      const first = gItems[0].it;
+                      const groupTotal = gItems.reduce((s, { it }) => s + Number(it.computedTotal), 0);
+                      rows.push(
+                        <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                          <td colSpan={3} className="px-3 py-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-300">
+                                {first.setGroupLabel || "Set"}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">×</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={first.setQty || "1"}
+                                onChange={(e) =>
+                                  setReviewItems((prev) =>
+                                    prev.map((x) => x.setGroupId === gid ? { ...x, setQty: e.target.value } : x),
+                                  )
+                                }
+                                className="h-5 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
+                              />
+                              <span className="text-[10px] text-muted-foreground">sets</span>
+                            </div>
+                          </td>
+                          <td colSpan={4} />
+                          <td className="px-3 py-1.5 text-right text-[10px] font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
+                            {fmt(String(groupTotal))}
+                          </td>
+                          <td />
+                        </tr>,
+                      );
+                      gItems.forEach(({ it, idx }) => rows.push(renderReviewRow(it, idx, true)));
+                    }
+
+                    // Standalone
+                    reviewItems.forEach((it, idx) => {
+                      if (!it.setGroupId) rows.push(renderReviewRow(it, idx, false));
+                    });
+
+                    return rows;
+                  })()}
                 </tbody>
               </table>
             </div>

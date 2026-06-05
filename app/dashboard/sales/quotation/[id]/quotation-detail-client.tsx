@@ -23,6 +23,7 @@ import {
   ImageIcon,
   PrinterIcon,
   PencilIcon,
+  LayersIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -498,62 +499,136 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item, i) => (
-                  <tr
-                    key={item.id}
-                    className={cn(
-                      i < items.length - 1 ? "border-b border-border" : "",
-                      i % 2 === 1 ? "bg-muted/5" : "",
-                    )}
-                  >
-                    <td className="px-3 py-2.5 text-muted-foreground w-8">
-                      {item.rowNo}
-                    </td>
-                    <td className="px-3 py-2.5 font-mono text-[11px]">
-                      {item.productCode ?? "—"}
-                    </td>
-                    <td className="px-3 py-2.5 max-w-50">
-                      <div className="truncate">{item.description ?? "—"}</div>
-                      {item.descriptionSource === "sheet" && (
-                        <span className="text-[9px] text-blue-500">sheet</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 tabular-nums">{item.qty}</td>
-                    <td className="px-3 py-2.5 text-muted-foreground">
-                      {item.uom || "—"}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">
-                      {`RM ${Number(item.unitPrice ?? 0).toFixed(2)}`}
-                      {item.priceSource === "sheet" && (
-                        <span className="ml-1 text-[9px] text-blue-500">
-                          sheet
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 text-center tabular-nums">
-                      {Number(item.discountPct ?? 0) > 0
-                        ? `${item.discountPct}%`
-                        : "—"}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-medium">
-                      {Number(q.showTotalPrice)
-                        ? `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`
-                        : "—"}
-                    </td>
-                    <td className="px-3 py-2.5 w-6">
-                      <div className="flex items-center gap-1">
-                        {item.hasCert ? (
-                          <ShieldCheckIcon className="w-3.5 h-3.5 text-green-500" />
-                        ) : (
-                          <AlertCircleIcon className="w-3.5 h-3.5 text-orange-400" />
+                {(() => {
+                  const seenGroupIds = new Set<string>();
+                  const groupOrder: string[] = [];
+                  for (const it of items) {
+                    if (it.setGroupId && !seenGroupIds.has(it.setGroupId)) {
+                      seenGroupIds.add(it.setGroupId);
+                      groupOrder.push(it.setGroupId);
+                    }
+                  }
+
+                  const renderItemRow = (item: typeof items[number], inSet: boolean) => {
+                    const isRent = item.lineType === "rent";
+                    return (
+                      <tr
+                        key={item.id}
+                        className={cn(
+                          "border-b border-border/60 last:border-0",
+                          inSet && "bg-blue-50/20 dark:bg-blue-900/5",
                         )}
-                        {item.imageKey && (
-                          <ImageIcon className="w-3.5 h-3.5 text-blue-400" />
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      >
+                        {/* # + type badge */}
+                        <td className="px-3 py-2 w-12">
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
+                            <span className={cn(
+                              "text-[8px] font-bold px-1 py-0.5 rounded border",
+                              isRent
+                                ? "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-400"
+                                : "bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400",
+                            )}>
+                              {isRent ? "RENT" : "SELL"}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2 font-mono text-[11px]">
+                          {item.productCode ?? "—"}
+                        </td>
+
+                        <td className="px-3 py-2 max-w-50">
+                          <div className="truncate">{item.description ?? "—"}</div>
+                          {item.descriptionSource === "sheet" && (
+                            <span className="text-[9px] text-blue-500">sheet</span>
+                          )}
+                          {isRent && item.rentalDuration && (
+                            <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+                              rental for {item.rentalDuration} {item.rentalUnit ?? "case"}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2 tabular-nums">
+                          <div>{item.qty}</div>
+                          {inSet && (
+                            <div className="text-[9px] text-muted-foreground">/set</div>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {item.uom || "—"}
+                        </td>
+
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {`RM ${Number(item.unitPrice ?? 0).toFixed(2)}`}
+                          {item.priceSource === "sheet" && (
+                            <span className="ml-1 text-[9px] text-blue-500">sheet</span>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-2 text-center tabular-nums">
+                          {Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}
+                        </td>
+
+                        <td className="px-3 py-2 text-right tabular-nums font-medium">
+                          {Number(q.showTotalPrice)
+                            ? `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`
+                            : "—"}
+                        </td>
+
+                        <td className="px-3 py-2 w-6">
+                          <div className="flex items-center gap-1">
+                            {item.hasCert ? (
+                              <ShieldCheckIcon className="w-3.5 h-3.5 text-green-500" />
+                            ) : (
+                              <AlertCircleIcon className="w-3.5 h-3.5 text-orange-400" />
+                            )}
+                            {item.imageKey && <ImageIcon className="w-3.5 h-3.5 text-blue-400" />}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  };
+
+                  const rows: React.ReactNode[] = [];
+
+                  // Set groups
+                  for (const gid of groupOrder) {
+                    const gItems = items.filter((it) => it.setGroupId === gid);
+                    const first = gItems[0];
+                    const groupTotal = gItems.reduce((s, it) => s + Number(it.totalPrice ?? 0), 0);
+                    rows.push(
+                      <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                        <td colSpan={3} className="px-3 py-1.5">
+                          <div className="flex items-center gap-2">
+                            <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                              {first.setGroupLabel || "Set"}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              × {first.setQty ?? 1} sets
+                            </span>
+                          </div>
+                        </td>
+                        <td colSpan={4} />
+                        <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
+                          {Number(q.showTotalPrice) ? `RM ${groupTotal.toFixed(2)}` : "—"}
+                        </td>
+                        <td />
+                      </tr>,
+                    );
+                    gItems.forEach((it) => rows.push(renderItemRow(it, true)));
+                  }
+
+                  // Standalone items
+                  items
+                    .filter((it) => !it.setGroupId)
+                    .forEach((it) => rows.push(renderItemRow(it, false)));
+
+                  return rows;
+                })()}
               </tbody>
             </table>
           </div>

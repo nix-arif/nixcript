@@ -281,6 +281,14 @@ export type SpreadsheetRow = {
   unitPrice?: string;
   discountPct?: string;
   totalPrice?: string;
+  // sell / rent
+  lineType?: "sell" | "rent";
+  rentalDuration?: string;
+  rentalUnit?: string;
+  // set grouping
+  setGroupId?: string;
+  setGroupLabel?: string;
+  setQty?: string;
 };
 
 export type ReviewItem = SpreadsheetRow & {
@@ -426,12 +434,21 @@ export type CreateQuotationInput = {
   inclLampiran13: boolean;
 };
 
+function calcItemTotal(item: Pick<ReviewItem, "qty" | "unitPrice" | "discountPct" | "lineType" | "rentalDuration" | "setGroupId" | "setQty">): number {
+  const qty = Number(item.qty ?? 1);
+  const price = Number(item.unitPrice ?? 0);
+  const disc = Number(item.discountPct ?? 0) / 100;
+  const setMultiplier = item.setGroupId ? Number(item.setQty ?? 1) : 1;
+  const duration = item.lineType === "rent" ? Number(item.rentalDuration ?? 1) : 1;
+  return qty * setMultiplier * duration * price * (1 - disc);
+}
+
 function buildItemRows(quotationId: string, items: ReviewItem[]) {
   return items.map((item, i) => {
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
-    const disc = Number(item.discountPct ?? 0);
-    const total = qty * price * (1 - disc / 100);
+    const disc = Number(item.discountPct ?? 0) / 100;
+    const total = calcItemTotal(item);
 
     return {
       id: nanoid(),
@@ -445,7 +462,7 @@ function buildItemRows(quotationId: string, items: ReviewItem[]) {
       uom: item.uom,
       unitPrice: item.unitPrice ?? "0",
       discountPct: item.discountPct ?? "0",
-      discountAmt: ((qty * price * disc) / 100).toFixed(2),
+      discountAmt: (qty * price * disc).toFixed(2),
       totalPrice: total.toFixed(2),
       productId: item.productId,
       productName: item.productName,
@@ -457,6 +474,12 @@ function buildItemRows(quotationId: string, items: ReviewItem[]) {
       descriptionSource: item.descriptionSource,
       priceSource: item.priceSource,
       uomSource: item.uomSource,
+      lineType: item.lineType ?? "sell",
+      rentalDuration: item.rentalDuration ?? null,
+      rentalUnit: item.rentalUnit ?? null,
+      setGroupId: item.setGroupId ?? null,
+      setGroupLabel: item.setGroupLabel ?? null,
+      setQty: item.setQty ?? null,
     };
   });
 }
@@ -519,14 +542,9 @@ export async function createQuotation(input: CreateQuotationInput) {
     }
   }
 
-  // Calculate shared pricing — items store per-set values; multiply by sets for quotation totals
+  // Calculate shared pricing — set items use setQty multiplier; global sets multiplies the rest
   const setsCount = Math.max(1, input.sets ?? 1);
-  const perSetSubtotal = input.items.reduce((s, item) => {
-    const qty = Number(item.qty ?? 1);
-    const price = Number(item.unitPrice ?? 0);
-    const disc = Number(item.discountPct ?? 0);
-    return s + qty * price * (1 - disc / 100);
-  }, 0);
+  const perSetSubtotal = input.items.reduce((s, item) => s + calcItemTotal(item), 0);
   const subtotal = perSetSubtotal * setsCount;
 
   const overallDisc = Number(input.overallDiscountPct ?? 0);
@@ -603,25 +621,7 @@ export async function createQuotation(input: CreateQuotationInput) {
   const targetOrgs =
     ownerOrgs.length > 0 ? ownerOrgs : [{ id: orgId, name: "", slug: "" }];
 
-  // Determine primary org: for owners, use the active org; for members who may
-  // be viewing a sibling org they don't directly belong to, use their home org.
-  const [activeOrgMembership] = await db
-    .select({ role: member.role })
-    .from(member)
-    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
-    .limit(1);
-
-  let primaryOrgId = orgId;
-  if (!activeOrgMembership || activeOrgMembership.role !== "owner") {
-    const clusterIds = targetOrgs.map((o) => o.id);
-    const [homeOrgRow] = await db
-      .select({ organizationId: member.organizationId })
-      .from(member)
-      .where(and(eq(member.userId, userId), inArray(member.organizationId, clusterIds)))
-      .orderBy(asc(member.createdAt))
-      .limit(1);
-    if (homeOrgRow) primaryOrgId = homeOrgRow.organizationId;
-  }
+  const primaryOrgId = orgId;
 
   const groupId = nanoid();
   let originalQuotation: typeof quotation.$inferSelect | null = null;
@@ -871,6 +871,12 @@ export async function getQuotationForSO(id: string) {
       discountPct: quotationItem.discountPct,
       discountAmt: quotationItem.discountAmt,
       totalPrice: quotationItem.totalPrice,
+      lineType: quotationItem.lineType,
+      rentalDuration: quotationItem.rentalDuration,
+      rentalUnit: quotationItem.rentalUnit,
+      setGroupId: quotationItem.setGroupId,
+      setGroupLabel: quotationItem.setGroupLabel,
+      setQty: quotationItem.setQty,
     })
     .from(quotationItem)
     .where(eq(quotationItem.quotationId, id))
@@ -1698,6 +1704,12 @@ export type UpdateQuotationInput = {
     descriptionSource?: "db" | "sheet";
     priceSource?: "db" | "sheet";
     uomSource?: "db" | "sheet";
+    lineType?: "sell" | "rent";
+    rentalDuration?: string | null;
+    rentalUnit?: string | null;
+    setGroupId?: string | null;
+    setGroupLabel?: string | null;
+    setQty?: string | null;
   }[];
 };
 
@@ -1763,14 +1775,9 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
     }
   }
 
-  // Recalculate totals — items store per-set values; multiply by sets for quotation totals
+  // Recalculate totals — set items use setQty multiplier; global sets multiplies all
   const setsCount = Math.max(1, input.sets ?? Number(q.sets ?? 1));
-  const perSetSubtotal = input.items.reduce((s, item) => {
-    const qty = Number(item.qty ?? 1);
-    const price = Number(item.unitPrice ?? 0);
-    const disc = Number(item.discountPct ?? 0);
-    return s + qty * price * (1 - disc / 100);
-  }, 0);
+  const perSetSubtotal = input.items.reduce((s, item) => s + calcItemTotal(item), 0);
   const subtotal = perSetSubtotal * setsCount;
 
   const overallDisc = Number(input.overallDiscountPct ?? 0);
@@ -1823,14 +1830,15 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
 
   if (input.items.length > 0) {
     await db.insert(quotationItem).values(
-      input.items.map((item) => {
+      input.items.map((item, i) => {
         const qty = Number(item.qty ?? 1);
         const price = Number(item.unitPrice ?? 0);
-        const disc = Number(item.discountPct ?? 0);
-        const total = qty * price * (1 - disc / 100);
+        const disc = Number(item.discountPct ?? 0) / 100;
+        const total = calcItemTotal(item);
         return {
           id: nanoid(),
           quotationId: id,
+          sortOrder: i,
           rowNo: item.rowNo,
           sku: item.sku ?? null,
           productCode: item.productCode ?? null,
@@ -1839,7 +1847,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
           uom: item.uom ?? null,
           unitPrice: item.unitPrice ?? "0",
           discountPct: item.discountPct ?? "0",
-          discountAmt: ((qty * price * disc) / 100).toFixed(2),
+          discountAmt: (qty * price * disc).toFixed(2),
           totalPrice: total.toFixed(2),
           productId: item.productId ?? null,
           productName: item.productName ?? null,
@@ -1851,6 +1859,12 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
           descriptionSource: item.descriptionSource ?? "sheet",
           priceSource: item.priceSource ?? "sheet",
           uomSource: item.uomSource ?? "sheet",
+          lineType: item.lineType ?? "sell",
+          rentalDuration: item.rentalDuration ?? null,
+          rentalUnit: item.rentalUnit ?? null,
+          setGroupId: item.setGroupId ?? null,
+          setGroupLabel: item.setGroupLabel ?? null,
+          setQty: item.setQty ?? null,
         };
       }),
     );

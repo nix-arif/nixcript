@@ -35,6 +35,12 @@ type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
 interface LineItem extends SalesOrderItemInput {
   _key: string;
+  lineType: "sell" | "rent";
+  rentalDuration: string;
+  rentalUnit: string;
+  setGroupId: string;
+  setGroupLabel: string;
+  setQty: string;
 }
 
 const newLine = (rowNo: number): LineItem => ({
@@ -48,6 +54,12 @@ const newLine = (rowNo: number): LineItem => ({
   discountPct: "0",
   discountAmt: "0",
   totalPrice: "0",
+  lineType: "sell",
+  rentalDuration: "",
+  rentalUnit: "case",
+  setGroupId: "",
+  setGroupLabel: "",
+  setQty: "",
 });
 
 function calcLine(item: LineItem): LineItem {
@@ -167,6 +179,12 @@ export function CreateSalesOrderClient({ members }: Props) {
           discountPct: String(item.discountPct ?? "0"),
           discountAmt: String(item.discountAmt ?? "0"),
           totalPrice: String(item.totalPrice ?? "0"),
+          lineType: (item.lineType ?? "sell") as "sell" | "rent",
+          rentalDuration: item.rentalDuration ?? "",
+          rentalUnit: item.rentalUnit ?? "case",
+          setGroupId: item.setGroupId ?? "",
+          setGroupLabel: item.setGroupLabel ?? "",
+          setQty: item.setQty ?? "",
         }),
       );
       setItems((prev) => {
@@ -314,7 +332,15 @@ export function CreateSalesOrderClient({ members }: Props) {
       sstPct,
       sst: sstAmt.toFixed(2),
       grandTotal: grand.toFixed(2),
-      items: items.map(({ _key, ...rest }) => rest),
+      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, ...rest }) => ({
+        ...rest,
+        lineType,
+        rentalDuration: rentalDuration || undefined,
+        rentalUnit: rentalUnit || undefined,
+        setGroupId: setGroupId || undefined,
+        setGroupLabel: setGroupLabel || undefined,
+        setQty: setQty || undefined,
+      })),
     });
   }
 

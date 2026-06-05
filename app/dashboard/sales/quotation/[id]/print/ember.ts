@@ -254,7 +254,10 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
     rowH: number;
   };
   const rowInfos: RowInfo[] = items.map(item => {
-    const descLines = wrap(item.description ?? "—", fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
+    const rentalPrefix = item.lineType === "rent" && item.rentalDuration
+      ? `rental for ${item.rentalDuration} ${item.rentalUnit ?? "case"} `
+      : "";
+    const descLines = wrap(`${rentalPrefix}${item.description ?? "—"}`.toUpperCase(), fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
@@ -279,14 +282,35 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   const P1_ROW_AVAIL = H - BAND_H - TITLE_BAR_H - TABLE_HDR_H - MB - 20;
   const PN_ROW_AVAIL = H - BAND_H - TABLE_HDR_H - MB - 20;
 
+  // ── Build render entries (set headers interleaved with items) ────────────
+  const SET_HDR_H = 18;
+  type RenderEntry =
+    | { kind: "setHeader"; label: string; qty: number; setTotal: number; rowH: number }
+    | { kind: "item"; rowIdx: number; rowH: number };
+  const renderItems: RenderEntry[] = [];
+  {
+    const seenGroups = new Set<string>();
+    for (let i = 0; i < rowInfos.length; i++) {
+      const it = rowInfos[i].item;
+      if (it.setGroupId && !seenGroups.has(it.setGroupId)) {
+        seenGroups.add(it.setGroupId);
+        const setTotal = rowInfos
+          .filter(r => r.item.setGroupId === it.setGroupId)
+          .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
+        renderItems.push({ kind: "setHeader", label: it.setGroupLabel ?? "Set", qty: Number(it.setQty ?? 1), setTotal, rowH: SET_HDR_H });
+      }
+      renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
+    }
+  }
+
   // ── Paginate ──────────────────────────────────────────────────────────────
   const pageGroups: number[][] = [];
   let curGroup: number[] = [];
   let usedH = 0;
   let firstPage = true;
 
-  for (let i = 0; i < rowInfos.length; i++) {
-    const rh    = rowInfos[i].rowH;
+  for (let i = 0; i < renderItems.length; i++) {
+    const rh    = renderItems[i].rowH;
     const avail = firstPage
       ? Math.max(P1_ROW_AVAIL, RH_MIN * 3)
       : Math.max(PN_ROW_AVAIL, RH_MIN * 3);
@@ -306,11 +330,11 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
     const lastGroup   = pageGroups[pageGroups.length - 1];
     const lastIsFirst = pageGroups.length === 1;
     const lastAvail   = Math.max(lastIsFirst ? P1_ROW_AVAIL : PN_ROW_AVAIL, RH_MIN * 3);
-    const lastItemsH  = lastGroup.reduce((s, i) => s + rowInfos[i].rowH, 0);
+    const lastItemsH  = lastGroup.reduce((s, i) => s + renderItems[i].rowH, 0);
     if (lastItemsH + BOTTOM_RESERVE > lastAvail && lastGroup.length > 1) {
       let fitH = 0, splitAt = 0;
       for (const idx of lastGroup) {
-        if (fitH + rowInfos[idx].rowH + BOTTOM_RESERVE <= lastAvail) { fitH += rowInfos[idx].rowH; splitAt++; }
+        if (fitH + renderItems[idx].rowH + BOTTOM_RESERVE <= lastAvail) { fitH += renderItems[idx].rowH; splitAt++; }
         else break;
       }
       splitAt = Math.max(1, splitAt);
@@ -569,14 +593,37 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
     curY = tHdrY;
 
     // ── Item rows ────────────────────────────────────────────────────────────
+    let itemRowAlt = 0;
     for (let ri = 0; ri < pageItems.length; ri++) {
-      const rowIdx = pageItems[ri];
+      const entry = renderItems[pageItems[ri]];
+
+      // ── Set group header ───────────────────────────────────────────────────
+      if (entry.kind === "setHeader") {
+        itemRowAlt = 0;
+        const hdrY  = curY - SET_HDR_H;
+        const textY = hdrY + (SET_HDR_H - FS_DESC) / 2;
+        page.drawRectangle({ x: ML, y: hdrY, width: CW, height: SET_HDR_H, color: rgb(0.90, 0.93, 0.97) });
+        const labelW = fontB.widthOfTextAtSize(entry.label, FS_DESC);
+        page.drawText(entry.label, { x: ML + TABLE_PAD, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
+        page.drawText(`  ×  ${entry.qty} ${entry.qty === 1 ? "set" : "sets"}`, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_CODE, font: fontR, color: C_LITE });
+        if (showTP) {
+          const totStr = `RM ${entry.setTotal.toFixed(2)}`;
+          const totW = fontB.widthOfTextAtSize(totStr, FS_DESC);
+          page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totW, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
+        }
+        hLine(page, hdrY, ML, W - MR, accent, 0.5);
+        curY = hdrY;
+        continue;
+      }
+
+      const { rowIdx } = entry;
       const { item, descLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
       const rowY = curY - rowH;
 
-      if (ri % 2 === 0) {
+      if (itemRowAlt % 2 === 0) {
         page.drawRectangle({ x: ML, y: rowY, width: CW, height: rowH, color: C_OFF });
       }
+      itemRowAlt++;
 
       if (extraLine !== null) {
         page.drawRectangle({

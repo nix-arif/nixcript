@@ -140,6 +140,12 @@ export interface SalesOrderItemInput {
   discountPct?: string;
   discountAmt?: string;
   totalPrice?: string;
+  lineType?: string;
+  rentalDuration?: string;
+  rentalUnit?: string;
+  setGroupId?: string;
+  setGroupLabel?: string;
+  setQty?: string;
 }
 
 export interface CreateSalesOrderInput {
@@ -401,6 +407,12 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
         discountPct: item.discountPct ?? "0",
         discountAmt: item.discountAmt ?? "0",
         totalPrice: item.totalPrice ?? "0",
+        lineType: item.lineType ?? "sell",
+        rentalDuration: item.rentalDuration ?? null,
+        rentalUnit: item.rentalUnit ?? null,
+        setGroupId: item.setGroupId ?? null,
+        setGroupLabel: item.setGroupLabel ?? null,
+        setQty: item.setQty ?? null,
       })),
     );
   }
@@ -517,6 +529,12 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
         discountPct: item.discountPct ?? "0",
         discountAmt: item.discountAmt ?? "0",
         totalPrice: item.totalPrice ?? "0",
+        lineType: item.lineType ?? "sell",
+        rentalDuration: item.rentalDuration ?? null,
+        rentalUnit: item.rentalUnit ?? null,
+        setGroupId: item.setGroupId ?? null,
+        setGroupLabel: item.setGroupLabel ?? null,
+        setQty: item.setQty ?? null,
       })),
     );
   }
