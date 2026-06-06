@@ -32,10 +32,15 @@ const BUCKET = process.env.R2_CUSTOMER_PURCHASE_ORDER_BUCKET!;
 
 export async function getCustomerPoDocumentUploadUrl(
   filename: string,
+  mimeType?: string,
 ): Promise<{ key: string; uploadUrl: string }> {
   await requireAccess("customer-po:create");
   const key = `customer-pos/${nanoid()}-${filename}`;
-  const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: "application/pdf" });
+  const cmd = new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ...(mimeType ? { ContentType: mimeType } : {}),
+  });
   return { key, uploadUrl: await getSignedUrl(s3, cmd, { expiresIn: 3600 }) };
 }
 

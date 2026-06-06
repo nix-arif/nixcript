@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createCustomerPo, getCustomerPoDocumentUploadUrl } from "@/server/customer-purchase-order";
+import { createCustomerPo } from "@/server/customer-purchase-order";
 import { getCustomers } from "@/server/customer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,12 +56,18 @@ export function CreateCustomerPoClient() {
     setPdfFile(file);
     setPdfUploading(true);
     try {
-      const { key, uploadUrl } = await getCustomerPoDocumentUploadUrl(file.name);
-      await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": "application/pdf" } });
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/customer-po/upload", { method: "POST", body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Upload failed (${res.status})`);
+      }
+      const { key } = await res.json();
       setPdfKey(key);
       toast.success("Document uploaded");
-    } catch {
-      toast.error("Failed to upload document");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to upload document");
       setPdfFile(null);
     } finally {
       setPdfUploading(false);
