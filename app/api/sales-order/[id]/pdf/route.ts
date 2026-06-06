@@ -21,6 +21,8 @@ export async function GET(_req: Request, { params }: Props) {
   }
 
   if (!data) return new Response("Not Found", { status: 404 });
+  if (data.order.status !== "confirmed" && data.order.status !== "fulfilled")
+    return new Response("PDF is only available for confirmed sales orders", { status: 403 });
 
   let bytes: Uint8Array;
   try {

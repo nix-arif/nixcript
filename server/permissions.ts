@@ -131,6 +131,29 @@ export const getUserPermissionsForOrg = async (
     );
 };
 
+export const bulkGrantPermissions = async (
+  userId: string,
+  organizationId: string,
+  permissionKeys: string[],
+) => {
+  try {
+    await Promise.all(
+      permissionKeys.map((key) =>
+        db
+          .insert(userPermission)
+          .values({ id: nanoid(), userId, organizationId, permissionKey: key, allowed: true })
+          .onConflictDoUpdate({
+            target: [userPermission.userId, userPermission.organizationId, userPermission.permissionKey],
+            set: { allowed: true },
+          }),
+      ),
+    );
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: (e as Error).message };
+  }
+};
+
 export const upsertUserPermission = async (
   userId: string,
   organizationId: string,

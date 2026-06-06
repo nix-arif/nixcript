@@ -61,6 +61,31 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
   const cust    = so.customerSnapshot as any;
   const bank    = orgBankingInfo.find((b: any) => b.isPrimary) ?? orgBankingInfo[0] ?? null;
 
+  // ── Multi-customer data ────────────────────────────────────────────────────
+  type CustEntry = { name: string; org: string | null; qtNo: string };
+  const lqJson = (so.linkedQuotations ?? []) as { id: string; quotationNo: string; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null }[];
+  const allCustomers: CustEntry[] = lqJson
+    .filter((lq) => lq.customerSnapshot)
+    .map((lq) => ({
+      name: [lq.customerSnapshot!.title, lq.customerSnapshot!.name].filter(Boolean).join(" "),
+      org: lq.customerSnapshot!.organizationName ?? null,
+      qtNo: lq.quotationNo,
+    }))
+    .filter((c) => c.name);
+  if (allCustomers.length === 0 && cust) {
+    const name = [cust.title, cust.name].filter(Boolean).join(" ");
+    if (name) allCustomers.push({ name, org: cust.organizationName ?? null, qtNo: "" });
+  }
+
+  // Map quotation id → customer name for item section headers
+  const customerByQtId = new Map<string, string>();
+  for (const lq of lqJson) {
+    if (lq.customerSnapshot) {
+      const n = [lq.customerSnapshot.title, lq.customerSnapshot.name].filter(Boolean).join(" ");
+      if (n) customerByQtId.set(lq.id, n);
+    }
+  }
+
   const subtotal  = Number(so.subtotal ?? 0);
   const discAmt   = Number(so.overallDiscountAmt ?? 0);
   const sstAmt    = Number(so.sst ?? 0);
@@ -110,13 +135,30 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
   const LH      = 11.5;
   const RH_MIN  = 24;
 
-  // ── Pre-compute row heights ───────────────────────────────────────────────
-  type RowInfo = { item: typeof items[number]; descLines: string[]; rowH: number };
-  const rowInfos: RowInfo[] = items.map(item => {
+  // ── Pre-compute row entries (items + customer section headers) ───────────
+  const SECTION_ROW_H = 16;
+  type RowEntry =
+    | { kind: "item"; item: typeof items[number]; descLines: string[]; rowH: number }
+    | { kind: "section"; label: string; rowH: number };
+
+  const uniqueCustQts = new Set(
+    items.filter((i) => i.sourceQuotationId && customerByQtId.has(i.sourceQuotationId)).map((i) => i.sourceQuotationId!),
+  );
+  const showSections = uniqueCustQts.size > 1;
+
+  const rowEntries: RowEntry[] = [];
+  let lastQtId: string | null = null;
+  for (const item of items) {
+    const qtId = item.sourceQuotationId ?? null;
+    if (showSections && qtId !== lastQtId) {
+      const label = (qtId ? customerByQtId.get(qtId) : null) ?? "Other items";
+      rowEntries.push({ kind: "section", label, rowH: SECTION_ROW_H });
+      lastQtId = qtId;
+    }
     const descLines = wrap(item.description ?? "—", fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
     const rowH = Math.max(RH_MIN, descLines.length * LH + 10);
-    return { item, descLines, rowH };
-  });
+    rowEntries.push({ kind: "item", item, descLines, rowH });
+  }
 
   // ── Heights ───────────────────────────────────────────────────────────────
   const QL_BAND_H = 30;
@@ -137,15 +179,17 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
   const IPAD_T    = 10;
   const IPAD_B    = 8;
 
-  let leftH = IPAD_T + INFO_FS + 6;
-  if (cust) {
-    const custName = [cust.title, cust.name].filter(Boolean).join(" ");
-    if (custName) leftH += INFO_FS + 4;
-    if (cust.position || cust.department) leftH += INFO_LH;
-    if (cust.organizationName) leftH += INFO_LH;
-    if (cust.organizationAddress) leftH += INFO_LH * 2;
-    if (cust.email || cust.contactNo) leftH += INFO_LH;
-  } else { leftH += INFO_LH; }
+  let leftH = IPAD_T + INFO_FS + 6; // "CUSTOMER" label
+  if (allCustomers.length > 0) {
+    for (let i = 0; i < allCustomers.length; i++) {
+      leftH += INFO_FS + 4;                              // name
+      if (allCustomers[i].org) leftH += INFO_LH;        // org
+      if (allCustomers[i].qtNo) leftH += INFO_LH - 1;   // via ref
+      if (i < allCustomers.length - 1) leftH += 6;      // separator gap
+    }
+  } else {
+    leftH += INFO_LH;
+  }
   leftH += IPAD_B;
 
   const detailRowCount = 2 + (so.deliveryDate ? 1 : 0) + (so.deliveryAddress ? 1 : 0) + (so.salesPersonName ? 1 : 0);
@@ -169,8 +213,8 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
   let usedH = 0;
   let firstPage = true;
 
-  for (let i = 0; i < rowInfos.length; i++) {
-    const rh    = rowInfos[i].rowH;
+  for (let i = 0; i < rowEntries.length; i++) {
+    const rh    = rowEntries[i].rowH;
     const avail = firstPage
       ? Math.max(P1_ROW_AVAIL, RH_MIN * 3)
       : Math.max(PN_ROW_AVAIL, RH_MIN * 3);
@@ -191,11 +235,11 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
     const lastGroup   = pageGroups[pageGroups.length - 1];
     const lastIsFirst = pageGroups.length === 1;
     const lastAvail   = Math.max(lastIsFirst ? P1_ROW_AVAIL : PN_ROW_AVAIL, RH_MIN * 3);
-    const lastItemsH  = lastGroup.reduce((s, i) => s + rowInfos[i].rowH, 0);
+    const lastItemsH  = lastGroup.reduce((s, i) => s + rowEntries[i].rowH, 0);
     if (lastItemsH + BOTTOM_RESERVE > lastAvail && lastGroup.length > 1) {
       let fitH = 0, splitAt = 0;
       for (const idx of lastGroup) {
-        if (fitH + rowInfos[idx].rowH + BOTTOM_RESERVE <= lastAvail) { fitH += rowInfos[idx].rowH; splitAt++; }
+        if (fitH + rowEntries[idx].rowH + BOTTOM_RESERVE <= lastAvail) { fitH += rowEntries[idx].rowH; splitAt++; }
         else break;
       }
       splitAt = Math.max(1, splitAt);
@@ -246,18 +290,19 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
 
       // "SALES ORDER" label
       page.drawText("SALES ORDER", {
-        x: ML, y: curY + QL_BAND_H - 22,
+        x: ML, y: curY + QL_BAND_H - 10,
         size: 16, font: fontB, color: accent,
       });
       // SO number (right-aligned)
       const soNoW = fontB.widthOfTextAtSize(so.soNo, 11);
       page.drawText(so.soNo, {
-        x: W - MR - soNoW, y: curY + QL_BAND_H - 22,
+        x: W - MR - soNoW, y: curY + QL_BAND_H - 10,
         size: 11, font: fontB, color: accent,
       });
+      // Date on second line, above the divider
       page.drawText(fmtD(so.createdAt), {
         x: W - MR - fontR.widthOfTextAtSize(fmtD(so.createdAt), 8.5),
-        y: curY + QL_BAND_H - 34,
+        y: curY + 6,
         size: 8.5, font: fontR, color: C_MID,
       });
 
@@ -277,38 +322,31 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
         page.drawRectangle({ x: ML, y: boxTop - boxH, width: INFO_LEFT_W - 3, height: boxH, borderColor: accent, borderWidth: 0.6 });
         page.drawRectangle({ x: INFO_RIGHT_X + 3, y: boxTop - boxH, width: INFO_RIGHT_W - 3, height: boxH, borderColor: accent, borderWidth: 0.6 });
 
-        // ── Left: CUSTOMER ────────────────────────────────────────────────
+        // ── Left: CUSTOMER(S) ────────────────────────────────────────────
         const leftX    = ML + IPAD_H;
         const leftMaxW = INFO_LEFT_W - 3 - IPAD_H * 2;
         let ly = boxTop - IPAD_T - INFO_FS;
 
-        page.drawText("CUSTOMER", { x: leftX, y: ly, size: INFO_FS, font: fontB, color: accent });
+        page.drawText(allCustomers.length > 1 ? "CUSTOMERS" : "CUSTOMER", { x: leftX, y: ly, size: INFO_FS, font: fontB, color: accent });
         ly -= INFO_FS + 6;
 
-        if (cust) {
-          const custName = [cust.title, cust.name].filter(Boolean).join(" ");
-          if (custName) {
-            page.drawText(trunc(custName, fontB, INFO_FS, leftMaxW), { x: leftX, y: ly, size: INFO_FS, font: fontB, color: C_DARK });
+        if (allCustomers.length > 0) {
+          for (let ci = 0; ci < allCustomers.length; ci++) {
+            const c = allCustomers[ci];
+            page.drawText(trunc(c.name, fontB, INFO_FS, leftMaxW), { x: leftX, y: ly, size: INFO_FS, font: fontB, color: C_DARK });
             ly -= INFO_FS + 4;
-          }
-          if (cust.position || cust.department) {
-            const pos = [cust.position, cust.department].filter(Boolean).join(", ");
-            page.drawText(trunc(pos, fontR, INFO_FS, leftMaxW), { x: leftX, y: ly, size: INFO_FS, font: fontR, color: C_MID });
-            ly -= INFO_LH;
-          }
-          if (cust.organizationName) {
-            page.drawText(trunc(cust.organizationName, fontR, INFO_FS, leftMaxW), { x: leftX, y: ly, size: INFO_FS, font: fontR, color: C_MID });
-            ly -= INFO_LH;
-          }
-          if (cust.organizationAddress) {
-            for (const line of wrap(cust.organizationAddress, fontR, INFO_FS, leftMaxW).slice(0, 2)) {
-              page.drawText(line, { x: leftX, y: ly, size: INFO_FS, font: fontR, color: C_LITE });
+            if (c.org) {
+              page.drawText(trunc(c.org, fontR, INFO_FS, leftMaxW), { x: leftX, y: ly, size: INFO_FS, font: fontR, color: C_MID });
               ly -= INFO_LH;
             }
-          }
-          if (cust.email || cust.contactNo) {
-            const contact = [cust.email, cust.contactNo].filter(Boolean).join("  ·  ");
-            page.drawText(trunc(contact, fontR, INFO_FS, leftMaxW), { x: leftX, y: ly, size: INFO_FS, font: fontR, color: C_LITE });
+            if (c.qtNo) {
+              page.drawText(`via ${c.qtNo}`, { x: leftX, y: ly, size: INFO_FS - 1, font: fontR, color: C_LITE });
+              ly -= INFO_LH - 1;
+            }
+            if (ci < allCustomers.length - 1) {
+              hLine(page, ly + 3, leftX, leftX + leftMaxW, C_LINE, 0.3);
+              ly -= 6;
+            }
           }
         } else {
           page.drawText("—", { x: leftX, y: ly, size: INFO_FS, font: fontR, color: C_LITE });
@@ -379,7 +417,19 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
     // ── Item rows ─────────────────────────────────────────────────────────────
     const tableTopY = curY + TABLE_HDR_H;
     for (const rowIdx of pageItems) {
-      const { item, descLines, rowH } = rowInfos[rowIdx];
+      const entry = rowEntries[rowIdx];
+
+      // ── Section header row ───────────────────────────────────────────────
+      if (entry.kind === "section") {
+        const sY = curY - entry.rowH;
+        page.drawRectangle({ x: ML, y: sY, width: CW, height: entry.rowH, color: rgb(0.945, 0.947, 0.958) });
+        page.drawRectangle({ x: ML, y: sY, width: 3, height: entry.rowH, color: accent });
+        page.drawText(entry.label.toUpperCase(), { x: ML + 8, y: sY + 5, size: 7.5, font: fontB, color: accent });
+        curY = sY;
+        continue;
+      }
+
+      const { item, descLines, rowH } = entry;
       const rowY        = curY - rowH;
       const textBaseline = curY - 11;
 

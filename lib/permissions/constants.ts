@@ -387,3 +387,100 @@ export const DEPT_ROLE_PERMISSIONS: Record<
 export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
   stakeholder: STAKEHOLDER_PERMISSIONS,
 };
+
+// ── Permission bundles (bulk-grant presets) ────────────────────────────────
+//   Granting one capability often requires read access to related resources.
+//   These bundles encode those dependencies so admins can apply them in one click.
+
+export type PermissionBundle = {
+  id: string;
+  label: string;
+  description: string;
+  permissions: PermissionKey[];
+};
+
+export const PERMISSION_BUNDLES: PermissionBundle[] = [
+  {
+    id: "quotation-creator",
+    label: "Quotation Creator",
+    description: "Create and view quotations. Requires reading customers and products.",
+    permissions: ["quotation:read", "quotation:create", "customer:read", "product:read"],
+  },
+  {
+    id: "quotation-manager",
+    label: "Quotation Manager",
+    description: "Full quotation management including updates and deletion.",
+    permissions: ["quotation:read", "quotation:create", "quotation:update", "quotation:delete", "customer:read", "product:read"],
+  },
+  {
+    id: "sales-order-creator",
+    label: "Sales Order Creator",
+    description: "Create sales orders from quotations. Requires reading quotations, customers, and products.",
+    permissions: ["sales-order:read", "sales-order:create", "quotation:read", "customer:read", "product:read"],
+  },
+  {
+    id: "sales-order-manager",
+    label: "Sales Order Manager",
+    description: "Full sales order management. Includes quotation, customer, and product read access.",
+    permissions: [
+      "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
+      "quotation:read", "customer:read", "product:read",
+    ],
+  },
+  {
+    id: "customer-po-handler",
+    label: "Customer PO Handler",
+    description: "Create and manage customer purchase orders. Requires sales order and customer read.",
+    permissions: ["customer-po:read", "customer-po:create", "customer-po:update", "sales-order:read", "customer:read"],
+  },
+  {
+    id: "delivery-order-handler",
+    label: "Delivery Order Handler",
+    description: "Create and manage delivery orders. Requires sales order and customer read.",
+    permissions: ["delivery-order:read", "delivery-order:create", "delivery-order:update", "sales-order:read", "customer:read"],
+  },
+  {
+    id: "invoice-creator",
+    label: "Invoice Creator",
+    description: "Create and manage invoices. Requires sales order, delivery order, and customer read.",
+    permissions: ["invoice:read", "invoice:create", "invoice:update", "customer:read", "sales-order:read", "delivery-order:read"],
+  },
+  {
+    id: "purchase-order-creator",
+    label: "Purchase Order Creator",
+    description: "Create and manage purchase orders. Requires supplier and product read.",
+    permissions: ["purchase-order:read", "purchase-order:create", "purchase-order:update", "supplier:read", "product:read"],
+  },
+  {
+    id: "inventory-staff",
+    label: "Inventory Staff",
+    description: "View inventory and submit stock movements. Requires product read.",
+    permissions: ["inventory:read", "inventory:adjust", "product:read"],
+  },
+  {
+    id: "sales-staff",
+    label: "Sales Staff",
+    description: "Full sales workflow: quotations, sales orders, customer POs, and related reads.",
+    permissions: [
+      "quotation:read", "quotation:create", "quotation:update",
+      "sales-order:read", "sales-order:create",
+      "customer-po:read",
+      "delivery-order:read",
+      "invoice:read",
+      "customer:read",
+      "product:read",
+    ],
+  },
+  {
+    id: "customer-manager",
+    label: "Customer Manager",
+    description: "Create and manage customer records.",
+    permissions: ["customer:read", "customer:create", "customer:update"],
+  },
+  {
+    id: "supplier-manager",
+    label: "Supplier Manager",
+    description: "Create and manage supplier records.",
+    permissions: ["supplier:read", "supplier:create", "supplier:update"],
+  },
+];

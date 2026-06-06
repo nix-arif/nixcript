@@ -32,6 +32,17 @@ import {
 } from "lucide-react";
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
+type LinkedQuotation = {
+  id: string;
+  quotationNo: string;
+  customerId?: string | null;
+  customerSnapshot?: {
+    title?: string;
+    name: string;
+    organizationName?: string;
+  } | null;
+};
+
 interface LineItem extends SalesOrderItemInput {
   _key: string;
 }
@@ -56,6 +67,7 @@ const newLine = (rowNo: number): LineItem => ({
   discountPct: "0",
   discountAmt: "0",
   totalPrice: "0",
+  sourceQuotationId: "",
 });
 
 function calcLine(item: LineItem): LineItem {
@@ -95,8 +107,8 @@ export function EditSalesOrderClient({ order, members }: Props) {
   // ── Quotation ───────────────────────────────────────────────────────────────
   const [qtSearch, setQtSearch] = useState("");
   const [qtResults, setQtResults] = useState<Awaited<ReturnType<typeof searchQuotationsByNo>>>([]);
-  const [linkedQuotations, setLinkedQuotations] = useState<{ id: string; quotationNo: string }[]>(
-    (order.linkedQuotations as { id: string; quotationNo: string }[] | null) ??
+  const [linkedQuotations, setLinkedQuotations] = useState<LinkedQuotation[]>(
+    (order.linkedQuotations as LinkedQuotation[] | null) ??
     (order.quotationId && order.quotationNo ? [{ id: order.quotationId, quotationNo: order.quotationNo }] : []),
   );
   const [qtLoading, setQtLoading] = useState(false);
@@ -154,6 +166,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
           discountPct: String(i.discountPct ?? "0"),
           discountAmt: String(i.discountAmt ?? "0"),
           totalPrice: String(i.totalPrice ?? "0"),
+          sourceQuotationId: i.sourceQuotationId ?? "",
         }))
       : [newLine(1)],
   );
@@ -209,9 +222,14 @@ export function EditSalesOrderClient({ order, members }: Props) {
     try {
       const qt = await getQuotationForSO(qtId);
       if (!qt) return;
-      setLinkedQuotations((prev) => [...prev, { id: qt.id, quotationNo: qt.quotationNo }]);
+      setLinkedQuotations((prev) => [...prev, {
+        id: qt.id,
+        quotationNo: qt.quotationNo,
+        customerId: qt.customerId ?? null,
+        customerSnapshot: qt.customerSnapshot ?? null,
+      }]);
 
-      // Append items
+      // Append items, tag with source quotation
       const newItems = qt.items.map((item) =>
         calcLine({
           _key: crypto.randomUUID(),
@@ -224,6 +242,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
           discountPct: String(item.discountPct ?? "0"),
           discountAmt: String(item.discountAmt ?? "0"),
           totalPrice: String(item.totalPrice ?? "0"),
+          sourceQuotationId: qt.id,
         }),
       );
       setItems((prev) => {
@@ -362,7 +381,8 @@ export function EditSalesOrderClient({ order, members }: Props) {
   // ── Save ────────────────────────────────────────────────────────────────────
 
   async function handleSave() {
-    if (!selectedCustomer) { toast.error("Please select a customer"); return; }
+    const primaryCustomerId = selectedCustomer?.id ?? linkedQuotations.find((q) => q.customerId)?.customerId ?? null;
+    if (!primaryCustomerId) { toast.error("Please select a customer"); return; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return; }
 
     setSaving(true);
@@ -370,8 +390,8 @@ export function EditSalesOrderClient({ order, members }: Props) {
       const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
       await updateSalesOrder({
         id: order.id,
-        customerId: selectedCustomer.id,
-        customerCompanyId: custCompanyId,
+        customerId: primaryCustomerId,
+        customerCompanyId: selectedCustomer ? custCompanyId : undefined,
         linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
         status,
         salesPersonName: salesPerson || undefined,
@@ -398,6 +418,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
 
   const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
   const allCompanies = selectedCustomer?.companies ?? [];
+  const linkedCustomers = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
 
   return (
     <div className="p-6">
@@ -485,8 +506,28 @@ export function EditSalesOrderClient({ order, members }: Props) {
 
         {/* ── 2. Customer ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Customer</h2>
-          {selectedCustomer ? (
+          <h2 className="text-sm font-semibold mb-3">Customer{linkedCustomers.length > 1 ? "s" : ""}</h2>
+
+          {linkedCustomers.length > 0 ? (
+            <div className="divide-y divide-border/40">
+              {linkedCustomers.map((lq) => {
+                const snap = lq.customerSnapshot;
+                if (!snap) return null;
+                const name = [snap.title, snap.name].filter(Boolean).join(" ");
+                return (
+                  <div key={lq.id} className="py-2 first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm">{name}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono shrink-0">via {lq.quotationNo}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <BuildingIcon className="w-3 h-3 shrink-0" />{snap.organizationName || "—"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : selectedCustomer ? (
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -673,11 +714,23 @@ export function EditSalesOrderClient({ order, members }: Props) {
                   <th className="text-right pb-2 pr-2 w-24">Unit price</th>
                   <th className="text-right pb-2 pr-2 w-16">Disc %</th>
                   <th className="text-right pb-2 pr-2 w-24">Total</th>
+                  {linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
+                    <th className="text-left pb-2 pr-2 w-28">Customer</th>
+                  )}
                   <th className="w-6" />
                 </tr>
               </thead>
               <tbody>
-                {items.map((item, rowIdx) => (
+                {items.map((item, rowIdx) => {
+                  const hasCustomers = linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
+                  const sourceQt = item.sourceQuotationId
+                    ? linkedQuotations.find((q) => q.id === item.sourceQuotationId)
+                    : undefined;
+                  const custName = sourceQt?.customerSnapshot
+                    ? [sourceQt.customerSnapshot.title, sourceQt.customerSnapshot.name].filter(Boolean).join(" ")
+                    : null;
+                  const unassignedLinked = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
+                  return (
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
                     <td className="py-1.5 pr-2">
@@ -701,6 +754,29 @@ export function EditSalesOrderClient({ order, members }: Props) {
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
                       {fmt(parseFloat(item.totalPrice ?? "0"))}
                     </td>
+                    {hasCustomers && (
+                      <td className="py-1.5 pr-2">
+                        {custName ? (
+                          <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground max-w-25 truncate" title={custName}>
+                            {custName}
+                          </span>
+                        ) : unassignedLinked.length > 0 ? (
+                          <select
+                            value={item.sourceQuotationId ?? ""}
+                            onChange={(e) => updateItem(item._key, { sourceQuotationId: e.target.value })}
+                            className="h-6 rounded border border-border bg-background px-1 text-[10px] max-w-25"
+                          >
+                            <option value="">—</option>
+                            {unassignedLinked.map((q) => {
+                              const n = q.customerSnapshot
+                                ? [q.customerSnapshot.title, q.customerSnapshot.name].filter(Boolean).join(" ")
+                                : q.quotationNo;
+                              return <option key={q.id} value={q.id}>{n}</option>;
+                            })}
+                          </select>
+                        ) : null}
+                      </td>
+                    )}
                     <td className="py-1.5">
                       <button
                         onClick={() => removeLine(item._key)}
@@ -711,7 +787,8 @@ export function EditSalesOrderClient({ order, members }: Props) {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

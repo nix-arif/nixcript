@@ -33,6 +33,17 @@ import {
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
+type LinkedQuotation = {
+  id: string;
+  quotationNo: string;
+  customerId?: string | null;
+  customerSnapshot?: {
+    title?: string;
+    name: string;
+    organizationName?: string;
+  } | null;
+};
+
 interface LineItem extends SalesOrderItemInput {
   _key: string;
   lineType: "sell" | "rent";
@@ -41,6 +52,7 @@ interface LineItem extends SalesOrderItemInput {
   setGroupId: string;
   setGroupLabel: string;
   setQty: string;
+  sourceQuotationId: string;
 }
 
 const newLine = (rowNo: number): LineItem => ({
@@ -60,6 +72,7 @@ const newLine = (rowNo: number): LineItem => ({
   setGroupId: "",
   setGroupLabel: "",
   setQty: "",
+  sourceQuotationId: "",
 });
 
 function calcLine(item: LineItem): LineItem {
@@ -92,7 +105,7 @@ export function CreateSalesOrderClient({ members }: Props) {
   const [qtSearch, setQtSearch] = useState("");
   const [qtResults, setQtResults] = useState<Awaited<ReturnType<typeof searchQuotationsByNo>>>([]);
   const [qtHighlight, setQtHighlight] = useState(-1);
-  const [linkedQuotations, setLinkedQuotations] = useState<{ id: string; quotationNo: string }[]>([]);
+  const [linkedQuotations, setLinkedQuotations] = useState<LinkedQuotation[]>([]);
   const [qtLoading, setQtLoading] = useState(false);
   const [includeDummy, setIncludeDummy] = useState(false);
   const qtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -171,9 +184,14 @@ export function CreateSalesOrderClient({ members }: Props) {
       if (!qt) return;
 
       const isFirst = linkedQuotations.length === 0;
-      setLinkedQuotations((prev) => [...prev, { id: qt.id, quotationNo: qt.quotationNo }]);
+      setLinkedQuotations((prev) => [...prev, {
+        id: qt.id,
+        quotationNo: qt.quotationNo,
+        customerId: qt.customerId ?? null,
+        customerSnapshot: qt.customerSnapshot ?? null,
+      }]);
 
-      // Append items (renumber after existing)
+      // Append items (renumber after existing), tag with source quotation
       const newItems = qt.items.map((item) =>
         calcLine({
           _key: crypto.randomUUID(),
@@ -192,6 +210,7 @@ export function CreateSalesOrderClient({ members }: Props) {
           setGroupId: item.setGroupId ?? "",
           setGroupLabel: item.setGroupLabel ?? "",
           setQty: item.setQty ?? "",
+          sourceQuotationId: qt.id,
         }),
       );
       setItems((prev) => {
@@ -338,13 +357,14 @@ export function CreateSalesOrderClient({ members }: Props) {
   // ── Save ────────────────────────────────────────────────────────────────────
 
   async function buildAndCreate() {
-    if (!selectedCustomer) { toast.error("Please select a customer"); return null; }
+    const primaryCustomerId = selectedCustomer?.id ?? linkedQuotations.find((q) => q.customerId)?.customerId ?? null;
+    if (!primaryCustomerId) { toast.error("Please select a customer"); return null; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
 
     const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
     return createSalesOrder({
-      customerId: selectedCustomer.id,
-      customerCompanyId: custCompanyId,
+      customerId: primaryCustomerId,
+      customerCompanyId: selectedCustomer ? custCompanyId : undefined,
       linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
       salesPersonName: salesPerson || undefined,
       associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
@@ -357,7 +377,7 @@ export function CreateSalesOrderClient({ members }: Props) {
       sstPct,
       sst: sstAmt.toFixed(2),
       grandTotal: grand.toFixed(2),
-      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, ...rest }) => ({
+      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, ...rest }) => ({
         ...rest,
         lineType,
         rentalDuration: rentalDuration || undefined,
@@ -365,6 +385,7 @@ export function CreateSalesOrderClient({ members }: Props) {
         setGroupId: setGroupId || undefined,
         setGroupLabel: setGroupLabel || undefined,
         setQty: setQty || undefined,
+        sourceQuotationId: sourceQuotationId || undefined,
       })),
     });
   }
@@ -400,6 +421,7 @@ export function CreateSalesOrderClient({ members }: Props) {
 
   const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
   const allCompanies = selectedCustomer?.companies ?? [];
+  const linkedCustomers = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
 
   return (
     <div className="p-6">
@@ -490,9 +512,28 @@ export function CreateSalesOrderClient({ members }: Props) {
 
         {/* ── 2. Customer ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Customer</h2>
+          <h2 className="text-sm font-semibold mb-3">Customer{linkedCustomers.length > 1 ? "s" : ""}</h2>
 
-          {selectedCustomer ? (
+          {linkedCustomers.length > 0 ? (
+            <div className="divide-y divide-border/40">
+              {linkedCustomers.map((lq) => {
+                const snap = lq.customerSnapshot;
+                if (!snap) return null;
+                const name = [snap.title, snap.name].filter(Boolean).join(" ");
+                return (
+                  <div key={lq.id} className="py-2 first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm">{name}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono shrink-0">via {lq.quotationNo}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <BuildingIcon className="w-3 h-3 shrink-0" />{snap.organizationName || "—"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : selectedCustomer ? (
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -506,7 +547,6 @@ export function CreateSalesOrderClient({ members }: Props) {
                     <XIcon className="w-3.5 h-3.5" />
                   </button>
                 </div>
-
                 {allCompanies.length > 0 && (
                   <div className="mt-2">
                     {allCompanies.length === 1 ? (
@@ -669,11 +709,23 @@ export function CreateSalesOrderClient({ members }: Props) {
                   <th className="text-right pb-2 pr-2 w-24">Unit price</th>
                   <th className="text-right pb-2 pr-2 w-16">Disc %</th>
                   <th className="text-right pb-2 pr-2 w-24">Total</th>
+                  {linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
+                    <th className="text-left pb-2 pr-2 w-28">Customer</th>
+                  )}
                   <th className="w-6" />
                 </tr>
               </thead>
               <tbody>
-                {items.map((item, rowIdx) => (
+                {items.map((item, rowIdx) => {
+                  const hasCustomers = linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
+                  const sourceQt = item.sourceQuotationId
+                    ? linkedQuotations.find((q) => q.id === item.sourceQuotationId)
+                    : undefined;
+                  const custName = sourceQt?.customerSnapshot
+                    ? [sourceQt.customerSnapshot.title, sourceQt.customerSnapshot.name].filter(Boolean).join(" ")
+                    : null;
+                  const unassignedLinked = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
+                  return (
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
                     <td className="py-1.5 pr-2">
@@ -734,6 +786,29 @@ export function CreateSalesOrderClient({ members }: Props) {
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
                       {fmt(parseFloat(item.totalPrice ?? "0"))}
                     </td>
+                    {hasCustomers && (
+                      <td className="py-1.5 pr-2">
+                        {custName ? (
+                          <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground max-w-25 truncate" title={custName}>
+                            {custName}
+                          </span>
+                        ) : unassignedLinked.length > 0 ? (
+                          <select
+                            value={item.sourceQuotationId ?? ""}
+                            onChange={(e) => updateItem(item._key, { sourceQuotationId: e.target.value })}
+                            className="h-6 rounded border border-border bg-background px-1 text-[10px] max-w-25"
+                          >
+                            <option value="">—</option>
+                            {unassignedLinked.map((q) => {
+                              const n = q.customerSnapshot
+                                ? [q.customerSnapshot.title, q.customerSnapshot.name].filter(Boolean).join(" ")
+                                : q.quotationNo;
+                              return <option key={q.id} value={q.id}>{n}</option>;
+                            })}
+                          </select>
+                        ) : null}
+                      </td>
+                    )}
                     <td className="py-1.5">
                       <button
                         onClick={() => removeLine(item._key)}
@@ -744,7 +819,8 @@ export function CreateSalesOrderClient({ members }: Props) {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

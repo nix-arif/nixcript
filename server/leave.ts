@@ -54,7 +54,7 @@ export type ApplyLeaveInput = {
 
 async function getSession() {
   const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
+  if (!session) throw new Error("You must be signed in to continue");
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
   return { session, orgId, userId: session.user.id, userName: session.user.name };
@@ -63,7 +63,7 @@ async function getSession() {
 async function requireAccess(permission: string) {
   const { session, orgId, userId, userName } = await getSession();
   const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, permission)) throw new Error("Forbidden");
+  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
   return { session, orgId, userId, userName };
 }
 
@@ -936,7 +936,7 @@ export async function deleteLeaveDocument(id: string): Promise<string> {
   if (!doc[0]) throw new Error("Document not found");
   const perms = await getUserPermissions(userId, orgId);
   if (doc[0].uploadedBy !== userId && !hasAccess(perms, "leave:approve"))
-    throw new Error("Forbidden");
+    throw new Error("You don't have permission to do this");
   await db.delete(leaveDocument).where(eq(leaveDocument.id, id));
   return doc[0].fileKey;
 }

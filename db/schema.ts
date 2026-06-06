@@ -1284,7 +1284,19 @@ export const salesOrder = pgTable(
     // Source quotation (optional — SO can be created independently)
     quotationId: text("quotation_id").references(() => quotation.id),
     quotationNo: text("quotation_no"),
-    linkedQuotations: json("linked_quotations").$type<{ id: string; quotationNo: string }[]>(),
+    linkedQuotations: json("linked_quotations").$type<{
+      id: string;
+      quotationNo: string;
+      customerId?: string | null;
+      customerSnapshot?: {
+        title?: string;
+        name: string;
+        organizationName?: string;
+        organizationAddress?: string;
+        email?: string;
+        contactNo?: string;
+      } | null;
+    }[]>(),
 
     // Customer
     customerId: text("customer_id").references(() => customer.id),
@@ -1371,6 +1383,8 @@ export const salesOrderItem = pgTable(
     setGroupId: text("set_group_id"),
     setGroupLabel: text("set_group_label"),
     setQty: text("set_qty"),
+
+    sourceQuotationId: text("source_quotation_id"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
