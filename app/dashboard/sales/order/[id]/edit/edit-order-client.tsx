@@ -101,6 +101,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
   );
   const [qtLoading, setQtLoading] = useState(false);
   const [qtHighlight, setQtHighlight] = useState(-1);
+  const [includeDummy, setIncludeDummy] = useState(false);
   const qtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Customer ────────────────────────────────────────────────────────────────
@@ -162,17 +163,23 @@ export function EditSalesOrderClient({ order, members }: Props) {
 
   // ── Quotation search ────────────────────────────────────────────────────────
 
-  const handleQtSearch = useCallback((val: string) => {
+  const handleQtSearch = useCallback((val: string, withDummy = includeDummy) => {
     setQtSearch(val);
     setQtHighlight(-1);
     if (val.length < 2) { setQtResults([]); return; }
     if (qtTimer.current) clearTimeout(qtTimer.current);
     qtTimer.current = setTimeout(async () => {
-      const res = await searchQuotationsByNo(val);
+      const res = await searchQuotationsByNo(val, withDummy);
       setQtResults(res);
       setQtHighlight(-1);
     }, 300);
-  }, []);
+  }, [includeDummy]);
+
+  function handleToggleDummy() {
+    const next = !includeDummy;
+    setIncludeDummy(next);
+    if (qtSearch.length >= 2) handleQtSearch(qtSearch, next);
+  }
 
   function handleQtKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (qtResults.length === 0) return;
@@ -223,6 +230,33 @@ export function EditSalesOrderClient({ order, members }: Props) {
         const combined = [...prev, ...newItems];
         return combined.map((i, idx) => ({ ...i, rowNo: idx + 1 }));
       });
+
+      // Auto-fill customer whenever not yet set
+      if (!selectedCustomer && qt.customerId) {
+        const cust = await getCustomer(qt.customerId);
+        if (cust) {
+          setSelectedCustomer(cust as unknown as Customer);
+          const primary = cust.companies.find((c) => c.isPrimary);
+          if (primary) setCustCompanyId(primary.id);
+          else if (cust.companies.length === 1) setCustCompanyId(cust.companies[0].id);
+        } else if (qt.customerSnapshot) {
+          // Customer belongs to a sibling org (dummy quotation) or was deleted — use snapshot
+          const snap = qt.customerSnapshot;
+          setSelectedCustomer({
+            id: qt.customerId,
+            title: snap.title ?? null,
+            name: snap.name ?? "",
+            contactNo: snap.contactNo ?? null,
+            email: snap.email ?? null,
+            createdAt: new Date(),
+            createdByName: null,
+            companies: snap.organizationName
+              ? [{ id: "__snap__", customerId: qt.customerId, organizationName: snap.organizationName, organizationAddress: snap.organizationAddress ?? null, isPrimary: true, createdAt: new Date() }]
+              : [],
+          } as unknown as Customer);
+          if (snap.organizationName) setCustCompanyId("__snap__");
+        }
+      }
     } catch {
       toast.error("Failed to load quotation");
     } finally {
@@ -422,13 +456,30 @@ export function EditSalesOrderClient({ order, members }: Props) {
                       className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${isHighlighted ? "bg-muted" : "hover:bg-muted/50"}`}
                       onClick={() => selectQuotation(qt.id)}
                     >
-                      <div className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</span>
+                        {qt.isDummy === 1 && (
+                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded border border-muted-foreground/30 bg-muted text-muted-foreground">Dummy</span>
+                        )}
+                      </div>
                       {custName && <div className="text-[11px] text-muted-foreground">{custName}</div>}
                     </button>
                   );
                 })}
               </div>
             )}
+          </div>
+          <div className="flex justify-end mt-2">
+            <button
+              type="button"
+              onClick={handleToggleDummy}
+              className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              <div className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${includeDummy ? "bg-primary" : "bg-muted-foreground/30"}`}>
+                <div className={`w-3 h-3 rounded-full bg-white shadow transition-transform ${includeDummy ? "translate-x-3" : "translate-x-0"}`} />
+              </div>
+              Include dummy quotations
+            </button>
           </div>
         </section>
 

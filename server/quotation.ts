@@ -808,8 +808,14 @@ export async function getQuotationBasic(id: string) {
 export type QuotationBasic = NonNullable<Awaited<ReturnType<typeof getQuotationBasic>>>;
 
 // ── Search quotations by number (for SO creation lookup) ─────────────────
-export async function searchQuotationsByNo(query: string) {
-  const { orgId } = await requireAccess("quotation:read");
+export async function searchQuotationsByNo(query: string, includeDummy = false) {
+  const { orgId, userId } = await requireAccess("quotation:read");
+
+  // When including dummy quotations, search across the entire owner-org cluster.
+  const ownerOrgs = includeDummy ? await getAllOwnerOrgs(userId, orgId) : [];
+  const searchOrgIds = includeDummy && ownerOrgs.length > 0
+    ? ownerOrgs.map((o) => o.id)
+    : [orgId];
 
   // Match against the running number only (part after the last "-")
   // e.g. typing "42" matches "BMS-QT-2025-0042", not the prefix
@@ -818,6 +824,7 @@ export async function searchQuotationsByNo(query: string) {
       id: quotation.id,
       quotationNo: quotation.quotationNo,
       status: quotation.status,
+      isDummy: quotation.isDummy,
       grandTotal: quotation.grandTotal,
       customerSnapshot: quotation.customerSnapshot,
       createdAt: quotation.createdAt,
@@ -825,25 +832,28 @@ export async function searchQuotationsByNo(query: string) {
     .from(quotation)
     .where(
       and(
-        eq(quotation.organizationId, orgId),
+        inArray(quotation.organizationId, searchOrgIds),
         sql`REGEXP_REPLACE(${quotation.quotationNo}, '^.*-', '') ILIKE ${'%' + query + '%'}`,
-        eq(quotation.isDummy, 0),
+        includeDummy ? undefined : eq(quotation.isDummy, 0),
         eq(quotation.status, "final"),
       ),
     )
-    .orderBy(desc(quotation.createdAt))
-    .limit(8);
+    .orderBy(asc(quotation.isDummy), desc(quotation.createdAt))
+    .limit(10);
 }
 
 // ── Fetch quotation with items for SO pre-fill ───────────────────────────
 export async function getQuotationForSO(id: string) {
-  const { orgId } = await requireAccess("quotation:read");
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
   const [q] = await db
     .select({
       id: quotation.id,
       quotationNo: quotation.quotationNo,
       status: quotation.status,
+      isDummy: quotation.isDummy,
       grandTotal: quotation.grandTotal,
       subtotal: quotation.subtotal,
       overallDiscountPct: quotation.overallDiscountPct,
@@ -856,7 +866,7 @@ export async function getQuotationForSO(id: string) {
       notes: quotation.notes,
     })
     .from(quotation)
-    .where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)))
+    .where(and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)))
     .limit(1);
 
   if (!q) return null;
