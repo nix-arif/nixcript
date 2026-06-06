@@ -55,6 +55,9 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
     orgBankingInfo,
   } = data;
 
+  // poNo is set at approval; prNo is the requisition number. For PDF (confirmed POs) poNo should exist.
+  const poNoDisplay = po.poNo ?? po.prNo ?? "";
+
   const DEFAULT_ACCENT = rgb(0.05, 0.14, 0.30);
   const accent  = hexToRgb(orgBrandColor, DEFAULT_ACCENT);
   const coName  = orgCompanyName ?? orgName;
@@ -215,7 +218,7 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
 
     // ── Footer ────────────────────────────────────────────────────────────
     page.drawRectangle({ x: 0, y: MB + 14, width: W, height: 2, color: accent });
-    page.drawText(po.poNo, { x: ML, y: MB + 4, size: 7, font: fontR, color: C_LITE });
+    page.drawText(poNoDisplay, { x: ML, y: MB + 4, size: 7, font: fontR, color: C_LITE });
     const pgText   = `Page ${pi + 1} of ${totalPages}`;
     const pgCenter = (W - fontR.widthOfTextAtSize(pgText, 7)) / 2;
     page.drawText(pgText, { x: pgCenter, y: MB + 4, size: 7, font: fontR, color: C_LITE });
@@ -248,8 +251,8 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
         size: 16, font: fontB, color: accent,
       });
       // PO number (right-aligned)
-      const poNoW = fontB.widthOfTextAtSize(po.poNo, 11);
-      page.drawText(po.poNo, {
+      const poNoW = fontB.widthOfTextAtSize(poNoDisplay, 11);
+      page.drawText(poNoDisplay, {
         x: W - MR - poNoW, y: curY + QL_BAND_H - 22,
         size: 11, font: fontB, color: accent,
       });
@@ -319,7 +322,7 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
         ry -= INFO_FS + 6;
 
         const detailRows: [string, string][] = [
-          ["PO No",  po.poNo],
+          ["PO No",  poNoDisplay],
           ["Date",   fmtD(po.createdAt)],
           ...(po.expectedDeliveryDate ? [["Expected Delivery", fmtD(po.expectedDeliveryDate)]] as [string, string][] : []),
           ...(salesOrderNo            ? [["Linked SO",         salesOrderNo]]                   as [string, string][] : []),
@@ -344,7 +347,7 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
       // ── Continuation header ───────────────────────────────────────────────
       page.drawRectangle({ x: 0, y: H - ACCENT_BAR_H, width: W, height: ACCENT_BAR_H, color: accent });
       curY = H - ACCENT_BAR_H - 10;
-      page.drawText(`${po.poNo}  ·  continued`, { x: ML, y: curY - 8, size: 8, font: fontR, color: C_MID });
+      page.drawText(`${poNoDisplay}  ·  continued`, { x: ML, y: curY - 8, size: 8, font: fontR, color: C_MID });
       curY -= 26;
     }
 

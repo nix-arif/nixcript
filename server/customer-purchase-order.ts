@@ -221,7 +221,7 @@ export interface CustomerPoTrackingData {
     createdAt: Date; grandTotal: string | null;
     deliveryDate: Date | null;
   } | null;
-  internalPos: { id: string; poNo: string; status: string; createdAt: Date; grandTotal: string | null }[];
+  internalPos: { id: string; prNo: string | null; poNo: string | null; status: string; createdAt: Date; grandTotal: string | null }[];
   dos: { id: string; doNo: string; status: string; createdAt: Date; deliveryDate: Date | null }[];
   invoices: {
     id: string; invoiceNo: string; status: string; createdAt: Date;
@@ -278,7 +278,7 @@ export async function getCustomerPoForTracking(id: string): Promise<CustomerPoTr
       .orderBy(asc(invoice.createdAt)),
     poLinkRows.length > 0
       ? db.select({
-          id: purchaseOrder.id, poNo: purchaseOrder.poNo, status: purchaseOrder.status,
+          id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, status: purchaseOrder.status,
           createdAt: purchaseOrder.createdAt, grandTotal: purchaseOrder.grandTotal,
         }).from(purchaseOrder)
           .where(inArray(purchaseOrder.id, poLinkRows.map((r) => r.purchaseOrderId)))

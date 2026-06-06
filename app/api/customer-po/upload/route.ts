@@ -29,8 +29,7 @@ export async function POST(req: NextRequest) {
   const file = form.get("file") as File | null;
   if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
 
-  const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
-  const key = `customer-pos/${nanoid()}.${ext}`;
+  const key = `customer-pos/${nanoid()}-${file.name}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 
   await s3.send(

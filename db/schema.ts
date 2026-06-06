@@ -1460,7 +1460,8 @@ export const purchaseOrder = pgTable(
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
 
-    poNo: text("po_no").notNull(), // e.g. BMS-PO-2025-0001
+    prNo: text("pr_no"),            // e.g. BMS-PR-2026-0001 — set at creation (null for legacy records)
+    poNo: text("po_no"),            // e.g. BMS-PO-2026-0001 — set at approval (null in PR phase)
 
     // Linked SO (optional)
     salesOrderId: text("sales_order_id").references(() => salesOrder.id),
@@ -1505,6 +1506,7 @@ export const purchaseOrder = pgTable(
   },
   (t) => [
     uniqueIndex("purchase_order_no_org_uidx").on(t.organizationId, t.poNo),
+    uniqueIndex("purchase_order_pr_no_org_uidx").on(t.organizationId, t.prNo),
     index("purchase_order_org_idx").on(t.organizationId),
   ],
 );
@@ -1548,6 +1550,95 @@ export const purchaseOrderCounter = pgTable("purchase_order_counter", {
     .notNull(),
 });
 
+export const purchaseRequisitionCounter = pgTable("purchase_requisition_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const goodsReceiptCounter = pgTable("goods_receipt_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+export const goodsReceipt = pgTable(
+  "goods_receipt",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    grNo: text("gr_no").notNull(),
+    purchaseOrderId: text("purchase_order_id")
+      .notNull()
+      .references(() => purchaseOrder.id, { onDelete: "cascade" }),
+    receivedDate: timestamp("received_date").notNull(),
+    receivedBy: text("received_by")
+      .notNull()
+      .references(() => user.id),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("goods_receipt_no_org_uidx").on(t.organizationId, t.grNo),
+    index("goods_receipt_po_idx").on(t.purchaseOrderId),
+  ],
+);
+
+export const goodsReceiptItem = pgTable(
+  "goods_receipt_item",
+  {
+    id: text("id").primaryKey(),
+    goodsReceiptId: text("goods_receipt_id")
+      .notNull()
+      .references(() => goodsReceipt.id, { onDelete: "cascade" }),
+    purchaseOrderItemId: text("purchase_order_item_id").references(() => purchaseOrderItem.id),
+    productId: text("product_id"),
+    productCode: text("product_code"),
+    description: text("description"),
+    qtyOrdered: text("qty_ordered").notNull().default("0"),
+    qtyReceived: text("qty_received").notNull().default("0"),
+    uom: text("uom"),
+    unitPrice: text("unit_price").default("0"),
+    currency: text("currency").default("MYR"),
+    notes: text("notes"),
+  },
+  (t) => [index("gr_item_gr_idx").on(t.goodsReceiptId)],
+);
+
+export const goodsReceiptRelations = relations(goodsReceipt, ({ one, many }) => ({
+  organization: one(organization, { fields: [goodsReceipt.organizationId], references: [organization.id] }),
+  purchaseOrder: one(purchaseOrder, { fields: [goodsReceipt.purchaseOrderId], references: [purchaseOrder.id] }),
+  receivedByUser: one(user, { fields: [goodsReceipt.receivedBy], references: [user.id] }),
+  items: many(goodsReceiptItem),
+}));
+
+export const goodsReceiptItemRelations = relations(goodsReceiptItem, ({ one }) => ({
+  goodsReceipt: one(goodsReceipt, { fields: [goodsReceiptItem.goodsReceiptId], references: [goodsReceipt.id] }),
+  purchaseOrderItem: one(purchaseOrderItem, { fields: [goodsReceiptItem.purchaseOrderItemId], references: [purchaseOrderItem.id] }),
+}));
+
 export const purchaseOrderRelations = relations(purchaseOrder, ({ one, many }) => ({
   organization: one(organization, {
     fields: [purchaseOrder.organizationId],
@@ -1567,6 +1658,7 @@ export const purchaseOrderRelations = relations(purchaseOrder, ({ one, many }) =
   }),
   items: many(purchaseOrderItem),
   customerPos: many(purchaseOrderCustomerPo),
+  goodsReceipts: many(goodsReceipt),
 }));
 
 export const purchaseOrderItemRelations = relations(purchaseOrderItem, ({ one }) => ({
@@ -2590,10 +2682,17 @@ export const schema = {
   purchaseOrder,
   purchaseOrderItem,
   purchaseOrderCounter,
+  purchaseRequisitionCounter,
   purchaseOrderCustomerPo,
   purchaseOrderRelations,
   purchaseOrderItemRelations,
   purchaseOrderCustomerPoRelations,
+  // goods receipt
+  goodsReceipt,
+  goodsReceiptItem,
+  goodsReceiptCounter,
+  goodsReceiptRelations,
+  goodsReceiptItemRelations,
   // customer purchase order
   customerPurchaseOrder,
   customerPurchaseOrderRelations,

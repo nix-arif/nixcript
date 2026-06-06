@@ -5,13 +5,16 @@ import {
   ArrowLeftIcon, CheckIcon, ClockIcon, AlertCircleIcon,
   FileTextIcon, PackageIcon, TruckIcon, ReceiptIcon,
   BanknoteIcon, CircleIcon, PencilIcon, ExternalLinkIcon,
-  BuildingIcon, UserIcon, CalendarIcon,
+  BuildingIcon, UserIcon, CalendarIcon, PaperclipIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CustomerPoTrackingData } from "@/server/customer-purchase-order";
 
 type Data = CustomerPoTrackingData;
+
+// nanoid prefix is 21 chars + dash, original filename follows
+const docFilename = (key: string) => key.split("/").pop()?.slice(22) || key.split("/").pop() || "document";
 
 // ── Formatters ─────────────────────────────────────────────────────────────
 const fmt = (v: string | number | null | undefined) =>
@@ -35,12 +38,17 @@ const SO_STATUS: Record<string, { label: string; color: string }> = {
   cancelled: { label: "Cancelled",  color: "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400" },
 };
 const PO_STATUS: Record<string, { label: string; color: string }> = {
-  draft:        { label: "Draft",        color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
+  draft:        { label: "Draft",      color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
+  submitted:    { label: "Submitted",  color: "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400" },
+  confirmed:    { label: "Confirmed",  color: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
+  fulfilled:    { label: "Fulfilled",  color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
+  cancelled:    { label: "Cancelled",  color: "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400" },
+  // legacy labels
   sent:         { label: "Sent",         color: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
-  acknowledged: { label: "Acknowledged", color: "bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400" },
+  acknowledged: { label: "Acknowledged", color: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
   received:     { label: "Received",     color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
-  cancelled:    { label: "Cancelled",    color: "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400" },
 };
+
 const DO_STATUS: Record<string, { label: string; color: string }> = {
   draft:     { label: "Draft",     color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
   delivered: { label: "Delivered", color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
@@ -183,11 +191,17 @@ export function CustomerPoDetailClient({
   const snap = cpo.customerSnapshot as any;
   const can  = (p: string) => permissions.includes("*") || permissions.includes(p);
 
+  const prs     = internalPos.filter((p) => p.status === "draft" || p.status === "submitted");
+  const spoList = internalPos.filter((p) => p.status !== "draft" && p.status !== "submitted" && p.status !== "cancelled");
+
   // Step states
-  const cpoState: StepState = cpo.status === "fulfilled" ? "done" : cpo.status === "acknowledged" ? "active" : "active";
-  const soState:  StepState = !so ? "pending" : so.status === "fulfilled" ? "done" : so.status === "confirmed" ? "active" : "active";
-  const poState:  StepState = internalPos.length === 0 ? "pending"
-    : internalPos.every((p) => p.status === "received") ? "done"
+  const cpoState: StepState = cpo.status === "fulfilled" ? "done" : "active";
+  const soState:  StepState = !so ? "pending" : so.status === "fulfilled" ? "done" : "active";
+  const prState:  StepState = internalPos.length === 0 ? "pending"
+    : spoList.length > 0 ? "done"
+    : "active";
+  const spoState: StepState = spoList.length === 0 ? "pending"
+    : spoList.every((p) => p.status === "fulfilled") ? "done"
     : "active";
   const doState:  StepState = dos.length === 0 ? "pending"
     : dos.every((d) => d.status === "delivered") ? "done"
@@ -269,18 +283,43 @@ export function CustomerPoDetailClient({
             )}
           </TrailStep>
 
-          {/* Step 3 — Internal PO */}
-          <TrailStep state={poState} icon={FileTextIcon} label="Internal Purchase Order">
+          {/* Step 3 — Purchase Requisition */}
+          <TrailStep state={prState} icon={FileTextIcon} label="Purchase Requisition">
             {internalPos.length === 0 ? (
-              <PendingCard label="No internal PO raised yet" />
+              <PendingCard label="No purchase requisition raised yet" />
+            ) : prs.length === 0 ? (
+              <PendingCard label="All requisitions approved" />
             ) : (
               <div className="space-y-1.5">
-                {internalPos.map((po) => {
+                {prs.map((po) => {
                   const cfg = PO_STATUS[po.status] ?? PO_STATUS.draft;
                   return (
                     <DocCard
                       key={po.id}
-                      docNo={po.poNo}
+                      docNo={po.prNo ?? po.poNo ?? po.id}
+                      statusLabel={cfg.label}
+                      statusColor={cfg.color}
+                      meta={fmtDate(po.createdAt)}
+                      onClick={() => router.push(`/dashboard/procurement/purchase-order/${po.id}`)}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </TrailStep>
+
+          {/* Step 4 — Supplier PO */}
+          <TrailStep state={spoState} icon={PackageIcon} label="Supplier PO">
+            {spoList.length === 0 ? (
+              <PendingCard label="No supplier PO issued yet" />
+            ) : (
+              <div className="space-y-1.5">
+                {spoList.map((po) => {
+                  const cfg = PO_STATUS[po.status] ?? PO_STATUS.confirmed;
+                  return (
+                    <DocCard
+                      key={po.id}
+                      docNo={po.poNo ?? po.prNo ?? po.id}
                       statusLabel={cfg.label}
                       statusColor={cfg.color}
                       meta={fmtDate(po.createdAt)}
@@ -434,14 +473,32 @@ export function CustomerPoDetailClient({
           <section className="border border-border rounded-xl p-4 space-y-2.5">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Progress</h2>
             <ProgressRow icon={PackageIcon} label="Sales Order" state={soState} note={so?.soNo} />
-            <ProgressRow icon={FileTextIcon} label="Internal PO" state={poState}
-              note={internalPos.length > 0 ? `${internalPos.length} PO${internalPos.length > 1 ? "s" : ""}` : undefined} />
+            <ProgressRow icon={FileTextIcon} label="Purch. Req." state={prState}
+              note={prs.length > 0 ? `${prs.length} pending` : undefined} />
+            <ProgressRow icon={PackageIcon} label="Supplier PO" state={spoState}
+              note={spoList.length > 0 ? `${spoList.length} PO${spoList.length > 1 ? "s" : ""}` : undefined} />
             <ProgressRow icon={TruckIcon} label="Delivery" state={doState}
               note={dos.length > 0 ? `${dos.filter((d) => d.status === "delivered").length}/${dos.length} delivered` : undefined} />
             <ProgressRow icon={ReceiptIcon} label="Invoice" state={invState}
               note={invoices.length > 0 ? `${invoices.length} invoice${invoices.length > 1 ? "s" : ""}` : undefined} />
             <ProgressRow icon={BanknoteIcon} label="Payment" state={pmt.state} note={pmt.label} />
           </section>
+
+          {/* Attached document */}
+          {cpo.documentKey && (
+            <section className="border border-border rounded-xl p-4">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">Attached Document</h2>
+              <a
+                href={`/api/customer-po/download/${cpo.documentKey}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-sm text-primary hover:underline"
+              >
+                <PaperclipIcon className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{docFilename(cpo.documentKey)}</span>
+              </a>
+            </section>
+          )}
 
           {/* Notes */}
           {cpo.notes && (

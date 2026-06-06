@@ -58,7 +58,7 @@ export const navConfig: NavGroup[] = [
     icon: React.createElement(ProcurementIcon),
     items: [
       { title: "Suppliers",        url: "/dashboard/procurement/supplier",       permission: "supplier:read"       },
-      { title: "Purchase Orders",  url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
+      { title: "Requisitions & PO", url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
     ],
   },
   {

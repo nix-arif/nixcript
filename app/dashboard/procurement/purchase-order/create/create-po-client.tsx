@@ -239,7 +239,6 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
   }
 
   async function buildAndCreate() {
-    if (!selectedSo) { toast.error("A linked sales order is required"); return null; }
     if (!supplierId) { toast.error("Supplier is required"); return null; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
     if (items.some((i) => i._imageUploading)) { toast.error("Please wait for image uploads to finish"); return null; }
@@ -247,7 +246,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
     const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
     return createPurchaseOrder({
       supplierId,
-      salesOrderId: selectedSo!.id,
+      salesOrderId: selectedSo?.id,
       customerPoIds: selectedCpos.map((c) => c.id),
       supplierQuotationKey: pdfKey,
       currency,
@@ -267,7 +266,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
     try {
       const po = await buildAndCreate();
       if (!po) return;
-      toast.success("Purchase order created");
+      toast.success(`Purchase requisition ${po.prNo ?? ""} created`);
       router.push("/dashboard/procurement/purchase-order");
     } catch (e: any) {
       toast.error(e.message);
@@ -282,7 +281,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
       const po = await buildAndCreate();
       if (!po) return;
       await submitPurchaseOrder(po.id);
-      toast.success("Purchase order created and submitted");
+      toast.success(`Requisition ${po.prNo ?? ""} submitted for approval`);
       router.push("/dashboard/procurement/purchase-order");
     } catch (e: any) {
       toast.error(e.message);
@@ -296,8 +295,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
   return (
     <div className="p-6">
       <PageHeader
-        title="New Purchase Order"
-        description="Create a new purchase order to a supplier"
+        title="New Purchase Requisition"
+        description="Raise an internal purchase requisition — it will be reviewed and approved before a supplier PO is issued"
         action={
           <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/procurement/purchase-order")} className="gap-2">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
@@ -337,10 +336,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
 
         {/* ── Linked SO (single, optional) ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-1">
-            Linked Sales Order <span className="text-destructive">*</span>
-          </h2>
-          <p className="text-xs text-muted-foreground mb-3">Select the approved sales order this PO is raised for</p>
+          <h2 className="text-sm font-semibold mb-1">Linked Sales Order</h2>
+          <p className="text-xs text-muted-foreground mb-3">Optional — link to a confirmed SO if this requisition is tied to a customer order. Leave blank for stock replenishment.</p>
           {selectedSo ? (
             <div className="flex items-center gap-2 bg-muted/30 rounded-lg px-3 py-2">
               <div className="flex-1">
@@ -632,10 +629,10 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos, customerPos,
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
           <Button onClick={handleSaveAndSend} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
-            {saving ? "Creating…" : "Create & Submit"}
+            {saving ? "Submitting…" : "Submit for Approval"}
           </Button>
           <Button variant="outline" onClick={handleSave} disabled={saving || pdfUploading || loadingSoItems}>
-            Save as Draft
+            Save as Draft (Requisition)
           </Button>
           <Button variant="outline" onClick={() => router.push("/dashboard/procurement/purchase-order")}>Cancel</Button>
         </div>

@@ -51,7 +51,7 @@ type RefAccount = {
 type RefCustomer = { id: string; name: string; organizationName: string | null };
 type RefSupplier = { id: string; name: string };
 type RefInvoice = { id: string; invoiceNo: string };
-type RefPO = { id: string; poNo: string };
+type RefPO = { id: string; prNo: string | null; poNo: string | null };
 
 type RefData = {
   accounts: RefAccount[];
@@ -176,7 +176,8 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
       return refData.invoices.find((i) => i.id === referenceId)?.invoiceNo ?? "";
     }
     if (referenceType === "PURCHASE_ORDER") {
-      return refData.purchaseOrders.find((p) => p.id === referenceId)?.poNo ?? "";
+      const po = refData.purchaseOrders.find((p) => p.id === referenceId);
+      return po ? (po.poNo ?? po.prNo ?? "") : "";
     }
     return "";
   })();
@@ -451,7 +452,7 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
                 </SelectTrigger>
                 <SelectContent>
                   {refData.purchaseOrders.map((po) => (
-                    <SelectItem key={po.id} value={po.id}>{po.poNo}</SelectItem>
+                    <SelectItem key={po.id} value={po.id}>{po.poNo ?? po.prNo ?? po.id}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

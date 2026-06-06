@@ -1,9 +1,11 @@
-export type DocType = "qt" | "so" | "po" | "do" | "inv";
+export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "do" | "inv";
 
 export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string }> = {
   qt:  { docCode: "QT",  label: "Quotation" },
   so:  { docCode: "SO",  label: "Sales Order" },
+  pr:  { docCode: "PR",  label: "Purchase Requisition" },
   po:  { docCode: "PO",  label: "Purchase Order" },
+  gr:  { docCode: "GR",  label: "Goods Receipt" },
   do:  { docCode: "DO",  label: "Delivery Order" },
   inv: { docCode: "INV", label: "Invoice" },
 };

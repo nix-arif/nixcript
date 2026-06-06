@@ -5,6 +5,7 @@ import {
   purchaseOrder,
   purchaseOrderItem,
   purchaseOrderCounter,
+  purchaseRequisitionCounter,
   purchaseOrderCustomerPo,
   customerPurchaseOrder,
   salesOrder,
@@ -14,6 +15,7 @@ import {
   user,
   organization,
   organizationProfile,
+  goodsReceipt,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -104,7 +106,30 @@ async function requireAccess(permission: string) {
 }
 
 
-// ── Running number ─────────────────────────────────────────────────────────
+// ── Running numbers ────────────────────────────────────────────────────────
+
+async function generatePrNo(orgId: string): Promise<string> {
+  const cfg = await getNumberingConfig(orgId, "pr");
+  const year = new Date().getFullYear();
+  const existing = await db
+    .select()
+    .from(purchaseRequisitionCounter)
+    .where(eq(purchaseRequisitionCounter.organizationId, orgId))
+    .limit(1);
+  let nextNo: number;
+  if (existing.length === 0) {
+    await db.insert(purchaseRequisitionCounter).values({ id: nanoid(), organizationId: orgId, year, lastNumber: 1 });
+    nextNo = 1;
+  } else {
+    const counter = existing[0];
+    nextNo = counter.year === year ? counter.lastNumber + 1 : 1;
+    await db
+      .update(purchaseRequisitionCounter)
+      .set({ year, lastNumber: nextNo })
+      .where(eq(purchaseRequisitionCounter.organizationId, orgId));
+  }
+  return buildDocumentNo(cfg, year, nextNo);
+}
 
 async function generatePoNo(orgId: string): Promise<string> {
   const cfg = await getNumberingConfig(orgId, "po");
@@ -152,7 +177,7 @@ export interface PurchaseOrderItemInput {
 }
 
 export interface CreatePurchaseOrderInput {
-  salesOrderId: string;
+  salesOrderId?: string;
   supplierId: string;
   supplierQuotationKey?: string;
   customerPoIds?: string[];
@@ -296,11 +321,13 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemForPo
 }
 
 export type PurchaseOrderCustomerPoRow = typeof purchaseOrderCustomerPo.$inferSelect;
+export type GoodsReceiptSummary = { id: string; grNo: string; receivedDate: Date; createdAt: Date };
 export type PurchaseOrderWithItems = PurchaseOrderRow & {
   items: PurchaseOrderItem[];
   createdByName: string | null;
   salesOrderNo: string | null;
   customerPos: PurchaseOrderCustomerPoRow[];
+  goodsReceipts: GoodsReceiptSummary[];
 };
 export type PurchaseOrderListRow = PurchaseOrderRow & { createdByName: string | null };
 
@@ -337,13 +364,17 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
 
   if (!po) return null;
 
-  const [items, users, customerPos, soRows] = await Promise.all([
+  const [items, users, customerPos, soRows, grs] = await Promise.all([
     db.select().from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, id)).orderBy(asc(purchaseOrderItem.rowNo)),
     db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, po.createdBy)),
     db.select().from(purchaseOrderCustomerPo).where(eq(purchaseOrderCustomerPo.purchaseOrderId, id)),
     po.salesOrderId
       ? db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.id, po.salesOrderId))
       : Promise.resolve([]),
+    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, receivedDate: goodsReceipt.receivedDate, createdAt: goodsReceipt.createdAt })
+      .from(goodsReceipt)
+      .where(eq(goodsReceipt.purchaseOrderId, id))
+      .orderBy(desc(goodsReceipt.createdAt)),
   ]);
 
   return {
@@ -352,6 +383,7 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
     createdByName: users[0]?.name ?? null,
     salesOrderNo: soRows[0]?.soNo ?? null,
     customerPos,
+    goodsReceipts: grs,
   };
 }
 
@@ -420,28 +452,21 @@ export async function getPoForPrint(id: string) {
 
 // ── Mutations ──────────────────────────────────────────────────────────────
 
-export async function getExistingDraftPo(): Promise<{ id: string; poNo: string } | null> {
+export async function getExistingDraftPo(): Promise<{ id: string; docNo: string } | null> {
   const { orgId } = await requireAccess("purchase-order:read");
   const [row] = await db
-    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo })
+    .select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo })
     .from(purchaseOrder)
     .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.status, "draft")))
     .limit(1);
-  return row ?? null;
+  if (!row) return null;
+  return { id: row.id, docNo: row.prNo ?? row.poNo ?? row.id };
 }
 
 export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Promise<PurchaseOrderRow> {
   const { orgId, userId } = await requireAccess("purchase-order:create");
 
-  if (!input.salesOrderId) throw new Error("A linked sales order is required");
   if (!input.supplierId) throw new Error("Supplier is required");
-
-  const existingDraft = await db
-    .select({ id: purchaseOrder.id })
-    .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.status, "draft")))
-    .limit(1);
-  if (existingDraft.length > 0) throw new Error("A draft purchase order already exists. Send or delete it before creating a new one.");
 
   // Build supplier snapshot
   let supplierSnapshot: PurchaseOrderRow["supplierSnapshot"] = null;
@@ -457,14 +482,16 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
     };
   }
 
-  const poNo = await generatePoNo(orgId);
+  // PR number is assigned at creation; PO number is assigned at approval
+  const prNo = await generatePrNo(orgId);
 
   const [row] = await db
     .insert(purchaseOrder)
     .values({
       id: nanoid(),
       organizationId: orgId,
-      poNo,
+      prNo,
+      poNo: null,
       salesOrderId: input.salesOrderId ?? null,
       supplierId: input.supplierId,
       supplierSnapshot: supplierSnapshot ?? null,
@@ -678,7 +705,7 @@ export async function updatePurchaseOrderStatus(id: string, status: string): Pro
 
 async function getPoForWorkflow(id: string, orgId: string) {
   const [po] = await db
-    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, status: purchaseOrder.status, createdBy: purchaseOrder.createdBy })
+    .select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, status: purchaseOrder.status, createdBy: purchaseOrder.createdBy })
     .from(purchaseOrder)
     .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
   if (!po) throw new Error("Purchase order not found");
@@ -695,6 +722,7 @@ export async function submitPurchaseOrder(id: string): Promise<void> {
   revalidatePath("/dashboard/procurement/purchase-order");
 
   const actorName = session.user.name;
+  const docRef = po.prNo ?? po.poNo ?? id;
   getPoApprovers(orgId).then((approverIds) => {
     const targets = approverIds.filter((uid) => uid !== userId);
     if (targets.length === 0) return;
@@ -704,8 +732,8 @@ export async function submitPurchaseOrder(id: string): Promise<void> {
           organizationId: orgId,
           userId: recipientId,
           type: "po:submitted",
-          title: `PO ${po.poNo} pending approval`,
-          body: `${actorName} submitted ${po.poNo} for approval.`,
+          title: `PR ${docRef} pending approval`,
+          body: `${actorName} submitted requisition ${docRef} for approval.`,
           link: `/dashboard/procurement/purchase-order/${po.id}`,
         }),
       ),
@@ -717,17 +745,22 @@ export async function approvePurchaseOrder(id: string): Promise<void> {
   const { orgId, userId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "submitted") throw new Error("Only submitted purchase orders can be approved");
-  await db.update(purchaseOrder).set({ status: "confirmed", approvedBy: userId, approvedAt: new Date() }).where(eq(purchaseOrder.id, id));
+
+  // Generate PO number at approval — this is when the PR becomes a Supplier PO
+  const poNo = po.poNo ?? await generatePoNo(orgId);
+
+  await db.update(purchaseOrder).set({ status: "confirmed", poNo, approvedBy: userId, approvedAt: new Date() }).where(eq(purchaseOrder.id, id));
 
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
   revalidatePath("/dashboard/procurement/purchase-order");
 
+  const docRef = po.prNo ?? poNo;
   createNotification({
     organizationId: orgId,
     userId: po.createdBy,
     type: "po:approved",
-    title: `PO ${po.poNo} approved`,
-    body: `Your purchase order ${po.poNo} has been approved by ${session.user.name}.`,
+    title: `PR ${docRef} approved — PO ${poNo} issued`,
+    body: `Your requisition ${docRef} was approved by ${session.user.name}. PO ${poNo} has been issued.`,
     link: `/dashboard/procurement/purchase-order/${po.id}`,
   }).catch(console.error);
 }
@@ -741,12 +774,13 @@ export async function rejectPurchaseOrder(id: string): Promise<void> {
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
   revalidatePath("/dashboard/procurement/purchase-order");
 
+  const docRef = po.prNo ?? po.poNo ?? id;
   createNotification({
     organizationId: orgId,
     userId: po.createdBy,
     type: "po:rejected",
-    title: `PO ${po.poNo} returned for revision`,
-    body: `Your purchase order ${po.poNo} was returned for revision by ${session.user.name}.`,
+    title: `PR ${docRef} returned for revision`,
+    body: `Your requisition ${docRef} was returned for revision by ${session.user.name}.`,
     link: `/dashboard/procurement/purchase-order/${po.id}`,
   }).catch(console.error);
 }
@@ -760,12 +794,13 @@ export async function recallPurchaseOrder(id: string): Promise<void> {
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
   revalidatePath("/dashboard/procurement/purchase-order");
 
+  const docRef = po.poNo ?? po.prNo ?? id;
   createNotification({
     organizationId: orgId,
     userId: po.createdBy,
     type: "po:recalled",
-    title: `PO ${po.poNo} recalled`,
-    body: `Purchase order ${po.poNo} has been recalled by ${session.user.name}.`,
+    title: `PO ${docRef} recalled`,
+    body: `Purchase order ${docRef} has been recalled by ${session.user.name}.`,
     link: `/dashboard/procurement/purchase-order/${po.id}`,
   }).catch(console.error);
 }
@@ -773,7 +808,7 @@ export async function recallPurchaseOrder(id: string): Promise<void> {
 export async function fulfillPurchaseOrder(id: string, warehouseLabel = "Default"): Promise<void> {
   const { orgId, userId } = await requireAccess("purchase-order:update");
   const po = await getPoForWorkflow(id, orgId);
-  if (po.status !== "confirmed" && po.status !== "submitted") throw new Error("Purchase order must be submitted or confirmed before fulfilling");
+  if (po.status !== "confirmed") throw new Error("Purchase order must be confirmed (supplier PO) before marking as fulfilled");
 
   await db.update(purchaseOrder).set({ status: "fulfilled" }).where(eq(purchaseOrder.id, id));
 
@@ -797,7 +832,7 @@ export async function fulfillPurchaseOrder(id: string, warehouseLabel = "Default
           unitCost: item.unitPrice ?? undefined,
           referenceType: REF_TYPE.PURCHASE_ORDER,
           referenceId: id,
-          referenceNo: po.poNo,
+          referenceNo: po.poNo ?? po.prNo ?? id,
           notes: `PO receipt: ${item.productCode ?? ""}`.trim(),
         });
         // Write PO price back to product cost fields

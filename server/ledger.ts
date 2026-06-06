@@ -353,7 +353,7 @@ export async function getLedgerReferenceData() {
       .where(eq(invoice.organizationId, orgId))
       .orderBy(desc(invoice.createdAt))
       .limit(100),
-    db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo })
+    db.select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo })
       .from(purchaseOrder)
       .where(eq(purchaseOrder.organizationId, orgId))
       .orderBy(desc(purchaseOrder.createdAt))

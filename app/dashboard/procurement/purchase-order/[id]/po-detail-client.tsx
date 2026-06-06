@@ -19,6 +19,7 @@ import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   BuildingIcon, CalendarIcon, PackageIcon,
   SendIcon, CheckIcon, XIcon, ArchiveIcon, PrinterIcon, RotateCcwIcon,
+  ClipboardListIcon, TruckIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,10 +32,12 @@ const fmtDate = (d: Date | string | null | undefined) =>
 const PO_STATUS: Record<string, { label: string; className: string }> = {
   draft:     { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
   submitted: { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
-  confirmed: { label: "Confirmed",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  confirmed: { label: "PO Confirmed",      className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
   fulfilled: { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
   cancelled: { label: "Cancelled",         className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
+
+const PR_STATUSES = new Set(["draft", "submitted"]);
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = PO_STATUS[status] ?? PO_STATUS.draft;
@@ -63,6 +66,13 @@ export function PurchaseOrderDetailClient({
   const isOwner = order.createdBy === currentUserId;
   const snap = order.supplierSnapshot as any;
 
+  // Document numbers: prNo for PR phase, poNo for PO phase, fall back for legacy records
+  const isPrPhase = PR_STATUSES.has(status);
+  const headerDocNo = isPrPhase
+    ? (order.prNo ?? order.poNo ?? order.id)
+    : (order.poNo ?? order.prNo ?? order.id);
+  const docTypeLabel = isPrPhase ? "Purchase Requisition" : "Supplier Purchase Order";
+
   async function act(key: string, fn: () => Promise<void>, next: string, successMsg: string) {
     setActioning(key);
     try {
@@ -78,11 +88,11 @@ export function PurchaseOrderDetailClient({
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete ${order.poNo}? This cannot be undone.`)) return;
+    if (!confirm(`Delete ${headerDocNo}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       await deletePurchaseOrder(order.id);
-      toast.success("Purchase order deleted");
+      toast.success("Purchase requisition deleted");
       router.push("/dashboard/procurement/purchase-order");
     } catch (e: any) {
       toast.error(e.message);
@@ -98,13 +108,13 @@ export function PurchaseOrderDetailClient({
     <div className="p-6 space-y-6">
       {draftRedirected && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 px-4 py-3 text-sm text-amber-800 dark:text-amber-300 flex items-center gap-2">
-          <span className="font-medium">Draft already exists.</span>
-          You can only have one draft PO at a time. Submit or delete this one before creating a new order.
+          <span className="font-medium">Draft requisition already exists.</span>
+          Submit or delete it before raising a new one.
         </div>
       )}
       <PageHeader
-        title={order.poNo}
-        description={fmtDate(order.createdAt)}
+        title={headerDocNo}
+        description={`${docTypeLabel} · ${fmtDate(order.createdAt)}`}
         action={
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/procurement/purchase-order")} className="gap-1.5">
@@ -143,6 +153,18 @@ export function PurchaseOrderDetailClient({
           </div>
         }
       />
+
+      {/* PR → PO number trail (only when both exist) */}
+      {order.prNo && order.poNo && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground border border-border rounded-lg px-4 py-2.5 bg-muted/20">
+          <ClipboardListIcon className="w-3.5 h-3.5 shrink-0" />
+          <span className="font-mono font-medium text-foreground">{order.prNo}</span>
+          <span className="text-muted-foreground/50">→</span>
+          <TruckIcon className="w-3.5 h-3.5 shrink-0" />
+          <span className="font-mono font-medium text-foreground">{order.poNo}</span>
+          <span className="text-muted-foreground ml-1">Requisition approved — supplier PO issued</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left — items */}
@@ -209,6 +231,46 @@ export function PurchaseOrderDetailClient({
               <p className="text-sm text-muted-foreground whitespace-pre-wrap">{order.notes}</p>
             </section>
           )}
+
+          {/* Goods Receipt section — visible once PO is confirmed */}
+          {!isPrPhase && (
+            <section className="border border-border rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Goods Receipts</h2>
+                {status === "confirmed" && can("purchase-order:update") && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/goods-receipt/create`)}
+                  >
+                    <TruckIcon className="w-3 h-3" /> Record Receipt
+                  </Button>
+                )}
+              </div>
+              {order.goodsReceipts.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  {status === "fulfilled" ? "No formal goods receipts recorded." : "No goods receipts yet."}
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {order.goodsReceipts.map((gr) => (
+                    <button
+                      key={gr.id}
+                      onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/goods-receipt/${gr.id}`)}
+                      className="w-full flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted/30 transition-colors text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        <TruckIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="font-mono text-xs font-medium">{gr.grNo}</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{fmtDate(gr.receivedDate)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
         </div>
 
         {/* Right — summary + workflow */}
@@ -220,41 +282,41 @@ export function PurchaseOrderDetailClient({
               {/* Creator: submit draft */}
               {isDraft && can("purchase-order:update") && isOwner && (
                 <Button size="sm" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
-                  onClick={() => act("submit", () => submitPurchaseOrder(order.id), "submitted", "Purchase order submitted for approval")}>
+                  onClick={() => act("submit", () => submitPurchaseOrder(order.id), "submitted", "Requisition submitted for approval")}>
                   <SendIcon className="w-3.5 h-3.5" />
                   {actioning === "submit" ? "Submitting…" : "Submit for Approval"}
                 </Button>
               )}
-              {/* Approver: approve submitted */}
+              {/* Approver: approve submitted → becomes Supplier PO */}
               {status === "submitted" && can("purchase-order:approve") && (
                 <Button size="sm" className="w-full gap-1.5 h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white" disabled={!!actioning}
-                  onClick={() => act("approve", () => approvePurchaseOrder(order.id), "confirmed", "Purchase order approved")}>
+                  onClick={() => act("approve", () => approvePurchaseOrder(order.id), "confirmed", "Requisition approved — supplier PO issued")}>
                   <CheckIcon className="w-3.5 h-3.5" />
-                  {actioning === "approve" ? "Approving…" : "Approve"}
+                  {actioning === "approve" ? "Approving…" : "Approve & Issue PO"}
                 </Button>
               )}
               {/* Approver: reject submitted → back to draft */}
               {status === "submitted" && can("purchase-order:approve") && (
                 <Button size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs text-destructive hover:text-destructive border-destructive/30" disabled={!!actioning}
-                  onClick={() => act("reject", () => rejectPurchaseOrder(order.id), "draft", "Purchase order returned for revision")}>
+                  onClick={() => act("reject", () => rejectPurchaseOrder(order.id), "draft", "Requisition returned for revision")}>
                   <XIcon className="w-3.5 h-3.5" />
                   {actioning === "reject" ? "Returning…" : "Return for Revision"}
                 </Button>
               )}
-              {/* Approver: recall confirmed → back to draft */}
+              {/* Approver: recall confirmed PO → back to draft */}
               {status === "confirmed" && can("purchase-order:approve") && (
                 <Button size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
                   onClick={() => act("recall", () => recallPurchaseOrder(order.id), "draft", "Purchase order recalled")}>
                   <RotateCcwIcon className="w-3.5 h-3.5" />
-                  {actioning === "recall" ? "Recalling…" : "Recall"}
+                  {actioning === "recall" ? "Recalling…" : "Recall PO"}
                 </Button>
               )}
-              {/* Approver: mark confirmed PO as fulfilled */}
+              {/* Mark confirmed PO as fulfilled — direct close without GR */}
               {status === "confirmed" && can("purchase-order:approve") && (
-                <Button size="sm" className="w-full gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white" disabled={!!actioning}
-                  onClick={() => act("fulfill", () => fulfillPurchaseOrder(order.id), "fulfilled", "Purchase order fulfilled")}>
+                <Button size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
+                  onClick={() => act("fulfill", () => fulfillPurchaseOrder(order.id), "fulfilled", "Purchase order marked as fulfilled")}>
                   <ArchiveIcon className="w-3.5 h-3.5" />
-                  {actioning === "fulfill" ? "Fulfilling…" : "Mark Fulfilled"}
+                  {actioning === "fulfill" ? "Closing…" : "Close PO (no GR)"}
                 </Button>
               )}
               {/* Approver: cancel (submitted or confirmed) */}
@@ -290,6 +352,25 @@ export function PurchaseOrderDetailClient({
 
           <section className="border border-border rounded-xl p-4 space-y-2.5">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Details</h2>
+            {/* PR → PO number pair */}
+            {order.prNo && (
+              <div className="flex items-start gap-2">
+                <ClipboardListIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground">Requisition No.</p>
+                  <p className="text-xs font-mono">{order.prNo}</p>
+                </div>
+              </div>
+            )}
+            {order.poNo && (
+              <div className="flex items-start gap-2">
+                <TruckIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground">Purchase Order No.</p>
+                  <p className="text-xs font-mono">{order.poNo}</p>
+                </div>
+              </div>
+            )}
             <div className="flex items-start gap-2">
               <PackageIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
               <div>
@@ -342,6 +423,15 @@ export function PurchaseOrderDetailClient({
                   <div>
                     <p className="text-[10px] text-muted-foreground">Prepared by</p>
                     <p className="text-xs">{order.createdByName}</p>
+                  </div>
+                </div>
+              )}
+              {order.approvedAt && (
+                <div className="flex items-start gap-2">
+                  <CheckIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Approved</p>
+                    <p className="text-xs">{fmtDate(order.approvedAt)}</p>
                   </div>
                 </div>
               )}

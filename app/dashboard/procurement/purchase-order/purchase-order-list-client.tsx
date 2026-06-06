@@ -24,10 +24,13 @@ const fmtDate = (d: Date | string | null | undefined) =>
 const PO_STATUS: Record<string, { label: string; className: string }> = {
   draft:     { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
   submitted: { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
-  confirmed: { label: "Confirmed",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  confirmed: { label: "PO Confirmed",      className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
   fulfilled: { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
   cancelled: { label: "Cancelled",         className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
+
+const PR_STATUSES = new Set(["draft", "submitted"]);
+const docType = (status: string) => PR_STATUSES.has(status) ? "Purchase Req." : "Supplier PO";
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = PO_STATUS[status] ?? PO_STATUS.draft;
@@ -58,15 +61,16 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
     const s = search.toLowerCase();
     const snap = o.supplierSnapshot as any;
     return (
-      o.poNo.toLowerCase().includes(s) ||
+      (o.poNo ?? "").toLowerCase().includes(s) ||
+      (o.prNo ?? "").toLowerCase().includes(s) ||
       snap?.name?.toLowerCase().includes(s) ||
       o.status.toLowerCase().includes(s) ||
       o.createdByName?.toLowerCase().includes(s)
     );
   });
 
-  async function handleDelete(id: string, poNo: string) {
-    if (!confirm(`Delete ${poNo}? This cannot be undone.`)) return;
+  async function handleDelete(id: string, docNo: string) {
+    if (!confirm(`Delete ${docNo}? This cannot be undone.`)) return;
     setDeleting(id);
     try {
       await deletePurchaseOrder(id);
@@ -82,12 +86,12 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
   return (
     <div className="p-6">
       <PageHeader
-        title="Purchase Orders"
-        description="Track and manage purchase orders to suppliers"
+        title="Requisitions & Purchase Orders"
+        description="Raise purchase requisitions, get them approved, then issue supplier POs"
         action={
           can("purchase-order:create") && (
             <Button onClick={() => router.push("/dashboard/procurement/purchase-order/create")} className="gap-2">
-              <PlusIcon className="w-4 h-4" /> New PO
+              <PlusIcon className="w-4 h-4" /> New Requisition
             </Button>
           )
         }
@@ -125,14 +129,14 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
         </div>
       ) : filtered.length === 0 ? (
         <>
-          <div className="text-xs text-muted-foreground mb-3 tabular-nums">0 orders</div>
+          <div className="text-xs text-muted-foreground mb-3 tabular-nums">0 records</div>
           <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
             <FileTextIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-            <div className="text-sm font-medium mb-1">No purchase orders yet</div>
-            <div className="text-xs mb-4">Create your first purchase order to get started</div>
+            <div className="text-sm font-medium mb-1">No requisitions or purchase orders yet</div>
+            <div className="text-xs mb-4">Raise a purchase requisition to get started</div>
             {can("purchase-order:create") && (
               <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/procurement/purchase-order/create")}>
-                <PlusIcon className="w-3.5 h-3.5" /> New PO
+                <PlusIcon className="w-3.5 h-3.5" /> New Requisition
               </Button>
             )}
           </div>
@@ -140,7 +144,7 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
       ) : (
         <>
           <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-            {filtered.length} order{filtered.length !== 1 ? "s" : ""}
+            {filtered.length} record{filtered.length !== 1 ? "s" : ""}
           </div>
           <div className="space-y-2">
             {filtered.map((o) => {
@@ -159,7 +163,15 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-medium">
-                          <Highlight text={o.poNo} query={search} />
+                          <Highlight text={PR_STATUSES.has(o.status) ? (o.prNo ?? o.poNo ?? "—") : (o.poNo ?? o.prNo ?? "—")} query={search} />
+                        </span>
+                        <span className={cn(
+                          "text-[10px] font-medium rounded px-1.5 py-0.5",
+                          PR_STATUSES.has(o.status)
+                            ? "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400"
+                            : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400",
+                        )}>
+                          {docType(o.status)}
                         </span>
                         <StatusBadge status={o.status} />
                         {o.salesOrderId && (
@@ -198,7 +210,7 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
                       )}
                       {can("purchase-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && !o.approvedAt && (
                         <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
-                          disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.poNo)}>
+                          disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.prNo ?? o.poNo ?? o.id)}>
                           <TrashIcon className="w-3.5 h-3.5" />
                         </Button>
                       )}
