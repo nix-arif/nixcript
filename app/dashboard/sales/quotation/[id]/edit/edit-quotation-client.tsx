@@ -144,6 +144,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
   const [deliveryTerm, setDeliveryTerm] = useState(q.deliveryTerm ?? "EX-STOCK SUBJECT PRIOR SALES, OTHERWISE 8 – 12 WEEKS");
   const [paymentTerm, setPaymentTerm] = useState(q.paymentTerm ?? "30 days");
   const [returnPolicy, setReturnPolicy] = useState(q.returnPolicy ?? "GOODS ONCE SOLD WILL NOT TAKEN BACK");
+  const [warranty, setWarranty] = useState((q as any).warranty ?? "5 years against material and manufacturing defects");
 
   // ── Items state ─────────────────────────────────────────────────────────
   const [items, setItems] = useState<EditItem[]>(() =>
@@ -285,6 +286,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
         deliveryTerm: deliveryTerm || null,
         paymentTerm: paymentTerm || null,
         returnPolicy: returnPolicy || null,
+        warranty: warranty || null,
         overallDiscountPct: overallDiscount,
         sstPct: sstPct,
         includeCatalogue,
@@ -707,6 +709,13 @@ export function EditQuotationClient({ data, customers, members }: Props) {
                   onChange={(e) => setReturnPolicy(e.target.value)}
                   rows={2}
                   className="text-sm resize-none"
+                />
+              </Field>
+              <Field label="Warranty">
+                <Input
+                  value={warranty}
+                  onChange={(e) => setWarranty(e.target.value)}
+                  className="h-9 text-sm"
                 />
               </Field>
             </div>

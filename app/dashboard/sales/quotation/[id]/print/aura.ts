@@ -45,6 +45,11 @@ function sanitizeText(t: string): string {
   return String(t).replace(/[\x00-\x1F\x7F]/g, " ");
 }
 
+function toSentenceCase(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
 function wrap(text: string, font: PDFFont, size: number, maxW: number): string[] {
   if (!text) return [""];
   const words = sanitizeText(text).split(" ");
@@ -243,14 +248,13 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   }) + 6;
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
-  const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
+  const termsNoteLines = q.notes ? wrap(q.notes, fontR, 8.5, CW - 80) : [];
   const TOTALS_H     = 26 + Math.max(bank ? 52 : 0, (totRowCount + 1) * 16) + 20;
-  const TERMS_H      = 80; // terms box: 3 rows × ~13px + 2×8px padding + gaps
-  const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
+  const TERMS_H      = 96 + (q.notes ? 4 + termsNoteLines.length * 12 : 0);
   const FOOTER_BLOCK = 30;
   const CLOSING_H    = 38;
   const ACCEPT_H     = 0;
-  const BOTTOM_RESERVE = TOTALS_H + TERMS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
+  const BOTTOM_RESERVE = TOTALS_H + TERMS_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
 
   // Header repeats on every page — same row availability for all pages
   const PAGE_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 20;
@@ -589,13 +593,17 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         const TLABELW = Math.max(
           fontB.widthOfTextAtSize("Brand",    TFS),
           fontB.widthOfTextAtSize("Delivery", TFS),
+          fontB.widthOfTextAtSize("Validity", TFS),
           fontB.widthOfTextAtSize("Warranty", TFS),
+          fontB.widthOfTextAtSize("Notes",    TFS),
         ) + 14;
         const TVALFITW = CW - TLPAD - TLABELW - TRPAD;
         const termsData: { label: string; value: string }[] = [
-          { label: "Brand",    value: brandText },
-          { label: "Delivery", value: "Ex-stock subject to availability, otherwise 8 - 12 weeks" },
-          { label: "Warranty", value: "5 Years against material & manufacturing defects" },
+          { label: "Brand",    value: toSentenceCase(brandText) },
+          ...(q.deliveryTerm ? [{ label: "Delivery", value: toSentenceCase(q.deliveryTerm) }] : []),
+          ...(q.paymentTerm  ? [{ label: "Validity", value: toSentenceCase(q.paymentTerm)  }] : []),
+          ...((q as any).warranty ? [{ label: "Warranty", value: toSentenceCase((q as any).warranty) }] : []),
+          ...(q.notes ? [{ label: "Notes", value: q.notes }] : []),
         ];
         const termsRendered = termsData.map(r => ({
           label: r.label,
@@ -634,22 +642,6 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         const clW = fontR.widthOfTextAtSize(cl, 8);
         page.drawText(cl, { x: (W - clW) / 2, y: curY, size: 8, font: fontR, color: C_LITE });
         curY -= 12;
-      }
-
-      // Notes
-      if (q.notes) {
-        curY -= 10;
-        const nl    = wrap(q.notes, fontR, 9.5, CW - 20);
-        const noteH = nl.length * 12 + 20;
-        page.drawRectangle({ x: ML, y: curY - noteH, width: 3, height: noteH, color: accent });
-        page.drawText("NOTES", {
-          x: ML + 8, y: curY - 10, size: 7.5, font: fontB, color: accent,
-        });
-        let ny = curY - 22;
-        for (const line of nl) {
-          page.drawText(line, { x: ML + 8, y: ny, size: 9.5, font: fontR, color: C_DARK });
-          ny -= 12;
-        }
       }
 
     }
@@ -768,15 +760,19 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       const TFS = 8.5;
       const TLPAD = 10; const TRPAD = 10; const TVPAD = 8; const ROW_GAP = 4; const TLH = 12;
       const TLABELW = Math.max(
-        fontB.widthOfTextAtSize("Brand", TFS),
+        fontB.widthOfTextAtSize("Brand",    TFS),
         fontB.widthOfTextAtSize("Delivery", TFS),
+        fontB.widthOfTextAtSize("Validity", TFS),
         fontB.widthOfTextAtSize("Warranty", TFS),
+        fontB.widthOfTextAtSize("Notes",    TFS),
       ) + 14;
       const TVALFITW = CW - TLPAD - TLABELW - TRPAD;
       const termsData: { label: string; value: string }[] = [
-        { label: "Brand",    value: brandText },
-        { label: "Delivery", value: "Ex-stock subject to availability, otherwise 8 - 12 weeks" },
-        { label: "Warranty", value: "5 Years against material & manufacturing defects" },
+        { label: "Brand",    value: toSentenceCase(brandText) },
+        ...(q.deliveryTerm ? [{ label: "Delivery", value: toSentenceCase(q.deliveryTerm) }] : []),
+        ...(q.paymentTerm  ? [{ label: "Validity", value: toSentenceCase(q.paymentTerm)  }] : []),
+        ...((q as any).warranty ? [{ label: "Warranty", value: toSentenceCase((q as any).warranty) }] : []),
+        ...(q.notes ? [{ label: "Notes", value: q.notes }] : []),
       ];
       const termsRendered = termsData.map(r => ({
         label: r.label, valLines: wrap(r.value, fontR, TFS, TVALFITW),
@@ -814,18 +810,6 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       curY -= 12;
     }
 
-    if (q.notes) {
-      curY -= 10;
-      const nl    = wrap(q.notes, fontR, 9.5, CW - 20);
-      const noteH = nl.length * 12 + 20;
-      sp.drawRectangle({ x: ML, y: curY - noteH, width: 3, height: noteH, color: accent });
-      sp.drawText("NOTES", { x: ML + 8, y: curY - 10, size: 7.5, font: fontB, color: accent });
-      let ny = curY - 22;
-      for (const line of nl) {
-        sp.drawText(line, { x: ML + 8, y: ny, size: 9.5, font: fontR, color: C_DARK });
-        ny -= 12;
-      }
-    }
   }
 
   // ── Catalogue pages ──────────────────────────────────────────────────────

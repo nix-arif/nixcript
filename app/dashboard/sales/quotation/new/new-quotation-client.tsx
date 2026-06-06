@@ -155,6 +155,7 @@ export function NewQuotationClient({
   const [deliveryTerm, setDeliveryTerm] = useState("EX-STOCK SUBJECT PRIOR SALES, OTHERWISE 8 – 12 WEEKS");
   const [paymentTerm, setPaymentTerm] = useState("30 days");
   const [returnPolicy, setReturnPolicy] = useState("GOODS ONCE SOLD WILL NOT TAKEN BACK");
+  const [warranty, setWarranty] = useState("5 years against material and manufacturing defects");
 
   // Step 2 state
   const [fileName, setFileName] = useState("");
@@ -460,6 +461,7 @@ export function NewQuotationClient({
         deliveryTerm: deliveryTerm || undefined,
         paymentTerm: paymentTerm || undefined,
         returnPolicy: returnPolicy || undefined,
+        warranty: warranty || undefined,
         items: finalItems,
         overallDiscountPct: applyTotalDiscount ? (overallDiscount || "0") : "0",
         sstPct: applySST ? sstPct || "8" : "0",
@@ -852,6 +854,13 @@ export function NewQuotationClient({
                   onChange={(e) => setReturnPolicy(e.target.value)}
                   rows={2}
                   className="text-sm resize-none"
+                />
+              </Field>
+              <Field label="Warranty">
+                <Input
+                  value={warranty}
+                  onChange={(e) => setWarranty(e.target.value)}
+                  className="h-9 text-sm"
                 />
               </Field>
             </div>

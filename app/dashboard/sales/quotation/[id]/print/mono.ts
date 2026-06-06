@@ -528,7 +528,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   // Terms & Conditions — pre-wrap values for dynamic height
   const tLLabels = ["PRICE VALIDITY", "DELIVERY"];
-  const tRLabels = ["PAYMENT TERM", "RETURN POLICY"];
+  const tRLabels = ["PAYMENT TERM", ...((q as any).warranty ? ["WARRANTY"] : []), "RETURN POLICY"];
   const tLMaxW = Math.max(...tLLabels.map(l => fontR.widthOfTextAtSize(l, FS_BODY)));
   const tRMaxW = Math.max(...tRLabels.map(l => fontR.widthOfTextAtSize(l, FS_BODY)));
   const tLValW = BHALF_W - tLMaxW - BCOLON_W - 8;
@@ -539,6 +539,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   ];
   const tPreR = [
     wrap(String((q as any).paymentTerm  ?? "—").toUpperCase(), fontR, FS_BODY, tRValW),
+    ...((q as any).warranty ? [wrap(String((q as any).warranty).toUpperCase(), fontR, FS_BODY, tRValW)] : []),
     wrap(String((q as any).returnPolicy ?? "—").toUpperCase(), fontR, FS_BODY, tRValW),
   ];
   const tConH = Math.max(

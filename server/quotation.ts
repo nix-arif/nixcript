@@ -417,6 +417,7 @@ export type CreateQuotationInput = {
   deliveryTerm?: string;
   paymentTerm?: string;
   returnPolicy?: string;
+  warranty?: string;
   items: ReviewItem[];
   overallDiscountPct: string;
   sstPct: string;
@@ -566,6 +567,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     deliveryTerm: input.deliveryTerm ?? null,
     paymentTerm: input.paymentTerm ?? null,
     returnPolicy: input.returnPolicy ?? null,
+    warranty: input.warranty ?? null,
     subtotal: subtotal.toFixed(2),
     overallDiscountPct: input.overallDiscountPct,
     overallDiscountAmt: ((subtotal * overallDisc) / 100).toFixed(2),
@@ -1671,6 +1673,7 @@ export type UpdateQuotationInput = {
   deliveryTerm?: string | null;
   paymentTerm?: string | null;
   returnPolicy?: string | null;
+  warranty?: string | null;
   overallDiscountPct: string;
   sstPct: string;
   includeCatalogue: boolean;
@@ -1803,6 +1806,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       deliveryTerm: input.deliveryTerm ?? null,
       paymentTerm: input.paymentTerm ?? null,
       returnPolicy: input.returnPolicy ?? null,
+      warranty: input.warranty ?? null,
       subtotal: subtotal.toFixed(2),
       overallDiscountPct: input.overallDiscountPct,
       overallDiscountAmt: ((subtotal * overallDisc) / 100).toFixed(2),

@@ -954,6 +954,7 @@ export const quotation = pgTable(
     deliveryTerm: text("delivery_term"),
     paymentTerm: text("payment_term"),
     returnPolicy: text("return_policy"),
+    warranty: text("warranty"),
 
     // Pricing
     subtotal: text("subtotal").notNull().default("0"),
