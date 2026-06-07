@@ -77,6 +77,24 @@ export function SalesOrderDetailClient({
   const snap = order.customerSnapshot as any;
   const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
 
+  // Build deduplicated customer entries from CPO links, fall back to SO snapshot
+  const seen = new Set<string>();
+  const cpoCustomerEntries = (
+    order.cpoCustomers.length > 0
+      ? order.cpoCustomers.map((c) => ({
+          label: c.customerSnapshot?.organizationName ?? (c.customerSnapshot ? [c.customerSnapshot.title, c.customerSnapshot.name].filter(Boolean).join(" ") : ""),
+          person: c.customerSnapshot ? [c.customerSnapshot.title, c.customerSnapshot.name].filter(Boolean).join(" ") : null,
+          address: null as string | null,
+        }))
+      : custName
+        ? [{ label: snap?.organizationName ?? custName, person: custName, address: snap?.organizationAddress ?? null }]
+        : []
+  ).filter((c) => {
+    if (!c.label || seen.has(c.label)) return false;
+    seen.add(c.label);
+    return true;
+  });
+
   async function handleDelete() {
     if (!confirm(`Delete ${order.soNo}? This cannot be undone.`)) return;
     setDeleting(true);
@@ -167,7 +185,12 @@ export function SalesOrderDetailClient({
             )}
             {status === "confirmed" && can("purchase-order:create") && (
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/purchase-order/create?soId=${order.id}`)}>
-                <ShoppingCartIcon className="w-3.5 h-3.5" /> Convert to PO
+                <ShoppingCartIcon className="w-3.5 h-3.5" /> Raise Requisition
+              </Button>
+            )}
+            {status === "confirmed" && can("sales-order:update") && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/sales/consignment/create?soId=${order.id}&soNo=${encodeURIComponent(order.soNo)}`)}>
+                <PackageIcon className="w-3.5 h-3.5" /> Create Consignment
               </Button>
             )}
             {status === "draft" ? (
@@ -205,25 +228,29 @@ export function SalesOrderDetailClient({
 
           {/* Customer */}
           <section className="border border-border rounded-xl p-4">
-            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Customer</h2>
-            {custName ? (
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  <span className="text-sm font-medium">{custName}</span>
-                </div>
-                {snap?.organizationName && (
-                  <div className="flex items-center gap-2">
-                    <BuildingIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-sm text-muted-foreground">{snap.organizationName}</span>
-                  </div>
-                )}
-                {snap?.organizationAddress && (
-                  <div className="flex items-start gap-2 mt-1">
-                    <MapPinIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                    <span className="text-xs text-muted-foreground">{snap.organizationAddress}</span>
-                  </div>
-                )}
+            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Customer{cpoCustomerEntries.length > 1 ? "s" : ""}
+            </h2>
+            {cpoCustomerEntries.length > 0 ? (
+              <div className="space-y-0">
+                {cpoCustomerEntries.map((c, i) => {
+                  const hasBoth = c.person && c.person !== c.label && c.label;
+                  return (
+                    <div key={i} className={`grid grid-cols-2 gap-x-6 gap-y-0.5 ${i > 0 ? "border-t border-border/50 pt-3 mt-3" : ""}`}>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Organization</p>
+                        <p className="text-sm font-medium">{c.label || "—"}</p>
+                        {c.address && (
+                          <p className="text-[11px] text-muted-foreground mt-1 leading-snug">{c.address}</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Contact</p>
+                        <p className="text-sm">{hasBoth ? c.person : "—"}</p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No customer linked</p>
@@ -253,18 +280,58 @@ export function SalesOrderDetailClient({
                     </tr>
                   </thead>
                   <tbody>
-                    {order.items.map((item) => (
-                      <tr key={item.id} className="border-b border-border/40 last:border-0">
-                        <td className="py-2 pr-3 text-muted-foreground">{item.rowNo}</td>
-                        <td className="py-2 pr-3 font-mono text-muted-foreground">{item.productCode || "—"}</td>
-                        <td className="py-2 pr-3">{item.description || "—"}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{item.qty}</td>
-                        <td className="py-2 pr-3 text-muted-foreground">{item.uom || "—"}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{fmt(item.unitPrice)}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">{item.discountPct || "0"}%</td>
-                        <td className="py-2 text-right tabular-nums font-medium">{fmt(item.totalPrice)}</td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      // Build CPO id → { customerName, cpoNo } map
+                      const cpoInfoMap = new Map(
+                        order.cpoCustomers.map((c) => [
+                          c.customerPoId,
+                          {
+                            customerName: c.customerSnapshot
+                              ? [c.customerSnapshot.title, c.customerSnapshot.name].filter(Boolean).join(" ")
+                              : null,
+                            cpoNo: c.customerPoNo,
+                          },
+                        ]),
+                      );
+
+                      // Only tag when items span more than one distinct CPO
+                      const distinctCpos = new Set(
+                        order.items.map((i) => (i as any).sourceCustomerPoId).filter(Boolean),
+                      );
+                      const showTags = distinctCpos.size > 1;
+
+                      return order.items.map((item) => {
+                        const info = cpoInfoMap.get((item as any).sourceCustomerPoId ?? "");
+                        return (
+                          <tr key={item.id} className="border-b border-border/40 last:border-0">
+                            <td className="py-2 pr-3 text-muted-foreground">{item.rowNo}</td>
+                            <td className="py-2 pr-3 font-mono text-muted-foreground">{item.productCode || "—"}</td>
+                            <td className="py-2 pr-3">
+                              <div className="flex flex-col gap-1">
+                                <span>{item.description || "—"}</span>
+                                {showTags && info && (
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {info.customerName && (
+                                      <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
+                                        {info.customerName}
+                                      </span>
+                                    )}
+                                    <span className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                                      {info.cpoNo}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-2 pr-3 text-right tabular-nums">{item.qty}</td>
+                            <td className="py-2 pr-3 text-muted-foreground">{item.uom || "—"}</td>
+                            <td className="py-2 pr-3 text-right tabular-nums">{fmt(item.unitPrice)}</td>
+                            <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">{item.discountPct || "0"}%</td>
+                            <td className="py-2 text-right tabular-nums font-medium">{fmt(item.totalPrice)}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>

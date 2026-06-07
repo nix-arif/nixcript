@@ -30,6 +30,9 @@ export function EditCustomerPoClient({ cpo }: { cpo: CustomerPo }) {
   const [receivedDate, setReceivedDate] = useState(
     cpo.receivedDate ? new Date(cpo.receivedDate).toISOString().slice(0, 10) : "",
   );
+  const [deliveryDate, setDeliveryDate] = useState(
+    (cpo as any).deliveryDate ? new Date((cpo as any).deliveryDate).toISOString().slice(0, 10) : "",
+  );
   const [status, setStatus] = useState(cpo.status ?? "received");
   const [notes, setNotes] = useState(cpo.notes ?? "");
 
@@ -100,6 +103,7 @@ export function EditCustomerPoClient({ cpo }: { cpo: CustomerPo }) {
         documentKey: pdfKey ?? existingDocKey ?? undefined,
         notes: notes || undefined,
         receivedDate: receivedDate ? new Date(receivedDate) : undefined,
+        deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
         status,
       });
       toast.success("Customer PO updated");
@@ -155,6 +159,15 @@ export function EditCustomerPoClient({ cpo }: { cpo: CustomerPo }) {
                 type="date"
                 value={receivedDate}
                 onChange={(e) => setReceivedDate(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Due delivery date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <input
+                type="date"
+                value={deliveryDate}
+                onChange={(e) => setDeliveryDate(e.target.value)}
                 className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
               />
             </div>

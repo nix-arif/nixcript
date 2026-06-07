@@ -8,12 +8,12 @@ import {
   type SalesOrderItemInput,
   type SalesOrderWithItems,
 } from "@/server/sales-order";
-import { getCustomers, getCustomer } from "@/server/customer";
+import { getCustomers } from "@/server/customer";
 import {
-  searchQuotationsByNo,
-  getQuotationForSO,
-  type QuotationForSO,
-} from "@/server/quotation";
+  getCustomerPoForSoCreate,
+  searchCustomerPosByNo,
+  type CustomerPoSearchResult,
+} from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,23 +28,25 @@ import {
   SearchIcon,
   XIcon,
   BuildingIcon,
-  FileTextIcon,
+  LinkIcon,
 } from "lucide-react";
+
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
-type LinkedQuotation = {
+type LinkedCpo = {
   id: string;
-  quotationNo: string;
-  customerId?: string | null;
-  customerSnapshot?: {
-    title?: string;
-    name: string;
-    organizationName?: string;
+  customerPoNo: string;
+  customerId: string | null;
+  customerSnapshot: {
+    title?: string; name: string; organizationName?: string;
+    organizationAddress?: string; email?: string; contactNo?: string;
   } | null;
 };
 
 interface LineItem extends SalesOrderItemInput {
   _key: string;
+  sourceCustomerPoId: string;
+  sourceCustomerPoNo: string;
 }
 
 const SO_STATUS = ["draft", "confirmed", "fulfilled", "cancelled"] as const;
@@ -68,6 +70,8 @@ const newLine = (rowNo: number): LineItem => ({
   discountAmt: "0",
   totalPrice: "0",
   sourceQuotationId: "",
+  sourceCustomerPoId: "",
+  sourceCustomerPoNo: "",
 });
 
 function calcLine(item: LineItem): LineItem {
@@ -91,8 +95,7 @@ const fmt = (n: number) => `RM ${n.toLocaleString("en-MY", { minimumFractionDigi
 
 function toDateInput(d: Date | string | null | undefined): string {
   if (!d) return "";
-  const date = new Date(d);
-  return date.toISOString().split("T")[0];
+  return new Date(d).toISOString().split("T")[0];
 }
 
 interface Props {
@@ -104,17 +107,17 @@ export function EditSalesOrderClient({ order, members }: Props) {
   const router = useRouter();
   const snap = order.customerSnapshot as any;
 
-  // ── Quotation ───────────────────────────────────────────────────────────────
-  const [qtSearch, setQtSearch] = useState("");
-  const [qtResults, setQtResults] = useState<Awaited<ReturnType<typeof searchQuotationsByNo>>>([]);
-  const [linkedQuotations, setLinkedQuotations] = useState<LinkedQuotation[]>(
-    (order.linkedQuotations as LinkedQuotation[] | null) ??
-    (order.quotationId && order.quotationNo ? [{ id: order.quotationId, quotationNo: order.quotationNo }] : []),
+  // ── Customer POs ─────────────────────────────────────────────────────────────
+  const existingCpoLinks = (order.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null) ?? [];
+  const [linkedCpos, setLinkedCpos] = useState<LinkedCpo[]>(
+    existingCpoLinks.map((c) => ({ id: c.customerPoId, customerPoNo: c.customerPoNo, customerId: null, customerSnapshot: null })),
   );
-  const [qtLoading, setQtLoading] = useState(false);
-  const [qtHighlight, setQtHighlight] = useState(-1);
-  const [includeDummy, setIncludeDummy] = useState(false);
-  const qtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [cpoSearch, setCpoSearch] = useState("");
+  const [cpoResults, setCpoResults] = useState<CustomerPoSearchResult[]>([]);
+  const [cpoHighlight, setCpoHighlight] = useState(-1);
+  const [cpoLoading, setCpoLoading] = useState(false);
+  const [showAddCpo, setShowAddCpo] = useState(false);
+  const cpoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Customer ────────────────────────────────────────────────────────────────
   const initialCustomer: Customer | null = order.customerId && snap
@@ -167,6 +170,8 @@ export function EditSalesOrderClient({ order, members }: Props) {
           discountAmt: String(i.discountAmt ?? "0"),
           totalPrice: String(i.totalPrice ?? "0"),
           sourceQuotationId: i.sourceQuotationId ?? "",
+          sourceCustomerPoId: (i as any).sourceCustomerPoId ?? "",
+          sourceCustomerPoNo: (i as any).sourceCustomerPoNo ?? "",
         }))
       : [newLine(1)],
   );
@@ -174,117 +179,53 @@ export function EditSalesOrderClient({ order, members }: Props) {
   const [saving, setSaving] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
 
-  // ── Quotation search ────────────────────────────────────────────────────────
+  // ── CPO search ──────────────────────────────────────────────────────────────
 
-  const handleQtSearch = useCallback((val: string, withDummy = includeDummy) => {
-    setQtSearch(val);
-    setQtHighlight(-1);
-    if (val.length < 2) { setQtResults([]); return; }
-    if (qtTimer.current) clearTimeout(qtTimer.current);
-    qtTimer.current = setTimeout(async () => {
-      const res = await searchQuotationsByNo(val, withDummy);
-      setQtResults(res);
-      setQtHighlight(-1);
+  const handleCpoSearch = useCallback((val: string) => {
+    setCpoSearch(val);
+    setCpoHighlight(-1);
+    if (val.length < 2) { setCpoResults([]); return; }
+    if (cpoTimer.current) clearTimeout(cpoTimer.current);
+    cpoTimer.current = setTimeout(async () => {
+      setCpoResults(await searchCustomerPosByNo(val));
+      setCpoHighlight(-1);
     }, 300);
-  }, [includeDummy]);
+  }, []);
 
-  function handleToggleDummy() {
-    const next = !includeDummy;
-    setIncludeDummy(next);
-    if (qtSearch.length >= 2) handleQtSearch(qtSearch, next);
+  function handleCpoKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!cpoResults.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setCpoHighlight((i) => Math.min(i + 1, cpoResults.length - 1)); return; }
+    if (e.key === "ArrowUp")   { e.preventDefault(); setCpoHighlight((i) => Math.max(i - 1, 0)); return; }
+    if (e.key === "Enter")     { e.preventDefault(); const r = cpoResults[cpoHighlight] ?? cpoResults[0]; if (r) selectCpo(r.id); return; }
+    if (e.key === "Escape")    { setCpoResults([]); setCpoHighlight(-1); setShowAddCpo(false); }
   }
 
-  function handleQtKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (qtResults.length === 0) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setQtHighlight((i) => Math.min(i + 1, qtResults.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setQtHighlight((i) => Math.max(i - 1, 0));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      const target = qtHighlight >= 0 ? qtResults[qtHighlight] : qtResults[0];
-      if (target) selectQuotation(target.id);
-    } else if (e.key === "Escape") {
-      setQtResults([]);
-      setQtHighlight(-1);
+  async function selectCpo(cpoId: string) {
+    if (linkedCpos.some((c) => c.id === cpoId)) {
+      toast.error("This customer PO is already linked");
+      setCpoSearch(""); setCpoResults([]);
+      return;
     }
-  }
-
-  async function selectQuotation(qtId: string) {
-    if (linkedQuotations.some((q) => q.id === qtId)) {
-      setQtSearch(""); setQtResults([]); return;
-    }
-    setQtSearch("");
-    setQtResults([]);
-    setQtLoading(true);
+    setCpoSearch(""); setCpoResults([]); setCpoLoading(true);
     try {
-      const qt = await getQuotationForSO(qtId);
-      if (!qt) return;
-      setLinkedQuotations((prev) => [...prev, {
-        id: qt.id,
-        quotationNo: qt.quotationNo,
-        customerId: qt.customerId ?? null,
-        customerSnapshot: qt.customerSnapshot ?? null,
+      const data = await getCustomerPoForSoCreate(cpoId);
+      if (!data) return;
+      setLinkedCpos((prev) => [...prev, {
+        id: data.id,
+        customerPoNo: data.customerPoNo,
+        customerId: data.customerId,
+        customerSnapshot: data.customerSnapshot,
       }]);
-
-      // Append items, tag with source quotation
-      const newItems = qt.items.map((item) =>
-        calcLine({
-          _key: crypto.randomUUID(),
-          rowNo: 0,
-          productCode: item.productCode ?? "",
-          description: item.description ?? "",
-          qty: String(item.qty ?? "1"),
-          uom: item.uom ?? "",
-          unitPrice: String(item.unitPrice ?? "0"),
-          discountPct: String(item.discountPct ?? "0"),
-          discountAmt: String(item.discountAmt ?? "0"),
-          totalPrice: String(item.totalPrice ?? "0"),
-          sourceQuotationId: qt.id,
-        }),
-      );
-      setItems((prev) => {
-        const combined = [...prev, ...newItems];
-        return combined.map((i, idx) => ({ ...i, rowNo: idx + 1 }));
-      });
-
-      // Auto-fill customer whenever not yet set
-      if (!selectedCustomer && qt.customerId) {
-        const cust = await getCustomer(qt.customerId);
-        if (cust) {
-          setSelectedCustomer(cust as unknown as Customer);
-          const primary = cust.companies.find((c) => c.isPrimary);
-          if (primary) setCustCompanyId(primary.id);
-          else if (cust.companies.length === 1) setCustCompanyId(cust.companies[0].id);
-        } else if (qt.customerSnapshot) {
-          // Customer belongs to a sibling org (dummy quotation) or was deleted — use snapshot
-          const snap = qt.customerSnapshot;
-          setSelectedCustomer({
-            id: qt.customerId,
-            title: snap.title ?? null,
-            name: snap.name ?? "",
-            contactNo: snap.contactNo ?? null,
-            email: snap.email ?? null,
-            createdAt: new Date(),
-            createdByName: null,
-            companies: snap.organizationName
-              ? [{ id: "__snap__", customerId: qt.customerId, organizationName: snap.organizationName, organizationAddress: snap.organizationAddress ?? null, isPrimary: true, createdAt: new Date() }]
-              : [],
-          } as unknown as Customer);
-          if (snap.organizationName) setCustCompanyId("__snap__");
-        }
-      }
+      setShowAddCpo(false);
     } catch {
-      toast.error("Failed to load quotation");
+      toast.error("Failed to load customer PO");
     } finally {
-      setQtLoading(false);
+      setCpoLoading(false);
     }
   }
 
-  function removeLinkedQuotation(id: string) {
-    setLinkedQuotations((prev) => prev.filter((q) => q.id !== id));
+  function removeCpo(id: string) {
+    setLinkedCpos((prev) => prev.filter((c) => c.id !== id));
   }
 
   // ── Customer search ─────────────────────────────────────────────────────────
@@ -381,7 +322,10 @@ export function EditSalesOrderClient({ order, members }: Props) {
   // ── Save ────────────────────────────────────────────────────────────────────
 
   async function handleSave() {
-    const primaryCustomerId = selectedCustomer?.id ?? linkedQuotations.find((q) => q.customerId)?.customerId ?? null;
+    const primaryCustomerId =
+      selectedCustomer?.id ??
+      linkedCpos.find((c) => c.customerId)?.customerId ??
+      null;
     if (!primaryCustomerId) { toast.error("Please select a customer"); return; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return; }
 
@@ -392,7 +336,9 @@ export function EditSalesOrderClient({ order, members }: Props) {
         id: order.id,
         customerId: primaryCustomerId,
         customerCompanyId: selectedCustomer ? custCompanyId : undefined,
-        linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
+        customerPoLinks: linkedCpos.length > 0
+          ? linkedCpos.map((c) => ({ customerPoId: c.id, customerPoNo: c.customerPoNo }))
+          : undefined,
         status,
         salesPersonName: salesPerson || undefined,
         associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
@@ -405,7 +351,11 @@ export function EditSalesOrderClient({ order, members }: Props) {
         sstPct,
         sst: sstAmt.toFixed(2),
         grandTotal: grand.toFixed(2),
-        items: items.map(({ _key, ...rest }) => rest),
+        items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, ...rest }) => ({
+          ...rest,
+          sourceCustomerPoId: sourceCustomerPoId || undefined,
+          sourceCustomerPoNo: sourceCustomerPoNo || undefined,
+        })),
       });
       toast.success("Sales order updated");
       router.push(`/dashboard/sales/order/${order.id}`);
@@ -418,7 +368,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
 
   const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
   const allCompanies = selectedCustomer?.companies ?? [];
-  const linkedCustomers = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
+  const showCpoColumn = linkedCpos.length > 1;
 
   return (
     <div className="p-6">
@@ -436,98 +386,97 @@ export function EditSalesOrderClient({ order, members }: Props) {
 
       <div className="space-y-6">
 
-        {/* ── 1. Linked quotations ── */}
+        {/* ── 1. Linked Customer POs ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Linked quotations</h2>
-          <div className="flex items-center gap-2 flex-wrap mb-2">
-            {linkedQuotations.map((q) => (
-              <span key={q.id} className="flex items-center gap-1 text-[11px] bg-muted rounded-full px-2.5 py-1 font-mono">
-                <FileTextIcon className="w-3 h-3 text-muted-foreground" />
-                {q.quotationNo}
-                <button onClick={() => removeLinkedQuotation(q.id)} className="text-muted-foreground hover:text-foreground ml-0.5">
-                  <XIcon className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-          <div className="relative">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input
-              value={qtSearch}
-              onChange={(e) => handleQtSearch(e.target.value)}
-              onKeyDown={handleQtKeyDown}
-              placeholder="Add quotation…"
-              className="pl-9 h-9 text-sm"
-              disabled={qtLoading}
-            />
-            {qtLoading && (
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>
-            )}
-            {qtResults.length > 0 && (
-              <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
-                {qtResults.map((qt, idx) => {
-                  const s = qt.customerSnapshot as any;
-                  const custName = s ? [s.title, s.name].filter(Boolean).join(" ") : null;
-                  const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
-                  const isHighlighted = idx === qtHighlight;
-                  return (
-                    <button
-                      key={qt.id}
-                      disabled={alreadyLinked}
-                      className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${isHighlighted ? "bg-muted" : "hover:bg-muted/50"}`}
-                      onClick={() => selectQuotation(qt.id)}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</span>
-                        {qt.isDummy === 1 && (
-                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded border border-muted-foreground/30 bg-muted text-muted-foreground">Dummy</span>
-                        )}
-                      </div>
-                      {custName && <div className="text-[11px] text-muted-foreground">{custName}</div>}
-                    </button>
-                  );
-                })}
+          <h2 className="text-sm font-semibold mb-3">Customer POs</h2>
+          <div className="space-y-2">
+            {linkedCpos.map((c) => {
+              const csnap = c.customerSnapshot;
+              const custName = csnap ? [csnap.title, csnap.name].filter(Boolean).join(" ") : null;
+              return (
+                <div key={c.id} className="flex items-center gap-3 px-3 py-2 bg-muted/40 rounded-lg border border-border">
+                  <LinkIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <span className="font-mono text-sm font-medium">{c.customerPoNo}</span>
+                    {custName && <span className="text-[11px] text-muted-foreground ml-2">{custName}</span>}
+                  </div>
+                  <button onClick={() => removeCpo(c.id)} className="text-muted-foreground hover:text-foreground shrink-0">
+                    <XIcon className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+
+            {(linkedCpos.length === 0 || showAddCpo) && (
+              <div className="relative">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none z-10" />
+                <Input
+                  value={cpoSearch}
+                  onChange={(e) => handleCpoSearch(e.target.value)}
+                  onKeyDown={handleCpoKeyDown}
+                  placeholder={linkedCpos.length === 0 ? "Search customer PO number…" : "Search another customer PO…"}
+                  className="pl-9 h-9 text-sm"
+                  disabled={cpoLoading}
+                />
+                {cpoLoading && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>}
+                {showAddCpo && (
+                  <button className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => { setShowAddCpo(false); setCpoSearch(""); setCpoResults([]); }}>
+                    <XIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {cpoResults.length > 0 && (
+                  <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                    {cpoResults.map((r, idx) => {
+                      const rsnap = r.customerSnapshot as any;
+                      const custName = rsnap ? [rsnap.title, rsnap.name].filter(Boolean).join(" ") : null;
+                      const alreadyLinked = linkedCpos.some((c) => c.id === r.id);
+                      return (
+                        <button
+                          key={r.id}
+                          disabled={alreadyLinked}
+                          className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${idx === cpoHighlight ? "bg-muted" : "hover:bg-muted/50"}`}
+                          onClick={() => !alreadyLinked && selectCpo(r.id)}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-mono font-medium">{r.customerPoNo}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                              r.status === "fulfilled" ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                              : r.status === "cancelled" ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                              : "bg-muted text-muted-foreground"}`}>
+                              {r.status}
+                            </span>
+                            {alreadyLinked && <span className="text-[10px] text-muted-foreground">already linked</span>}
+                          </div>
+                          {custName && <div className="text-[11px] text-muted-foreground mt-0.5">{custName}</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
-          </div>
-          <div className="flex justify-end mt-2">
-            <button
-              type="button"
-              onClick={handleToggleDummy}
-              className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              <div className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${includeDummy ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                <div className={`w-3 h-3 rounded-full bg-white shadow transition-transform ${includeDummy ? "translate-x-3" : "translate-x-0"}`} />
-              </div>
-              Include dummy quotations
-            </button>
+
+            {linkedCpos.length > 0 && !showAddCpo && (
+              <button className="text-xs text-primary hover:underline flex items-center gap-1"
+                onClick={() => setShowAddCpo(true)}>
+                <PlusIcon className="w-3 h-3" /> Add another customer PO
+              </button>
+            )}
+
+            {linkedCpos.length === 0 && (
+              <p className="text-[11px] text-muted-foreground">
+                Link customer POs that this sales order fulfils.
+              </p>
+            )}
           </div>
         </section>
 
         {/* ── 2. Customer ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Customer{linkedCustomers.length > 1 ? "s" : ""}</h2>
+          <h2 className="text-sm font-semibold mb-3">Customer</h2>
 
-          {linkedCustomers.length > 0 ? (
-            <div className="divide-y divide-border/40">
-              {linkedCustomers.map((lq) => {
-                const snap = lq.customerSnapshot;
-                if (!snap) return null;
-                const name = [snap.title, snap.name].filter(Boolean).join(" ");
-                return (
-                  <div key={lq.id} className="py-2 first:pt-0 last:pb-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-sm">{name}</span>
-                      <span className="text-[10px] text-muted-foreground font-mono shrink-0">via {lq.quotationNo}</span>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                      <BuildingIcon className="w-3 h-3 shrink-0" />{snap.organizationName || "—"}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          ) : selectedCustomer ? (
+          {selectedCustomer ? (
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -714,22 +663,20 @@ export function EditSalesOrderClient({ order, members }: Props) {
                   <th className="text-right pb-2 pr-2 w-24">Unit price</th>
                   <th className="text-right pb-2 pr-2 w-16">Disc %</th>
                   <th className="text-right pb-2 pr-2 w-24">Total</th>
-                  {linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
-                    <th className="text-left pb-2 pr-2 w-28">Customer</th>
+                  {showCpoColumn && (
+                    <th className="text-left pb-2 pr-2 w-28">From CPO</th>
                   )}
                   <th className="w-6" />
                 </tr>
               </thead>
               <tbody>
                 {items.map((item, rowIdx) => {
-                  const hasCustomers = linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
-                  const sourceQt = item.sourceQuotationId
-                    ? linkedQuotations.find((q) => q.id === item.sourceQuotationId)
+                  const sourceCpo = item.sourceCustomerPoId
+                    ? linkedCpos.find((c) => c.id === item.sourceCustomerPoId)
                     : undefined;
-                  const custName = sourceQt?.customerSnapshot
-                    ? [sourceQt.customerSnapshot.title, sourceQt.customerSnapshot.name].filter(Boolean).join(" ")
+                  const cpoCustomerName = sourceCpo?.customerSnapshot
+                    ? [sourceCpo.customerSnapshot.title, sourceCpo.customerSnapshot.name].filter(Boolean).join(" ")
                     : null;
-                  const unassignedLinked = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
                   return (
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
@@ -754,27 +701,41 @@ export function EditSalesOrderClient({ order, members }: Props) {
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
                       {fmt(parseFloat(item.totalPrice ?? "0"))}
                     </td>
-                    {hasCustomers && (
+                    {showCpoColumn && (
                       <td className="py-1.5 pr-2">
-                        {custName ? (
-                          <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground max-w-25 truncate" title={custName}>
-                            {custName}
-                          </span>
-                        ) : unassignedLinked.length > 0 ? (
+                        {sourceCpo ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-mono">
+                              {sourceCpo.customerPoNo}
+                            </span>
+                            {cpoCustomerName && (
+                              <p className="text-[10px] text-muted-foreground truncate max-w-25" title={cpoCustomerName}>
+                                {cpoCustomerName}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
                           <select
-                            value={item.sourceQuotationId ?? ""}
-                            onChange={(e) => updateItem(item._key, { sourceQuotationId: e.target.value })}
-                            className="h-6 rounded border border-border bg-background px-1 text-[10px] max-w-25"
+                            value={item.sourceCustomerPoId ?? ""}
+                            onChange={(e) => {
+                              const cpo = linkedCpos.find((c) => c.id === e.target.value);
+                              updateItem(item._key, {
+                                sourceCustomerPoId: e.target.value || "",
+                                sourceCustomerPoNo: cpo?.customerPoNo || "",
+                              } as Partial<LineItem>);
+                            }}
+                            className="h-6 rounded border border-border bg-background px-1 text-[10px] max-w-27.5"
                           >
-                            <option value="">—</option>
-                            {unassignedLinked.map((q) => {
-                              const n = q.customerSnapshot
-                                ? [q.customerSnapshot.title, q.customerSnapshot.name].filter(Boolean).join(" ")
-                                : q.quotationNo;
-                              return <option key={q.id} value={q.id}>{n}</option>;
+                            <option value="">— assign —</option>
+                            {linkedCpos.map((c) => {
+                              const csnap = c.customerSnapshot;
+                              const label = csnap
+                                ? `${c.customerPoNo} · ${[csnap.title, csnap.name].filter(Boolean).join(" ")}`
+                                : c.customerPoNo;
+                              return <option key={c.id} value={c.id}>{label}</option>;
                             })}
                           </select>
-                        ) : null}
+                        )}
                       </td>
                     )}
                     <td className="py-1.5">

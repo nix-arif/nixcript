@@ -46,10 +46,11 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(ShoppingCartIcon),
     items: [
-      { title: "Customers",    url: "/dashboard/sales/customer",    permission: "customer:read"    },
-      { title: "Quotations",   url: "/dashboard/sales/quotation",   permission: "quotation:read"   },
-      { title: "Sales Orders", url: "/dashboard/sales/order",       permission: "sales-order:read" },
-      { title: "Customer POs", url: "/dashboard/sales/customer-po", permission: "customer-po:read" },
+      { title: "Customers",    url: "/dashboard/sales/customer",      permission: "customer:read"    },
+      { title: "Quotations",   url: "/dashboard/sales/quotation",     permission: "quotation:read"   },
+      { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
+      { title: "Customer POs", url: "/dashboard/sales/customer-po",   permission: "customer-po:read" },
+      { title: "Consignment",  url: "/dashboard/sales/consignment",   permission: "sales-order:read" },
     ],
   },
   {
@@ -57,8 +58,9 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(ProcurementIcon),
     items: [
-      { title: "Suppliers",        url: "/dashboard/procurement/supplier",       permission: "supplier:read"       },
-      { title: "Requisitions & PO", url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
+      { title: "Suppliers",         url: "/dashboard/procurement/supplier",        permission: "supplier:read"       },
+      { title: "Requisitions & PO", url: "/dashboard/procurement/purchase-order",  permission: "purchase-order:read" },
+      { title: "Goods Receipts",    url: "/dashboard/procurement/goods-receipt",   permission: "purchase-order:read" },
     ],
   },
   {

@@ -1,4 +1,4 @@
-export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "do" | "inv";
+export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "do" | "inv" | "co";
 
 export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string }> = {
   qt:  { docCode: "QT",  label: "Quotation" },
@@ -8,6 +8,7 @@ export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string
   gr:  { docCode: "GR",  label: "Goods Receipt" },
   do:  { docCode: "DO",  label: "Delivery Order" },
   inv: { docCode: "INV", label: "Invoice" },
+  co:  { docCode: "CO",  label: "Consignment" },
 };
 
 export type NumberFormat = "standard" | "compact";

@@ -22,12 +22,23 @@ import {
 import type { StockWithProduct, Warehouse } from "@/server/inventory";
 import { adjustStock, setReorderPoint, transferStock, searchProducts } from "@/server/inventory";
 import { MOVEMENT_TYPE } from "@/lib/inventory/constants";
+import type { ConsignmentItemRow } from "@/server/consignment";
 
 interface Product { id: string; productCode: string; description: string | null; uom: string | null }
+type ActiveConsignment = {
+  consignmentId: string;
+  consignmentNo: string;
+  customerName: string | null;
+  customerOrg: string | null;
+  sentDate: Date | null;
+  item: ConsignmentItemRow;
+};
+
 interface Props {
   inventory: StockWithProduct[];
   warehouses: Warehouse[];
   permissions: string[];
+  activeConsignments?: ActiveConsignment[];
 }
 
 function ProductSearch({ value, onChange }: { value: string; onChange: (id: string, code: string) => void }) {
@@ -112,7 +123,7 @@ function fmt(v: string | number) {
   return parseFloat(String(v)).toLocaleString("en-MY", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 }
 
-export function InventoryClient({ inventory, warehouses, permissions }: Props) {
+export function InventoryClient({ inventory, warehouses, permissions, activeConsignments = [] }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [search, setSearch] = useState("");
@@ -323,6 +334,55 @@ export function InventoryClient({ inventory, warehouses, permissions }: Props) {
           </Table>
         </div>
       ))}
+
+      {/* ── Consignment Section ──────────────────────────────────────────── */}
+      {activeConsignments.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            Active Consignments ({activeConsignments.length} item{activeConsignments.length !== 1 ? "s" : ""})
+          </h2>
+          <div className="rounded-lg border border-border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/20">
+                  <TableHead>CO No.</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Item</TableHead>
+                  <TableHead className="text-center w-16">OUM</TableHead>
+                  <TableHead className="text-right w-24">Sent</TableHead>
+                  <TableHead className="text-right w-24">Used</TableHead>
+                  <TableHead className="text-right w-24">Returned</TableHead>
+                  <TableHead className="text-right w-24">Remaining</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {activeConsignments.map(({ consignmentId, consignmentNo, customerName, customerOrg, item }) => {
+                  const remaining = parseFloat(item.qtySent) - parseFloat(item.qtyUsed) - parseFloat(item.qtyReturned);
+                  return (
+                    <TableRow
+                      key={`${consignmentId}-${item.id}`}
+                      className="cursor-pointer hover:bg-muted/30"
+                      onClick={() => router.push(`/dashboard/sales/consignment/${consignmentId}`)}
+                    >
+                      <TableCell className="text-xs font-medium">{consignmentNo}</TableCell>
+                      <TableCell className="text-sm">
+                        <p>{customerName ?? "—"}</p>
+                        {customerOrg && <p className="text-xs text-muted-foreground">{customerOrg}</p>}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{item.description}</TableCell>
+                      <TableCell className="text-center text-xs text-muted-foreground">{item.uom ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmt(item.qtySent)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-orange-600 dark:text-orange-400">{fmt(item.qtyUsed)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-green-600 dark:text-green-400">{fmt(item.qtyReturned)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">{fmt(remaining)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
 
       {/* ── Stock Movement Sheet ─────────────────────────────────────────── */}
       <Sheet open={adjustOpen} onOpenChange={open => { if (!saving) setAdjustOpen(open); }}>

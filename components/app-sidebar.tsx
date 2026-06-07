@@ -32,16 +32,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>
+      <SidebarHeader className="border-b border-sidebar-border/60 pb-2">
         <OrganizationSwitcher />
       </SidebarHeader>
-      <SidebarContent>
-        <div className={permissionsLoading ? "pointer-events-none opacity-40 transition-opacity" : "transition-opacity"}>
+      <SidebarContent className="overflow-y-auto">
+        <div className={`transition-opacity duration-150 ${permissionsLoading ? "pointer-events-none opacity-30" : "opacity-100"}`}>
           <NavMain items={filteredNav} />
         </div>
-        {/* <NavProjects projects={projects} /> */}
       </SidebarContent>
-      <SidebarFooter>
+      <SidebarFooter className="border-t border-sidebar-border/60 pt-2">
         <NavUser />
       </SidebarFooter>
       <SidebarRail />

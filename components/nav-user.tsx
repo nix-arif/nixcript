@@ -4,9 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -16,23 +14,10 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { User } from "@/db/schema";
 import { authClient } from "@/lib/auth-client";
 import { useAppStore } from "@/lib/store/use-app-store";
-import {
-  ChevronsUpDownIcon,
-  SparklesIcon,
-  BadgeCheckIcon,
-  CreditCardIcon,
-  BellIcon,
-  LogOutIcon,
-} from "lucide-react";
+import { ChevronsUpDownIcon, UserCircleIcon, LogOutIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-
-// interface NavUserProps {
-//   user: User | null;
-// }
 
 export function NavUser() {
   const { isMobile } = useSidebar();
@@ -44,18 +29,11 @@ export function NavUser() {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton size="lg" disabled>
-            <Avatar className="h-8 w-8 rounded-lg">
-              <AvatarFallback
-                className="rounded-lg animate-pulse bg-muted"
-                suppressHydrationWarning
-              >
-                &nbsp;
-              </AvatarFallback>
-            </Avatar>
-            <div className="grid flex-1 gap-1">
-              <div className="h-3 w-24 rounded bg-muted animate-pulse" />
-              <div className="h-2.5 w-32 rounded bg-muted animate-pulse" />
+          <SidebarMenuButton size="lg" disabled className="gap-3">
+            <div className="size-8 rounded-full bg-muted animate-pulse shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-2.5 w-20 rounded bg-muted animate-pulse" />
+              <div className="h-2 w-28 rounded bg-muted animate-pulse" />
             </div>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -65,6 +43,9 @@ export function NavUser() {
 
   if (!session?.user) return null;
   const user = session.user;
+  const initials = user.name
+    ? user.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase()
+    : "??";
 
   const handleSignOut = async () => {
     clearPermissions();
@@ -79,72 +60,60 @@ export function NavUser() {
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground gap-3"
             >
-              <Avatar className="h-8 w-8 rounded-lg">
+              <Avatar className="size-8 rounded-full shrink-0">
                 {user.image && <AvatarImage src={user.image} alt={user.name} />}
-                <AvatarFallback className="rounded-lg" suppressHydrationWarning>
-                  {user.name?.slice(0, 2).toUpperCase() ?? "??"}
+                <AvatarFallback className="rounded-full text-xs font-semibold" suppressHydrationWarning>
+                  {initials}
                 </AvatarFallback>
               </Avatar>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{user.name}</span>
-                <span className="truncate text-xs">{user.email}</span>
+              <div className="grid flex-1 text-left leading-tight">
+                <span className="truncate text-sm font-semibold">{user.name}</span>
+                <span className="truncate text-[11px] text-muted-foreground">{user.email}</span>
               </div>
-              <ChevronsUpDownIcon className="ml-auto size-4" />
+              <ChevronsUpDownIcon className="ml-auto size-4 text-muted-foreground shrink-0" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
+
           <DropdownMenuContent
-            className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+            className="w-(--radix-dropdown-menu-trigger-width) min-w-60 rounded-xl p-1.5"
             side={isMobile ? "bottom" : "right"}
             align="end"
-            sideOffset={4}
+            sideOffset={6}
           >
-            <DropdownMenuLabel className="p-0 font-normal">
-              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                <Avatar className="h-8 w-8 rounded-lg">
-                  {user.image && (
-                    <AvatarImage src={user.image} alt={user.name} />
-                  )}
-                  <AvatarFallback
-                    className="rounded-lg"
-                    suppressHydrationWarning
-                  >
-                    {user.name?.slice(0, 2).toUpperCase() ?? "??"}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">{user.name}</span>
-                  <span className="truncate text-xs">{user.email}</span>
-                </div>
+            {/* User info header */}
+            <div className="flex items-center gap-2.5 px-2 py-2 mb-1">
+              <Avatar className="size-9 rounded-full shrink-0">
+                {user.image && <AvatarImage src={user.image} alt={user.name} />}
+                <AvatarFallback className="rounded-full text-xs font-semibold" suppressHydrationWarning>
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
+              <div className="grid flex-1 leading-tight min-w-0">
+                <span className="truncate text-sm font-semibold">{user.name}</span>
+                <span className="truncate text-[11px] text-muted-foreground">{user.email}</span>
               </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <SparklesIcon />
-                Upgrade to Pro
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <BadgeCheckIcon />
-                Account
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <CreditCardIcon />
-                Billing
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <BellIcon />
-                Notifications
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleSignOut}>
-              <LogOutIcon />
-              Log out
+            </div>
+
+            <DropdownMenuSeparator className="my-1" />
+
+            <DropdownMenuItem
+              className="flex items-center gap-2.5 px-2 py-2 rounded-lg cursor-pointer"
+              onClick={() => router.push("/dashboard/profile/my-profile")}
+            >
+              <UserCircleIcon className="size-4 text-muted-foreground" />
+              <span className="text-sm">My profile</span>
+            </DropdownMenuItem>
+
+            <DropdownMenuSeparator className="my-1" />
+
+            <DropdownMenuItem
+              className="flex items-center gap-2.5 px-2 py-2 rounded-lg cursor-pointer text-destructive focus:text-destructive"
+              onClick={handleSignOut}
+            >
+              <LogOutIcon className="size-4" />
+              <span className="text-sm">Log out</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

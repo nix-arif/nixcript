@@ -14,9 +14,10 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, inArray, or } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, inArray, or, isNull, notInArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
+import { createNotification, getSoApprovers } from "@/server/notifications";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -72,19 +73,34 @@ async function requireAccess(permission: string) {
 
 export type CustomerPo = typeof customerPurchaseOrder.$inferSelect;
 
+export type CpoItemInput = {
+  rowNo: number;
+  productCode: string;
+  description: string;
+  qty: string;
+  uom: string;
+  unitPrice: string;
+  discountPct: string;
+  totalPrice: string;
+  lineType: string;
+};
+
 export interface CreateCustomerPoInput {
   customerPoNo: string;
   customerId?: string;
   customerCompanyId?: string;
   quotationId?: string;
   quotationNo?: string;
+  quotationLinks?: { quotationId: string; quotationNo: string }[];
   salesOrderId?: string;
   salesOrderNo?: string;
+  items?: CpoItemInput[];
   amount?: string;
   currency?: string;
   documentKey?: string;
   notes?: string;
   receivedDate?: Date;
+  deliveryDate?: Date;
   status?: string;
 }
 
@@ -101,6 +117,29 @@ export async function getCustomerPos(): Promise<CustomerPo[]> {
     .orderBy(desc(customerPurchaseOrder.createdAt));
 }
 
+export async function getOpenCustomerPos(): Promise<CustomerPoSearchResult[]> {
+  const { orgId } = await requireAccess("customer-po:read");
+  return db
+    .select({
+      id: customerPurchaseOrder.id,
+      customerPoNo: customerPurchaseOrder.customerPoNo,
+      customerId: customerPurchaseOrder.customerId,
+      customerSnapshot: customerPurchaseOrder.customerSnapshot,
+      amount: customerPurchaseOrder.amount,
+      currency: customerPurchaseOrder.currency,
+      status: customerPurchaseOrder.status,
+    })
+    .from(customerPurchaseOrder)
+    .where(
+      and(
+        eq(customerPurchaseOrder.organizationId, orgId),
+        isNull(customerPurchaseOrder.salesOrderId),
+        notInArray(customerPurchaseOrder.status, ["cancelled", "fulfilled"]),
+      ),
+    )
+    .orderBy(desc(customerPurchaseOrder.createdAt));
+}
+
 export async function getCustomerPoDetail(id: string): Promise<CustomerPo | null> {
   const { orgId } = await requireAccess("customer-po:read");
   const [row] = await db
@@ -108,6 +147,80 @@ export async function getCustomerPoDetail(id: string): Promise<CustomerPo | null
     .from(customerPurchaseOrder)
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
   return row ?? null;
+}
+
+export type CustomerPoForSoCreate = {
+  id: string;
+  customerPoNo: string;
+  customerId: string | null;
+  customerSnapshot: {
+    title?: string; name: string; organizationName?: string;
+    organizationAddress?: string; email?: string; contactNo?: string;
+  } | null;
+  quotationId: string | null;
+  quotationNo: string | null;
+  quotationLinks: { quotationId: string; quotationNo: string }[] | null;
+  salesOrderId: string | null;
+  amount: string;
+  currency: string;
+  items: CpoItemInput[] | null;
+};
+
+export async function getCustomerPoForSoCreate(id: string): Promise<CustomerPoForSoCreate | null> {
+  const { orgId } = await requireAccess("customer-po:read");
+  const [row] = await db
+    .select({
+      id: customerPurchaseOrder.id,
+      customerPoNo: customerPurchaseOrder.customerPoNo,
+      customerId: customerPurchaseOrder.customerId,
+      customerSnapshot: customerPurchaseOrder.customerSnapshot,
+      quotationId: customerPurchaseOrder.quotationId,
+      quotationNo: customerPurchaseOrder.quotationNo,
+      quotationLinks: customerPurchaseOrder.quotationLinks,
+      salesOrderId: customerPurchaseOrder.salesOrderId,
+      amount: customerPurchaseOrder.amount,
+      currency: customerPurchaseOrder.currency,
+      items: customerPurchaseOrder.items,
+    })
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
+  return row ?? null;
+}
+
+export type CustomerPoSearchResult = {
+  id: string;
+  customerPoNo: string;
+  customerId: string | null;
+  customerSnapshot: {
+    title?: string; name: string; organizationName?: string;
+  } | null;
+  amount: string;
+  currency: string;
+  status: string;
+};
+
+export async function searchCustomerPosByNo(query: string): Promise<CustomerPoSearchResult[]> {
+  const { orgId } = await requireAccess("customer-po:read");
+  const rows = await db
+    .select({
+      id: customerPurchaseOrder.id,
+      customerPoNo: customerPurchaseOrder.customerPoNo,
+      customerId: customerPurchaseOrder.customerId,
+      customerSnapshot: customerPurchaseOrder.customerSnapshot,
+      amount: customerPurchaseOrder.amount,
+      currency: customerPurchaseOrder.currency,
+      status: customerPurchaseOrder.status,
+    })
+    .from(customerPurchaseOrder)
+    .where(
+      and(
+        eq(customerPurchaseOrder.organizationId, orgId),
+        ilike(customerPurchaseOrder.customerPoNo, `%${query}%`),
+      ),
+    )
+    .orderBy(desc(customerPurchaseOrder.createdAt))
+    .limit(10);
+  return rows;
 }
 
 export async function getCustomerPosByCustomer(customerId: string): Promise<CustomerPo[]> {
@@ -164,19 +277,50 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
       customerPoNo: input.customerPoNo,
       customerId: input.customerId ?? null,
       customerSnapshot,
-      quotationId: input.quotationId ?? null,
-      quotationNo: input.quotationNo ?? null,
+      quotationId: input.quotationLinks?.[0]?.quotationId ?? input.quotationId ?? null,
+      quotationNo: input.quotationLinks?.[0]?.quotationNo ?? input.quotationNo ?? null,
+      quotationLinks: input.quotationLinks && input.quotationLinks.length > 0 ? input.quotationLinks : null,
       salesOrderId: input.salesOrderId ?? null,
       salesOrderNo: input.salesOrderNo ?? null,
+      items: input.items ?? null,
       amount: input.amount ?? "0",
       currency: input.currency ?? "MYR",
       documentKey: input.documentKey ?? null,
       notes: input.notes ?? null,
       receivedDate: input.receivedDate ?? null,
+      deliveryDate: input.deliveryDate ?? null,
       status: input.status ?? "received",
       createdBy: userId,
     })
     .returning();
+
+  // Notify sales approvers that a new Customer PO needs a Sales Order
+  try {
+    const approvers = await getSoApprovers(orgId);
+    const snap = customerSnapshot as any;
+    const customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+    const body = customerName
+      ? `${customerName} sent a PO that requires a Sales Order to be created.`
+      : "A new Customer PO has been received and requires a Sales Order.";
+
+    await Promise.all(
+      approvers
+        .filter((uid) => uid !== userId) // don't notify self
+        .map((uid) =>
+          createNotification({
+            organizationId: orgId,
+            userId: uid,
+            type: "cpo:received",
+            title: `New Customer PO: ${input.customerPoNo}`,
+            body,
+            link: `/dashboard/sales/customer-po/${row.id}`,
+          }),
+        ),
+    );
+  } catch {
+    // Notification failure must never break CPO creation
+  }
+
   return row;
 }
 
@@ -197,15 +341,20 @@ export async function updateCustomerPo(input: UpdateCustomerPoInput): Promise<Cu
     .update(customerPurchaseOrder)
     .set({
       customerPoNo: input.customerPoNo,
-      quotationId: input.quotationId ?? null,
-      quotationNo: input.quotationNo ?? null,
+      quotationId: input.quotationLinks?.[0]?.quotationId ?? input.quotationId ?? null,
+      quotationNo: input.quotationLinks?.[0]?.quotationNo ?? input.quotationNo ?? null,
+      quotationLinks: input.quotationLinks !== undefined
+        ? (input.quotationLinks && input.quotationLinks.length > 0 ? input.quotationLinks : null)
+        : existing.quotationLinks,
       salesOrderId: input.salesOrderId ?? null,
       salesOrderNo: input.salesOrderNo ?? null,
+      items: input.items !== undefined ? (input.items ?? null) : existing.items,
       amount: input.amount ?? existing.amount,
       currency: input.currency ?? existing.currency,
       documentKey: input.documentKey !== undefined ? input.documentKey : existing.documentKey,
       notes: input.notes ?? null,
       receivedDate: input.receivedDate ?? null,
+      deliveryDate: input.deliveryDate !== undefined ? (input.deliveryDate ?? null) : existing.deliveryDate,
       status: input.status ?? existing.status,
     })
     .where(eq(customerPurchaseOrder.id, input.id))

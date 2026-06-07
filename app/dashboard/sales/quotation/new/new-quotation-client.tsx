@@ -303,44 +303,32 @@ export function NewQuotationClient({
         const ws = wb.Sheets[wb.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json<any>(ws, { defval: "" });
 
-        const rows: SpreadsheetRow[] = json
+        // Normalize all column keys to lowercase+trimmed for case-insensitive matching
+        const normalizedJson = json.map((row: any) =>
+          Object.fromEntries(
+            Object.entries(row).map(([k, v]) => [k.toLowerCase().trim().replace(/\s+/g, " "), v]),
+          ),
+        );
+
+        const col = (row: any, ...names: string[]) => {
+          for (const n of names) {
+            const v = row[n.toLowerCase().trim().replace(/\s+/g, " ")];
+            if (v !== undefined && v !== "") return String(v);
+          }
+          return "";
+        };
+
+        const rows: SpreadsheetRow[] = normalizedJson
           .map((row: any, i: number) => ({
-            rowNo: parseRowNo(row["No"] ?? row["no"] ?? row["NO"] ?? row["#"], i + 1),
-            sku: String(row["SKU"] ?? row["sku"] ?? "").trim(),
-            productCode: String(
-              row["Product Code"] ??
-                row["product_code"] ??
-                row["ProductCode"] ??
-                row["product code"] ??
-                "",
-            ).trim(),
-            description: String(
-              row["Description"] ?? row["description"] ?? "",
-            ).trim(),
-            qty: String(row["Qty"] ?? row["qty"] ?? row["QTY"] ?? "1").trim(),
-            uom: String(row["UOM"] ?? row["uom"] ?? "").trim(),
-            unitPrice: String(
-              row["Unit Price"] ??
-                row["unit_price"] ??
-                row["UnitPrice"] ??
-                row["unit price"] ??
-                "",
-            ).trim(),
-            discountPct: String(
-              row["Disc %"] ??
-                row["Disc"] ??
-                row["disc"] ??
-                row["Discount %"] ??
-                row["Discount"] ??
-                row["discount"] ??
-                "",
-            ).trim(),
-            totalPrice: String(
-              row["Total Price"] ??
-                row["total_price"] ??
-                row["TotalPrice"] ??
-                "",
-            ).trim(),
+            rowNo: parseRowNo(col(row, "No", "no", "#") || String(i + 1), i + 1),
+            sku: col(row, "SKU", "sku").trim(),
+            productCode: col(row, "Product Code", "product_code", "ProductCode", "Code", "Kode").trim(),
+            description: col(row, "Description", "Desc", "Nama", "Item", "Item Description").trim(),
+            qty: col(row, "Qty", "QTY", "Quantity", "Kuantiti") || "1",
+            uom: col(row, "UOM", "OUM", "Uom", "Oum", "Unit", "Unit of Measure", "unit_of_measure", "Satuan").trim(),
+            unitPrice: col(row, "Unit Price", "unit_price", "UnitPrice", "Price", "Harga").trim(),
+            discountPct: col(row, "Disc %", "Disc", "Discount %", "Discount", "Diskaun").trim(),
+            totalPrice: col(row, "Total Price", "total_price", "TotalPrice", "Total").trim(),
           }))
           .filter((r) => r.productCode || r.description);
 
@@ -963,7 +951,7 @@ export function NewQuotationClient({
                     "Product Code",
                     "Description",
                     "Qty",
-                    "UOM",
+                    "OUM",
                     "Unit Price",
                     "Disc %",
                     "Total Price",
@@ -1046,7 +1034,7 @@ export function NewQuotationClient({
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-muted/20">
-                    {["#", "Code", "Description", "Qty", "UOM", "Unit price", "Disc %", "Total", ""].map((h) => (
+                    {["#", "Code", "Description", "Qty", "OUM", "Unit price", "Disc %", "Total", ""].map((h) => (
                       <th
                         key={h}
                         className={cn(
@@ -1173,7 +1161,20 @@ export function NewQuotationClient({
                           </td>
 
                           {/* UOM */}
-                          <td className="px-3 py-1.5 text-muted-foreground">{item.uom || "—"}</td>
+                          <td className="px-3 py-1.5">
+                            <div className="flex items-center gap-0.5">
+                              <input
+                                type="text"
+                                value={item.uom ?? ""}
+                                onChange={(e) => updateItemField(idx, { uom: e.target.value })}
+                                className="w-14 h-6 border border-input rounded px-1.5 text-xs bg-background"
+                                placeholder="—"
+                              />
+                              {item.uomSource === "sheet" && (
+                                <span className="text-[9px] text-blue-500">s</span>
+                              )}
+                            </div>
+                          </td>
 
                           {/* Unit price */}
                           <td className="px-3 py-1.5 text-right">

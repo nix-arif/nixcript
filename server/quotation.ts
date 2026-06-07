@@ -5,6 +5,7 @@ import {
   quotation,
   quotationItem,
   quotationCounter,
+  customerPurchaseOrder,
   customer,
   customerCompany,
   user,
@@ -15,7 +16,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc, inArray, sql, ilike } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql, ilike, count } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -819,13 +820,14 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
 
   // Match against the running number only (part after the last "-")
   // e.g. typing "42" matches "BMS-QT-2025-0042", not the prefix
-  return db
+  const rows = await db
     .select({
       id: quotation.id,
       quotationNo: quotation.quotationNo,
       status: quotation.status,
       isDummy: quotation.isDummy,
       grandTotal: quotation.grandTotal,
+      customerId: quotation.customerId,
       customerSnapshot: quotation.customerSnapshot,
       createdAt: quotation.createdAt,
     })
@@ -840,6 +842,21 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
     )
     .orderBy(asc(quotation.isDummy), desc(quotation.createdAt))
     .limit(10);
+
+  if (rows.length === 0) return rows.map((r) => ({ ...r, cpoCount: 0 }));
+
+  // Count existing CPOs per quotation so the UI can show "2 CPOs already"
+  const qtIds = rows.map((r) => r.id);
+  const cpoCounts = await db
+    .select({ quotationId: customerPurchaseOrder.quotationId, cnt: count() })
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.organizationId, orgId), inArray(customerPurchaseOrder.quotationId, qtIds)))
+    .groupBy(customerPurchaseOrder.quotationId);
+
+  const cpoCountMap: Record<string, number> = {};
+  for (const c of cpoCounts) if (c.quotationId) cpoCountMap[c.quotationId] = c.cnt;
+
+  return rows.map((r) => ({ ...r, cpoCount: cpoCountMap[r.id] ?? 0 }));
 }
 
 // ── Fetch quotation with items for SO pre-fill ───────────────────────────

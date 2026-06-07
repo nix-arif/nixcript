@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -14,6 +14,11 @@ import {
   getQuotationForSO,
   type QuotationForSO,
 } from "@/server/quotation";
+import {
+  getCustomerPoForSoCreate,
+  searchCustomerPosByNo,
+  type CustomerPoSearchResult,
+} from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +34,10 @@ import {
   XIcon,
   BuildingIcon,
   FileTextIcon,
+  LinkIcon,
+  ChevronDownIcon,
 } from "lucide-react";
+import type { CustomerPoForSoCreate } from "@/server/customer-purchase-order";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
@@ -44,6 +52,16 @@ type LinkedQuotation = {
   } | null;
 };
 
+type LinkedCpo = {
+  id: string;
+  customerPoNo: string;
+  customerId: string | null;
+  customerSnapshot: {
+    title?: string; name: string; organizationName?: string;
+    organizationAddress?: string; email?: string; contactNo?: string;
+  } | null;
+};
+
 interface LineItem extends SalesOrderItemInput {
   _key: string;
   lineType: "sell" | "rent";
@@ -53,6 +71,8 @@ interface LineItem extends SalesOrderItemInput {
   setGroupLabel: string;
   setQty: string;
   sourceQuotationId: string;
+  sourceCustomerPoId: string;
+  sourceCustomerPoNo: string;
 }
 
 const newLine = (rowNo: number): LineItem => ({
@@ -73,6 +93,8 @@ const newLine = (rowNo: number): LineItem => ({
   setGroupLabel: "",
   setQty: "",
   sourceQuotationId: "",
+  sourceCustomerPoId: "",
+  sourceCustomerPoNo: "",
 });
 
 function calcLine(item: LineItem): LineItem {
@@ -96,12 +118,25 @@ const fmt = (n: number) => `RM ${n.toLocaleString("en-MY", { minimumFractionDigi
 
 interface Props {
   members: OrgMember[];
+  cpo?: CustomerPoForSoCreate | null;
+  openCpos?: CustomerPoSearchResult[];
 }
 
-export function CreateSalesOrderClient({ members }: Props) {
+export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
   const router = useRouter();
 
-  // Quotation search
+  // Customer PO combobox
+  const [linkedCpos, setLinkedCpos] = useState<LinkedCpo[]>([]);
+  const [cpoSearch, setCpoSearch] = useState("");
+  const [cpoResults, setCpoResults] = useState<CustomerPoSearchResult[]>([]);
+  const [cpoHighlight, setCpoHighlight] = useState(-1);
+  const [cpoLoading, setCpoLoading] = useState(false);
+  const [cpoDropdownOpen, setCpoDropdownOpen] = useState(false);
+  const cpoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cpoDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Quotation search (optional)
+  const [showQtSection, setShowQtSection] = useState(false);
   const [qtSearch, setQtSearch] = useState("");
   const [qtResults, setQtResults] = useState<Awaited<ReturnType<typeof searchQuotationsByNo>>>([]);
   const [qtHighlight, setQtHighlight] = useState(-1);
@@ -133,6 +168,210 @@ export function CreateSalesOrderClient({ members }: Props) {
 
   const [saving, setSaving] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
+
+  // ── Pre-select CPO from prop on mount ───────────────────────────────────────
+  useEffect(() => {
+    if (!cpo) return;
+    const linked: LinkedCpo = {
+      id: cpo.id,
+      customerPoNo: cpo.customerPoNo,
+      customerId: cpo.customerId,
+      customerSnapshot: cpo.customerSnapshot,
+    };
+    setLinkedCpos([linked]);
+    // Import items from CPO, tag with source CPO
+    if (cpo.items && cpo.items.length > 0) {
+      setItems(
+        cpo.items.map((item, idx) =>
+          calcLine({
+            _key: crypto.randomUUID(),
+            rowNo: idx + 1,
+            productCode: item.productCode ?? "",
+            description: item.description ?? "",
+            qty: String(item.qty ?? "1"),
+            uom: item.uom ?? "",
+            unitPrice: String(item.unitPrice ?? "0"),
+            discountPct: String(item.discountPct ?? "0"),
+            discountAmt: "0",
+            totalPrice: String(item.totalPrice ?? "0"),
+            lineType: (item.lineType ?? "sell") as "sell" | "rent",
+            rentalDuration: "",
+            rentalUnit: "case",
+            setGroupId: "",
+            setGroupLabel: "",
+            setQty: "",
+            sourceQuotationId: "",
+            sourceCustomerPoId: cpo.id,
+            sourceCustomerPoNo: cpo.customerPoNo,
+          }),
+        ),
+      );
+    }
+    // Auto-fill customer from CPO
+    if (cpo.customerId) {
+      getCustomer(cpo.customerId)
+        .then((cust) => {
+          if (!cust) return;
+          setSelectedCustomer(cust as unknown as Customer);
+          const primary = cust.companies.find((c) => c.isPrimary) ?? cust.companies[0];
+          if (primary) setCustCompanyId(primary.id);
+        })
+        .catch(() => {
+          const snap = cpo.customerSnapshot;
+          if (!snap) return;
+          setSelectedCustomer({
+            id: cpo.customerId!,
+            title: snap.title ?? null,
+            name: snap.name ?? "",
+            contactNo: snap.contactNo ?? null,
+            email: snap.email ?? null,
+            createdAt: new Date(),
+            createdByName: null,
+            companies: snap.organizationName
+              ? [{ id: "__snap__", customerId: cpo.customerId!, organizationName: snap.organizationName, organizationAddress: snap.organizationAddress ?? null, isPrimary: true, createdAt: new Date() }]
+              : [],
+          } as unknown as Customer);
+          if (snap.organizationName) setCustCompanyId("__snap__");
+        });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (cpoDropdownRef.current && !cpoDropdownRef.current.contains(e.target as Node)) {
+        setCpoDropdownOpen(false);
+        setCpoSearch("");
+        setCpoResults([]);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // ── Customer PO search ──────────────────────────────────────────────────────
+
+  const handleCpoSearch = useCallback((val: string) => {
+    setCpoSearch(val);
+    setCpoHighlight(-1);
+    if (val.length < 2) { setCpoResults([]); return; }
+    if (cpoTimer.current) clearTimeout(cpoTimer.current);
+    cpoTimer.current = setTimeout(async () => {
+      setCpoResults(await searchCustomerPosByNo(val));
+      setCpoHighlight(-1);
+    }, 300);
+  }, []);
+
+  function handleCpoKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!cpoResults.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setCpoHighlight((i) => Math.min(i + 1, cpoResults.length - 1)); return; }
+    if (e.key === "ArrowUp")   { e.preventDefault(); setCpoHighlight((i) => Math.max(i - 1, 0)); return; }
+    if (e.key === "Enter")     { e.preventDefault(); const r = cpoResults[cpoHighlight] ?? cpoResults[0]; if (r) selectCpo(r.id); return; }
+    if (e.key === "Escape")    { setCpoResults([]); setCpoHighlight(-1); setCpoDropdownOpen(false); }
+  }
+
+  async function selectCpo(cpoId: string) {
+    if (linkedCpos.some((c) => c.id === cpoId)) {
+      toast.error("This customer PO is already linked");
+      setCpoSearch(""); setCpoResults([]);
+      return;
+    }
+    setCpoSearch(""); setCpoResults([]); setCpoLoading(true);
+    try {
+      const data = await getCustomerPoForSoCreate(cpoId);
+      if (!data) return;
+
+      const linked: LinkedCpo = {
+        id: data.id,
+        customerPoNo: data.customerPoNo,
+        customerId: data.customerId,
+        customerSnapshot: data.customerSnapshot,
+      };
+      setLinkedCpos((prev) => [...prev, linked]);
+
+      // Import CPO items (append), tag with source CPO for multi-customer tracking
+      if (data.items && data.items.length > 0) {
+        setItems((prev) => {
+          const base = prev.filter((i) => i.description || i.productCode);
+          const newItems = (data.items ?? []).map((item) =>
+            calcLine({
+              _key: crypto.randomUUID(),
+              rowNo: 0,
+              productCode: item.productCode ?? "",
+              description: item.description ?? "",
+              qty: String(item.qty ?? "1"),
+              uom: item.uom ?? "",
+              unitPrice: String(item.unitPrice ?? "0"),
+              discountPct: String(item.discountPct ?? "0"),
+              discountAmt: "0",
+              totalPrice: String(item.totalPrice ?? "0"),
+              lineType: (item.lineType ?? "sell") as "sell" | "rent",
+              rentalDuration: "",
+              rentalUnit: "case",
+              setGroupId: "",
+              setGroupLabel: "",
+              setQty: "",
+              sourceQuotationId: "",
+              sourceCustomerPoId: data.id,
+              sourceCustomerPoNo: data.customerPoNo,
+            }),
+          );
+          return [...base, ...newItems].map((i, idx) => ({ ...i, rowNo: idx + 1 }));
+        });
+      }
+
+      // Auto-fill customer from first CPO
+      if (linkedCpos.length === 0 && data.customerId && !selectedCustomer) {
+        getCustomer(data.customerId)
+          .then((cust) => {
+            if (!cust) return;
+            setSelectedCustomer(cust as unknown as Customer);
+            const primary = cust.companies.find((c) => c.isPrimary) ?? cust.companies[0];
+            if (primary) setCustCompanyId(primary.id);
+          })
+          .catch(() => {
+            const snap = data.customerSnapshot;
+            if (!snap) return;
+            setSelectedCustomer({
+              id: data.customerId!,
+              title: snap.title ?? null,
+              name: snap.name ?? "",
+              contactNo: snap.contactNo ?? null,
+              email: snap.email ?? null,
+              createdAt: new Date(),
+              createdByName: null,
+              companies: snap.organizationName
+                ? [{ id: "__snap__", customerId: data.customerId!, organizationName: snap.organizationName, organizationAddress: snap.organizationAddress ?? null, isPrimary: true, createdAt: new Date() }]
+                : [],
+            } as unknown as Customer);
+            if (snap.organizationName) setCustCompanyId("__snap__");
+          });
+      }
+      setCpoSearch("");
+      setCpoResults([]);
+    } catch {
+      toast.error("Failed to load customer PO");
+    } finally {
+      setCpoLoading(false);
+    }
+  }
+
+  function removeCpo(id: string) {
+    setLinkedCpos((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      if (next.length === 0) {
+        setSelectedCustomer(null);
+        setCustCompanyId(undefined);
+      }
+      return next;
+    });
+    setItems((prev) => {
+      const remaining = prev
+        .filter((i) => i.sourceCustomerPoId !== id)
+        .map((i, idx) => ({ ...i, rowNo: idx + 1 }));
+      return remaining.length > 0 ? remaining : [newLine(1)];
+    });
+  }
 
   // ── Quotation search ────────────────────────────────────────────────────────
 
@@ -211,6 +450,8 @@ export function CreateSalesOrderClient({ members }: Props) {
           setGroupLabel: item.setGroupLabel ?? "",
           setQty: item.setQty ?? "",
           sourceQuotationId: qt.id,
+          sourceCustomerPoId: "",
+          sourceCustomerPoNo: "",
         }),
       );
       setItems((prev) => {
@@ -357,7 +598,10 @@ export function CreateSalesOrderClient({ members }: Props) {
   // ── Save ────────────────────────────────────────────────────────────────────
 
   async function buildAndCreate() {
-    const primaryCustomerId = selectedCustomer?.id ?? linkedQuotations.find((q) => q.customerId)?.customerId ?? null;
+    const primaryCustomerId = selectedCustomer?.id
+      ?? linkedCpos.find((c) => c.customerId)?.customerId
+      ?? linkedQuotations.find((q) => q.customerId)?.customerId
+      ?? null;
     if (!primaryCustomerId) { toast.error("Please select a customer"); return null; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
 
@@ -365,6 +609,9 @@ export function CreateSalesOrderClient({ members }: Props) {
     return createSalesOrder({
       customerId: primaryCustomerId,
       customerCompanyId: selectedCustomer ? custCompanyId : undefined,
+      customerPoLinks: linkedCpos.length > 0
+        ? linkedCpos.map((c) => ({ customerPoId: c.id, customerPoNo: c.customerPoNo }))
+        : undefined,
       linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
       salesPersonName: salesPerson || undefined,
       associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
@@ -377,7 +624,7 @@ export function CreateSalesOrderClient({ members }: Props) {
       sstPct,
       sst: sstAmt.toFixed(2),
       grandTotal: grand.toFixed(2),
-      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, ...rest }) => ({
+      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, ...rest }) => ({
         ...rest,
         lineType,
         rentalDuration: rentalDuration || undefined,
@@ -386,6 +633,8 @@ export function CreateSalesOrderClient({ members }: Props) {
         setGroupLabel: setGroupLabel || undefined,
         setQty: setQty || undefined,
         sourceQuotationId: sourceQuotationId || undefined,
+        sourceCustomerPoId: sourceCustomerPoId || undefined,
+        sourceCustomerPoNo: sourceCustomerPoNo || undefined,
       })),
     });
   }
@@ -396,7 +645,7 @@ export function CreateSalesOrderClient({ members }: Props) {
       const so = await buildAndCreate();
       if (!so) return;
       toast.success("Sales order created");
-      router.push("/dashboard/sales/order");
+      router.push(cpo ? `/dashboard/sales/customer-po/${cpo.id}` : "/dashboard/sales/order");
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -411,7 +660,7 @@ export function CreateSalesOrderClient({ members }: Props) {
       if (!so) return;
       await submitSalesOrder(so.id);
       toast.success("Sales order created and submitted for approval");
-      router.push("/dashboard/sales/order");
+      router.push(cpo ? `/dashboard/sales/customer-po/${cpo.id}` : "/dashboard/sales/order");
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -422,6 +671,12 @@ export function CreateSalesOrderClient({ members }: Props) {
   const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
   const allCompanies = selectedCustomer?.companies ?? [];
   const linkedCustomers = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
+
+  // Show CPO column when >1 CPO is linked (items need to know which customer they're for)
+  const showCpoColumn = linkedCpos.length > 1;
+  // Unique customer IDs across all linked CPOs
+  const cpoCustomerIds = [...new Set(linkedCpos.map((c) => c.customerId).filter(Boolean))];
+  const multiCustomerSo = cpoCustomerIds.length > 1;
 
   return (
     <div className="p-6">
@@ -437,77 +692,206 @@ export function CreateSalesOrderClient({ members }: Props) {
 
       <div className="space-y-6">
 
-        {/* ── 1. Linked quotations ── */}
-        <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Linked quotations</h2>
-          <div className="flex items-center gap-2 flex-wrap mb-2">
-            {linkedQuotations.map((q) => (
-              <span key={q.id} className="flex items-center gap-1 text-[11px] bg-muted rounded-full px-2.5 py-1 font-mono">
-                <FileTextIcon className="w-3 h-3 text-muted-foreground" />
-                {q.quotationNo}
-                <button onClick={() => removeLinkedQuotation(q.id)} className="text-muted-foreground hover:text-foreground ml-0.5">
-                  <XIcon className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
+        {/* ── CPO context banner ── */}
+        {cpo && (
+          <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-sm">
+            <LinkIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+            <span className="text-blue-800 dark:text-blue-300">
+              Creating sales order for Customer PO{" "}
+              <span className="font-mono font-semibold">{cpo.customerPoNo}</span>
+            </span>
           </div>
-          <div className="relative">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input
-              value={qtSearch}
-              onChange={(e) => handleQtSearch(e.target.value)}
-              onKeyDown={handleQtKeyDown}
-              placeholder={linkedQuotations.length === 0 ? "Search quotation no. to auto-fill…" : "Add another quotation…"}
-              className="pl-9 h-9 text-sm"
-              disabled={qtLoading}
-            />
-            {qtLoading && (
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>
-            )}
-            {qtResults.length > 0 && (
-              <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
-                {qtResults.map((qt, idx) => {
-                  const snap = qt.customerSnapshot as any;
-                  const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
-                  const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
-                  const isHighlighted = idx === qtHighlight;
-                  return (
-                    <button
-                      key={qt.id}
-                      disabled={alreadyLinked}
-                      className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${isHighlighted ? "bg-muted" : "hover:bg-muted/50"}`}
-                      onClick={() => selectQuotation(qt.id, qt.quotationNo)}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</span>
-                        {qt.isDummy === 1 && (
-                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded border border-muted-foreground/30 bg-muted text-muted-foreground">Dummy</span>
-                        )}
-                      </div>
-                      {custName && <div className="text-[11px] text-muted-foreground">{custName}</div>}
-                    </button>
-                  );
-                })}
-              </div>
+        )}
+
+        {/* ── 1. Linked Customer POs — combobox ── */}
+        <section className={`border rounded-xl p-4 ${linkedQuotations.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold">Customer POs</h2>
+            {linkedQuotations.length > 0 && (
+              <span className="text-[11px] text-muted-foreground">Remove quotation first</span>
             )}
           </div>
-          <div className="flex items-center justify-between mt-2">
-            {linkedQuotations.length === 0 && (
-              <p className="text-[11px] text-muted-foreground">
-                First quotation auto-fills customer, pricing, and items. Additional quotations append their items.
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={handleToggleDummy}
-              className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground ml-auto"
+
+          <div className="relative" ref={cpoDropdownRef}>
+            {/* Trigger — pills + chevron */}
+            <div
+              className={`min-h-9 flex flex-wrap gap-1.5 items-center px-3 py-2 rounded-md border cursor-pointer transition-colors ${cpoDropdownOpen ? "border-ring ring-1 ring-ring" : "border-border hover:border-ring/50"}`}
+              onClick={() => setCpoDropdownOpen((o) => !o)}
             >
-              <div className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${includeDummy ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                <div className={`w-3 h-3 rounded-full bg-white shadow transition-transform ${includeDummy ? "translate-x-3" : "translate-x-0"}`} />
+              {linkedCpos.length === 0 && (
+                <span className="text-sm text-muted-foreground flex-1 select-none">Select customer POs…</span>
+              )}
+              {linkedCpos.map((c) => {
+                const snap = c.customerSnapshot;
+                const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                return (
+                  <span key={c.id} className="flex items-center gap-1.5 bg-muted border border-border/60 rounded-md px-2 py-0.5 text-xs font-mono leading-5">
+                    {c.customerPoNo}
+                    {custName && <span className="text-[10px] text-muted-foreground font-sans hidden sm:inline">{custName}</span>}
+                    <button
+                      className="text-muted-foreground hover:text-foreground -mr-0.5"
+                      onClick={(e) => { e.stopPropagation(); removeCpo(c.id); }}
+                    >
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              })}
+              <ChevronDownIcon className={`w-3.5 h-3.5 text-muted-foreground ml-auto shrink-0 transition-transform duration-150 ${cpoDropdownOpen ? "rotate-180" : ""}`} />
+            </div>
+
+            {/* Dropdown panel */}
+            {cpoDropdownOpen && (
+              <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                {/* Search */}
+                <div className="p-2 border-b border-border/60">
+                  <div className="relative">
+                    <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                    <Input
+                      value={cpoSearch}
+                      onChange={(e) => handleCpoSearch(e.target.value)}
+                      onKeyDown={handleCpoKeyDown}
+                      placeholder="Search by PO number…"
+                      className="pl-8 h-8 text-sm"
+                      autoFocus
+                    />
+                    {cpoLoading && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>}
+                  </div>
+                </div>
+
+                {/* Options list */}
+                <div className="max-h-64 overflow-y-auto">
+                  {(() => {
+                    const rows = cpoSearch.length >= 2
+                      ? cpoResults
+                      : openCpos.filter((r) => !linkedCpos.some((l) => l.id === r.id));
+
+                    if (rows.length === 0) {
+                      return (
+                        <p className="px-3 py-5 text-sm text-muted-foreground text-center">
+                          {cpoSearch.length >= 2 ? "No results" : openCpos.length > 0 ? "All pending CPOs linked" : "No pending CPOs — search above"}
+                        </p>
+                      );
+                    }
+
+                    return rows.map((r, idx) => {
+                      const snap = r.customerSnapshot as any;
+                      const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                      const alreadyLinked = linkedCpos.some((c) => c.id === r.id);
+                      return (
+                        <button
+                          key={r.id}
+                          disabled={alreadyLinked}
+                          className={`w-full text-left px-3 py-2.5 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${idx === cpoHighlight ? "bg-muted" : "hover:bg-muted/50"}`}
+                          onClick={() => { if (!alreadyLinked) selectCpo(r.id); }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-mono font-medium">{r.customerPoNo}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                              r.status === "received" ? "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400"
+                              : r.status === "acknowledged" ? "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400"
+                              : r.status === "fulfilled" ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                              : r.status === "cancelled" ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                              : "bg-muted text-muted-foreground"}`}>
+                              {r.status}
+                            </span>
+                            {alreadyLinked && <span className="text-[10px] text-muted-foreground">linked</span>}
+                            <span className="text-[11px] text-muted-foreground ml-auto tabular-nums shrink-0">
+                              {r.currency} {parseFloat(r.amount).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          {custName && <div className="text-[11px] text-muted-foreground mt-0.5">{custName}</div>}
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
               </div>
-              Include dummy quotations
-            </button>
+            )}
           </div>
+        </section>
+
+        {/* ── 1b. Linked quotations (optional) ── */}
+        <section className={`border rounded-xl p-4 ${linkedCpos.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">
+              Quotations <span className="text-muted-foreground font-normal text-xs">(optional)</span>
+            </h2>
+            {linkedCpos.length > 0 ? (
+              <span className="text-[11px] text-muted-foreground">Remove customer PO first</span>
+            ) : !showQtSection && (
+              <button className="text-xs text-primary hover:underline flex items-center gap-1"
+                onClick={() => setShowQtSection(true)}>
+                <PlusIcon className="w-3 h-3" /> Link quotation
+              </button>
+            )}
+          </div>
+
+          {showQtSection && (
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {linkedQuotations.map((q) => (
+                  <span key={q.id} className="flex items-center gap-1 text-[11px] bg-muted rounded-full px-2.5 py-1 font-mono">
+                    <FileTextIcon className="w-3 h-3 text-muted-foreground" />
+                    {q.quotationNo}
+                    <button onClick={() => removeLinkedQuotation(q.id)} className="text-muted-foreground hover:text-foreground ml-0.5">
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="relative">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none z-10" />
+                <Input
+                  value={qtSearch}
+                  onChange={(e) => handleQtSearch(e.target.value)}
+                  onKeyDown={handleQtKeyDown}
+                  placeholder={linkedQuotations.length === 0 ? "Search quotation no.…" : "Add another quotation…"}
+                  className="pl-9 h-9 text-sm"
+                  disabled={qtLoading}
+                />
+                {qtLoading && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>}
+                {qtResults.length > 0 && (
+                  <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                    {qtResults.map((qt, idx) => {
+                      const snap = qt.customerSnapshot as any;
+                      const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                      const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
+                      return (
+                        <button
+                          key={qt.id}
+                          disabled={alreadyLinked}
+                          className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${idx === qtHighlight ? "bg-muted" : "hover:bg-muted/50"}`}
+                          onClick={() => selectQuotation(qt.id, qt.quotationNo)}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</span>
+                            {qt.isDummy === 1 && (
+                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded border border-muted-foreground/30 bg-muted text-muted-foreground">Dummy</span>
+                            )}
+                          </div>
+                          {custName && <div className="text-[11px] text-muted-foreground">{custName}</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-between">
+                <button type="button" onClick={handleToggleDummy}
+                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground">
+                  <div className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${includeDummy ? "bg-primary" : "bg-muted-foreground/30"}`}>
+                    <div className={`w-3 h-3 rounded-full bg-white shadow transition-transform ${includeDummy ? "translate-x-3" : "translate-x-0"}`} />
+                  </div>
+                  Include dummy quotations
+                </button>
+                <button className="text-[11px] text-muted-foreground hover:text-foreground"
+                  onClick={() => { setShowQtSection(false); setQtSearch(""); setQtResults([]); }}>
+                  Hide
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* ── 2. Customer ── */}
@@ -709,7 +1093,10 @@ export function CreateSalesOrderClient({ members }: Props) {
                   <th className="text-right pb-2 pr-2 w-24">Unit price</th>
                   <th className="text-right pb-2 pr-2 w-16">Disc %</th>
                   <th className="text-right pb-2 pr-2 w-24">Total</th>
-                  {linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
+                  {showCpoColumn && (
+                    <th className="text-left pb-2 pr-2 w-28">From CPO</th>
+                  )}
+                  {!showCpoColumn && linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
                     <th className="text-left pb-2 pr-2 w-28">Customer</th>
                   )}
                   <th className="w-6" />
@@ -717,7 +1104,7 @@ export function CreateSalesOrderClient({ members }: Props) {
               </thead>
               <tbody>
                 {items.map((item, rowIdx) => {
-                  const hasCustomers = linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
+                  const hasQuotationCustomers = !showCpoColumn && linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
                   const sourceQt = item.sourceQuotationId
                     ? linkedQuotations.find((q) => q.id === item.sourceQuotationId)
                     : undefined;
@@ -725,6 +1112,13 @@ export function CreateSalesOrderClient({ members }: Props) {
                     ? [sourceQt.customerSnapshot.title, sourceQt.customerSnapshot.name].filter(Boolean).join(" ")
                     : null;
                   const unassignedLinked = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
+                  // CPO column: find which CPO this item belongs to
+                  const sourceCpo = item.sourceCustomerPoId
+                    ? linkedCpos.find((c) => c.id === item.sourceCustomerPoId)
+                    : undefined;
+                  const cpoCustomerName = sourceCpo?.customerSnapshot
+                    ? [sourceCpo.customerSnapshot.title, sourceCpo.customerSnapshot.name].filter(Boolean).join(" ")
+                    : null;
                   return (
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
@@ -786,7 +1180,44 @@ export function CreateSalesOrderClient({ members }: Props) {
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
                       {fmt(parseFloat(item.totalPrice ?? "0"))}
                     </td>
-                    {hasCustomers && (
+                    {showCpoColumn && (
+                      <td className="py-1.5 pr-2">
+                        {sourceCpo ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-mono">
+                              {sourceCpo.customerPoNo}
+                            </span>
+                            {cpoCustomerName && (
+                              <p className="text-[10px] text-muted-foreground truncate max-w-25" title={cpoCustomerName}>
+                                {cpoCustomerName}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <select
+                            value={item.sourceCustomerPoId ?? ""}
+                            onChange={(e) => {
+                              const cpo = linkedCpos.find((c) => c.id === e.target.value);
+                              updateItem(item._key, {
+                                sourceCustomerPoId: e.target.value || undefined,
+                                sourceCustomerPoNo: cpo?.customerPoNo || undefined,
+                              } as Partial<LineItem>);
+                            }}
+                            className="h-6 rounded border border-border bg-background px-1 text-[10px] max-w-27.5"
+                          >
+                            <option value="">— assign —</option>
+                            {linkedCpos.map((c) => {
+                              const snap = c.customerSnapshot;
+                              const label = snap
+                                ? `${c.customerPoNo} · ${[snap.title, snap.name].filter(Boolean).join(" ")}`
+                                : c.customerPoNo;
+                              return <option key={c.id} value={c.id}>{label}</option>;
+                            })}
+                          </select>
+                        )}
+                      </td>
+                    )}
+                    {hasQuotationCustomers && (
                       <td className="py-1.5 pr-2">
                         {custName ? (
                           <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground max-w-25 truncate" title={custName}>

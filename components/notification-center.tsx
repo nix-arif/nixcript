@@ -15,10 +15,11 @@ import { formatDistanceToNow } from "date-fns";
 type Notification = Awaited<ReturnType<typeof getNotifications>>[number];
 
 const TYPE_COLORS: Record<string, string> = {
-  "so:submitted": "bg-blue-500",
-  "so:approved":  "bg-green-500",
-  "so:rejected":  "bg-red-500",
-  "so:recalled":  "bg-amber-500",
+  "so:submitted":  "bg-blue-500",
+  "so:approved":   "bg-green-500",
+  "so:rejected":   "bg-red-500",
+  "so:recalled":   "bg-amber-500",
+  "cpo:received":  "bg-purple-500",
 };
 
 export function NotificationCenter() {

@@ -7,7 +7,6 @@ import {
 } from "@/components/ui/collapsible";
 import {
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -42,13 +41,13 @@ export function NavMain({
   };
 
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Platform</SidebarGroupLabel>
-      <SidebarMenu>
+    <SidebarGroup className="px-2 py-1">
+      <SidebarMenu className="gap-0.5">
         {items.map((item) => {
-          const isGroupActive = item.items?.some((sub) =>
-            pathname === sub.url || pathname.startsWith(sub.url + "/")
+          const isGroupActive = item.items?.some(
+            (sub) => pathname === sub.url || pathname.startsWith(sub.url + "/")
           );
+
           return (
             <Collapsible
               key={item.title}
@@ -58,23 +57,40 @@ export function NavMain({
             >
               <SidebarMenuItem>
                 <CollapsibleTrigger asChild>
-                  <SidebarMenuButton tooltip={item.title} isActive={isGroupActive}>
-                    {item.icon}
-                    <span>{item.title}</span>
-                    <ChevronRightIcon className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+                  <SidebarMenuButton
+                    tooltip={item.title}
+                    isActive={isGroupActive}
+                    className={`h-8 rounded-md gap-2.5 text-[13px] font-medium transition-colors
+                      ${isGroupActive
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+                      }`}
+                  >
+                    <span className="shrink-0 [&_svg]:size-4 [&_svg]:opacity-80">{item.icon}</span>
+                    <span className="truncate">{item.title}</span>
+                    <ChevronRightIcon className="ml-auto size-3.5 shrink-0 opacity-50 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
                   </SidebarMenuButton>
                 </CollapsibleTrigger>
+
                 <CollapsibleContent>
-                  <SidebarMenuSub>
+                  <SidebarMenuSub className="ml-5 border-l border-sidebar-border/60 pl-2 py-0.5 gap-0">
                     {item.items?.map((subItem) => {
                       const isActive =
                         pathname === subItem.url ||
                         pathname.startsWith(subItem.url + "/");
                       return (
                         <SidebarMenuSubItem key={subItem.title}>
-                          <SidebarMenuSubButton asChild isActive={isActive}>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={isActive}
+                            className={`h-7 rounded-md text-[12px] transition-colors
+                              ${isActive
+                                ? "text-sidebar-accent-foreground font-semibold bg-sidebar-accent"
+                                : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/40"
+                              }`}
+                          >
                             <Link href={subItem.url} onClick={closeMobile}>
-                              <span>{subItem.title}</span>
+                              {subItem.title}
                             </Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>

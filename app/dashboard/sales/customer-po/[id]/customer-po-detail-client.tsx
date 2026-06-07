@@ -5,7 +5,7 @@ import {
   ArrowLeftIcon, CheckIcon, ClockIcon, AlertCircleIcon,
   FileTextIcon, PackageIcon, TruckIcon, ReceiptIcon,
   BanknoteIcon, CircleIcon, PencilIcon, ExternalLinkIcon,
-  BuildingIcon, UserIcon, CalendarIcon, PaperclipIcon,
+  BuildingIcon, UserIcon, CalendarIcon, PaperclipIcon, PlusIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -279,7 +279,19 @@ export function CustomerPoDetailClient({
                 </div>
               </>
             ) : (
-              <PendingCard label="No sales order linked yet" />
+              <>
+                <PendingCard label="No sales order linked yet" />
+                {can("sales-order:create") && cpo.status !== "cancelled" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 gap-1.5 h-7 text-xs"
+                    onClick={() => router.push(`/dashboard/sales/order/create?cpoId=${cpo.id}`)}
+                  >
+                    <PlusIcon className="w-3 h-3" /> Create Sales Order
+                  </Button>
+                )}
+              </>
             )}
           </TrailStep>
 

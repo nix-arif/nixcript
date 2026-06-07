@@ -256,13 +256,12 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
         x: W - MR - poNoW, y: curY + QL_BAND_H - 22,
         size: 11, font: fontB, color: accent,
       });
+      hLine(page, curY, ML, W - MR, accent, 1.2);
       page.drawText(fmtD(po.createdAt), {
         x: W - MR - fontR.widthOfTextAtSize(fmtD(po.createdAt), 8.5),
-        y: curY + QL_BAND_H - 34,
+        y: curY - 10,
         size: 8.5, font: fontR, color: C_MID,
       });
-
-      hLine(page, curY, ML, W - MR, accent, 1.2);
       curY -= DIVIDER_GAP;
 
       // ── Info section ─────────────────────────────────────────────────────

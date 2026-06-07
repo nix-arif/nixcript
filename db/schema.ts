@@ -9,6 +9,7 @@ import {
   integer,
   date,
   json,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 /* =========================
@@ -1327,6 +1328,11 @@ export const salesOrder = pgTable(
     sstPct: text("sst_pct").default("0"),
     grandTotal: text("grand_total").notNull().default("0"),
 
+    // Customer PO(s) that triggered this SO
+    customerPoId: text("customer_po_id").references((): AnyPgColumn => customerPurchaseOrder.id), // primary (first) for backward compat
+    customerPoNo: text("customer_po_no"),
+    customerPoLinks: json("customer_po_links").$type<{ customerPoId: string; customerPoNo: string }[]>(),
+
     notes: text("notes"),
     status: text("status").notNull().default("draft"), // draft | confirmed | fulfilled | cancelled
 
@@ -1385,6 +1391,8 @@ export const salesOrderItem = pgTable(
     setQty: text("set_qty"),
 
     sourceQuotationId: text("source_quotation_id"),
+    sourceCustomerPoId: text("source_customer_po_id"),
+    sourceCustomerPoNo: text("source_customer_po_no"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -1413,6 +1421,10 @@ export const salesOrderRelations = relations(salesOrder, ({ one, many }) => ({
   quotation: one(quotation, {
     fields: [salesOrder.quotationId],
     references: [quotation.id],
+  }),
+  customerPo: one(customerPurchaseOrder, {
+    fields: [salesOrder.customerPoId],
+    references: [customerPurchaseOrder.id],
   }),
   customer: one(customer, {
     fields: [salesOrder.customerId],
@@ -1446,6 +1458,86 @@ export const salesOrderItemRelations = relations(salesOrderItem, ({ one }) => ({
     fields: [salesOrderItem.salesOrderId],
     references: [salesOrder.id],
   }),
+}));
+
+/* ============================================================================================================================================================================================================================================
+   CONSIGNMENT TABLES
+=============================================================================================================================================================================================================================================== */
+
+export const consignmentCounter = pgTable("consignment_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+});
+
+export const consignment = pgTable(
+  "consignment",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    consignmentNo: text("consignment_no").notNull(),
+    soId: text("so_id").notNull().references(() => salesOrder.id),
+    soNo: text("so_no").notNull(),
+    customerId: text("customer_id").references(() => customer.id),
+    customerSnapshot: json("customer_snapshot").$type<{
+      title?: string; name: string; organizationName?: string;
+      organizationAddress?: string; email?: string; contactNo?: string;
+    }>(),
+    sentDate: timestamp("sent_date"),
+    expiryDate: timestamp("expiry_date"),
+    notes: text("notes"),
+    status: text("status").notNull().default("active"), // active | closed
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [index("consignment_org_idx").on(t.organizationId), index("consignment_so_idx").on(t.soId)],
+);
+
+export const consignmentItem = pgTable("consignment_item", {
+  id: text("id").primaryKey(),
+  consignmentId: text("consignment_id").notNull().references(() => consignment.id, { onDelete: "cascade" }),
+  organizationId: text("organization_id").notNull(),
+  productId: text("product_id").references(() => product.id),
+  productCode: text("product_code"),
+  description: text("description").notNull(),
+  uom: text("uom"),
+  unitPrice: text("unit_price").notNull().default("0"),
+  qtySent: text("qty_sent").notNull().default("0"),
+  qtyUsed: text("qty_used").notNull().default("0"),
+  qtyReturned: text("qty_returned").notNull().default("0"),
+});
+
+export const consignmentUsage = pgTable("consignment_usage", {
+  id: text("id").primaryKey(),
+  consignmentId: text("consignment_id").notNull().references(() => consignment.id, { onDelete: "cascade" }),
+  organizationId: text("organization_id").notNull(),
+  usageDate: timestamp("usage_date").notNull(),
+  type: text("type").notNull(), // "used" | "returned"
+  notes: text("notes"),
+  recordedBy: text("recorded_by").notNull().references(() => user.id),
+  items: json("items").$type<{ consignmentItemId: string; qty: string }[]>().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const consignmentRelations = relations(consignment, ({ one, many }) => ({
+  organization: one(organization, { fields: [consignment.organizationId], references: [organization.id] }),
+  salesOrder: one(salesOrder, { fields: [consignment.soId], references: [salesOrder.id] }),
+  customer: one(customer, { fields: [consignment.customerId], references: [customer.id] }),
+  createdByUser: one(user, { fields: [consignment.createdBy], references: [user.id] }),
+  items: many(consignmentItem),
+  usages: many(consignmentUsage),
+}));
+
+export const consignmentItemRelations = relations(consignmentItem, ({ one }) => ({
+  consignment: one(consignment, { fields: [consignmentItem.consignmentId], references: [consignment.id] }),
+  product: one(product, { fields: [consignmentItem.productId], references: [product.id] }),
+}));
+
+export const consignmentUsageRelations = relations(consignmentUsage, ({ one }) => ({
+  consignment: one(consignment, { fields: [consignmentUsage.consignmentId], references: [consignment.id] }),
+  recordedByUser: one(user, { fields: [consignmentUsage.recordedBy], references: [user.id] }),
 }));
 
 /* ============================================================================================================================================================================================================================================
@@ -1717,10 +1809,23 @@ export const customerPurchaseOrder = pgTable(
     }>(),
 
     // Links to our documents
-    quotationId: text("quotation_id").references(() => quotation.id),
+    quotationId: text("quotation_id").references(() => quotation.id), // primary (first) quotation for backward compat
     quotationNo: text("quotation_no"),
+    quotationLinks: json("quotation_links").$type<{ quotationId: string; quotationNo: string }[]>(),
     salesOrderId: text("sales_order_id").references(() => salesOrder.id),
     salesOrderNo: text("sales_order_no"),
+
+    items: json("items").$type<{
+      rowNo: number;
+      productCode: string;
+      description: string;
+      qty: string;
+      uom: string;
+      unitPrice: string;
+      discountPct: string;
+      totalPrice: string;
+      lineType: string;
+    }[]>(),
 
     amount: text("amount").notNull().default("0"),
     currency: text("currency").notNull().default("MYR"),
@@ -1729,6 +1834,7 @@ export const customerPurchaseOrder = pgTable(
     documentKey: text("document_key"),
     notes: text("notes"),
     receivedDate: timestamp("received_date"),
+    deliveryDate: timestamp("delivery_date"),
     status: text("status").notNull().default("received"), // received | acknowledged | fulfilled | cancelled
 
     createdBy: text("created_by").notNull().references(() => user.id),
@@ -2760,4 +2866,12 @@ export const schema = {
   staffStockLimit,
   stockRequestRelations,
   staffStockLimitRelations,
+  // consignment
+  consignmentCounter,
+  consignment,
+  consignmentItem,
+  consignmentUsage,
+  consignmentRelations,
+  consignmentItemRelations,
+  consignmentUsageRelations,
 };

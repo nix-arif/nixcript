@@ -10,10 +10,11 @@ import {
   product,
   user,
   organization,
+  supplier,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -96,6 +97,25 @@ export type GoodsReceiptWithItems = GoodsReceiptRow & {
   purchaseOrderPrNo: string | null;
 };
 
+export type GoodsReceiptListRow = GoodsReceiptRow & {
+  receivedByName: string | null;
+  poNo: string | null;
+  prNo: string | null;
+  supplierName: string | null;
+  itemCount: number;
+};
+
+export type ConfirmedPoForGr = {
+  id: string;
+  prNo: string | null;
+  poNo: string | null;
+  supplierName: string | null;
+  grandTotal: string;
+  currency: string;
+  expectedDeliveryDate: Date | null;
+  grCount: number;
+};
+
 // ── Queries ─────────────────────────────────────────────────────────────────
 
 export async function getGoodsReceiptsForPo(purchaseOrderId: string): Promise<GoodsReceiptRow[]> {
@@ -130,6 +150,87 @@ export async function getGoodsReceiptDetail(id: string): Promise<GoodsReceiptWit
     purchaseOrderNo: poRows[0]?.poNo ?? null,
     purchaseOrderPrNo: poRows[0]?.prNo ?? null,
   };
+}
+
+export async function getAllGoodsReceipts(): Promise<GoodsReceiptListRow[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+
+  const grs = await db
+    .select()
+    .from(goodsReceipt)
+    .where(eq(goodsReceipt.organizationId, orgId))
+    .orderBy(desc(goodsReceipt.createdAt));
+
+  if (grs.length === 0) return [];
+
+  const userIds   = [...new Set(grs.map((g) => g.receivedBy))];
+  const poIds     = [...new Set(grs.map((g) => g.purchaseOrderId))];
+  const grIds     = grs.map((g) => g.id);
+
+  const [users, pos, grItems] = await Promise.all([
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds)),
+    db.select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, supplierSnapshot: purchaseOrder.supplierSnapshot })
+      .from(purchaseOrder)
+      .where(inArray(purchaseOrder.id, poIds)),
+    db.select({ goodsReceiptId: goodsReceiptItem.goodsReceiptId })
+      .from(goodsReceiptItem)
+      .where(inArray(goodsReceiptItem.goodsReceiptId, grIds)),
+  ]);
+
+  const userMap    = Object.fromEntries(users.map((u) => [u.id, u.name]));
+  const poMap      = Object.fromEntries(pos.map((p) => [p.id, p]));
+  const itemCounts = grIds.reduce<Record<string, number>>((acc, id) => ({ ...acc, [id]: 0 }), {});
+  for (const gi of grItems) itemCounts[gi.goodsReceiptId] = (itemCounts[gi.goodsReceiptId] ?? 0) + 1;
+
+  return grs.map((gr) => {
+    const po   = poMap[gr.purchaseOrderId];
+    const snap = po?.supplierSnapshot as any;
+    return {
+      ...gr,
+      receivedByName: userMap[gr.receivedBy] ?? null,
+      poNo:           po?.poNo ?? null,
+      prNo:           po?.prNo ?? null,
+      supplierName:   snap?.name ?? null,
+      itemCount:      itemCounts[gr.id] ?? 0,
+    };
+  });
+}
+
+export async function getConfirmedPosForGr(): Promise<ConfirmedPoForGr[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+
+  const pos = await db
+    .select()
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.status, "confirmed")))
+    .orderBy(desc(purchaseOrder.createdAt));
+
+  if (pos.length === 0) return [];
+
+  const poIds = pos.map((p) => p.id);
+  const existingGrs = await db
+    .select({ purchaseOrderId: goodsReceipt.purchaseOrderId })
+    .from(goodsReceipt)
+    .where(and(eq(goodsReceipt.organizationId, orgId), inArray(goodsReceipt.purchaseOrderId, poIds)));
+
+  const grCountByPo = existingGrs.reduce<Record<string, number>>((acc, g) => {
+    acc[g.purchaseOrderId] = (acc[g.purchaseOrderId] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  return pos.map((p) => {
+    const snap = p.supplierSnapshot as any;
+    return {
+      id:                   p.id,
+      prNo:                 p.prNo,
+      poNo:                 p.poNo,
+      supplierName:         snap?.name ?? null,
+      grandTotal:           p.grandTotal,
+      currency:             p.currency,
+      expectedDeliveryDate: p.expectedDeliveryDate,
+      grCount:              grCountByPo[p.id] ?? 0,
+    };
+  });
 }
 
 // ── Mutations ───────────────────────────────────────────────────────────────
@@ -216,6 +317,8 @@ export async function createGoodsReceipt(input: CreateGoodsReceiptInput): Promis
 
   revalidatePath(`/dashboard/procurement/purchase-order/${input.purchaseOrderId}`);
   revalidatePath("/dashboard/procurement/purchase-order");
+  revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard/inventory/movements");
 
   return gr;
 }

@@ -121,3 +121,42 @@ When marking as Delivered, STOCK_OUT comes from the staff's "Field - [Name]" war
 Returning unused stock
 
 Go to Stock Overview → Transfer → move from "Field - [Name]" back to main warehouse
+
+# How to Use the Standard PR → PO → GR Flow
+
+Step 1 — Raise a Purchase Requisition (PR)
+Go to Procurement → Requisitions & PO → New Requisition
+
+Select a supplier (required)
+Link a Sales Order (optional — leave blank for stock replenishment)
+Fill in items, quantities, unit prices
+Two options:
+Save as Draft — saves with status Draft, gets a PR number like BMS-PR-2026-0001
+Submit for Approval — moves to Awaiting Approval, notifies approvers
+Step 2 — Approve the Requisition (PR → PO)
+An approver opens the PR and clicks "Approve & Issue PO"
+
+A new PO number is generated (e.g., BMS-PO-2026-0001)
+Status changes to PO Confirmed
+The detail page now shows the PR → PO trail: BMS-PR-2026-0001 → BMS-PO-2026-0001
+PDF becomes available (the document you send to the supplier)
+Approver can also:
+
+Return for Revision — sends back to draft
+Recall PO — pulls back a confirmed PO to draft
+Step 3 — Record Goods Receipt (GR) when goods arrive
+On the confirmed PO, click "Record Receipt" (in the Goods Receipts section)
+
+Enter the received date
+Enter qty received per item (can be less than ordered for partial delivery)
+Submit → creates BMS-GR-2026-0001, stock is added to inventory automatically
+If you receive a partial delivery, click "Record Receipt" again for the next delivery. The PO auto-closes when all quantities are fully received.
+
+Document numbering summary
+Phase Document Number format
+Internal requisition Purchase Requisition BMS-PR-2026-0001
+Approved, sent to supplier Supplier PO BMS-PO-2026-0001
+Goods arrive Goods Receipt BMS-GR-2026-0001
+What the list view shows
+Amber "Purchase Req." chip = still in draft/awaiting approval phase — shows PR number
+Blue "Supplier PO" chip = approved and confirmed — shows PO number

@@ -9,10 +9,13 @@ import {
   deliveryOrder,
   customer,
   customerCompany,
+  customerPurchaseOrder,
   quotation,
   organization,
   organizationProfile,
   user,
+  invoice,
+  consignment,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -127,7 +130,16 @@ export type SalesOrderMeta = {
   approvedByName: string | null;
 };
 
-export type SalesOrderListRow = SalesOrderRow & { createdByName: string | null };
+export type CpoCustomer = {
+  customerPoId: string;
+  customerPoNo: string;
+  customerSnapshot: { title?: string; name: string; organizationName?: string } | null;
+};
+
+export type SalesOrderListRow = SalesOrderRow & {
+  createdByName: string | null;
+  cpoCustomers: CpoCustomer[];
+};
 
 export interface SalesOrderItemInput {
   rowNo: number;
@@ -147,11 +159,16 @@ export interface SalesOrderItemInput {
   setGroupLabel?: string;
   setQty?: string;
   sourceQuotationId?: string;
+  sourceCustomerPoId?: string;
+  sourceCustomerPoNo?: string;
 }
 
 export interface CreateSalesOrderInput {
   customerId?: string;
   customerCompanyId?: string;
+  customerPoId?: string;
+  customerPoNo?: string;
+  customerPoLinks?: { customerPoId: string; customerPoNo: string }[];
   quotationId?: string;
   quotationNo?: string;
   linkedQuotations?: { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string; organizationAddress?: string; email?: string; contactNo?: string } | null }[];
@@ -177,7 +194,7 @@ export interface UpdateSalesOrderInput extends Omit<CreateSalesOrderInput, "item
   items: SalesOrderItemInput[];
 }
 
-export type SalesOrderWithItems = SalesOrderRow & SalesOrderMeta & { items: SalesOrderItem[] };
+export type SalesOrderWithItems = SalesOrderRow & SalesOrderMeta & { items: SalesOrderItem[]; cpoCustomers: CpoCustomer[] };
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
@@ -203,14 +220,38 @@ export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
   if (rows.length === 0) return [];
 
   const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
-  const users = await db
-    .select({ id: user.id, name: user.name })
-    .from(user)
-    .where(inArray(user.id, creatorIds));
+
+  const allCpoIds = [
+    ...new Set(
+      rows.flatMap((r) => {
+        const links = r.customerPoLinks as { customerPoId: string }[] | null;
+        return links?.map((l) => l.customerPoId) ?? [];
+      }),
+    ),
+  ];
+
+  const [users, cpoRows] = await Promise.all([
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds)),
+    allCpoIds.length > 0
+      ? db
+          .select({ id: customerPurchaseOrder.id, customerSnapshot: customerPurchaseOrder.customerSnapshot })
+          .from(customerPurchaseOrder)
+          .where(inArray(customerPurchaseOrder.id, allCpoIds))
+      : Promise.resolve([]),
+  ]);
 
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+  const cpoSnapMap = new Map(cpoRows.map((c) => [c.id, c.customerSnapshot]));
 
-  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy) }));
+  return rows.map((r) => {
+    const links = r.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null;
+    const cpoCustomers: CpoCustomer[] = (links ?? []).map((l) => ({
+      customerPoId: l.customerPoId,
+      customerPoNo: l.customerPoNo,
+      customerSnapshot: (cpoSnapMap.get(l.customerPoId) as CpoCustomer["customerSnapshot"]) ?? null,
+    }));
+    return { ...r, createdByName: nameOf(r.createdBy), cpoCustomers };
+  });
 }
 
 export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithItems | null> {
@@ -223,7 +264,13 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
 
   if (!so) return null;
 
-  const [items, users] = await Promise.all([
+  const cpoIds = [
+    ...new Set(
+      ((so.customerPoLinks as { customerPoId: string }[] | null) ?? []).map((l) => l.customerPoId),
+    ),
+  ];
+
+  const [items, users, cpoRows] = await Promise.all([
     db
       .select()
       .from(salesOrderItem)
@@ -238,9 +285,23 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
           [so.createdBy, so.submittedBy, so.approvedBy].filter((x): x is string => !!x),
         ),
       ),
+    cpoIds.length > 0
+      ? db
+          .select({ id: customerPurchaseOrder.id, customerSnapshot: customerPurchaseOrder.customerSnapshot })
+          .from(customerPurchaseOrder)
+          .where(inArray(customerPurchaseOrder.id, cpoIds))
+      : Promise.resolve([]),
   ]);
 
   const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
+  const cpoSnapMap = new Map(cpoRows.map((c) => [c.id, c.customerSnapshot]));
+
+  const links = (so.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null) ?? [];
+  const cpoCustomers: CpoCustomer[] = links.map((l) => ({
+    customerPoId: l.customerPoId,
+    customerPoNo: l.customerPoNo,
+    customerSnapshot: (cpoSnapMap.get(l.customerPoId) as CpoCustomer["customerSnapshot"]) ?? null,
+  }));
 
   return {
     ...so,
@@ -248,6 +309,7 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
     submittedByName: nameOf(so.submittedBy ?? null),
     approvedByName: nameOf(so.approvedBy ?? null),
     items,
+    cpoCustomers,
   };
 }
 
@@ -373,6 +435,9 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
       quotationId: input.linkedQuotations?.[0]?.id ?? input.quotationId ?? null,
       quotationNo: input.linkedQuotations?.[0]?.quotationNo ?? input.quotationNo ?? null,
       linkedQuotations: input.linkedQuotations ?? null,
+      customerPoId: input.customerPoLinks?.[0]?.customerPoId ?? input.customerPoId ?? null,
+      customerPoNo: input.customerPoLinks?.[0]?.customerPoNo ?? input.customerPoNo ?? null,
+      customerPoLinks: input.customerPoLinks && input.customerPoLinks.length > 0 ? input.customerPoLinks : null,
       customerId: input.customerId ?? null,
       customerSnapshot: customerSnapshot ?? null,
       supplierQuotationKey: input.supplierQuotationKey ?? null,
@@ -415,8 +480,20 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
         sourceQuotationId: item.sourceQuotationId || null,
+        sourceCustomerPoId: item.sourceCustomerPoId || null,
+        sourceCustomerPoNo: item.sourceCustomerPoNo || null,
       })),
     );
+  }
+
+  // Back-link: update all linked Customer POs so they point to this new SO
+  const cpoLinks = input.customerPoLinks ?? (input.customerPoId ? [{ customerPoId: input.customerPoId, customerPoNo: input.customerPoNo ?? "" }] : []);
+  for (const link of cpoLinks) {
+    await db
+      .update(customerPurchaseOrder)
+      .set({ salesOrderId: row.id, salesOrderNo: row.soNo })
+      .where(eq(customerPurchaseOrder.id, link.customerPoId));
+    revalidatePath(`/dashboard/sales/customer-po/${link.customerPoId}`);
   }
 
   revalidatePath("/dashboard/sales/order");
@@ -493,6 +570,15 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
         ? (input.linkedQuotations[0]?.quotationNo ?? null)
         : (input.quotationNo !== undefined ? (input.quotationNo ?? null) : existing.quotationNo),
       linkedQuotations: input.linkedQuotations !== undefined ? (input.linkedQuotations ?? null) : existing.linkedQuotations,
+      customerPoId: input.customerPoLinks !== undefined
+        ? (input.customerPoLinks[0]?.customerPoId ?? null)
+        : (input.customerPoId !== undefined ? (input.customerPoId ?? null) : existing.customerPoId),
+      customerPoNo: input.customerPoLinks !== undefined
+        ? (input.customerPoLinks[0]?.customerPoNo ?? null)
+        : (input.customerPoNo !== undefined ? (input.customerPoNo ?? null) : existing.customerPoNo),
+      customerPoLinks: input.customerPoLinks !== undefined
+        ? (input.customerPoLinks.length > 0 ? input.customerPoLinks : null)
+        : existing.customerPoLinks,
       supplierQuotationKey: input.supplierQuotationKey !== undefined
         ? input.supplierQuotationKey
         : existing.supplierQuotationKey,
@@ -538,6 +624,8 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
         sourceQuotationId: item.sourceQuotationId || null,
+        sourceCustomerPoId: item.sourceCustomerPoId || null,
+        sourceCustomerPoNo: item.sourceCustomerPoNo || null,
       })),
     );
   }
@@ -564,6 +652,14 @@ export async function deleteSalesOrder(id: string): Promise<void> {
     await deleteSupplierQuotationFile(existing.supplierQuotationKey);
   }
 
+  // Block deletion if consignments exist (soId is NOT NULL, cannot unlink)
+  const [hasConsignment] = await db
+    .select({ id: consignment.id })
+    .from(consignment)
+    .where(eq(consignment.soId, id))
+    .limit(1);
+  if (hasConsignment) throw new Error("Cannot delete: this order has consignment records");
+
   // Unlink any POs that reference this SO (set salesOrderId → null)
   await db
     .update(purchaseOrder)
@@ -576,7 +672,19 @@ export async function deleteSalesOrder(id: string): Promise<void> {
     .set({ salesOrderId: null, salesOrderNo: null })
     .where(and(eq(deliveryOrder.organizationId, orgId), eq(deliveryOrder.salesOrderId, id)));
 
-  // Delete the SO (items cascade)
+  // Unlink any Customer POs that reference this SO
+  await db
+    .update(customerPurchaseOrder)
+    .set({ salesOrderId: null, salesOrderNo: null })
+    .where(and(eq(customerPurchaseOrder.organizationId, orgId), eq(customerPurchaseOrder.salesOrderId, id)));
+
+  // Unlink any invoices that reference this SO
+  await db
+    .update(invoice)
+    .set({ salesOrderId: null, salesOrderNo: null })
+    .where(and(eq(invoice.organizationId, orgId), eq(invoice.salesOrderId, id)));
+
+  // Delete the SO (items cascade via onDelete: "cascade")
   await db.delete(salesOrder).where(eq(salesOrder.id, id));
 
   // Release the running number: decrement the counter if this was the latest number for the year

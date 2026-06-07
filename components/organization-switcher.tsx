@@ -6,9 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -17,12 +15,45 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { ChevronsUpDownIcon, PlusIcon } from "lucide-react";
+import { ChevronsUpDownIcon, PlusIcon, CheckIcon } from "lucide-react";
 import CreateOrganizationForm from "./dialog-forms/create-organization-form";
 import { authClient } from "@/lib/auth-client";
 import { Spinner } from "./ui/spinner";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store/use-app-store";
+
+const ORG_COLORS = [
+  "bg-blue-500",
+  "bg-violet-500",
+  "bg-emerald-500",
+  "bg-amber-500",
+  "bg-rose-500",
+  "bg-cyan-500",
+  "bg-pink-500",
+  "bg-indigo-500",
+];
+
+function orgAvatarColor(name: string) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return ORG_COLORS[Math.abs(hash) % ORG_COLORS.length];
+}
+
+function OrgAvatar({ name, logo, size = "md" }: { name: string; logo?: string | null; size?: "sm" | "md" }) {
+  const dim = size === "sm" ? "size-6" : "size-8";
+  const text = size === "sm" ? "text-[11px]" : "text-sm";
+  if (logo) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={logo} alt={name} className={`${dim} rounded-md object-contain`} />
+    );
+  }
+  return (
+    <div className={`${dim} rounded-md ${orgAvatarColor(name)} flex items-center justify-center shrink-0`}>
+      <span className={`${text} font-semibold text-white leading-none`}>{name[0].toUpperCase()}</span>
+    </div>
+  );
+}
 
 export function OrganizationSwitcher() {
   const { isMobile } = useSidebar();
@@ -244,61 +275,57 @@ export function OrganizationSwitcher() {
             <DropdownMenuTrigger asChild>
               <SidebarMenuButton
                 size="lg"
-                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground gap-3"
               >
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg text-sidebar-primary-foreground bg-transparent!">
-                  {displayOrg?.logo ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={displayOrg.logo}
-                      alt={displayOrg.name}
-                      style={{ width: "auto", height: "32px", objectFit: "contain" }}
-                    />
-                  ) : (
-                    displayOrg?.name[0]
-                  )}
+                {displayOrg && <OrgAvatar name={displayOrg.name} logo={displayOrg.logo} size="md" />}
+                <div className="grid flex-1 text-left leading-tight">
+                  <span className="truncate text-sm font-semibold">{displayOrg?.name}</span>
+                  <span className="truncate text-[11px] text-muted-foreground">Workspace</span>
                 </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">
-                    {displayOrg?.name}
-                  </span>
-                </div>
-                <ChevronsUpDownIcon className="ml-auto" />
+                <ChevronsUpDownIcon className="ml-auto size-4 text-muted-foreground" />
               </SidebarMenuButton>
             </DropdownMenuTrigger>
+
             <DropdownMenuContent
-              className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+              className="w-(--radix-dropdown-menu-trigger-width) min-w-60 rounded-xl p-1.5"
               align="start"
               side={isMobile ? "bottom" : "right"}
-              sideOffset={4}
+              sideOffset={6}
             >
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Organizations
-              </DropdownMenuLabel>
-              {organizationList.map((org, index) => (
-                <DropdownMenuItem
-                  key={org.id}
-                  onClick={() => handleSwitchOrg(org.id)}
-                  className="gap-2 p-2"
-                >
-                  <div className="flex size-6 items-center justify-center rounded-md border">
-                    {org.name[0]}
-                  </div>
-                  {org.name}
-                  <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
+              <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                Workspaces
+              </p>
+
+              {organizationList.map((org, index) => {
+                const isActive = org.id === (pendingOrgId ?? activeOrganization?.id);
+                return (
+                  <DropdownMenuItem
+                    key={org.id}
+                    onClick={() => handleSwitchOrg(org.id)}
+                    className="flex items-center gap-2.5 px-2 py-2 rounded-lg cursor-pointer"
+                  >
+                    <OrgAvatar name={org.name} logo={org.logo} size="sm" />
+                    <span className={`flex-1 truncate text-sm ${isActive ? "font-semibold" : "font-medium"}`}>
+                      {org.name}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {isActive && <CheckIcon className="size-3.5 text-primary" />}
+                      <span className="text-[10px] text-muted-foreground tabular-nums opacity-50">⌘{index + 1}</span>
+                    </div>
+                  </DropdownMenuItem>
+                );
+              })}
+
+              <DropdownMenuSeparator className="my-1.5" />
+
               <DropdownMenuItem
-                className="gap-2 p-2"
+                className="flex items-center gap-2.5 px-2 py-2 rounded-lg cursor-pointer text-muted-foreground hover:text-foreground"
                 onClick={() => setIsCreateOrgOpen(true)}
               >
-                <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
-                  <PlusIcon className="size-4" />
+                <div className="size-6 rounded-md border border-dashed border-border flex items-center justify-center shrink-0">
+                  <PlusIcon className="size-3.5" />
                 </div>
-                <div className="font-medium text-muted-foreground">
-                  Add Organization
-                </div>
+                <span className="text-sm">New workspace</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
