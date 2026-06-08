@@ -259,21 +259,30 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
     extraLine: string | null;
     isGreenRow: boolean;
     rowH: number;
+    firstParaLineCount: number; // display lines belonging to the first source paragraph
   };
   const rowInfos: RowInfo[] = items.map(item => {
     const rentalPrefix = item.lineType === "rent" && item.rentalDuration
       ? `rental for ${item.rentalDuration} ${item.rentalUnit ?? "case"} `
       : "";
-    const descLines = wrap(`${rentalPrefix}${item.description ?? "—"}`.toUpperCase(), fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
+    const rawDesc  = `${rentalPrefix}${item.description ?? "—"}`.toUpperCase();
+    const descLines = wrap(rawDesc, fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
+    // If the source text has an explicit newline, count how many display lines
+    // the first paragraph produces — those stay at FS_DESC; the rest use 6pt.
+    // Single-line sources (no \n) keep all display lines at FS_DESC regardless
+    // of how many times word-wrap splits them.
+    const firstParaLineCount = /\r?\n/.test(rawDesc)
+      ? Math.max(1, wrap(rawDesc.split(/\r?\n/)[0], fontR, FS_DESC, C_DESC - TABLE_PAD * 2).length)
+      : descLines.length;
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLineH  = 0;
     const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
-    const descH = descLines.length <= 1 ? descLines.length * LH : LH + (descLines.length - 1) * CONT_LH;
+    const descH = firstParaLineCount * LH + Math.max(0, descLines.length - firstParaLineCount) * CONT_LH;
     const rowH = Math.max(hasItemDisc ? RH_MIN + 8 : RH_MIN, codeLineH + descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6));
-    return { item, descLines, extraLine, isGreenRow, rowH };
+    return { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount };
   });
 
   // ── Page availability ─────────────────────────────────────────────────────
@@ -625,7 +634,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
 
       const { rowIdx } = entry;
-      const { item, descLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
+      const { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
       const rowY = curY - rowH;
 
       if (itemRowAlt % 2 === 0) {
@@ -657,10 +666,9 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
 
       for (let li = 0; li < descLines.length; li++) {
-        const lineSize = li === 0 ? FS_DESC : 6;
-        const lineLH   = li === 0 ? LH : CONT_LH;
-        page.drawText(descLines[li], { x: X_DESC + TABLE_PAD, y: dy, size: lineSize, font: fontR, color: C_DARK });
-        dy -= lineLH;
+        const isCont = li >= firstParaLineCount;
+        page.drawText(descLines[li], { x: X_DESC + TABLE_PAD, y: dy, size: isCont ? 6 : FS_DESC, font: fontR, color: C_DARK });
+        dy -= isCont ? CONT_LH : LH;
       }
       if (extraLine) {
         dy -= MDA_GAP;
