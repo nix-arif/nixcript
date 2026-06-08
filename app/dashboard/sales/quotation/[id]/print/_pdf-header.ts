@@ -38,28 +38,32 @@ export function sanitizeText(t: string): string {
 
 export function wrap(text: string, font: PDFFont, size: number, maxW: number): string[] {
   if (!text) return [""];
-  const words = sanitizeText(text).split(" ");
-  const lines: string[] = [];
-  let cur = "";
-  for (const word of words) {
-    const test = cur ? `${cur} ${word}` : word;
-    if (font.widthOfTextAtSize(test, size) <= maxW) {
-      cur = test;
-    } else {
-      if (cur) lines.push(cur);
-      let remaining = word;
-      while (font.widthOfTextAtSize(remaining, size) > maxW && remaining.length > 1) {
-        let cut = remaining.length - 1;
-        while (cut > 0 && font.widthOfTextAtSize(remaining.slice(0, cut) + "-", size) > maxW) cut--;
-        if (cut === 0) break;
-        lines.push(remaining.slice(0, cut) + "-");
-        remaining = remaining.slice(cut);
+  const paragraphs = String(text).split(/\r?\n/);
+  const allLines: string[] = [];
+  for (const para of paragraphs) {
+    const words = sanitizeText(para).split(" ").filter(Boolean);
+    if (!words.length) continue;
+    let cur = "";
+    for (const word of words) {
+      const test = cur ? `${cur} ${word}` : word;
+      if (font.widthOfTextAtSize(test, size) <= maxW) {
+        cur = test;
+      } else {
+        if (cur) allLines.push(cur);
+        let remaining = word;
+        while (font.widthOfTextAtSize(remaining, size) > maxW && remaining.length > 1) {
+          let cut = remaining.length - 1;
+          while (cut > 0 && font.widthOfTextAtSize(remaining.slice(0, cut) + "-", size) > maxW) cut--;
+          if (cut === 0) break;
+          allLines.push(remaining.slice(0, cut) + "-");
+          remaining = remaining.slice(cut);
+        }
+        cur = remaining;
       }
-      cur = remaining;
     }
+    if (cur) allLines.push(cur);
   }
-  if (cur) lines.push(cur);
-  return lines.length ? lines : [""];
+  return allLines.length ? allLines : [""];
 }
 
 export function trunc(text: string, font: PDFFont, size: number, maxW: number): string {

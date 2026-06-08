@@ -53,28 +53,32 @@ function sanitizeText(t: string): string {
 
 function wrap(text: string, font: PDFFont, size: number, maxW: number): string[] {
   if (!text) return [""];
-  const words = sanitizeText(text).split(" ");
-  const lines: string[] = [];
-  let cur = "";
-  for (const word of words) {
-    const test = cur ? `${cur} ${word}` : word;
-    if (font.widthOfTextAtSize(test, size) <= maxW) {
-      cur = test;
-    } else {
-      if (cur) lines.push(cur);
-      let rem = word;
-      while (font.widthOfTextAtSize(rem, size) > maxW && rem.length > 1) {
-        let cut = rem.length - 1;
-        while (cut > 0 && font.widthOfTextAtSize(rem.slice(0, cut) + "-", size) > maxW) cut--;
-        if (cut === 0) break;
-        lines.push(rem.slice(0, cut) + "-");
-        rem = rem.slice(cut);
+  const paragraphs = String(text).split(/\r?\n/);
+  const allLines: string[] = [];
+  for (const para of paragraphs) {
+    const words = sanitizeText(para).split(" ").filter(Boolean);
+    if (!words.length) continue;
+    let cur = "";
+    for (const word of words) {
+      const test = cur ? `${cur} ${word}` : word;
+      if (font.widthOfTextAtSize(test, size) <= maxW) {
+        cur = test;
+      } else {
+        if (cur) allLines.push(cur);
+        let rem = word;
+        while (font.widthOfTextAtSize(rem, size) > maxW && rem.length > 1) {
+          let cut = rem.length - 1;
+          while (cut > 0 && font.widthOfTextAtSize(rem.slice(0, cut) + "-", size) > maxW) cut--;
+          if (cut === 0) break;
+          allLines.push(rem.slice(0, cut) + "-");
+          rem = rem.slice(cut);
+        }
+        cur = rem;
       }
-      cur = rem;
     }
+    if (cur) allLines.push(cur);
   }
-  if (cur) lines.push(cur);
-  return lines.length ? lines : [""];
+  return allLines.length ? allLines : [""];
 }
 
 function trunc(text: string, font: PDFFont, size: number, maxW: number): string {
