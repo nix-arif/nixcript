@@ -260,7 +260,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     detailFontSize: detailFSz, fontR,
   }) + 6;
 
-  const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
+  const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 2 : 0) + (sstAmt > 0 ? 1 : 0);
   const termsNoteLines = q.notes ? wrap(q.notes, fontR, 8.5, CW - 80) : [];
   const TOTALS_H     = 26 + Math.max(bank ? 52 : 0, (totRowCount + 1) * 16) + 20;
   const TERMS_H      = 96 + (q.notes ? 4 + termsNoteLines.length * 12 : 0);
@@ -312,30 +312,26 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   }
   pageGroups.push(curGroup);
 
-  // Ensure last page has room for the totals/terms/closing section
+  // Safety-net: if items on last page leave insufficient room for bottom content, add overflow page
+  let hasOverflowPage = false;
   {
     const lastGroup  = pageGroups[pageGroups.length - 1];
     const lastItemsH = lastGroup.reduce((s, i) => s + renderItems[i].rowH, 0);
-    if (lastItemsH + BOTTOM_RESERVE > avail && lastGroup.length > 1) {
-      let fitH = 0, splitAt = 0;
-      for (const idx of lastGroup) {
-        if (fitH + renderItems[idx].rowH + BOTTOM_RESERVE <= avail) { fitH += renderItems[idx].rowH; splitAt++; }
-        else break;
-      }
-      splitAt = Math.max(1, splitAt);
-      if (splitAt < lastGroup.length) {
-        pageGroups[pageGroups.length - 1] = lastGroup.slice(0, splitAt);
-        pageGroups.push(lastGroup.slice(splitAt));
-      }
+    // items start at avail+28 (after header/info/dividers/banner/tHdr), end at avail+28-lastItemsH
+    const curYAfterItems = avail + 28 - lastItemsH;
+    if (curYAfterItems - 10 - BOTTOM_RESERVE < MB + 32) {
+      pageGroups.push([]);
+      hasOverflowPage = true;
     }
   }
 
   const totalPages = pageGroups.length;
   // ── Draw pages ────────────────────────────────────────────────────────────
   for (let pi = 0; pi < pageGroups.length; pi++) {
-    const isLast    = pi === pageGroups.length - 1;
-    const page      = pdfDoc.addPage([W, H]);
-    const pageItems = pageGroups[pi];
+    const isLast         = pi === pageGroups.length - 1;
+    const isOverflowPage = hasOverflowPage && isLast;
+    const page           = pdfDoc.addPage([W, H]);
+    const pageItems      = pageGroups[pi];
 
     // ── Footer ──────────────────────────────────────────────────────────────
     hLine(page, MB + 22, ML, W - MR, accent, 0.6);
@@ -392,9 +388,9 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     hLine(page, curY);
     curY -= 2;
 
-    // ── Table banner (optional) ────────────────────────────────────────────
+    // ── Table banner (optional) — skipped on overflow page ────────────────
     let tableTopY = curY;
-    if (hasBanner) {
+    if (hasBanner && !isOverflowPage) {
       const bannerY = curY - BANNER_H;
       page.drawRectangle({ x: ML, y: bannerY, width: CW, height: BANNER_H, color: C_LINE });
       const bannerText = trunc((q.title ?? "Quotation Items").toUpperCase(), fontB, 8.5, CW - 12);
@@ -406,7 +402,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       curY -= BANNER_H;
     }
 
-    // ── Table header ────────────────────────────────────────────────────────
+    // ── Table header — skipped on overflow page ──────────────────────────
     const thdrs: { label: string; x: number; w: number; align: "l" | "c" | "r" }[] = [
       { label: "No",          x: X_NO,   w: C_NO,   align: "c" },
       ...(showCode ? [{ label: "Code", x: X_CODE, w: C_CODE, align: "l" as const }] : []),
@@ -418,19 +414,21 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       ...(showTP   ? [{ label: "Total", x: X_TOT,  w: C_TOT,  align: "r" as const }] : []),
     ];
 
-    const tHdrY = curY - TABLE_HDR_H;
-    // Aura: thin rule above header text
-    hLine(page, curY, ML, W - MR, C_LINE, 0.4);
-    for (const col of thdrs) {
-      const tw = fontB.widthOfTextAtSize(col.label, 7.5);
-      const tx = col.x + (col.w - tw) / 2;
-      page.drawText(col.label.toUpperCase(), {
-        x: tx, y: tHdrY + 6, size: 7.5, font: fontB, color: accent,
-      });
+    if (!isOverflowPage) {
+      const tHdrY = curY - TABLE_HDR_H;
+      // Aura: thin rule above header text
+      hLine(page, curY, ML, W - MR, C_LINE, 0.4);
+      for (const col of thdrs) {
+        const tw = fontB.widthOfTextAtSize(col.label, 7.5);
+        const tx = col.x + (col.w - tw) / 2;
+        page.drawText(col.label.toUpperCase(), {
+          x: tx, y: tHdrY + 6, size: 7.5, font: fontB, color: accent,
+        });
+      }
+      // Thicker accent rule below header
+      page.drawLine({ start: { x: ML, y: tHdrY }, end: { x: W - MR, y: tHdrY }, thickness: 1.5, color: accent });
+      curY = tHdrY;
     }
-    // Thicker accent rule below header
-    page.drawLine({ start: { x: ML, y: tHdrY }, end: { x: W - MR, y: tHdrY }, thickness: 1.5, color: accent });
-    curY = tHdrY;
 
     // ── Item rows ────────────────────────────────────────────────────────────
     for (const entryIdx of pageItems) {
@@ -537,8 +535,8 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       curY = rowY;
     }
 
-    // Rounded outer table border (optional)
-    if (tableRowStyle === "rounded") {
+    // Rounded outer table border (optional) — skipped on overflow page (no items)
+    if (!isOverflowPage && tableRowStyle === "rounded") {
       const tableH = tableTopY - curY;
       const r = 6;
       page.drawSvgPath(
@@ -591,7 +589,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       }
       if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
       if (discAmt > 0) {
-        totItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
+        totItems.push([Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount", `- ${fmtM(discAmt)}`]);
         totItems.push(["After Discount", fmtM(afterDisc)]);
       }
       if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
@@ -691,17 +689,20 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   if (Number(q.includeCatalogue)) {
     const r2ImgBase = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
 
-    const seenCodes = new Set<string>();
-    const catItems = items.filter(it => {
-      if (!it.productCode || seenCodes.has(it.productCode)) return false;
-      seenCodes.add(it.productCode);
-      return true;
-    });
+    const codeCount = new Map<string, number>();
+    const catItems = items
+      .filter(it => !!it.productCode)
+      .map(it => {
+        const code = it.productCode!;
+        const n = (codeCount.get(code) ?? 0) + 1;
+        codeCount.set(code, n);
+        return { item: it, displayCode: n === 1 ? code : `${code} (${n})` };
+      });
 
     if (catItems.length > 0) {
       const imageCache = new Map<string, PDFImage>();
-      for (const item of catItems) {
-        if (!item.productCode) continue;
+      for (const { item } of catItems) {
+        if (!item.productCode || imageCache.has(item.productCode)) continue;
         for (const ext of ["jpg", "jpeg", "png", "webp"]) {
           try {
             const url = `${r2ImgBase}/${encodeURIComponent(item.productCode)}.${ext}`;
@@ -785,7 +786,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
         let rowTopY = colHdrY;
         for (let ri = 0; ri < pageRows.length; ri++) {
-          const item    = pageRows[ri];
+          const { item, displayCode } = pageRows[ri];
           const rowY    = rowTopY - CAT_ROW_H;
           hLine(catPage, rowY, ML, ML + CW, C_LINE, 0.3);
 
@@ -820,8 +821,8 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
           const detMaxW = CAT_COL_DET - 16;
           let   detY    = rowY + CAT_ROW_H - 16;
 
-          if (showCode && item.productCode) {
-            catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), {
+          if (showCode && displayCode) {
+            catPage.drawText(trunc(displayCode, fontB, 8, detMaxW), {
               x: detX, y: detY, size: 8, font: fontB, color: accent,
             });
             detY -= 11;

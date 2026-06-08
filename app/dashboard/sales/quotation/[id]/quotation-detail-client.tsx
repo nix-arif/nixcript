@@ -713,7 +713,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               )}
               {overallDiscAmt > 0 && (
                 <Row
-                  label={`Discount (${q.overallDiscountPct}%)`}
+                  label={Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount"}
                   value={`- ${fmt(overallDiscAmt)}`}
                   className="text-red-600 dark:text-red-400"
                   mono

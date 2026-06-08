@@ -491,14 +491,14 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const TABLE_HDR_H   = 20;
   const INFO_BLOCK    = estimateMonoInfoBoxH({ cust, title: q.title ?? null });
 
-  const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
+  const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
   const SUMMARY_ROW_H = TABLE_HDR_H;             // subtotal & grand total rows inside the table
   const TOT_PAD       = 5;                        // inner padding for summary / footer rows
   // Compute 2-col footer table height accurately (words wrap varies with grand total size)
   const _wordsLinesEst = wrap(numberToWords(grand), fontR, FS_BODY, CW * 0.65 - TOT_PAD * 2).slice(0, 4);
   const BTM_TABLE_H   = TABLE_HDR_H + Math.max(_wordsLinesEst.length * INFO_LH + 6, 3 * 14);
-  const TOTALS_H      = (2 + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 1 : 0)) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
+  const TOTALS_H      = (2 + (sets > 1 ? 1 : 0)) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 32;
   const CLOSING_H    = 50;
@@ -612,7 +612,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     const lastIsFirst = pageGroups.length === 1;
     const lastItemsH  = lastGroup.reduce((s, i) => s + renderItems[i].rowH, 0);
     const itemStartY  = lastIsFirst ? (P1_ROW_AVAIL + MB + 32) : (PN_ROW_AVAIL + MB + 32);
-    const summaryH    = (2 + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 1 : 0)) * SUMMARY_ROW_H;
+    const summaryH    = (2 + (sets > 1 ? 1 : 0)) * SUMMARY_ROW_H;
     const curYAfterSummary = itemStartY - lastItemsH - summaryH;
     const bottomH = 8 + BTM_TABLE_H + (bank ? BANK_BOX_H : 0) + TERMS_BOX_H + 10 + CLOSING_H + NOTES_H;
     if (curYAfterSummary - bottomH < MB + 32) {
@@ -910,10 +910,13 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         page.drawLine({ start: { x: W - MR, y: curY   }, end: { x: W - MR, y: odRowY }, thickness: 0.8, color: C_BLACK });
         page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: odRowY }, thickness: 0.3, color: C_BLACK });
         page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: odRowY }, thickness: 0.3, color: C_BLACK });
-        page.drawText("OVERALL DISCOUNT", { x: X_NO + TOT_PAD, y: odRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
-        const odPctStr  = `(${q.overallDiscountPct}%)`;
-        const odPctW    = fontR.widthOfTextAtSize(odPctStr, FS_BODY);
-        page.drawText(odPctStr, { x: X_QTY + ((C_QTY + C_UOM) - odPctW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        const isFixedDisc = Number(q.overallDiscountPct ?? 0) === 0;
+        page.drawText(isFixedDisc ? "SPECIAL DISCOUNT" : "OVERALL DISCOUNT", { x: X_NO + TOT_PAD, y: odRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+        if (!isFixedDisc) {
+          const odPctStr = `(${q.overallDiscountPct}%)`;
+          const odPctW   = fontR.widthOfTextAtSize(odPctStr, FS_BODY);
+          page.drawText(odPctStr, { x: X_QTY + ((C_QTY + C_UOM) - odPctW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        }
         const odStr  = `- ${fmtM(discAmt)}`;
         const odStrW = fontR.widthOfTextAtSize(odStr, FS_BODY);
         page.drawText(odStr, { x: X_UP + (amtAreaW - odStrW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
@@ -958,9 +961,10 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       const RIGHT_COL_X = ML + LEFT_COL_W;
       const BTM_HDR_H   = TABLE_HDR_H;
       const wordsText   = numberToWords(grand);
-      const RIGHT_ROW_H = 14; // height of each right-column sub-row
-      const wordsLines  = wrap(wordsText, fontR, FS_BODY, LEFT_COL_W - TOT_PAD * 2).slice(0, 4);
-      const btmConH     = Math.max(wordsLines.length * INFO_LH + 6, 3 * RIGHT_ROW_H);
+      const RIGHT_ROW_H  = 14; // height of each right-column sub-row
+      const summaryRows  = 3;
+      const wordsLines   = wrap(wordsText, fontR, FS_BODY, LEFT_COL_W - TOT_PAD * 2).slice(0, 4);
+      const btmConH      = Math.max(wordsLines.length * INFO_LH + 6, summaryRows * RIGHT_ROW_H);
       const btmTotalH   = BTM_HDR_H + btmConH;
 
       // Outer border
@@ -1006,30 +1010,26 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         wy -= INFO_LH;
       }
 
-      // Right column — 3 sub-rows: Taxable Amount | SST | Total After Tax
-      const rTop    = curY - BTM_HDR_H; // top of right content area
-      const rightW  = W - MR - RIGHT_COL_X - TOT_PAD;
+      // Right column — Taxable Amount | [Total Discount] | SST | Total After Tax
+      const rTop = curY - BTM_HDR_H; // top of right content area
+      let   rRow = 0;
 
-      // Row 1: taxable amount — label left, amount right
-      page.drawLine({ start: { x: RIGHT_COL_X, y: rTop - RIGHT_ROW_H }, end: { x: W - MR, y: rTop - RIGHT_ROW_H }, thickness: 0.3, color: C_BLACK });
-      page.drawText("TAXABLE AMOUNT (MYR)", { x: RIGHT_COL_X + TOT_PAD, y: rTop - RIGHT_ROW_H + 4, size: FS_BODY, font: fontR, color: C_BLACK });
-      const taxStr  = fmtM(afterDisc);
-      const taxStrW = fontR.widthOfTextAtSize(taxStr, FS_BODY);
-      page.drawText(taxStr, { x: W - MR - TOT_PAD - taxStrW, y: rTop - RIGHT_ROW_H + 4, size: FS_BODY, font: fontR, color: C_BLACK });
+      const drawSummaryRow = (label: string, val: string, bold = false) => {
+        rRow++;
+        page.drawLine({ start: { x: RIGHT_COL_X, y: rTop - rRow * RIGHT_ROW_H }, end: { x: W - MR, y: rTop - rRow * RIGHT_ROW_H }, thickness: 0.3, color: C_BLACK });
+        const font = bold ? fontB : fontR;
+        page.drawText(label, { x: RIGHT_COL_X + TOT_PAD, y: rTop - rRow * RIGHT_ROW_H + 4, size: FS_BODY, font, color: C_BLACK });
+        const vw = font.widthOfTextAtSize(val, FS_BODY);
+        page.drawText(val, { x: W - MR - TOT_PAD - vw, y: rTop - rRow * RIGHT_ROW_H + 4, size: FS_BODY, font, color: C_BLACK });
+      };
 
-      // Row 2: SST (X%) — label left, amount right
-      const sstLabel = `SST (${q.sstPct ?? "0"}%)`;
-      page.drawLine({ start: { x: RIGHT_COL_X, y: rTop - 2 * RIGHT_ROW_H }, end: { x: W - MR, y: rTop - 2 * RIGHT_ROW_H }, thickness: 0.3, color: C_BLACK });
-      page.drawText(sstLabel, { x: RIGHT_COL_X + TOT_PAD, y: rTop - 2 * RIGHT_ROW_H + 4, size: FS_BODY, font: fontR, color: C_BLACK });
-      const sstValStr = fmtM(sstAmt);
-      const sstValW   = fontR.widthOfTextAtSize(sstValStr, FS_BODY);
-      page.drawText(sstValStr, { x: W - MR - TOT_PAD - sstValW, y: rTop - 2 * RIGHT_ROW_H + 4, size: FS_BODY, font: fontR, color: C_BLACK });
+      drawSummaryRow("TAXABLE AMOUNT (MYR)", fmtM(afterDisc));
 
-      // Row 3: TOTAL AFTER TAX — label left, grand total right, bold
-      page.drawText("TOTAL AFTER TAX", { x: RIGHT_COL_X + TOT_PAD, y: rTop - 3 * RIGHT_ROW_H + 4, size: FS_BODY, font: fontB, color: C_BLACK });
-      const tatStr  = fmtM(grand);
-      const tatStrW = fontB.widthOfTextAtSize(tatStr, FS_BODY);
-      page.drawText(tatStr, { x: W - MR - TOT_PAD - tatStrW, y: rTop - 3 * RIGHT_ROW_H + 4, size: FS_BODY, font: fontB, color: C_BLACK });
+      // Next row: SST
+      drawSummaryRow(`SST (${q.sstPct ?? "0"}%)`, fmtM(sstAmt));
+
+      // Last row: Total After Tax (bold)
+      drawSummaryRow("TOTAL AFTER TAX", fmtM(grand), true);
 
       curY -= btmTotalH;
 
@@ -1147,17 +1147,20 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   // ── Catalogue pages ──────────────────────────────────────────────────────
   if (Number(q.includeCatalogue)) {
     const r2ImgBase = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
-    const seenCodes = new Set<string>();
-    const catItems = items.filter(it => {
-      if (!it.productCode || seenCodes.has(it.productCode)) return false;
-      seenCodes.add(it.productCode);
-      return true;
-    });
+    const codeCount = new Map<string, number>();
+    const catItems = items
+      .filter(it => !!it.productCode)
+      .map(it => {
+        const code = it.productCode!;
+        const n = (codeCount.get(code) ?? 0) + 1;
+        codeCount.set(code, n);
+        return { item: it, displayCode: n === 1 ? code : `${code} (${n})` };
+      });
 
     if (catItems.length > 0) {
       const imageCache = new Map<string, PDFImage>();
-      for (const item of catItems) {
-        if (!item.productCode) continue;
+      for (const { item } of catItems) {
+        if (!item.productCode || imageCache.has(item.productCode)) continue;
         for (const ext of ["jpg", "jpeg", "png", "webp"]) {
           try {
             const url = `${r2ImgBase}/${encodeURIComponent(item.productCode)}.${ext}`;
@@ -1224,7 +1227,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         // Product rows — no fill, black row borders, all text black and all caps
         let rowTopY = colHdrY;
         for (let ri = 0; ri < pageRows.length; ri++) {
-          const item    = pageRows[ri];
+          const { item, displayCode } = pageRows[ri];
           const rowY    = rowTopY - CAT_ROW_H;
           catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.4, color: C_BLACK });
 
@@ -1246,8 +1249,8 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
           const detMaxW = CAT_COL_DET - 16;
           let   detY    = rowY + CAT_ROW_H - 16;
 
-          if (showCode && item.productCode) {
-            catPage.drawText(trunc(item.productCode.toUpperCase(), fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: C_BLACK });
+          if (showCode && displayCode) {
+            catPage.drawText(trunc(displayCode.toUpperCase(), fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: C_BLACK });
             detY -= 11;
           }
           if (item.description) {

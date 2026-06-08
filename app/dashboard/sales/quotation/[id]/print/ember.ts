@@ -287,7 +287,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
   // ── Page availability ─────────────────────────────────────────────────────
   const TITLE_BAR_H  = q.title ? 26 : 0;
-  const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
+  const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 2 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
   const TOTALS_H     = 14 + totRowCount * 13 + 6 + GRAND_BAND_H + 10;
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
@@ -739,22 +739,6 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       hLine(page, curY, ML, W - MR, C_LINE, 0.5);
       curY -= 14;
 
-      if (bank) {
-        let by = curY;
-        page.drawText("PAYMENT TO", { x: ML, y: by, size: 7, font: fontB, color: C_DARK });
-        by -= 13;
-        for (const [lbl, val] of [
-          ["Bank",         bank.bankName           ?? ""],
-          ["Branch",       (bank as any).branchName ?? ""],
-          ["Account Name", bank.accountHolder      ?? ""],
-          ["Account No.",  bank.accountNo           ?? ""],
-        ] as [string, string][]) {
-          page.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_LITE });
-          page.drawText(trunc(String(val), fontB, 9.5, 170), { x: ML + 76, y: by, size: 9.5, font: fontB, color: C_DARK });
-          by -= 13;
-        }
-      }
-
       const totColW = 220;
       const totX    = W - MR - totColW;
       let ty = curY;
@@ -769,7 +753,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
       if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
       if (discAmt > 0) {
-        totItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
+        totItems.push([Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount", `- ${fmtM(discAmt)}`]);
         totItems.push(["After Discount", fmtM(afterDisc)]);
       }
       if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
@@ -796,10 +780,22 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       curY = ty - GRAND_BAND_H - 14;
 
       curY -= 14;
+      if (bank) {
+        const bankParts: string[] = [];
+        if (bank.bankName) bankParts.push(bank.bankName);
+        if ((bank as any).branchName) bankParts.push(`(${(bank as any).branchName})`);
+        if (bank.accountHolder) bankParts.push(`account name ${bank.accountHolder}`);
+        if (bank.accountNo) bankParts.push(`account number ${bank.accountNo}`);
+        const paymentSentence = `Payment can be made to ${bankParts.join(", ")}.`;
+        for (const cl of wrap(paymentSentence, fontR, 8, CW)) {
+          page.drawText(cl, { x: ML, y: curY, size: 8, font: fontR, color: C_LITE });
+          curY -= 12;
+        }
+        curY -= 4;
+      }
       const closeMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order. Should you have any enquiries, please do not hesitate to contact us.";
-      for (const cl of wrap(closeMsg, fontR, 8, CW - 40)) {
-        const clW = fontR.widthOfTextAtSize(cl, 8);
-        page.drawText(cl, { x: (W - clW) / 2, y: curY, size: 8, font: fontR, color: C_LITE });
+      for (const cl of wrap(closeMsg, fontR, 8, CW)) {
+        page.drawText(cl, { x: ML, y: curY, size: 8, font: fontR, color: C_LITE });
         curY -= 12;
       }
 
@@ -826,17 +822,20 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   // ── Catalogue pages ────────────────────────────────────────────────────────
   if (Number(q.includeCatalogue)) {
     const r2ImgBase = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
-    const seenCodes = new Set<string>();
-    const catItems  = items.filter(it => {
-      if (!it.productCode || seenCodes.has(it.productCode)) return false;
-      seenCodes.add(it.productCode);
-      return true;
-    });
+    const codeCount = new Map<string, number>();
+    const catItems = items
+      .filter(it => !!it.productCode)
+      .map(it => {
+        const code = it.productCode!;
+        const n = (codeCount.get(code) ?? 0) + 1;
+        codeCount.set(code, n);
+        return { item: it, displayCode: n === 1 ? code : `${code} (${n})` };
+      });
 
     if (catItems.length > 0) {
       const imageCache = new Map<string, PDFImage>();
-      for (const item of catItems) {
-        if (!item.productCode) continue;
+      for (const { item } of catItems) {
+        if (!item.productCode || imageCache.has(item.productCode)) continue;
         for (const ext of ["jpg", "jpeg", "png", "webp"]) {
           try {
             const url = `${r2ImgBase}/${encodeURIComponent(item.productCode)}.${ext}`;
@@ -916,7 +915,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
         let rowTopY = colHdrY;
         for (let ri = 0; ri < pageRows.length; ri++) {
-          const item    = pageRows[ri];
+          const { item, displayCode } = pageRows[ri];
           const rowY    = rowTopY - CAT_ROW_H;
           hLine(catPage, rowY, ML, ML + CW, C_LINE, 0.3);
 
@@ -945,8 +944,8 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
           const detX    = ML + CAT_COL_NO + CAT_COL_IMG + 8;
           const detMaxW = CAT_COL_DET - 16;
           let   detY    = rowY + CAT_ROW_H - 16;
-          if (showCode && item.productCode) {
-            catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), {
+          if (showCode && displayCode) {
+            catPage.drawText(trunc(displayCode, fontB, 8, detMaxW), {
               x: detX, y: detY, size: 8, font: fontB, color: C_DARK,
             });
             detY -= 11;

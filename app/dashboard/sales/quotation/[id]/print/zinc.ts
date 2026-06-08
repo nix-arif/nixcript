@@ -579,7 +579,7 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
       }
       if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
       if (discAmt > 0) {
-        totItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
+        totItems.push([Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount", `- ${fmtM(discAmt)}`]);
         totItems.push(["After Discount", fmtM(afterDisc)]);
       }
       if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);

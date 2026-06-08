@@ -178,8 +178,14 @@ export function EditQuotationClient({ data, customers, members }: Props) {
   );
 
   // ── Pricing state ────────────────────────────────────────────────────────
+  const initDiscType: "pct" | "fixed" = Number(q.overallDiscountPct ?? 0) > 0 ? "pct"
+    : Number(q.overallDiscountAmt ?? 0) > 0 ? "fixed" : "pct";
+  const [discountType, setDiscountType] = useState<"pct" | "fixed">(initDiscType);
   const [overallDiscount, setOverallDiscount] = useState(
-    q.overallDiscountPct ?? "0",
+    initDiscType === "pct" ? (q.overallDiscountPct ?? "0") : "0",
+  );
+  const [specialDiscAmt, setSpecialDiscAmt] = useState(
+    initDiscType === "fixed" ? (q.overallDiscountAmt ?? "0") : "0",
   );
   const [sstPct, setSstPct] = useState(q.sstPct ?? "0");
   const applySST = Number(sstPct) > 0;
@@ -212,7 +218,9 @@ export function EditQuotationClient({ data, customers, members }: Props) {
 
   const subtotalPerSet = items.reduce((s, it) => s + itemLineTotal(it), 0);
   const subtotal = subtotalPerSet * sets;
-  const discAmt = subtotal * (Number(overallDiscount) / 100);
+  const discAmt = discountType === "pct"
+    ? subtotal * (Number(overallDiscount) / 100)
+    : Number(specialDiscAmt);
   const afterDiscount = subtotal - discAmt;
   const sstAmt = afterDiscount * (Number(sstPct) / 100);
   const grandTotal = afterDiscount + sstAmt;
@@ -287,7 +295,8 @@ export function EditQuotationClient({ data, customers, members }: Props) {
         paymentTerm: paymentTerm || null,
         returnPolicy: returnPolicy || null,
         warranty: warranty || null,
-        overallDiscountPct: overallDiscount,
+        overallDiscountPct: discountType === "pct" ? overallDiscount : "0",
+        overallDiscountAmt: discountType === "fixed" ? specialDiscAmt : undefined,
         sstPct: sstPct,
         includeCatalogue,
         includeMdaCerts,
@@ -845,17 +854,53 @@ export function EditQuotationClient({ data, customers, members }: Props) {
           <div className="bg-background border border-border rounded-xl overflow-hidden">
             <SectionHeader title="Pricing" />
             <div className="p-4 space-y-3">
-              <Field label="Overall discount (%)">
-                <Input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value={overallDiscount}
-                  onChange={(e) => setOverallDiscount(e.target.value)}
-                  className="h-9 text-sm text-right"
-                />
-              </Field>
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground">Total discount</p>
+                <div className="flex gap-1 mb-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDiscountType("pct")}
+                    className={`px-3 py-1 text-xs rounded-md border transition-colors ${discountType === "pct" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-foreground"}`}
+                  >
+                    % Percentage
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiscountType("fixed")}
+                    className={`px-3 py-1 text-xs rounded-md border transition-colors ${discountType === "fixed" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-foreground"}`}
+                  >
+                    RM Special
+                  </button>
+                </div>
+                {discountType === "pct" ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={overallDiscount}
+                      onChange={(e) => setOverallDiscount(e.target.value)}
+                      className="h-9 text-sm text-right flex-1"
+                      placeholder="0"
+                    />
+                    <span className="text-sm text-muted-foreground">%</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">RM</span>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={specialDiscAmt}
+                      onChange={(e) => setSpecialDiscAmt(e.target.value)}
+                      className="h-9 text-sm text-right flex-1"
+                      placeholder="0.00"
+                    />
+                  </div>
+                )}
+              </div>
               <Field label="SST (%)">
                 <Input
                   type="number"
@@ -887,9 +932,9 @@ export function EditQuotationClient({ data, customers, members }: Props) {
                     <span className="tabular-nums">{fmt(subtotal)}</span>
                   </div>
                 )}
-                {Number(overallDiscount) > 0 && (
+                {discAmt > 0 && (
                   <div className="flex justify-between text-red-600 dark:text-red-400">
-                    <span>Discount ({overallDiscount}%)</span>
+                    <span>{discountType === "pct" ? `Discount (${overallDiscount}%)` : "Special Discount"}</span>
                     <span className="tabular-nums">- {fmt(discAmt)}</span>
                   </div>
                 )}

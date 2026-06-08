@@ -168,6 +168,8 @@ export function NewQuotationClient({
 
   // Step 4 state
   const [overallDiscount, setOverallDiscount] = useState("0");
+  const [specialDiscAmt, setSpecialDiscAmt] = useState("0");
+  const [discountType, setDiscountType] = useState<"pct" | "fixed">("pct");
   const [sstPct, setSstPct] = useState("0");
   const [applySST, setApplySST] = useState(false);
   const [applyItemizeDiscount, setApplyItemizeDiscount] = useState(false);
@@ -210,7 +212,9 @@ export function NewQuotationClient({
 
   const afterItemDisc = subtotalNSets - itemDiscTotal;
   const overallDiscAmt = applyTotalDiscount
-    ? afterItemDisc * (Number(overallDiscount || 0) / 100)
+    ? discountType === "pct"
+      ? afterItemDisc * (Number(overallDiscount || 0) / 100)
+      : Number(specialDiscAmt || 0)
     : 0;
   const totalDisc = itemDiscTotal + overallDiscAmt;
   const afterAllDisc = subtotalNSets - totalDisc;
@@ -451,7 +455,8 @@ export function NewQuotationClient({
         returnPolicy: returnPolicy || undefined,
         warranty: warranty || undefined,
         items: finalItems,
-        overallDiscountPct: applyTotalDiscount ? (overallDiscount || "0") : "0",
+        overallDiscountPct: applyTotalDiscount && discountType === "pct" ? (overallDiscount || "0") : "0",
+        overallDiscountAmt: applyTotalDiscount && discountType === "fixed" ? (specialDiscAmt || "0") : undefined,
         sstPct: applySST ? sstPct || "8" : "0",
         includeCatalogue,
         includeMdaCerts,
@@ -1329,35 +1334,72 @@ export function NewQuotationClient({
                 )}
 
                 {/* Total discount */}
-                <div className="flex items-center gap-3 px-4 py-3">
+                <div className="flex items-start gap-3 px-4 py-3">
                   <input
                     type="checkbox"
                     id="applyTotalDisc"
                     checked={applyTotalDiscount}
                     onChange={(e) => setApplyTotalDiscount(e.target.checked)}
-                    className="w-4 h-4"
+                    className="w-4 h-4 mt-0.5"
                   />
-                  <label htmlFor="applyTotalDisc" className="text-sm font-medium cursor-pointer flex-1">
-                    Apply total discount
-                  </label>
-                  {applyTotalDiscount && (
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        value={overallDiscount}
-                        onChange={(e) => setOverallDiscount(e.target.value)}
-                        className="h-7 text-sm w-16 text-right"
-                        min="0"
-                        max="100"
-                      />
-                      <span className="text-sm text-muted-foreground">%</span>
-                      {overallDiscAmt > 0 && (
-                        <span className="text-sm text-red-600 dark:text-red-400 font-mono tabular-nums">
-                          − RM {fmt(overallDiscAmt)}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  <div className="flex-1 space-y-2">
+                    <label htmlFor="applyTotalDisc" className="text-sm font-medium cursor-pointer">
+                      Apply total discount
+                    </label>
+                    {applyTotalDiscount && (
+                      <div className="space-y-2">
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setDiscountType("pct")}
+                            className={`px-3 py-1 text-xs rounded-md border transition-colors ${discountType === "pct" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-foreground"}`}
+                          >
+                            % Percentage
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDiscountType("fixed")}
+                            className={`px-3 py-1 text-xs rounded-md border transition-colors ${discountType === "fixed" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-foreground"}`}
+                          >
+                            RM Special
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {discountType === "pct" ? (
+                            <>
+                              <Input
+                                type="number"
+                                value={overallDiscount}
+                                onChange={(e) => setOverallDiscount(e.target.value)}
+                                className="h-7 text-sm w-20 text-right"
+                                min="0"
+                                max="100"
+                                placeholder="0"
+                              />
+                              <span className="text-sm text-muted-foreground">%</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-sm text-muted-foreground">RM</span>
+                              <Input
+                                type="number"
+                                value={specialDiscAmt}
+                                onChange={(e) => setSpecialDiscAmt(e.target.value)}
+                                className="h-7 text-sm w-28 text-right"
+                                min="0"
+                                placeholder="0.00"
+                              />
+                            </>
+                          )}
+                          {overallDiscAmt > 0 && (
+                            <span className="text-sm text-red-600 dark:text-red-400 font-mono tabular-nums">
+                              − RM {fmt(overallDiscAmt)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Apply SST */}

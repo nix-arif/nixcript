@@ -421,6 +421,7 @@ export type CreateQuotationInput = {
   warranty?: string;
   items: ReviewItem[];
   overallDiscountPct: string;
+  overallDiscountAmt?: string;
   sstPct: string;
   includeCatalogue: boolean;
   includeMdaCerts: boolean;
@@ -549,8 +550,11 @@ export async function createQuotation(input: CreateQuotationInput) {
   const perSetSubtotal = input.items.reduce((s, item) => s + calcItemTotal(item), 0);
   const subtotal = perSetSubtotal * setsCount;
 
-  const overallDisc = Number(input.overallDiscountPct ?? 0);
-  const afterDiscount = subtotal * (1 - overallDisc / 100);
+  const overallDiscPct = Number(input.overallDiscountPct ?? 0);
+  const overallDiscAmt = overallDiscPct > 0
+    ? subtotal * (overallDiscPct / 100)
+    : Number(input.overallDiscountAmt ?? 0);
+  const afterDiscount = subtotal - overallDiscAmt;
   const sstAmt = afterDiscount * (Number(input.sstPct ?? 0) / 100);
   const grandTotal = afterDiscount + sstAmt;
 
@@ -571,7 +575,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     warranty: input.warranty ?? null,
     subtotal: subtotal.toFixed(2),
     overallDiscountPct: input.overallDiscountPct,
-    overallDiscountAmt: ((subtotal * overallDisc) / 100).toFixed(2),
+    overallDiscountAmt: overallDiscAmt.toFixed(2),
     sst: sstAmt.toFixed(2),
     sstPct: input.sstPct,
     grandTotal: grandTotal.toFixed(2),
@@ -1703,6 +1707,7 @@ export type UpdateQuotationInput = {
   returnPolicy?: string | null;
   warranty?: string | null;
   overallDiscountPct: string;
+  overallDiscountAmt?: string;
   sstPct: string;
   includeCatalogue: boolean;
   includeMdaCerts: boolean;
@@ -1811,8 +1816,11 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
   const perSetSubtotal = input.items.reduce((s, item) => s + calcItemTotal(item), 0);
   const subtotal = perSetSubtotal * setsCount;
 
-  const overallDisc = Number(input.overallDiscountPct ?? 0);
-  const afterDiscount = subtotal * (1 - overallDisc / 100);
+  const overallDiscPct = Number(input.overallDiscountPct ?? 0);
+  const overallDiscAmt = overallDiscPct > 0
+    ? subtotal * (overallDiscPct / 100)
+    : Number(input.overallDiscountAmt ?? 0);
+  const afterDiscount = subtotal - overallDiscAmt;
   const sstAmt = afterDiscount * (Number(input.sstPct ?? 0) / 100);
   const grandTotal = afterDiscount + sstAmt;
 
@@ -1837,7 +1845,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       warranty: input.warranty ?? null,
       subtotal: subtotal.toFixed(2),
       overallDiscountPct: input.overallDiscountPct,
-      overallDiscountAmt: ((subtotal * overallDisc) / 100).toFixed(2),
+      overallDiscountAmt: overallDiscAmt.toFixed(2),
       sst: sstAmt.toFixed(2),
       sstPct: input.sstPct,
       grandTotal: grandTotal.toFixed(2),

@@ -770,7 +770,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       }
       if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
       if (discAmt > 0) {
-        totItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
+        totItems.push([Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount", `- ${fmtM(discAmt)}`]);
         totItems.push(["After Discount", fmtM(afterDisc)]);
       }
       if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
@@ -837,18 +837,21 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   if (Number(q.includeCatalogue)) {
     const r2ImgBase = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
 
-    const seenCodes = new Set<string>();
-    const catItems  = items.filter(it => {
-      if (!it.productCode || seenCodes.has(it.productCode)) return false;
-      seenCodes.add(it.productCode);
-      return true;
-    });
+    const codeCount = new Map<string, number>();
+    const catItems = items
+      .filter(it => !!it.productCode)
+      .map(it => {
+        const code = it.productCode!;
+        const n = (codeCount.get(code) ?? 0) + 1;
+        codeCount.set(code, n);
+        return { item: it, displayCode: n === 1 ? code : `${code} (${n})` };
+      });
 
     if (catItems.length > 0) {
-      // Pre-fetch images
+      // Pre-fetch images (one fetch per unique productCode)
       const imageCache = new Map<string, PDFImage>();
-      for (const item of catItems) {
-        if (!item.productCode) continue;
+      for (const { item } of catItems) {
+        if (!item.productCode || imageCache.has(item.productCode)) continue;
         for (const ext of ["jpg", "jpeg", "png", "webp"]) {
           try {
             const url = `${r2ImgBase}/${encodeURIComponent(item.productCode)}.${ext}`;
@@ -938,7 +941,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         // ── Product rows ──────────────────────────────────────────────
         let rowTopY = colHdrY;
         for (let ri = 0; ri < pageRows.length; ri++) {
-          const item    = pageRows[ri];
+          const { item, displayCode } = pageRows[ri];
           const rowY    = rowTopY - CAT_ROW_H;
           dashedLine(catPage, rowY, ML, ML + CW, rgb(0.86, 0.86, 0.86));
 
@@ -986,8 +989,8 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
           const detMaxW = CAT_COL_DET - 16;
           let   detY    = rowY + CAT_ROW_H - 16;
 
-          if (showCode && item.productCode) {
-            catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), {
+          if (showCode && displayCode) {
+            catPage.drawText(trunc(displayCode, fontB, 8, detMaxW), {
               x: detX, y: detY, size: 8, font: fontB, color: accentT,
             });
             detY -= 11;
