@@ -744,9 +744,10 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         page.drawText("PAYMENT TO", { x: ML, y: by, size: 7, font: fontB, color: C_DARK });
         by -= 13;
         for (const [lbl, val] of [
-          ["Bank",         bank.bankName      ?? ""],
-          ["Account Name", bank.accountHolder ?? ""],
-          ["Account No.",  bank.accountNo     ?? ""],
+          ["Bank",         bank.bankName           ?? ""],
+          ["Branch",       (bank as any).branchName ?? ""],
+          ["Account Name", bank.accountHolder      ?? ""],
+          ["Account No.",  bank.accountNo           ?? ""],
         ] as [string, string][]) {
           page.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_LITE });
           page.drawText(trunc(String(val), fontB, 9.5, 170), { x: ML + 76, y: by, size: 9.5, font: fontB, color: C_DARK });

@@ -520,7 +520,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     const bRValW = BHALF_W - bRMaxW - BCOLON_W - 8;
     bPreL = [
       wrap(String((bank as any).bankName      ?? "—").toUpperCase(), fontR, FS_BODY, bLValW),
-      wrap(String((bank as any).branch        ?? "—").toUpperCase(), fontR, FS_BODY, bLValW),
+      wrap(String((bank as any).branchName     ?? "—").toUpperCase(), fontR, FS_BODY, bLValW),
     ];
     bPreR = [
       wrap(String((bank as any).accountNo     ?? "—").toUpperCase(), fontR, FS_BODY, bRValW),

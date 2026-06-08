@@ -741,9 +741,10 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         });
         let by = curY - 28;
         for (const [lbl, val] of [
-          ["Bank",         bank.bankName      ?? ""],
-          ["Account Name", bank.accountHolder ?? ""],
-          ["Account No.",  bank.accountNo     ?? ""],
+          ["Bank",         bank.bankName           ?? ""],
+          ["Branch",       (bank as any).branchName ?? ""],
+          ["Account Name", bank.accountHolder      ?? ""],
+          ["Account No.",  bank.accountNo           ?? ""],
         ] as [string, string][]) {
           const lw = fontR.widthOfTextAtSize(`${lbl}: `, 8.5);
           page.drawText(`${lbl}: `, { x: ML + 10, y: by, size: 8.5, font: fontR, color: C_MID });

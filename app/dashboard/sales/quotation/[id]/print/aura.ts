@@ -561,6 +561,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         by -= 13;
         for (const [lbl, val] of [
           ["Bank", bank.bankName ?? ""],
+          ["Branch", (bank as any).branchName ?? ""],
           ["Account Name", bank.accountHolder ?? ""],
           ["Account No.", bank.accountNo ?? ""],
         ] as [string,string][]) {

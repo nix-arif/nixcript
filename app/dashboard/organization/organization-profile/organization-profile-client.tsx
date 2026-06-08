@@ -758,14 +758,39 @@ export function OrganizationProfileClient({ data }: Props) {
                   >
                     {/* Bank header */}
                     <div className="flex items-center gap-2 px-3 py-2 bg-muted/20 border-b border-border">
-                      <input
+                      <Select
                         value={bank.bankName}
-                        onChange={(e) =>
-                          updateBank(i, "bankName", e.target.value)
-                        }
-                        placeholder="Bank name e.g. Maybank"
-                        className="flex-1 bg-transparent text-xs font-medium outline-none placeholder:text-muted-foreground"
-                      />
+                        onValueChange={(v) => updateBank(i, "bankName", v)}
+                      >
+                        <SelectTrigger className="flex-1 h-7 border-0 bg-transparent shadow-none px-0 text-xs font-medium focus:ring-0">
+                          <SelectValue placeholder="Select bank…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[
+                            "Maybank",
+                            "CIMB Bank",
+                            "Public Bank",
+                            "RHB Bank",
+                            "Hong Leong Bank",
+                            "AmBank",
+                            "Bank Islam Malaysia",
+                            "Bank Rakyat",
+                            "Affin Bank",
+                            "Alliance Bank",
+                            "OCBC Bank Malaysia",
+                            "Standard Chartered Malaysia",
+                            "HSBC Bank Malaysia",
+                            "UOB Malaysia",
+                            "Bank Simpanan Nasional (BSN)",
+                            "Agrobank",
+                            "Bank Muamalat Malaysia",
+                            "MBSB Bank",
+                            "Kuwait Finance House Malaysia",
+                          ].map((b) => (
+                            <SelectItem key={b} value={b}>{b}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {bank.isPrimary ? (
                           <span className="text-[10px] bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 rounded px-1.5 py-0.5">

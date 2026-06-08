@@ -133,7 +133,7 @@ function TemplateCorporate({ entry }: { entry: GroupItem }) {
         {bank ? (
           <div style={{ fontSize: "11px" }}>
             <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: primary, marginBottom: "6px" }}>Payment To</div>
-            {[["Bank", bank.bankName], ["Account", bank.accountHolder], ["Account No.", bank.accountNo]].map(([l, v]) => (
+            {([["Bank", bank.bankName], ["Branch", (bank as any).branchName], ["Account", bank.accountHolder], ["Account No.", bank.accountNo]] as [string,string][]).map(([l, v]) => (
               <div key={l} style={{ color: "#555", marginBottom: "1px" }}><span style={{ color: "#888", marginRight: "6px" }}>{l}:</span>{v}</div>
             ))}
           </div>
@@ -291,7 +291,7 @@ function TemplateModern({ entry }: { entry: GroupItem }) {
         {bank ? (
           <div style={{ fontSize: "11px" }}>
             <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", color: primary, marginBottom: "5px" }}>Payment To</div>
-            {[["Bank", bank.bankName], ["Account", bank.accountHolder], ["Acc No.", bank.accountNo]].map(([l, v]) => (
+            {([["Bank", bank.bankName], ["Branch", (bank as any).branchName], ["Account", bank.accountHolder], ["Acc No.", bank.accountNo]] as [string,string][]).map(([l, v]) => (
               <div key={l} style={{ marginBottom: "1px" }}><span style={{ color: "#888", marginRight: "6px" }}>{l}:</span><span style={{ fontWeight: "500" }}>{v}</span></div>
             ))}
           </div>
@@ -455,7 +455,7 @@ function TemplateBold({ entry }: { entry: GroupItem }) {
         {bank ? (
           <div style={{ fontSize: "11px", padding: "10px 14px", background: "#f7f7f9", border: "1px solid #e5e5e5", borderRadius: "4px" }}>
             <div style={{ fontSize: "9px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "1px", color: primary, marginBottom: "5px" }}>Payment To</div>
-            {[["Bank", bank.bankName], ["Account", bank.accountHolder], ["Acc No.", bank.accountNo]].map(([l, v]) => (
+            {([["Bank", bank.bankName], ["Branch", (bank as any).branchName], ["Account", bank.accountHolder], ["Acc No.", bank.accountNo]] as [string,string][]).map(([l, v]) => (
               <div key={l} style={{ marginBottom: "1px" }}><span style={{ color: "#999", marginRight: "6px", fontWeight: "400" }}>{l}:</span><span style={{ fontWeight: "600" }}>{v}</span></div>
             ))}
           </div>
@@ -631,7 +631,7 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
         {bank ? (
           <div style={{ fontSize: "11px" }}>
             <div style={{ fontSize: "8.5px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.2px", color: navy, marginBottom: "6px" }}>Payment To</div>
-            {[["Bank", bank.bankName], ["Account Name", bank.accountHolder], ["Account No.", bank.accountNo]].map(([l, v]) => (
+            {([["Bank", bank.bankName], ["Branch", (bank as any).branchName], ["Account Name", bank.accountHolder], ["Account No.", bank.accountNo]] as [string,string][]).map(([l, v]) => (
               <div key={l} style={{ marginBottom: "2px", color: "#444" }}>
                 <span style={{ color: "#999", marginRight: "6px", fontSize: "10.5px" }}>{l}:</span>
                 <span style={{ fontWeight: "500" }}>{v}</span>
@@ -809,7 +809,7 @@ function TemplateEmber({ entry }: { entry: GroupItem }) {
         {bank ? (
           <div style={{ fontSize: "11px" }}>
             <div style={{ fontSize: "8.5px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.2px", color: primary, marginBottom: "5px" }}>Payment To</div>
-            {[["Bank", bank.bankName], ["Account", bank.accountHolder], ["Acc No.", bank.accountNo]].map(([l, v]) => (
+            {([["Bank", bank.bankName], ["Branch", (bank as any).branchName], ["Account", bank.accountHolder], ["Acc No.", bank.accountNo]] as [string,string][]).map(([l, v]) => (
               <div key={l} style={{ marginBottom: "1px" }}><span style={{ color: "#aaa", marginRight: "6px" }}>{l}:</span><span style={{ fontWeight: "500", color: "#333" }}>{v}</span></div>
             ))}
           </div>
@@ -1112,7 +1112,7 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
               <td style={{ padding: "5px 8px", borderRight: "1px solid #000", verticalAlign: "top", color: "#000", textTransform: "uppercase" }}>
                 <table style={{ borderCollapse: "collapse", width: "100%" }}>
                   <tbody>
-                    {([["Bank Name", bank.bankName ?? "—"], ["Branch", (bank as any).branch ?? "—"]] as [string, string][]).map(([l, v]) => (
+                    {([["Bank Name", bank.bankName ?? "—"], ["Branch", (bank as any).branchName ?? "—"]] as [string, string][]).map(([l, v]) => (
                       <tr key={l}>
                         <td style={{ color: "#000", paddingBottom: "3px", whiteSpace: "nowrap", paddingRight: "5px" }}>{l}</td>
                         <td style={{ color: "#000", paddingBottom: "3px", paddingLeft: "2px", paddingRight: "4px", whiteSpace: "nowrap" }}>:</td>
