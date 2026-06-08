@@ -33,7 +33,9 @@ export const C_WHITE = rgb(1, 1, 1);
 
 // ── Text helpers ────────────────────────────────────────────────────────────
 export function sanitizeText(t: string): string {
-  return String(t).replace(/[\x00-\x1F\x7F]/g, " ");
+  return String(t)
+    .replace(/[\x00-\x1F\x7F]/g, " ")
+    .replace(/[^\x00-\xFFŒœŠšŸŽžƒˆ˜–—‘’‚“”„†‡•…‰‹›€™]/g, " ");
 }
 
 export function wrap(text: string, font: PDFFont, size: number, maxW: number): string[] {

@@ -1243,13 +1243,13 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
             }
           }
           if (item.uom) {
-            catPage.drawText(item.uom.toUpperCase(), { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
+            catPage.drawText(sanitizeText(item.uom).toUpperCase(), { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
             detY -= 11;
           }
           if (showMdaCerts && item.hasCert) {
             detY -= 5;
             if (item.mdaRegNo) {
-              catPage.drawText(`MDA REG NO: ${item.mdaRegNo.toUpperCase()}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
+              catPage.drawText(sanitizeText(`MDA REG NO: ${item.mdaRegNo}`).toUpperCase(), { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
               detY -= 10;
             }
             if (item.mdaValidity) {

@@ -48,7 +48,9 @@ function fmtM(v: string | number | null | undefined): string {
 }
 
 function sanitizeText(t: string): string {
-  return String(t).replace(/[\x00-\x1F\x7F]/g, " ");
+  return String(t)
+    .replace(/[\x00-\x1F\x7F]/g, " ")
+    .replace(/[^\x00-\xFFŒœŠšŸŽžƒˆ˜–—‘’‚“”„†‡•…‰‹›€™]/g, " ");
 }
 
 function wrap(text: string, font: PDFFont, size: number, maxW: number): string[] {
@@ -672,7 +674,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       });
 
       // UOM
-      const uomStr = item.uom || "—";
+      const uomStr = sanitizeText(item.uom || "—");
       const uomW   = fontR.widthOfTextAtSize(uomStr, FS_CODE);
       page.drawText(uomStr, {
         x: X_UOM + (C_UOM - uomW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_MID,
@@ -996,13 +998,13 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
             }
           }
           if (item.uom) {
-            catPage.drawText(item.uom, { x: detX, y: detY, size: 8, font: fontR, color: C_MID });
+            catPage.drawText(sanitizeText(item.uom), { x: detX, y: detY, size: 8, font: fontR, color: C_MID });
             detY -= 11;
           }
           if (showMdaCerts && item.hasCert) {
             detY -= 5;
             if (item.mdaRegNo) {
-              catPage.drawText(`MDA Reg No: ${item.mdaRegNo}`, {
+              catPage.drawText(sanitizeText(`MDA Reg No: ${item.mdaRegNo}`), {
                 x: detX, y: detY, size: 7.5, font: fontR, color: C_BODY,
               });
               detY -= 10;
