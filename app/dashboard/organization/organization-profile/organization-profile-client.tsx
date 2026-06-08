@@ -232,7 +232,9 @@ export function OrganizationProfileClient({ data }: Props) {
   );
 
   // Banking
-  const [bankingInfo, setBankingInfo] = useState<BankEntry[]>(data.bankingInfo);
+  const [bankingInfo, setBankingInfo] = useState<BankEntry[]>(
+    data.bankingInfo.map((b) => ({ ...b, branchName: b.branchName ?? "" })),
+  );
 
 
   // Certificate keys

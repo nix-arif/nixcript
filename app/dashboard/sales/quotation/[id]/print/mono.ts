@@ -494,12 +494,14 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
   const SUMMARY_ROW_H = TABLE_HDR_H;             // subtotal & grand total rows inside the table
-  const BTM_TABLE_H   = TABLE_HDR_H + 42;         // 2-col footer table (header + 3 right-col rows)
-  const TOTALS_H      = (2 + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 1 : 0)) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
   const TOT_PAD       = 5;                        // inner padding for summary / footer rows
+  // Compute 2-col footer table height accurately (words wrap varies with grand total size)
+  const _wordsLinesEst = wrap(numberToWords(grand), fontR, FS_BODY, CW * 0.65 - TOT_PAD * 2).slice(0, 4);
+  const BTM_TABLE_H   = TABLE_HDR_H + Math.max(_wordsLinesEst.length * INFO_LH + 6, 3 * 14);
+  const TOTALS_H      = (2 + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 1 : 0)) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
-  const FOOTER_BLOCK = 30;
-  const CLOSING_H    = 38;
+  const FOOTER_BLOCK = 32;
+  const CLOSING_H    = 50;
   const ACCEPT_H     = 0;
   const SUB_HDR_H = 14;
   const BPAD      = 8;
@@ -555,10 +557,10 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   ) * INFO_LH + 8;
   const TERMS_BOX_H = TABLE_HDR_H + SUB_HDR_H + tConH;
 
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + (bank ? BANK_BOX_H + 8 : 0) + TERMS_BOX_H + 8 + ACCEPT_H;
+  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + (bank ? BANK_BOX_H + 8 : 0) + TERMS_BOX_H + 12 + ACCEPT_H;
 
-  const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - MB - 30;
-  const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 26;
+  const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - MB - 36;
+  const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 32;
 
   // ── Build render entries (set headers interleaved with items) ────────────
   const SET_HDR_H = 18;
@@ -602,23 +604,20 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   }
   pageGroups.push(curGroup);
 
-  // Ensure last page fits totals
+  // If 2-col + bank + T&C + closing + notes won't fit after items + summary rows on the last page,
+  // push a dedicated overflow page for those sections; the items page keeps items + summary rows.
+  let hasOverflowPage = false;
   {
     const lastGroup   = pageGroups[pageGroups.length - 1];
     const lastIsFirst = pageGroups.length === 1;
-    const lastAvail   = Math.max(lastIsFirst ? P1_ROW_AVAIL : PN_ROW_AVAIL, RH_MIN * 3);
     const lastItemsH  = lastGroup.reduce((s, i) => s + renderItems[i].rowH, 0);
-    if (lastItemsH + BOTTOM_RESERVE > lastAvail && lastGroup.length > 1) {
-      let fitH = 0, splitAt = 0;
-      for (const idx of lastGroup) {
-        if (fitH + renderItems[idx].rowH + BOTTOM_RESERVE <= lastAvail) { fitH += renderItems[idx].rowH; splitAt++; }
-        else break;
-      }
-      splitAt = Math.max(1, splitAt);
-      if (splitAt < lastGroup.length) {
-        pageGroups[pageGroups.length - 1] = lastGroup.slice(0, splitAt);
-        pageGroups.push(lastGroup.slice(splitAt));
-      }
+    const itemStartY  = lastIsFirst ? (P1_ROW_AVAIL + MB + 32) : (PN_ROW_AVAIL + MB + 32);
+    const summaryH    = (2 + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 1 : 0)) * SUMMARY_ROW_H;
+    const curYAfterSummary = itemStartY - lastItemsH - summaryH;
+    const bottomH = 8 + BTM_TABLE_H + (bank ? BANK_BOX_H : 0) + TERMS_BOX_H + 10 + CLOSING_H + NOTES_H;
+    if (curYAfterSummary - bottomH < MB + 32) {
+      pageGroups.push([]);
+      hasOverflowPage = true;
     }
   }
 
@@ -626,8 +625,11 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   // ── Draw pages ────────────────────────────────────────────────────────────
   for (let pi = 0; pi < pageGroups.length; pi++) {
-    const isFirst   = pi === 0;
-    const isLast    = pi === pageGroups.length - 1;
+    const isFirst        = pi === 0;
+    const isLast         = pi === pageGroups.length - 1;
+    const isOverflowPage = hasOverflowPage && isLast;
+    // isSummaryPage: the page that closes the items table with subtotal/grand-total rows
+    const isSummaryPage  = hasOverflowPage ? pi === pageGroups.length - 2 : isLast;
     const page      = pdfDoc.addPage([W, H]);
     const pageItems = pageGroups[pi];
 
@@ -698,7 +700,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       curY -= 28;
     }
 
-    // ── Table header — black fill, white text ─────────────────────────────
+    // ── Table header — skipped on dedicated overflow page ────────────────
     const thdrs: { label: string; x: number; w: number }[] = [
       { label: "No",                          x: X_NO,   w: C_NO   },
       ...(showCode ? [{ label: "Catalog No", x: X_CODE, w: C_CODE  }] : []),
@@ -709,6 +711,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       ...(showDisc ? [{ label: "Discount",    x: X_DISC, w: C_DISC  }] : []),
       ...(showTP   ? [{ label: "Total",      x: X_TOT,  w: C_TOT   }] : []),
     ];
+    if (!isOverflowPage) {
 
     const tHdrY = curY - TABLE_HDR_H;
     page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: TABLE_HDR_H, color: accentColor });
@@ -737,6 +740,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     });
     page.drawLine({ start: { x: ML,     y: curY + TABLE_HDR_H }, end: { x: ML,     y: curY }, thickness: 0.8, color: C_BORDER });
     page.drawLine({ start: { x: W - MR, y: curY + TABLE_HDR_H }, end: { x: W - MR, y: curY }, thickness: 0.8, color: C_BORDER });
+    } // end if (!isOverflowPage)
 
     // ── Item rows ────────────────────────────────────────────────────────────
     for (const entryIdx of pageItems) {
@@ -852,8 +856,8 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       curY = rowY;
     }
 
-    // ── On last page: subtotal + grand total rows inside the items table ───────
-    if (isLast) {
+    // ── Subtotal + grand total rows — rendered on last items page ────────────
+    if (isSummaryPage) {
       const totalQtyPerSet = items.reduce((s, i) => s + parseFloat(i.qty ?? "0"), 0);
       const fmtQty = (n: number) => n % 1 === 0 ? String(n) : n.toFixed(2);
       const amtAreaW = W - MR - X_UP; // width of merged cols 6-7 amount area
@@ -941,8 +945,10 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       curY = gtRowY;
     }
 
-    // Close table bottom border (after summary rows on last page)
-    page.drawLine({ start: { x: ML, y: curY }, end: { x: W - MR, y: curY }, thickness: 0.8, color: C_BORDER });
+    // Close table bottom border — not needed on the dedicated overflow page
+    if (!isOverflowPage) {
+      page.drawLine({ start: { x: ML, y: curY }, end: { x: W - MR, y: curY }, thickness: 0.8, color: C_BORDER });
+    }
 
     // ── Last page: footer content ──────────────────────────────────────────
     if (isLast) {
