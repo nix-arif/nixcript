@@ -191,6 +191,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   const FS_CODE   = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 9;
   const FS_NUM    = tfs === "small" ? 7.5  : tfs === "large" ? 9.5  : 8.5;
   const LH        = tfs === "small" ? 10   : tfs === "large" ? 13.5 : 11.5;
+  const CONT_LH   = 8;   // line height for continuation description lines at 6pt
   const RH_MIN    = tfs === "small" ? 15   : tfs === "large" ? 21   : 17;
   const MDA_GAP   = 3;
 
@@ -270,7 +271,8 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLineH  = 0;
     const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
-    const rowH = Math.max(hasItemDisc ? RH_MIN + 8 : RH_MIN, codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6));
+    const descH = descLines.length <= 1 ? descLines.length * LH : LH + (descLines.length - 1) * CONT_LH;
+    const rowH = Math.max(hasItemDisc ? RH_MIN + 8 : RH_MIN, codeLineH + descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6));
     return { item, descLines, extraLine, isGreenRow, rowH };
   });
 
@@ -654,9 +656,11 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         });
       }
 
-      for (const line of descLines) {
-        page.drawText(line, { x: X_DESC + TABLE_PAD, y: dy, size: FS_DESC, font: fontR, color: C_DARK });
-        dy -= LH;
+      for (let li = 0; li < descLines.length; li++) {
+        const lineSize = li === 0 ? FS_DESC : 6;
+        const lineLH   = li === 0 ? LH : CONT_LH;
+        page.drawText(descLines[li], { x: X_DESC + TABLE_PAD, y: dy, size: lineSize, font: fontR, color: C_DARK });
+        dy -= lineLH;
       }
       if (extraLine) {
         dy -= MDA_GAP;
