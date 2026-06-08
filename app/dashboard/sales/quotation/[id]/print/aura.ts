@@ -192,6 +192,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const FS_CODE   = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 9;
   const FS_NUM    = tfs === "small" ? 7.5  : tfs === "large" ? 9.5  : 8.5;
   const LH        = tfs === "small" ? 10   : tfs === "large" ? 13.5 : 11.5;
+  const CONT_LH   = 8;    // line height for continuation lines at 6pt
   const RH_MIN    = tfs === "small" ? 15   : tfs === "large" ? 21   : 17;
   const MDA_GAP   = 3;
 
@@ -201,11 +202,12 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
   // ── Pre-compute row heights ───────────────────────────────────────────────
   type RowInfo = {
-    item:       typeof items[number];
-    descLines:  string[];
-    extraLine:  string | null;
-    isGreenRow: boolean;
-    rowH:       number;
+    item:               typeof items[number];
+    descLines:          string[];
+    extraLine:          string | null;
+    isGreenRow:         boolean;
+    rowH:               number;
+    firstParaLineCount: number;
   };
 
   const CODE_LINE_H = LH - 2;
@@ -213,18 +215,23 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     const rentalPrefix = item.lineType === "rent" && item.rentalDuration
       ? `rental for ${item.rentalDuration} ${item.rentalUnit ?? "case"} `
       : "";
-    const descLines  = wrap(`${rentalPrefix}${item.description ?? "—"}`, fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
+    const rawDesc    = `${rentalPrefix}${item.description ?? "—"}`;
+    const descLines  = wrap(rawDesc, fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
+    const firstParaLineCount = /\r?\n/.test(rawDesc)
+      ? Math.max(1, wrap(rawDesc.split(/\r?\n/)[0], fontR, FS_DESC, C_DESC - TABLE_PAD * 2).length)
+      : descLines.length;
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLineH  = 0;
     const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
+    const descH = firstParaLineCount * LH + Math.max(0, descLines.length - firstParaLineCount) * CONT_LH;
     const rowH = Math.max(
       hasItemDisc ? RH_MIN + 8 : RH_MIN,
-      codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
+      codeLineH + descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
     );
-    return { item, descLines, extraLine, isGreenRow, rowH };
+    return { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount };
   });
 
   // ── Org name + header style ───────────────────────────────────────────────
@@ -420,7 +427,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         continue;
       }
       const rowIdx = entry.rowIdx;
-      const { item, descLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
+      const { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
       const rowY = curY - rowH;
 
       const textBaseline = curY - 11;
@@ -441,9 +448,10 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       }
 
       // Description + cert line
-      for (const line of descLines) {
-        page.drawText(line, { x: X_DESC + TABLE_PAD, y: dy, size: FS_DESC, font: fontR, color: C_DARK });
-        dy -= LH;
+      for (let li = 0; li < descLines.length; li++) {
+        const isCont = li >= firstParaLineCount;
+        page.drawText(descLines[li], { x: X_DESC + TABLE_PAD, y: dy, size: isCont ? 6 : FS_DESC, font: fontR, color: C_DARK });
+        dy -= isCont ? CONT_LH : LH;
       }
       if (extraLine) {
         dy -= MDA_GAP;

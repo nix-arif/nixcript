@@ -416,6 +416,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   // All body text matches the 7.5pt table header — uniform, no bold
   const FS_BODY   = 7.5;
   const LH        = 10;   // line height for wrapped description
+  const CONT_LH   = 8;    // line height for continuation lines at 6pt
   const RH_MIN    = 14;   // minimum row height
   const MDA_GAP   = 3;
 
@@ -445,11 +446,12 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   // ── Pre-compute row heights ───────────────────────────────────────────────
   type RowInfo = {
-    item:       typeof items[number];
-    descLines:  string[];
-    extraLine:  string | null;
-    isGreenRow: boolean;
-    rowH:       number;
+    item:               typeof items[number];
+    descLines:          string[];
+    extraLine:          string | null;
+    isGreenRow:         boolean;
+    rowH:               number;
+    firstParaLineCount: number;
   };
 
   const CODE_LINE_H = LH - 2;
@@ -457,18 +459,23 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     const rentalPrefix = item.lineType === "rent" && item.rentalDuration
       ? `rental for ${item.rentalDuration} ${item.rentalUnit ?? "case"} `
       : "";
-    const descLines  = wrap(`${rentalPrefix}${item.description ?? "—"}`.toUpperCase(), fontR, FS_BODY, C_DESCA - TABLE_PAD * 2);
+    const rawDesc    = `${rentalPrefix}${item.description ?? "—"}`.toUpperCase();
+    const descLines  = wrap(rawDesc, fontR, FS_BODY, C_DESCA - TABLE_PAD * 2);
+    const firstParaLineCount = /\r?\n/.test(rawDesc)
+      ? Math.max(1, wrap(rawDesc.split(/\r?\n/)[0], fontR, FS_BODY, C_DESCA - TABLE_PAD * 2).length)
+      : descLines.length;
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLineH  = 0;
     const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
+    const descH = firstParaLineCount * LH + Math.max(0, descLines.length - firstParaLineCount) * CONT_LH;
     const rowH = Math.max(
       hasItemDisc ? 22 : RH_MIN,
-      codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
+      codeLineH + descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
     );
-    return { item, descLines, extraLine, isGreenRow, rowH };
+    return { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount };
   });
 
   // ── Height estimates ──────────────────────────────────────────────────────
@@ -751,7 +758,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         continue;
       }
       const rowIdx = entry.rowIdx;
-      const { item, descLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
+      const { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
       const rowY = curY - rowH;
       const textBaseline = curY - 11;
 
@@ -783,9 +790,10 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       }
 
       // Description + cert line — all FS_BODY, all black
-      for (const line of descLines) {
-        page.drawText(line, { x: X_DESC + TABLE_PAD, y: dy, size: FS_BODY, font: fontR, color: C_BLACK });
-        dy -= LH;
+      for (let li = 0; li < descLines.length; li++) {
+        const isCont = li >= firstParaLineCount;
+        page.drawText(descLines[li], { x: X_DESC + TABLE_PAD, y: dy, size: isCont ? 6 : FS_BODY, font: fontR, color: C_BLACK });
+        dy -= isCont ? CONT_LH : LH;
       }
       if (extraLine) {
         dy -= MDA_GAP;
