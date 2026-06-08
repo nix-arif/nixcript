@@ -19,7 +19,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, sql } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -133,6 +133,7 @@ export type SalesOrderMeta = {
 export type CpoCustomer = {
   customerPoId: string;
   customerPoNo: string;
+  customerId: string | null;
   customerSnapshot: { title?: string; name: string; organizationName?: string } | null;
 };
 
@@ -185,6 +186,10 @@ export interface CreateSalesOrderInput {
   deliveryDate?: Date;
   deliveryAddress?: string;
   supplierQuotationKey?: string;
+  soType?: "standard" | "proforma";
+  proformaReason?: "sample" | "warranty" | "replacement";
+  originalSoId?: string;
+  originalSoNo?: string;
   items: SalesOrderItemInput[];
 }
 
@@ -206,6 +211,38 @@ export async function getExistingDraftSo(): Promise<{ id: string; soNo: string }
     .where(and(eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "draft")))
     .limit(1);
   return row ?? null;
+}
+
+export async function searchConfirmedSalesOrders(
+  query: string,
+  opts?: { includeStatuses?: string[] },
+): Promise<
+  { id: string; soNo: string; soType: string; proformaReason: string | null; customerSnapshot: SalesOrderRow["customerSnapshot"] }[]
+> {
+  const { orgId } = await requireAccess("delivery-order:create");
+  const statuses = opts?.includeStatuses ?? ["confirmed"];
+  const q = `%${query.trim()}%`;
+  const rows = await db
+    .select({
+      id: salesOrder.id,
+      soNo: salesOrder.soNo,
+      soType: salesOrder.soType,
+      proformaReason: salesOrder.proformaReason,
+      customerSnapshot: salesOrder.customerSnapshot,
+    })
+    .from(salesOrder)
+    .where(
+      and(
+        eq(salesOrder.organizationId, orgId),
+        inArray(salesOrder.status, statuses),
+        query.trim().length >= 1
+          ? ilike(salesOrder.soNo, q)
+          : undefined,
+      ),
+    )
+    .orderBy(desc(salesOrder.createdAt))
+    .limit(10);
+  return rows;
 }
 
 export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
@@ -234,22 +271,26 @@ export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds)),
     allCpoIds.length > 0
       ? db
-          .select({ id: customerPurchaseOrder.id, customerSnapshot: customerPurchaseOrder.customerSnapshot })
+          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot })
           .from(customerPurchaseOrder)
           .where(inArray(customerPurchaseOrder.id, allCpoIds))
       : Promise.resolve([]),
   ]);
 
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
-  const cpoSnapMap = new Map(cpoRows.map((c) => [c.id, c.customerSnapshot]));
+  const cpoMap = new Map(cpoRows.map((c) => [c.id, c]));
 
   return rows.map((r) => {
     const links = r.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null;
-    const cpoCustomers: CpoCustomer[] = (links ?? []).map((l) => ({
-      customerPoId: l.customerPoId,
-      customerPoNo: l.customerPoNo,
-      customerSnapshot: (cpoSnapMap.get(l.customerPoId) as CpoCustomer["customerSnapshot"]) ?? null,
-    }));
+    const cpoCustomers: CpoCustomer[] = (links ?? []).map((l) => {
+      const cpo = cpoMap.get(l.customerPoId);
+      return {
+        customerPoId: l.customerPoId,
+        customerPoNo: l.customerPoNo,
+        customerId: cpo?.customerId ?? null,
+        customerSnapshot: (cpo?.customerSnapshot as CpoCustomer["customerSnapshot"]) ?? null,
+      };
+    });
     return { ...r, createdByName: nameOf(r.createdBy), cpoCustomers };
   });
 }
@@ -287,21 +328,25 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
       ),
     cpoIds.length > 0
       ? db
-          .select({ id: customerPurchaseOrder.id, customerSnapshot: customerPurchaseOrder.customerSnapshot })
+          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot })
           .from(customerPurchaseOrder)
           .where(inArray(customerPurchaseOrder.id, cpoIds))
       : Promise.resolve([]),
   ]);
 
   const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
-  const cpoSnapMap = new Map(cpoRows.map((c) => [c.id, c.customerSnapshot]));
+  const cpoMap = new Map(cpoRows.map((c) => [c.id, c]));
 
   const links = (so.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null) ?? [];
-  const cpoCustomers: CpoCustomer[] = links.map((l) => ({
-    customerPoId: l.customerPoId,
-    customerPoNo: l.customerPoNo,
-    customerSnapshot: (cpoSnapMap.get(l.customerPoId) as CpoCustomer["customerSnapshot"]) ?? null,
-  }));
+  const cpoCustomers: CpoCustomer[] = links.map((l) => {
+    const cpo = cpoMap.get(l.customerPoId);
+    return {
+      customerPoId: l.customerPoId,
+      customerPoNo: l.customerPoNo,
+      customerId: cpo?.customerId ?? null,
+      customerSnapshot: (cpo?.customerSnapshot as CpoCustomer["customerSnapshot"]) ?? null,
+    };
+  });
 
   return {
     ...so,
@@ -453,6 +498,10 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
       notes: input.notes ?? null,
       deliveryDate: input.deliveryDate ?? null,
       deliveryAddress: input.deliveryAddress ?? null,
+      soType: input.soType ?? "standard",
+      proformaReason: input.proformaReason ?? null,
+      originalSoId: input.originalSoId ?? null,
+      originalSoNo: input.originalSoNo ?? null,
       status: "draft",
       createdBy: userId,
     })
@@ -960,7 +1009,7 @@ export async function recallSalesOrder(id: string): Promise<void> {
   if (!so) throw new Error("Sales order not found");
   if (so.status !== "confirmed") throw new Error("Only confirmed orders can be recalled");
 
-  await db.update(salesOrder).set({ status: "draft", approvedBy: null, approvedAt: null }).where(eq(salesOrder.id, id));
+  await db.update(salesOrder).set({ status: "draft", approvedBy: null, approvedAt: null, stockReservationStatus: null, stockReservedAt: null, stockReservedBy: null }).where(eq(salesOrder.id, id));
 
   // Release reserved stock
   const soItems = await db

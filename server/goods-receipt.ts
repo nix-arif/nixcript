@@ -236,7 +236,7 @@ export async function getConfirmedPosForGr(): Promise<ConfirmedPoForGr[]> {
 // ── Mutations ───────────────────────────────────────────────────────────────
 
 export async function createGoodsReceipt(input: CreateGoodsReceiptInput): Promise<GoodsReceiptRow> {
-  const { orgId, userId } = await requireAccess("purchase-order:update");
+  const { orgId, userId } = await requireAccess("goods-receipt:create");
 
   // Verify PO exists, belongs to org, and is in confirmed status
   const [po] = await db

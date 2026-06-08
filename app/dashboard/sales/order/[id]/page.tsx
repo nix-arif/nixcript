@@ -1,7 +1,8 @@
 import { requirePermission } from "@/lib/auth/require-permission";
 import { getSalesOrderDetail } from "@/server/sales-order";
 import { getQuotationBasic } from "@/server/quotation";
-import { getCachedSession } from "@/lib/auth/cached-session";
+import { getDeliveryOrdersBySoId } from "@/server/delivery-order";
+import { getPrsBySoId } from "@/server/purchase-requisition";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { notFound } from "next/navigation";
 import { SalesOrderDetailClient } from "./so-detail-client";
@@ -18,9 +19,11 @@ export default async function SalesOrderDetailPage({ params, searchParams }: { p
 
   if (!order) notFound();
 
-  const linkedQuotation = order.quotationId
-    ? await getQuotationBasic(order.quotationId).catch(() => null)
-    : null;
+  const [linkedQuotation, linkedDos, linkedPrs] = await Promise.all([
+    order.quotationId ? getQuotationBasic(order.quotationId).catch(() => null) : Promise.resolve(null),
+    getDeliveryOrdersBySoId(id).catch(() => []),
+    getPrsBySoId(id).catch(() => []),
+  ]);
 
-  return <SalesOrderDetailClient order={order} linkedQuotation={linkedQuotation} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} />;
+  return <SalesOrderDetailClient order={order} linkedQuotation={linkedQuotation} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} />;
 }

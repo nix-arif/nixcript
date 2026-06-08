@@ -18,10 +18,10 @@ import { cn } from "@/lib/utils";
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
-const DO_STATUS: Record<string, { label: string; className: string }> = {
-  draft:     { label: "Draft",     className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
-  delivered: { label: "Delivered", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
-  returned:  { label: "Returned",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
+const DO_STATUS: Record<string, { label: string; className: string; accent: string }> = {
+  draft:     { label: "Draft",     className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400",  accent: "bg-amber-400"  },
+  delivered: { label: "Delivered", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400",  accent: "bg-green-500"  },
+  returned:  { label: "Returned",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400",          accent: "bg-red-400"    },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -57,6 +57,7 @@ export function DeliveryOrderListClient({ initialOrders, permissions, currentUse
       snap?.name?.toLowerCase().includes(s) ||
       snap?.organizationName?.toLowerCase().includes(s) ||
       o.deliveredTo?.toLowerCase().includes(s) ||
+      o.salesOrderNo?.toLowerCase().includes(s) ||
       o.status.toLowerCase().includes(s) ||
       o.createdByName?.toLowerCase().includes(s)
     );
@@ -95,7 +96,7 @@ export function DeliveryOrderListClient({ initialOrders, permissions, currentUse
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by DO no., customer, status..."
+          placeholder="Search by DO no., customer, SO no., status..."
           className="pl-9 h-9 text-sm"
         />
         {search && (
@@ -110,7 +111,6 @@ export function DeliveryOrderListClient({ initialOrders, permissions, currentUse
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="border border-border rounded-xl px-4 py-3 animate-pulse">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-muted shrink-0" />
                 <div className="flex-1 space-y-2">
                   <div className="flex gap-2"><div className="h-3.5 w-28 bg-muted rounded" /><div className="h-3.5 w-16 bg-muted rounded" /></div>
                   <div className="h-3 w-48 bg-muted rounded" />
@@ -142,71 +142,92 @@ export function DeliveryOrderListClient({ initialOrders, permissions, currentUse
           <div className="space-y-2">
             {filtered.map((o) => {
               const snap = o.customerSnapshot as any;
+              const accentColor = DO_STATUS[o.status]?.accent ?? "bg-muted";
+              const orgName = snap?.organizationName;
+              const personName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+
               return (
                 <div
                   key={o.id}
-                  className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                  className="flex overflow-hidden rounded-xl border border-border bg-background hover:bg-muted/20 transition-colors cursor-pointer"
                   onClick={() => router.push(`/dashboard/fulfillment/delivery/${o.id}`)}
                 >
-                  <div className="flex items-center gap-3 px-4 py-3">
-                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0">
-                      <TruckIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                    </div>
+                  {/* Status accent stripe */}
+                  <div className={`w-1 shrink-0 ${accentColor}`} />
 
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-sm font-medium">
+                  <div className="flex-1 min-w-0 px-4 py-3">
+                    {/* Row 1: DO number + status + SO link */}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono text-sm font-semibold tracking-tight">
                           <Highlight text={o.doNo} query={search} />
                         </span>
                         <StatusBadge status={o.status} />
                         {o.salesOrderNo && (
-                          <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
+                          <span className="text-[10px] text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5 font-mono hidden sm:inline">
                             SO: {o.salesOrderNo}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                        {snap?.name && (
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <UserIcon className="w-3 h-3" />
-                            <Highlight text={snap.name} query={search} />
-                          </span>
+                      {o.deliveryDate && (
+                        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                          {fmtDate(o.deliveryDate)}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Row 2: Org + person */}
+                    {(orgName || personName) && (
+                      <div className="mt-1.5 flex flex-col gap-0.5">
+                        {orgName && (
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <BuildingIcon className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <p className="text-[12px] font-medium text-foreground/80 truncate">
+                              <Highlight text={orgName} query={search} />
+                            </p>
+                          </div>
                         )}
-                        {snap?.organizationName && (
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <BuildingIcon className="w-3 h-3" />
-                            <Highlight text={snap.organizationName} query={search} />
-                          </span>
-                        )}
-                        {o.deliveredTo && (
-                          <span className="text-[11px] text-muted-foreground">
-                            → <Highlight text={o.deliveredTo} query={search} />
-                          </span>
+                        {personName && (
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <UserIcon className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <p className="text-[11px] text-muted-foreground truncate">
+                              <Highlight text={personName} query={search} />
+                            </p>
+                          </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                    )}
+
+                    {/* Row 3: date + creator + delivered to */}
+                    <div className="flex items-center justify-between mt-1.5">
+                      <div className="flex items-center gap-3 flex-wrap">
                         {o.createdByName && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                             <CalendarIcon className="w-3 h-3" />
                             {fmtDate(o.createdAt)} · {o.createdByName}
                           </span>
                         )}
+                        {o.deliveredTo && (
+                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <TruckIcon className="w-3 h-3" />
+                            {o.deliveredTo}
+                          </span>
+                        )}
                       </div>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      {can("delivery-order:update") && EDITABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
-                        <Button variant="ghost" size="icon" className="w-7 h-7"
-                          onClick={() => router.push(`/dashboard/fulfillment/delivery/${o.id}/edit`)}>
-                          <PencilIcon className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
-                      {can("delivery-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
-                        <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
-                          disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.doNo)}>
-                          <TrashIcon className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
+                      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {can("delivery-order:update") && EDITABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
+                          <Button variant="ghost" size="icon" className="w-7 h-7"
+                            onClick={() => router.push(`/dashboard/fulfillment/delivery/${o.id}/edit`)}>
+                            <PencilIcon className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        {can("delivery-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
+                          <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
+                            disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.doNo)}>
+                            <TrashIcon className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

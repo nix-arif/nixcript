@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { department, memberDepartment, userPermission } from "@/db/schema";
+import { department, member, memberDepartment, userPermission } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { DEPT_ROLE_PERMISSIONS, ROLE_PERMISSIONS, type PermissionKey } from "./constants";
@@ -57,6 +57,66 @@ export async function grantDefaultPermissions(
       })),
     )
     .onConflictDoNothing();
+}
+
+/**
+ * Recomputes and replaces every department-role member's permissions for the
+ * given org based on the current DEPT_ROLE_PERMISSIONS constants.
+ * Safe to call after updating constants — owners and stakeholders are untouched.
+ */
+export async function resyncAllMemberPermissions(orgId: string): Promise<number> {
+  // All dept assignments in this org
+  const allAssignments = await db
+    .select({ memberId: memberDepartment.memberId, role: memberDepartment.role, departmentId: memberDepartment.departmentId })
+    .from(memberDepartment)
+    .where(eq(memberDepartment.organizationId, orgId));
+
+  if (allAssignments.length === 0) return 0;
+
+  const deptIds = [...new Set(allAssignments.map((a) => a.departmentId))];
+  const depts = await db.select({ id: department.id, name: department.name }).from(department).where(inArray(department.id, deptIds));
+  const deptNameById = Object.fromEntries(depts.map((d) => [d.id, d.name]));
+
+  const memberIds = [...new Set(allAssignments.map((a) => a.memberId))];
+  // Only resync regular members (skip owners — they bypass permission checks entirely)
+  const members = await db
+    .select({ id: member.id, userId: member.userId, role: member.role })
+    .from(member)
+    .where(and(inArray(member.id, memberIds), eq(member.organizationId, orgId)));
+  const userIdByMemberId = Object.fromEntries(
+    members.filter((m) => m.role !== "owner").map((m) => [m.id, m.userId]),
+  );
+
+  // Group assignments by memberId
+  const byMember = new Map<string, typeof allAssignments>();
+  for (const a of allAssignments) {
+    if (!byMember.has(a.memberId)) byMember.set(a.memberId, []);
+    byMember.get(a.memberId)!.push(a);
+  }
+
+  let synced = 0;
+  for (const [memberId, assignments] of byMember) {
+    const userId = userIdByMemberId[memberId];
+    if (!userId) continue;
+
+    const permSet = new Set<PermissionKey>();
+    for (const a of assignments) {
+      const name = deptNameById[a.departmentId];
+      if (!name) continue;
+      for (const p of DEPT_ROLE_PERMISSIONS[name]?.[a.role as "manager" | "member"] ?? []) {
+        permSet.add(p);
+      }
+    }
+
+    await db.delete(userPermission).where(and(eq(userPermission.userId, userId), eq(userPermission.organizationId, orgId)));
+    if (permSet.size > 0) {
+      await db.insert(userPermission).values(
+        [...permSet].map((key) => ({ id: nanoid(), userId, organizationId: orgId, permissionKey: key, allowed: true })),
+      ).onConflictDoNothing();
+    }
+    synced++;
+  }
+  return synced;
 }
 
 // Call this when a member is added to an additional department (after initial onboarding).

@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import {
   createSalesOrder,
   submitSalesOrder,
+  searchConfirmedSalesOrders,
   type SalesOrderItemInput,
 } from "@/server/sales-order";
+import { searchProducts, getProductsByCode } from "@/server/inventory";
 import { getCustomers, getCustomer } from "@/server/customer";
 import {
   searchQuotationsByNo,
@@ -97,6 +99,87 @@ const newLine = (rowNo: number): LineItem => ({
   sourceCustomerPoNo: "",
 });
 
+interface ProductCellProps {
+  item: LineItem;
+  rowIdx: number;
+  onUpdate: (key: string, patch: Partial<LineItem>) => void;
+  onCellKeyDown: (e: React.KeyboardEvent<HTMLInputElement>, row: number, col: number) => void;
+}
+
+function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown }: ProductCellProps) {
+  const [q, setQ] = useState(item.productCode ?? "");
+  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null }[]>([]);
+  const [open, setOpen] = useState(false);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { setQ(item.productCode ?? ""); }, [item.productCode]);
+
+  function handleInput(val: string) {
+    setQ(val);
+    onUpdate(item._key, { productCode: val, productId: undefined });
+    if (debounce.current) clearTimeout(debounce.current);
+    if (!val.trim()) { setResults([]); setOpen(false); return; }
+    debounce.current = setTimeout(async () => {
+      const r = await searchProducts(val);
+      setResults(r);
+      setOpen(r.length > 0);
+      const exact = r.find((p) => p.productCode.toLowerCase() === val.trim().toLowerCase());
+      if (exact) {
+        onUpdate(item._key, {
+          productId: exact.id,
+          productCode: exact.productCode,
+          description: item.description || exact.description || "",
+          uom: item.uom || exact.uom || "",
+        });
+        setOpen(false);
+      }
+    }, 300);
+  }
+
+  function pick(p: { id: string; productCode: string; description: string | null; uom: string | null }) {
+    onUpdate(item._key, {
+      productId: p.id,
+      productCode: p.productCode,
+      description: item.description || p.description || "",
+      uom: item.uom || p.uom || "",
+    });
+    setQ(p.productCode);
+    setResults([]);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <Input
+        data-row={rowIdx}
+        data-col={0}
+        value={q}
+        onChange={(e) => handleInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (open && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) return;
+          onCellKeyDown(e, rowIdx, 0);
+        }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className="h-7 text-xs"
+        placeholder="Code…"
+      />
+      {open && (
+        <div className="absolute z-50 top-full left-0 mt-0.5 w-64 rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto text-xs">
+          {results.map((p) => (
+            <button key={p.id} type="button"
+              className="w-full text-left px-2 py-1.5 hover:bg-accent flex gap-2"
+              onClick={() => pick(p)}
+            >
+              <span className="font-mono font-medium shrink-0">{p.productCode}</span>
+              <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function calcLine(item: LineItem): LineItem {
   const qty = parseFloat(item.qty || "0") || 0;
   const up = parseFloat(item.unitPrice || "0") || 0;
@@ -159,6 +242,15 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [notes, setNotes] = useState("");
 
+  // Order type
+  const [soType, setSoType] = useState<"standard" | "proforma">("standard");
+  const [proformaReason, setProformaReason] = useState<"sample" | "warranty" | "replacement">("sample");
+  const [originalSoSearch, setOriginalSoSearch] = useState("");
+  const [originalSoResults, setOriginalSoResults] = useState<Awaited<ReturnType<typeof searchConfirmedSalesOrders>>>([]);
+  const [originalSoSearching, setOriginalSoSearching] = useState(false);
+  const [selectedOriginalSo, setSelectedOriginalSo] = useState<{ id: string; soNo: string } | null>(null);
+  const originalSoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Pricing
   const [sstPct, setSstPct] = useState("0");
   const [overallDiscPct, setOverallDiscPct] = useState("0");
@@ -179,33 +271,38 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
       customerSnapshot: cpo.customerSnapshot,
     };
     setLinkedCpos([linked]);
-    // Import items from CPO, tag with source CPO
+    // Import items from CPO, resolve productId by code, tag with source CPO
     if (cpo.items && cpo.items.length > 0) {
-      setItems(
-        cpo.items.map((item, idx) =>
-          calcLine({
-            _key: crypto.randomUUID(),
-            rowNo: idx + 1,
-            productCode: item.productCode ?? "",
-            description: item.description ?? "",
-            qty: String(item.qty ?? "1"),
-            uom: item.uom ?? "",
-            unitPrice: String(item.unitPrice ?? "0"),
-            discountPct: String(item.discountPct ?? "0"),
-            discountAmt: "0",
-            totalPrice: String(item.totalPrice ?? "0"),
-            lineType: (item.lineType ?? "sell") as "sell" | "rent",
-            rentalDuration: "",
-            rentalUnit: "case",
-            setGroupId: "",
-            setGroupLabel: "",
-            setQty: "",
-            sourceQuotationId: "",
-            sourceCustomerPoId: cpo.id,
-            sourceCustomerPoNo: cpo.customerPoNo,
-          }),
-        ),
-      );
+      const codes = cpo.items.map((i) => i.productCode).filter(Boolean) as string[];
+      getProductsByCode(codes).then((resolved) => {
+        const codeMap = new Map(resolved.map((p) => [p.productCode, p.id]));
+        setItems(
+          cpo.items!.map((item, idx) =>
+            calcLine({
+              _key: crypto.randomUUID(),
+              rowNo: idx + 1,
+              productId: item.productCode ? codeMap.get(item.productCode) : undefined,
+              productCode: item.productCode ?? "",
+              description: item.description ?? "",
+              qty: String(item.qty ?? "1"),
+              uom: item.uom ?? "",
+              unitPrice: String(item.unitPrice ?? "0"),
+              discountPct: String(item.discountPct ?? "0"),
+              discountAmt: "0",
+              totalPrice: String(item.totalPrice ?? "0"),
+              lineType: (item.lineType ?? "sell") as "sell" | "rent",
+              rentalDuration: "",
+              rentalUnit: "case",
+              setGroupId: "",
+              setGroupLabel: "",
+              setQty: "",
+              sourceQuotationId: "",
+              sourceCustomerPoId: cpo.id,
+              sourceCustomerPoNo: cpo.customerPoNo,
+            }),
+          ),
+        );
+      }).catch(() => {/* items load without productId — user can correct manually */});
     }
     // Auto-fill customer from CPO
     if (cpo.customerId) {
@@ -289,35 +386,42 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
       };
       setLinkedCpos((prev) => [...prev, linked]);
 
-      // Import CPO items (append), tag with source CPO for multi-customer tracking
+      // Import CPO items (append), resolve productId by code, tag with source CPO
       if (data.items && data.items.length > 0) {
-        setItems((prev) => {
-          const base = prev.filter((i) => i.description || i.productCode);
-          const newItems = (data.items ?? []).map((item) =>
-            calcLine({
-              _key: crypto.randomUUID(),
-              rowNo: 0,
-              productCode: item.productCode ?? "",
-              description: item.description ?? "",
-              qty: String(item.qty ?? "1"),
-              uom: item.uom ?? "",
-              unitPrice: String(item.unitPrice ?? "0"),
-              discountPct: String(item.discountPct ?? "0"),
-              discountAmt: "0",
-              totalPrice: String(item.totalPrice ?? "0"),
-              lineType: (item.lineType ?? "sell") as "sell" | "rent",
-              rentalDuration: "",
-              rentalUnit: "case",
-              setGroupId: "",
-              setGroupLabel: "",
-              setQty: "",
-              sourceQuotationId: "",
-              sourceCustomerPoId: data.id,
-              sourceCustomerPoNo: data.customerPoNo,
-            }),
-          );
-          return [...base, ...newItems].map((i, idx) => ({ ...i, rowNo: idx + 1 }));
-        });
+        const codes = data.items.map((i) => i.productCode).filter(Boolean) as string[];
+        getProductsByCode(codes)
+          .catch(() => [] as { productCode: string; id: string }[])
+          .then((resolved) => {
+            const codeMap = new Map(resolved.map((p) => [p.productCode, p.id]));
+            setItems((prev) => {
+              const base = prev.filter((i) => i.description || i.productCode);
+              const newItems = (data.items ?? []).map((item) =>
+                calcLine({
+                  _key: crypto.randomUUID(),
+                  rowNo: 0,
+                  productId: item.productCode ? codeMap.get(item.productCode) : undefined,
+                  productCode: item.productCode ?? "",
+                  description: item.description ?? "",
+                  qty: String(item.qty ?? "1"),
+                  uom: item.uom ?? "",
+                  unitPrice: String(item.unitPrice ?? "0"),
+                  discountPct: String(item.discountPct ?? "0"),
+                  discountAmt: "0",
+                  totalPrice: String(item.totalPrice ?? "0"),
+                  lineType: (item.lineType ?? "sell") as "sell" | "rent",
+                  rentalDuration: "",
+                  rentalUnit: "case",
+                  setGroupId: "",
+                  setGroupLabel: "",
+                  setQty: "",
+                  sourceQuotationId: "",
+                  sourceCustomerPoId: data.id,
+                  sourceCustomerPoNo: data.customerPoNo,
+                }),
+              );
+              return [...base, ...newItems].map((i, idx) => ({ ...i, rowNo: idx + 1 }));
+            });
+          });
       }
 
       // Auto-fill customer from first CPO
@@ -435,6 +539,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
         calcLine({
           _key: crypto.randomUUID(),
           rowNo: 0, // renumbered below
+          productId: item.productId ?? undefined,
           productCode: item.productCode ?? "",
           description: item.description ?? "",
           qty: String(item.qty ?? "1"),
@@ -551,7 +656,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
     colIdx: number,
   ) {
     const el = e.currentTarget;
-    const COLS = 6;
+    const COLS = soType === "proforma" ? 4 : 6;
 
     const focus = (r: number, c: number) => {
       const target = tableRef.current?.querySelector<HTMLInputElement>(
@@ -605,8 +710,14 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
     if (!primaryCustomerId) { toast.error("Please select a customer"); return null; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
 
-    const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
+    const { subtotal, overallDiscAmt, sstAmt, grand } = soType === "proforma"
+      ? { subtotal: 0, overallDiscAmt: 0, sstAmt: 0, grand: 0 }
+      : calcTotals(items, sstPct, overallDiscPct);
     return createSalesOrder({
+      soType,
+      proformaReason: soType === "proforma" ? proformaReason : undefined,
+      originalSoId: soType === "proforma" && selectedOriginalSo ? selectedOriginalSo.id : undefined,
+      originalSoNo: soType === "proforma" && selectedOriginalSo ? selectedOriginalSo.soNo : undefined,
       customerId: primaryCustomerId,
       customerCompanyId: selectedCustomer ? custCompanyId : undefined,
       customerPoLinks: linkedCpos.length > 0
@@ -626,6 +737,10 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
       grandTotal: grand.toFixed(2),
       items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, ...rest }) => ({
         ...rest,
+        unitPrice: soType === "proforma" ? "0" : rest.unitPrice,
+        discountPct: soType === "proforma" ? "0" : rest.discountPct,
+        discountAmt: soType === "proforma" ? "0" : rest.discountAmt,
+        totalPrice: soType === "proforma" ? "0" : rest.totalPrice,
         lineType,
         rentalDuration: rentalDuration || undefined,
         rentalUnit: rentalUnit || undefined,
@@ -672,6 +787,19 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
   const allCompanies = selectedCustomer?.companies ?? [];
   const linkedCustomers = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
 
+  // Deduplicated customers from linked CPOs (by customerId or org name)
+  const cpoLinkedCustomers = linkedCpos.length > 0
+    ? (() => {
+        const seen = new Set<string>();
+        return linkedCpos.filter((c) => {
+          const key = c.customerId ?? c.customerSnapshot?.organizationName ?? c.customerSnapshot?.name ?? "";
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      })()
+    : [];
+
   // Show CPO column when >1 CPO is linked (items need to know which customer they're for)
   const showCpoColumn = linkedCpos.length > 1;
   // Unique customer IDs across all linked CPOs
@@ -692,8 +820,130 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
 
       <div className="space-y-6">
 
+        {/* ── 0. Order type ── */}
+        <section className="border border-border rounded-xl p-4">
+          <h2 className="text-sm font-semibold mb-3">Order type</h2>
+          <div className="flex gap-2">
+            {(["standard", "proforma"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setSoType(t)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                  soType === t
+                    ? t === "proforma"
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "bg-foreground text-background border-foreground"
+                    : "border-border text-muted-foreground hover:border-foreground/40"
+                }`}
+              >
+                {t === "standard" ? "Standard" : "Pro-forma"}
+              </button>
+            ))}
+          </div>
+          {soType === "proforma" && (
+            <div className="mt-3 space-y-3">
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-violet-50 dark:bg-violet-900/15 border border-violet-200 dark:border-violet-800/50">
+                <span className="text-xs text-violet-800 dark:text-violet-300">
+                  Pro-forma orders are not revenue transactions. Stock goes out but no commercial invoice is raised.
+                </span>
+              </div>
+              <div className="flex gap-2">
+                {(["sample", "warranty", "replacement"] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => {
+                      setProformaReason(r);
+                      if (r === "sample") { setSelectedOriginalSo(null); setOriginalSoSearch(""); setOriginalSoResults([]); }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors capitalize ${
+                      proformaReason === r
+                        ? "bg-violet-100 dark:bg-violet-900/40 text-violet-800 dark:text-violet-300 border-violet-300 dark:border-violet-700"
+                        : "border-border text-muted-foreground hover:border-foreground/30"
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+
+              {/* Original SO — only for warranty / replacement */}
+              {(proformaReason === "warranty" || proformaReason === "replacement") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Original Sales Order <span className="text-destructive">*</span>
+                  </Label>
+                  {selectedOriginalSo ? (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20">
+                      <span className="text-sm font-mono font-medium text-violet-800 dark:text-violet-300 flex-1">{selectedOriginalSo.soNo}</span>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedOriginalSo(null); setOriginalSoSearch(""); setOriginalSoResults([]); }}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <XIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                      <Input
+                        value={originalSoSearch}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setOriginalSoSearch(val);
+                          if (originalSoTimer.current) clearTimeout(originalSoTimer.current);
+                          originalSoTimer.current = setTimeout(async () => {
+                            setOriginalSoSearching(true);
+                            try {
+                              const r = await searchConfirmedSalesOrders(val, { includeStatuses: ["confirmed", "fulfilled"] });
+                              setOriginalSoResults(r);
+                            } finally {
+                              setOriginalSoSearching(false);
+                            }
+                          }, 300);
+                        }}
+                        placeholder="Search original SO number…"
+                        className="pl-9 h-9 text-sm"
+                      />
+                      {originalSoSearching && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Searching…</span>
+                      )}
+                      {originalSoResults.length > 0 && (
+                        <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                          {originalSoResults.map((so) => {
+                            const snap = so.customerSnapshot as any;
+                            return (
+                              <button
+                                key={so.id}
+                                type="button"
+                                className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0"
+                                onClick={() => {
+                                  setSelectedOriginalSo({ id: so.id, soNo: so.soNo });
+                                  setOriginalSoSearch("");
+                                  setOriginalSoResults([]);
+                                }}
+                              >
+                                <div className="text-sm font-mono font-medium">{so.soNo}</div>
+                                {snap?.organizationName && (
+                                  <div className="text-[11px] text-muted-foreground">{snap.organizationName}</div>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
         {/* ── CPO context banner ── */}
-        {cpo && (
+        {soType !== "proforma" && cpo && (
           <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-sm">
             <LinkIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
             <span className="text-blue-800 dark:text-blue-300">
@@ -704,7 +954,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
         )}
 
         {/* ── 1. Linked Customer POs — combobox ── */}
-        <section className={`border rounded-xl p-4 ${linkedQuotations.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
+        {soType !== "proforma" && <section className={`border rounded-xl p-4 ${linkedQuotations.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold">Customer POs</h2>
             {linkedQuotations.length > 0 && (
@@ -809,10 +1059,10 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               </div>
             )}
           </div>
-        </section>
+        </section>}
 
         {/* ── 1b. Linked quotations (optional) ── */}
-        <section className={`border rounded-xl p-4 ${linkedCpos.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
+        {(soType !== "proforma" || proformaReason === "sample") && <section className={`border rounded-xl p-4 ${linkedCpos.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold">
               Quotations <span className="text-muted-foreground font-normal text-xs">(optional)</span>
@@ -892,11 +1142,13 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               </div>
             </div>
           )}
-        </section>
+        </section>}
 
         {/* ── 2. Customer ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Customer{linkedCustomers.length > 1 ? "s" : ""}</h2>
+          <h2 className="text-sm font-semibold mb-3">
+            Customer{(linkedCustomers.length > 1 || cpoLinkedCustomers.length > 1) ? "s" : ""}
+          </h2>
 
           {linkedCustomers.length > 0 ? (
             <div className="divide-y divide-border/40">
@@ -913,6 +1165,37 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                     <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
                       <BuildingIcon className="w-3 h-3 shrink-0" />{snap.organizationName || "—"}
                     </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : cpoLinkedCustomers.length > 0 ? (
+            <div className="divide-y divide-border/40">
+              {cpoLinkedCustomers.map((cpo) => {
+                const snap = cpo.customerSnapshot;
+                const name = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : "—";
+                const orgName = snap?.organizationName;
+                const cposForThisCustomer = linkedCpos.filter(
+                  (c) => c.customerId === cpo.customerId ||
+                    (!cpo.customerId && c.customerSnapshot?.name === snap?.name)
+                );
+                return (
+                  <div key={cpo.id} className="py-2 first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="font-medium text-sm">{name}</span>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {cposForThisCustomer.map((c) => (
+                          <span key={c.id} className="text-[10px] text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
+                            {c.customerPoNo}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    {orgName && (
+                      <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <BuildingIcon className="w-3 h-3 shrink-0" />{orgName}
+                      </p>
+                    )}
                   </div>
                 );
               })}
@@ -1090,9 +1373,9 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                   <th className="text-left pb-2 pr-2">Description</th>
                   <th className="text-right pb-2 pr-2 w-16">Qty</th>
                   <th className="text-left pb-2 pr-2 w-14">UOM</th>
-                  <th className="text-right pb-2 pr-2 w-24">Unit price</th>
-                  <th className="text-right pb-2 pr-2 w-16">Disc %</th>
-                  <th className="text-right pb-2 pr-2 w-24">Total</th>
+                  {soType !== "proforma" && <th className="text-right pb-2 pr-2 w-24">Unit price</th>}
+                  {soType !== "proforma" && <th className="text-right pb-2 pr-2 w-16">Disc %</th>}
+                  {soType !== "proforma" && <th className="text-right pb-2 pr-2 w-24">Total</th>}
                   {showCpoColumn && (
                     <th className="text-left pb-2 pr-2 w-28">From CPO</th>
                   )}
@@ -1123,12 +1406,11 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
                     <td className="py-1.5 pr-2">
-                      <Input
-                        data-row={rowIdx} data-col={0}
-                        value={item.productCode ?? ""}
-                        onChange={(e) => updateItem(item._key, { productCode: e.target.value })}
-                        onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 0)}
-                        className="h-7 text-xs"
+                      <ProductCell
+                        item={item}
+                        rowIdx={rowIdx}
+                        onUpdate={updateItem}
+                        onCellKeyDown={handleCellKeyDown}
                       />
                     </td>
                     <td className="py-1.5 pr-2">
@@ -1159,27 +1441,33 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                         placeholder="unit"
                       />
                     </td>
-                    <td className="py-1.5 pr-2">
-                      <Input
-                        data-row={rowIdx} data-col={4}
-                        value={item.unitPrice ?? "0"}
-                        onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })}
-                        onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 4)}
-                        className="h-7 text-xs text-right"
-                      />
-                    </td>
-                    <td className="py-1.5 pr-2">
-                      <Input
-                        data-row={rowIdx} data-col={5}
-                        value={item.discountPct ?? "0"}
-                        onChange={(e) => updateItem(item._key, { discountPct: e.target.value })}
-                        onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 5)}
-                        className="h-7 text-xs text-right"
-                      />
-                    </td>
-                    <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
-                      {fmt(parseFloat(item.totalPrice ?? "0"))}
-                    </td>
+                    {soType !== "proforma" && (
+                      <td className="py-1.5 pr-2">
+                        <Input
+                          data-row={rowIdx} data-col={4}
+                          value={item.unitPrice ?? "0"}
+                          onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })}
+                          onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 4)}
+                          className="h-7 text-xs text-right"
+                        />
+                      </td>
+                    )}
+                    {soType !== "proforma" && (
+                      <td className="py-1.5 pr-2">
+                        <Input
+                          data-row={rowIdx} data-col={5}
+                          value={item.discountPct ?? "0"}
+                          onChange={(e) => updateItem(item._key, { discountPct: e.target.value })}
+                          onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 5)}
+                          className="h-7 text-xs text-right"
+                        />
+                      </td>
+                    )}
+                    {soType !== "proforma" && (
+                      <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
+                        {fmt(parseFloat(item.totalPrice ?? "0"))}
+                      </td>
+                    )}
                     {showCpoColumn && (
                       <td className="py-1.5 pr-2">
                         {sourceCpo ? (
@@ -1258,7 +1546,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
         </section>
 
         {/* ── 5. Pricing summary ── */}
-        <section className="border border-border rounded-xl p-4">
+        {soType !== "proforma" && <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Pricing</h2>
           <div className="flex justify-end">
             <div className="w-72 space-y-2 text-sm">
@@ -1296,7 +1584,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               </div>
             </div>
           </div>
-        </section>
+        </section>}
 
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">

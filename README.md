@@ -160,3 +160,17 @@ Goods arrive Goods Receipt BMS-GR-2026-0001
 What the list view shows
 Amber "Purchase Req." chip = still in draft/awaiting approval phase — shows PR number
 Blue "Supplier PO" chip = approved and confirmed — shows PO number
+
+# Delivery Order & SO Relation
+
+Task A — SO detail per-CPO fulfillment status (so-detail-client.tsx):
+
+When the SO has multiple CPOs (order.cpoCustomers.length > 1), the "Reserved" section shows a table row per CPO with CPO number, customer name, a colored badge (Pending / DO created / Delivered), and a "Create DO" button only for undelivered CPOs
+When the SO has one or zero CPOs, the original single "Create Delivery Order" button is shown unchanged
+Task B — CPO picker step in DO create (create-do-client.tsx):
+
+PrefillData now has customerPoId? and customerPoNo?
+After selecting an SO in SoPicker, if it has >1 CPOs the flow pauses on a CPO selection screen; if exactly 1, it auto-selects; if 0, proceeds with all items
+buildPrefill() filters SO items by sourceCustomerPoId for the chosen CPO, uses the CPO's customer snapshot, and sets customerPoId/customerPoNo
+The linked SO banner in DoForm shows a CPO: {poNo} badge when a CPO is selected
+handleSave passes customerPoId/customerPoNo through to createDeliveryOrder

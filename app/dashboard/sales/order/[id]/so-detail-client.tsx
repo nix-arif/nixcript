@@ -11,14 +11,21 @@ import {
   recallSalesOrder,
   type SalesOrderWithItems,
 } from "@/server/sales-order";
+import {
+  checkAndReserveStock,
+  releaseStockReservation,
+  type StockCheckResult,
+} from "@/server/stock-reservation";
 import { type QuotationBasic } from "@/server/quotation";
+import { type PrListRow } from "@/server/purchase-requisition";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, MapPinIcon,
   FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon, SendIcon, ClockIcon,
-  PrinterIcon, ShoppingCartIcon,
+  PrinterIcon, ShoppingCartIcon, WarehouseIcon, AlertTriangleIcon, CheckCircle2Icon,
+  Loader2Icon, TruckIcon, LinkIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -51,12 +58,16 @@ const QT_STATUS: Record<string, { label: string; className: string }> = {
 export function SalesOrderDetailClient({
   order,
   linkedQuotation,
+  linkedDos,
+  linkedPrs,
   permissions,
   currentUserId,
   draftRedirected,
 }: {
   order: SalesOrderWithItems;
   linkedQuotation: QuotationBasic | null;
+  linkedDos: { id: string; doNo: string; customerPoId: string | null; customerPoNo: string | null; status: string }[];
+  linkedPrs: PrListRow[];
   permissions: string[];
   currentUserId: string;
   draftRedirected?: boolean;
@@ -65,11 +76,16 @@ export function SalesOrderDetailClient({
   const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState(order.status ?? "draft");
   const [actioning, setActioning] = useState<"submit" | "approve" | "reject" | "recall" | null>(null);
+  const [reserving, setReserving] = useState(false);
+  const [releasing, setReleasing] = useState(false);
+  const [reservationResult, setReservationResult] = useState<StockCheckResult | null>(null);
+  const [stockStatus, setStockStatus] = useState<string | null>(order.stockReservationStatus ?? null);
 
   // Sync with server-refreshed prop
   useEffect(() => {
     setStatus(order.status ?? "draft");
-  }, [order.status]);
+    setStockStatus(order.stockReservationStatus ?? null);
+  }, [order.status, order.stockReservationStatus]);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = order.createdBy === currentUserId;
@@ -162,6 +178,42 @@ export function SalesOrderDetailClient({
     }
   }
 
+  async function handleReserveStock() {
+    setReserving(true);
+    setReservationResult(null);
+    try {
+      const result = await checkAndReserveStock(order.id);
+      setReservationResult(result);
+      setStockStatus(result.canReserve ? "reserved" : "insufficient");
+      if (result.canReserve) {
+        toast.success("Stock reserved successfully");
+      } else {
+        toast.warning("Insufficient stock — see shortage details below");
+      }
+      router.refresh();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setReserving(false);
+    }
+  }
+
+  async function handleReleaseReservation() {
+    if (!confirm("Release stock reservation? This will free the reserved quantities.")) return;
+    setReleasing(true);
+    try {
+      await releaseStockReservation(order.id);
+      setStockStatus(null);
+      setReservationResult(null);
+      toast.success("Stock reservation released");
+      router.refresh();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setReleasing(false);
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       {draftRedirected && (
@@ -184,7 +236,7 @@ export function SalesOrderDetailClient({
               </Button>
             )}
             {status === "confirmed" && can("purchase-order:create") && (
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/purchase-order/create?soId=${order.id}`)}>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/requisition/create?soId=${order.id}`)}>
                 <ShoppingCartIcon className="w-3.5 h-3.5" /> Raise Requisition
               </Button>
             )}
@@ -353,7 +405,14 @@ export function SalesOrderDetailClient({
           {/* Status */}
           <section className="border border-border rounded-xl p-4">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Status</h2>
-            <div className="mb-3"><StatusBadge status={status} /></div>
+            <div className="mb-3 flex items-center gap-2 flex-wrap">
+              <StatusBadge status={status} />
+              {order.soType === "proforma" && (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 capitalize">
+                  Pro-forma · {order.proformaReason ?? ""}
+                </span>
+              )}
+            </div>
             <div className="flex flex-col gap-2">
               {/* Creator: submit for approval */}
               {status === "draft" && can("sales-order:create") && (
@@ -408,6 +467,236 @@ export function SalesOrderDetailClient({
             </div>
           </section>
 
+          {/* Stock Reservation — only shown on confirmed SOs */}
+          {status === "confirmed" && can("delivery-order:create") && (
+            <section className={cn(
+              "border rounded-xl p-4 space-y-3",
+              stockStatus === "reserved"    && "border-green-300 dark:border-green-700/50 bg-green-50/50 dark:bg-green-900/10",
+              stockStatus === "insufficient" && "border-red-300 dark:border-red-700/50 bg-red-50/50 dark:bg-red-900/10",
+              !stockStatus                  && "border-border",
+            )}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                  <WarehouseIcon className="w-3.5 h-3.5" />
+                  Stock Reservation
+                </h2>
+                {stockStatus === "reserved" && (
+                  <span className="flex items-center gap-1 text-[11px] font-medium text-green-700 dark:text-green-400">
+                    <CheckCircle2Icon className="w-3.5 h-3.5" /> Reserved
+                  </span>
+                )}
+                {stockStatus === "insufficient" && (
+                  <span className="flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400">
+                    <AlertTriangleIcon className="w-3.5 h-3.5" /> Insufficient
+                  </span>
+                )}
+              </div>
+
+              {/* Not yet checked */}
+              {!stockStatus && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Check and reserve stock for all items in this sales order before creating a delivery order.
+                  </p>
+                  <Button
+                    size="sm"
+                    className="w-full gap-1.5 h-8 text-xs"
+                    onClick={handleReserveStock}
+                    disabled={reserving}
+                  >
+                    {reserving ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> : <WarehouseIcon className="w-3.5 h-3.5" />}
+                    {reserving ? "Checking stock…" : "Check & Reserve Stock"}
+                  </Button>
+                </div>
+              )}
+
+              {/* Reserved — ready for DO */}
+              {stockStatus === "reserved" && (
+                <div className="space-y-2">
+                  {/* Multi-CPO: show per-CPO delivery status */}
+                  {order.cpoCustomers.length > 1 ? (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        This SO has {order.cpoCustomers.length} customer POs. Create a separate delivery order for each.
+                      </p>
+                      <div className="rounded-lg border border-border overflow-hidden divide-y divide-border/50">
+                        {order.cpoCustomers.map((cpo) => {
+                          const dos = linkedDos.filter((d) => d.customerPoId === cpo.customerPoId);
+                          const delivered = dos.filter((d) => d.status === "delivered");
+                          const hasDo = dos.length > 0;
+                          const snap = cpo.customerSnapshot;
+                          const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                          return (
+                            <div key={cpo.customerPoId} className="px-3 py-2.5 flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs font-mono font-medium">{cpo.customerPoNo}</span>
+                                  {hasDo ? (
+                                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                                      {delivered.length > 0 ? "Delivered" : "DO created"}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                                      Pending
+                                    </span>
+                                  )}
+                                </div>
+                                {custName && <p className="text-[10px] text-muted-foreground mt-0.5">{custName}</p>}
+                                {dos.map((d) => (
+                                  <button
+                                    key={d.id}
+                                    onClick={() => router.push(`/dashboard/fulfillment/delivery/${d.id}`)}
+                                    className="text-[10px] font-mono text-blue-600 dark:text-blue-400 hover:underline block mt-0.5"
+                                  >
+                                    {d.doNo}
+                                  </button>
+                                ))}
+                              </div>
+                              {!hasDo && can("delivery-order:create") && (
+                                <Button
+                                  size="sm"
+                                  className="gap-1 h-7 text-xs bg-green-600 hover:bg-green-700 text-white shrink-0"
+                                  onClick={() => router.push(`/dashboard/fulfillment/delivery/create?soId=${order.id}&soNo=${encodeURIComponent(order.soNo)}&customerPoId=${encodeURIComponent(cpo.customerPoId)}`)}
+                                >
+                                  <TruckIcon className="w-3 h-3" /> Create DO
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    /* Single customer: simple Create DO button */
+                    <>
+                      <p className="text-xs text-muted-foreground">
+                        Stock has been reserved. You can now create a delivery order.
+                      </p>
+                      <Button
+                        size="sm"
+                        className="w-full gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
+                        onClick={() => router.push(`/dashboard/fulfillment/delivery/create?soId=${order.id}&soNo=${encodeURIComponent(order.soNo)}`)}
+                      >
+                        <TruckIcon className="w-3.5 h-3.5" />
+                        Create Delivery Order
+                      </Button>
+                    </>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full gap-1.5 h-7 text-xs text-muted-foreground hover:text-destructive"
+                    onClick={handleReleaseReservation}
+                    disabled={releasing}
+                  >
+                    {releasing ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <XIcon className="w-3 h-3" />}
+                    Release reservation
+                  </Button>
+                </div>
+              )}
+
+              {/* Insufficient stock */}
+              {stockStatus === "insufficient" && (
+                <div className="space-y-2">
+                  {reservationResult && reservationResult.items.some((i) => i.shortage > 0) && (
+                    <div className="rounded-lg border border-red-200 dark:border-red-800/50 overflow-hidden">
+                      <div className="px-3 py-2 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800/50">
+                        <p className="text-[11px] font-medium text-red-700 dark:text-red-400">Items with shortage</p>
+                      </div>
+                      <div className="divide-y divide-red-100 dark:divide-red-900/30">
+                        {reservationResult.items
+                          .filter((i) => i.shortage > 0)
+                          .map((i) => (
+                            <div key={i.productId} className="px-3 py-2">
+                              <p className="text-[11px] font-medium font-mono">{i.productCode ?? i.productId}</p>
+                              <p className="text-[10px] text-muted-foreground truncate">{i.description}</p>
+                              <div className="flex items-center gap-3 mt-1 text-[10px] tabular-nums">
+                                <span className="text-muted-foreground">Need <span className="font-medium text-foreground">{i.required}</span></span>
+                                <span className="text-muted-foreground">Available <span className="font-medium text-foreground">{i.available}</span></span>
+                                <span className="text-red-600 dark:text-red-400 font-medium">Short {i.shortage}</span>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 gap-1.5 h-8 text-xs"
+                      onClick={() => router.push(`/dashboard/procurement/requisition/create?soId=${order.id}`)}
+                    >
+                      <ShoppingCartIcon className="w-3.5 h-3.5" />
+                      Raise Requisition
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 gap-1.5 h-8 text-xs"
+                      onClick={handleReserveStock}
+                      disabled={reserving}
+                    >
+                      {reserving ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <RotateCcwIcon className="w-3 h-3" />}
+                      Retry
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Purchase Requisitions */}
+          {(linkedPrs.length > 0 || (can("purchase-order:read") && (status === "confirmed" || status === "fulfilled"))) && (
+            <section className="border border-border rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                  <ShoppingCartIcon className="w-3.5 h-3.5" />
+                  Purchase Requisitions
+                </h2>
+                {can("purchase-order:create") && (
+                  <button
+                    onClick={() => router.push(`/dashboard/procurement/requisition/create?soId=${order.id}`)}
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    + New
+                  </button>
+                )}
+              </div>
+              {linkedPrs.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No requisitions raised yet.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {linkedPrs.map((pr) => {
+                    const PR_BADGES: Record<string, { label: string; cls: string }> = {
+                      draft:             { label: "Draft",     cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400" },
+                      submitted:         { label: "Pending",   cls: "bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400" },
+                      approved:          { label: "Approved",  cls: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400" },
+                      partially_ordered: { label: "Partial",   cls: "bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400" },
+                      ordered:           { label: "Ordered",   cls: "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
+                      cancelled:         { label: "Cancelled", cls: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400" },
+                    };
+                    const badge = PR_BADGES[pr.status] ?? { label: pr.status, cls: "bg-muted text-muted-foreground" };
+                    return (
+                      <div key={pr.id} className="flex items-center justify-between gap-2 rounded-lg border border-border/60 px-3 py-2 hover:bg-muted/30 transition-colors">
+                        <button
+                          onClick={() => router.push(`/dashboard/procurement/requisition/${pr.id}`)}
+                          className="text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          {pr.prNo}
+                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-muted-foreground">{pr.itemCount} item{pr.itemCount !== 1 ? "s" : ""}</span>
+                          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${badge.cls}`}>{badge.label}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
           {/* Pricing */}
           <section className="border border-border rounded-xl p-4">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Pricing</h2>
@@ -438,6 +727,29 @@ export function SalesOrderDetailClient({
           {/* Details */}
           <section className="border border-border rounded-xl p-4 space-y-2.5">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Details</h2>
+
+            {/* Original SO — shown on warranty/replacement pro-forma SOs */}
+            {order.originalSoNo && (
+              <div className="flex items-start gap-2">
+                <LinkIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground capitalize">
+                    Original SO ({order.proformaReason})
+                  </p>
+                  {order.originalSoId ? (
+                    <button
+                      onClick={() => router.push(`/dashboard/sales/order/${order.originalSoId}`)}
+                      className="text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline text-left"
+                    >
+                      {order.originalSoNo}
+                    </button>
+                  ) : (
+                    <p className="text-xs font-mono">{order.originalSoNo}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {(() => {
               const allLinked = (order.linkedQuotations as { id: string; quotationNo: string }[] | null) ??
                 (order.quotationId && order.quotationNo ? [{ id: order.quotationId, quotationNo: order.quotationNo }] : []);

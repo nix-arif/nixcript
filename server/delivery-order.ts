@@ -77,6 +77,8 @@ export interface CreateDeliveryOrderInput {
   customerCompanyId?: string;
   salesOrderId?: string;
   salesOrderNo?: string;
+  customerPoId?: string;
+  customerPoNo?: string;
   deliveredTo?: string;
   deliveryAddress?: string;
   deliveryDate?: Date;
@@ -88,6 +90,23 @@ export interface UpdateDeliveryOrderInput extends Omit<CreateDeliveryOrderInput,
   id: string;
   status?: string;
   items: DeliveryOrderItemInput[];
+}
+
+export async function getDeliveryOrdersBySoId(
+  soId: string,
+): Promise<{ id: string; doNo: string; customerPoId: string | null; customerPoNo: string | null; status: string }[]> {
+  const { orgId } = await requireAccess("delivery-order:read");
+  return db
+    .select({
+      id: deliveryOrder.id,
+      doNo: deliveryOrder.doNo,
+      customerPoId: deliveryOrder.customerPoId,
+      customerPoNo: deliveryOrder.customerPoNo,
+      status: deliveryOrder.status,
+    })
+    .from(deliveryOrder)
+    .where(and(eq(deliveryOrder.salesOrderId, soId), eq(deliveryOrder.organizationId, orgId)))
+    .orderBy(asc(deliveryOrder.createdAt));
 }
 
 export async function getDeliveryOrders(): Promise<DeliveryOrderListRow[]> {
@@ -163,6 +182,8 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       doNo,
       salesOrderId: input.salesOrderId ?? null,
       salesOrderNo: input.salesOrderNo ?? null,
+      customerPoId: input.customerPoId ?? null,
+      customerPoNo: input.customerPoNo ?? null,
       customerId: input.customerId ?? null,
       customerSnapshot,
       deliveredTo: input.deliveredTo ?? null,

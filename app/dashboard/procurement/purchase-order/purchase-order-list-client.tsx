@@ -2,16 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { deletePurchaseOrder, type PurchaseOrderListRow } from "@/server/purchase-order";
+import { type PurchaseOrderListRow } from "@/server/purchase-order";
 import { useAppStore } from "@/lib/store/use-app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
-  PlusIcon, SearchIcon, XIcon, FileTextIcon,
-  PencilIcon, TrashIcon, BuildingIcon, CalendarIcon,
+  PlusIcon, SearchIcon, XIcon, TruckIcon,
+  BuildingIcon, CalendarIcon, ClipboardListIcon, PackageIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,23 +21,18 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const PO_STATUS: Record<string, { label: string; className: string }> = {
-  draft:     { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
-  submitted: { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
-  confirmed: { label: "PO Confirmed",      className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
-  fulfilled: { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
-  cancelled: { label: "Cancelled",         className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
+  confirmed: { label: "Confirmed", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  fulfilled: { label: "Fulfilled",  className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
+  cancelled: { label: "Cancelled",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
 
-const PR_STATUSES = new Set(["draft", "submitted"]);
-const docType = (status: string) => PR_STATUSES.has(status) ? "Purchase Req." : "Supplier PO";
+const PO_STATUSES = new Set(["confirmed", "fulfilled", "cancelled"]);
 
 function StatusBadge({ status }: { status: string }) {
-  const cfg = PO_STATUS[status] ?? PO_STATUS.draft;
+  const cfg = PO_STATUS[status];
+  if (!cfg) return null;
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
-
-const EDITABLE_STATUSES = new Set(["draft"]);
-const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
 interface Props {
   initialOrders: PurchaseOrderListRow[];
@@ -49,14 +43,16 @@ interface Props {
 export function PurchaseOrderListClient({ initialOrders, permissions, currentUserId }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
-  const [deleting, setDeleting] = useState<string | null>(null);
   const { isSwitchingOrg, setOrgSwitching } = useAppStore();
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
   useEffect(() => { setOrgSwitching(false); }, [initialOrders]);
 
-  const filtered = initialOrders.filter((o) => {
+  // Only show real supplier POs (confirmed/fulfilled/cancelled)
+  const poOnly = initialOrders.filter((o) => PO_STATUSES.has(o.status));
+
+  const filtered = poOnly.filter((o) => {
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = o.supplierSnapshot as any;
@@ -69,29 +65,15 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
     );
   });
 
-  async function handleDelete(id: string, docNo: string) {
-    if (!confirm(`Delete ${docNo}? This cannot be undone.`)) return;
-    setDeleting(id);
-    try {
-      await deletePurchaseOrder(id);
-      toast.success("Purchase order deleted");
-      router.refresh();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setDeleting(null);
-    }
-  }
-
   return (
     <div className="p-6">
       <PageHeader
-        title="Requisitions & Purchase Orders"
-        description="Raise purchase requisitions, get them approved, then issue supplier POs"
+        title="Purchase Orders"
+        description="Supplier POs issued from approved purchase requisitions"
         action={
           can("purchase-order:create") && (
             <Button onClick={() => router.push("/dashboard/procurement/purchase-order/create")} className="gap-2">
-              <PlusIcon className="w-4 h-4" /> New Requisition
+              <PlusIcon className="w-4 h-4" /> New PO
             </Button>
           )
         }
@@ -131,13 +113,20 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
         <>
           <div className="text-xs text-muted-foreground mb-3 tabular-nums">0 records</div>
           <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
-            <FileTextIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-            <div className="text-sm font-medium mb-1">No requisitions or purchase orders yet</div>
-            <div className="text-xs mb-4">Raise a purchase requisition to get started</div>
-            {can("purchase-order:create") && (
-              <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/procurement/purchase-order/create")}>
-                <PlusIcon className="w-3.5 h-3.5" /> New Requisition
-              </Button>
+            <TruckIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
+            <div className="text-sm font-medium mb-1">No purchase orders yet</div>
+            {search ? (
+              <div className="text-xs">No results match your search</div>
+            ) : (
+              <>
+                <div className="text-xs mb-4">POs are issued when purchase requisitions are approved</div>
+                <Button
+                  variant="outline" size="sm" className="gap-2"
+                  onClick={() => router.push("/dashboard/procurement/requisition")}
+                >
+                  <ClipboardListIcon className="w-3.5 h-3.5" /> View Requisitions
+                </Button>
+              </>
             )}
           </div>
         </>
@@ -156,26 +145,24 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
                   onClick={() => router.push(`/dashboard/procurement/purchase-order/${o.id}`)}
                 >
                   <div className="flex items-center gap-3 px-4 py-3">
-                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0">
-                      <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/20 shrink-0">
+                      <TruckIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-medium">
-                          <Highlight text={PR_STATUSES.has(o.status) ? (o.prNo ?? o.poNo ?? "—") : (o.poNo ?? o.prNo ?? "—")} query={search} />
-                        </span>
-                        <span className={cn(
-                          "text-[10px] font-medium rounded px-1.5 py-0.5",
-                          PR_STATUSES.has(o.status)
-                            ? "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400"
-                            : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400",
-                        )}>
-                          {docType(o.status)}
+                          <Highlight text={o.poNo ?? o.id} query={search} />
                         </span>
                         <StatusBadge status={o.status} />
+                        {o.prNo && (
+                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">
+                            <ClipboardListIcon className="w-2.5 h-2.5 shrink-0" />
+                            <Highlight text={o.prNo} query={search} />
+                          </span>
+                        )}
                         {o.salesOrderId && (
-                          <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
+                          <span className="text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">
                             Linked SO
                           </span>
                         )}
@@ -183,7 +170,7 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
                       <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                         {snap?.name && (
                           <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <BuildingIcon className="w-3 h-3" />
+                            <BuildingIcon className="w-3 h-3 shrink-0" />
                             <Highlight text={snap.name} query={search} />
                           </span>
                         )}
@@ -191,30 +178,16 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
                           {fmt(o.grandTotal, o.currency ?? "MYR")}
                         </span>
                       </div>
-                      <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                        {o.createdByName && (
-                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <CalendarIcon className="w-3 h-3" />
-                            {fmtDate(o.createdAt)} · {o.createdByName}
-                          </span>
-                        )}
+                      <div className="flex items-center gap-3 mt-0.5">
+                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <CalendarIcon className="w-3 h-3 shrink-0" />
+                          {fmtDate(o.createdAt)}
+                          {o.createdByName && ` · ${o.createdByName}`}
+                        </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      {can("purchase-order:update") && EDITABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
-                        <Button variant="ghost" size="icon" className="w-7 h-7"
-                          onClick={() => router.push(`/dashboard/procurement/purchase-order/${o.id}/edit`)}>
-                          <PencilIcon className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
-                      {can("purchase-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && !o.approvedAt && (
-                        <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
-                          disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.prNo ?? o.poNo ?? o.id)}>
-                          <TrashIcon className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
-                    </div>
+                    <PackageIcon className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
                   </div>
                 </div>
               );

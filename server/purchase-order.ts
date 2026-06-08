@@ -8,6 +8,8 @@ import {
   purchaseRequisitionCounter,
   purchaseOrderCustomerPo,
   customerPurchaseOrder,
+  purchaseRequisition,
+  purchaseRequisitionItem,
   salesOrder,
   salesOrderItem,
   product,
@@ -177,6 +179,7 @@ export interface PurchaseOrderItemInput {
 }
 
 export interface CreatePurchaseOrderInput {
+  purchaseRequisitionId?: string; // when set, PO is auto-confirmed (PR approval = authorization)
   salesOrderId?: string;
   supplierId: string;
   supplierQuotationKey?: string;
@@ -190,6 +193,66 @@ export interface CreatePurchaseOrderInput {
   expectedDeliveryDate?: Date;
   deliveryAddress?: string;
   items: PurchaseOrderItemInput[];
+}
+
+// ── PR → PO conversion helper ─────────────────────────────────────────────
+
+export type PrForPoConversion = {
+  id: string;
+  prNo: string;
+  salesOrderId: string | null;
+  salesOrderNo: string | null;
+  notes: string | null;
+  items: Array<{
+    id: string;
+    rowNo: number;
+    productId: string | null;
+    productCode: string | null;
+    description: string | null;
+    qty: string;
+    uom: string | null;
+    estimatedUnitCost: string;
+    currency: string;
+    preferredSupplierId: string | null;
+    preferredSupplierName: string | null;
+  }>;
+};
+
+export async function getPrForPoConversion(prId: string): Promise<PrForPoConversion | null> {
+  const { orgId } = await requireAccess("purchase-order:create");
+  const [pr] = await db
+    .select()
+    .from(purchaseRequisition)
+    .where(and(eq(purchaseRequisition.id, prId), eq(purchaseRequisition.organizationId, orgId)));
+  if (!pr) return null;
+  if (pr.status !== "approved" && pr.status !== "partially_ordered") return null;
+
+  const items = await db
+    .select()
+    .from(purchaseRequisitionItem)
+    .where(eq(purchaseRequisitionItem.purchaseRequisitionId, prId))
+    .orderBy(asc(purchaseRequisitionItem.rowNo));
+
+  return {
+    id: pr.id,
+    prNo: pr.prNo,
+    salesOrderId: pr.salesOrderId,
+    salesOrderNo: pr.salesOrderNo,
+    notes: pr.notes,
+    items: items.map((i) => ({
+      id: i.id,
+      rowNo: i.rowNo,
+      productId: i.productId ?? null,
+      productCode: i.productCode ?? null,
+      description: i.description ?? null,
+      qty: i.qty ?? "1",
+      uom: i.uom ?? null,
+      estimatedUnitCost: i.estimatedUnitCost ?? "0",
+      currency: i.currency ?? "MYR",
+      preferredSupplierId: i.preferredSupplierId ?? null,
+      preferredSupplierName: i.preferredSupplierName ?? null,
+    })),
+  };
 }
 
 export interface UpdatePurchaseOrderInput extends Omit<CreatePurchaseOrderInput, "items"> {
@@ -468,30 +531,31 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
 
   if (!input.supplierId) throw new Error("Supplier is required");
 
-  // Build supplier snapshot
-  let supplierSnapshot: PurchaseOrderRow["supplierSnapshot"] = null;
   const [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
-  if (sup) {
-    supplierSnapshot = {
-      name: sup.name,
-      registrationNo: sup.registrationNo ?? undefined,
-      address: sup.address ?? undefined,
-      contactPerson: sup.contactPerson ?? undefined,
-      contactNo: sup.contactNo ?? undefined,
-      email: sup.email ?? undefined,
-    };
-  }
+  const supplierSnapshot: PurchaseOrderRow["supplierSnapshot"] = sup ? {
+    name: sup.name,
+    registrationNo: sup.registrationNo ?? undefined,
+    address: sup.address ?? undefined,
+    contactPerson: sup.contactPerson ?? undefined,
+    contactNo: sup.contactNo ?? undefined,
+    email: sup.email ?? undefined,
+  } : null;
 
-  // PR number is assigned at creation; PO number is assigned at approval
-  const prNo = await generatePrNo(orgId);
+  const fromPr = !!input.purchaseRequisitionId;
+
+  // PR-sourced POs skip the draft phase — PR approval is the authorization
+  const prNo = fromPr ? null : await generatePrNo(orgId);
+  const poNo = fromPr ? await generatePoNo(orgId) : null;
+  const status = fromPr ? "confirmed" : "draft";
 
   const [row] = await db
     .insert(purchaseOrder)
     .values({
       id: nanoid(),
       organizationId: orgId,
+      purchaseRequisitionId: input.purchaseRequisitionId ?? null,
       prNo,
-      poNo: null,
+      poNo,
       salesOrderId: input.salesOrderId ?? null,
       supplierId: input.supplierId,
       supplierSnapshot: supplierSnapshot ?? null,
@@ -504,8 +568,9 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
       notes: input.notes ?? null,
       expectedDeliveryDate: input.expectedDeliveryDate ?? null,
       deliveryAddress: input.deliveryAddress ?? null,
-      status: "draft",
+      status,
       createdBy: userId,
+      ...(fromPr ? { approvedBy: userId, approvedAt: new Date() } : {}),
     })
     .returning();
 
@@ -543,6 +608,51 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
         })),
       );
     }
+  }
+
+  // When converting from a PR, link PR items to this PO (match by productCode)
+  // and update the PR's status to reflect ordering progress
+  if (fromPr && poNo) {
+    const poProductCodes = new Set(input.items.map((i) => i.productCode).filter(Boolean));
+
+    const prItemsFull = await db
+      .select({
+        id: purchaseRequisitionItem.id,
+        productCode: purchaseRequisitionItem.productCode,
+        purchaseOrderId: purchaseRequisitionItem.purchaseOrderId,
+      })
+      .from(purchaseRequisitionItem)
+      .where(eq(purchaseRequisitionItem.purchaseRequisitionId, input.purchaseRequisitionId!));
+
+    // Link PR items whose productCode appears in this PO and aren't already linked to another PO
+    const unlinked = prItemsFull.filter(
+      (pi) => pi.productCode && poProductCodes.has(pi.productCode) && !pi.purchaseOrderId,
+    );
+
+    if (unlinked.length > 0) {
+      await Promise.all(
+        unlinked.map((pi) =>
+          db.update(purchaseRequisitionItem)
+            .set({ purchaseOrderId: row.id, purchaseOrderNo: poNo })
+            .where(eq(purchaseRequisitionItem.id, pi.id)),
+        ),
+      );
+    }
+
+    // Re-check coverage after linking and update PR status
+    const updatedItems = prItemsFull.map((pi) =>
+      unlinked.find((u) => u.id === pi.id) ? { ...pi, purchaseOrderId: row.id } : pi,
+    );
+    const allLinked = updatedItems.every((i) => !!i.purchaseOrderId);
+    const anyLinked = updatedItems.some((i) => !!i.purchaseOrderId);
+    const newPrStatus = allLinked ? "ordered" : anyLinked ? "partially_ordered" : "approved";
+
+    await db.update(purchaseRequisition)
+      .set({ status: newPrStatus })
+      .where(eq(purchaseRequisition.id, input.purchaseRequisitionId!));
+
+    revalidatePath(`/dashboard/procurement/requisition/${input.purchaseRequisitionId}`);
+    revalidatePath("/dashboard/procurement/requisition");
   }
 
   return row;

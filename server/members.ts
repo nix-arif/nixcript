@@ -7,7 +7,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { and, eq, isNull, isNotNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { grantDepartmentPermissions } from "@/lib/permissions/grant-defaults";
+import { grantDepartmentPermissions, resyncAllMemberPermissions } from "@/lib/permissions/grant-defaults";
 import { nanoid } from "nanoid";
 
 async function requireAccess(permission: string) {
@@ -308,4 +308,12 @@ export async function permanentlyDeleteMember(memberId: string) {
     .where(and(eq(member.id, memberId), eq(member.organizationId, orgId)));
 
   revalidatePath("/dashboard/organization/members");
+}
+
+export async function resyncOrgPermissions(): Promise<number> {
+  const { orgId } = await requireAccess("member:invite");
+  const count = await resyncAllMemberPermissions(orgId);
+  revalidatePath("/dashboard/organization/members");
+  revalidatePath("/dashboard/organization/departments");
+  return count;
 }

@@ -6,7 +6,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, or } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, or, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
@@ -288,6 +288,17 @@ export async function setReorderPoint(
     await db.insert(stockLevel).values({ id: nanoid(), organizationId: orgId, productId, warehouseLabel, quantity: "0", reservedQty: "0", reorderPoint: reorderPoint ?? null, maxStock: maxStock ?? null, updatedAt: new Date() });
   }
   revalidatePath("/dashboard/inventory");
+}
+
+export async function getProductsByCode(
+  codes: string[],
+): Promise<{ productCode: string; id: string; description: string | null; uom: string | null }[]> {
+  if (codes.length === 0) return [];
+  const { orgId } = await requireAccess("inventory:read");
+  return db
+    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom })
+    .from(product)
+    .where(and(eq(product.organizationId, orgId), inArray(product.productCode, codes)));
 }
 
 export async function searchProducts(query: string) {

@@ -892,6 +892,7 @@ export async function getQuotationForSO(id: string) {
   const items = await db
     .select({
       rowNo: quotationItem.rowNo,
+      productId: quotationItem.productId,
       productCode: quotationItem.productCode,
       description: quotationItem.description,
       qty: quotationItem.qty,

@@ -205,6 +205,11 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                         <Highlight text={o.soNo} query={search} />
                       </span>
                       <StatusBadge status={o.status} />
+                      {o.soType === "proforma" && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 capitalize hidden sm:inline">
+                          {o.proformaReason ?? "Pro-forma"}
+                        </span>
+                      )}
                       {o.quotationNo && (
                         <span className="text-[10px] text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5 font-mono hidden sm:inline">
                           QT: {o.quotationNo}

@@ -39,11 +39,17 @@ export const ALL_PERMISSIONS = [
   { key: "supplier:update", label: "Update Supplier" },
   { key: "supplier:delete", label: "Delete Supplier" },
 
+  // Purchase Requisition
+  { key: "purchase-requisition:approve", label: "Approve Purchase Requisitions" },
+
   // Purchase Order
   { key: "purchase-order:read",   label: "View Purchase Orders" },
   { key: "purchase-order:create", label: "Create Purchase Order" },
   { key: "purchase-order:update", label: "Update Purchase Order" },
   { key: "purchase-order:delete", label: "Delete Purchase Order" },
+
+  // Goods Receipt
+  { key: "goods-receipt:create", label: "Record Goods Receipt" },
 
   // Customer
   { key: "customer:read",   label: "View Customers" },
@@ -174,6 +180,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
+      "goods-receipt:create",
       "customer:read", "customer:create", "customer:update", "customer:delete",
       "product:read",
       "member:read", "member:invite", "member:remove",
@@ -308,7 +315,9 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     manager: [
       "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
+      "goods-receipt:create",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
+      "inventory:read", "inventory:adjust", "inventory:manage",
       "sales-order:read",
       "invoice:read",
       "member:read",
@@ -318,9 +327,11 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "claim:read:own", "claim:apply",
     ],
     member: [
-      "delivery-order:read",
+      "delivery-order:read", "delivery-order:create", "delivery-order:update",
       "purchase-order:read",
+      "goods-receipt:create",
       "supplier:read",
+      "inventory:read", "inventory:adjust",
       "sales-order:read",
       "invoice:read",
       "member:read",
@@ -446,10 +457,34 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     permissions: ["invoice:read", "invoice:create", "invoice:update", "customer:read", "sales-order:read", "delivery-order:read"],
   },
   {
+    id: "purchase-requisition-creator",
+    label: "Purchase Requisition Creator",
+    description: "Raise and manage purchase requisitions linked to sales orders. Requires sales order and product read.",
+    permissions: [
+      "purchase-order:read", "purchase-order:create", "purchase-order:update",
+      "sales-order:read", "product:read", "supplier:read",
+    ],
+  },
+  {
+    id: "purchase-requisition-approver",
+    label: "Purchase Requisition Approver",
+    description: "Approve or return purchase requisitions for revision.",
+    permissions: [
+      "purchase-requisition:approve",
+      "purchase-order:read",
+    ],
+  },
+  {
     id: "purchase-order-creator",
     label: "Purchase Order Creator",
     description: "Create and manage purchase orders. Requires supplier and product read.",
     permissions: ["purchase-order:read", "purchase-order:create", "purchase-order:update", "supplier:read", "product:read"],
+  },
+  {
+    id: "warehouse-receiving",
+    label: "Warehouse / Receiving Staff",
+    description: "Record goods receipts against confirmed purchase orders. View-only access to POs.",
+    permissions: ["goods-receipt:create", "purchase-order:read", "supplier:read", "product:read"],
   },
   {
     id: "inventory-staff",

@@ -38,7 +38,8 @@ export const navConfig: NavGroup[] = [
     url: "/dashboard",
     icon: React.createElement(LayoutDashboardIcon),
     items: [
-      { title: "Home", url: "/dashboard" },
+      { title: "Home",     url: "/dashboard"           },
+      { title: "Workflow", url: "/dashboard/workflow", permission: "sales-order:read" },
     ],
   },
   {
@@ -58,9 +59,10 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(ProcurementIcon),
     items: [
-      { title: "Suppliers",         url: "/dashboard/procurement/supplier",        permission: "supplier:read"       },
-      { title: "Requisitions & PO", url: "/dashboard/procurement/purchase-order",  permission: "purchase-order:read" },
-      { title: "Goods Receipts",    url: "/dashboard/procurement/goods-receipt",   permission: "purchase-order:read" },
+      { title: "Suppliers",            url: "/dashboard/procurement/supplier",        permission: "supplier:read"       },
+      { title: "Purchase Requisition", url: "/dashboard/procurement/requisition",   permission: "purchase-order:read" },
+      { title: "Purchase Orders",      url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
+      { title: "Goods Receipts",       url: "/dashboard/procurement/goods-receipt",  permission: "purchase-order:read" },
     ],
   },
   {

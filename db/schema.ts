@@ -1350,6 +1350,19 @@ export const salesOrder = pgTable(
     approvedBy: text("approved_by").references(() => user.id),
     approvedAt: timestamp("approved_at"),
 
+    // Order type — standard commercial SO or pro-forma (samples, warranty, replacement)
+    soType: text("so_type").notNull().default("standard"), // 'standard' | 'proforma'
+    proformaReason: text("proforma_reason"), // 'sample' | 'warranty' | 'replacement' | null
+
+    // Original SO reference — for warranty/replacement pro-forma only
+    originalSoId: text("original_so_id").references((): AnyPgColumn => salesOrder.id),
+    originalSoNo: text("original_so_no"),
+
+    // Stock reservation — set by warehouse after SO is confirmed
+    stockReservationStatus: text("stock_reservation_status"), // null | 'reserved' | 'insufficient'
+    stockReservedAt: timestamp("stock_reserved_at"),
+    stockReservedBy: text("stock_reserved_by").references(() => user.id),
+
     updatedAt: timestamp("updated_at")
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -1555,7 +1568,10 @@ export const purchaseOrder = pgTable(
     prNo: text("pr_no"),            // e.g. BMS-PR-2026-0001 — set at creation (null for legacy records)
     poNo: text("po_no"),            // e.g. BMS-PO-2026-0001 — set at approval (null in PR phase)
 
-    // Linked SO (optional)
+    // Link to source PR (new purchaseRequisition system — no FK to avoid circular dep)
+    purchaseRequisitionId: text("purchase_requisition_id"),
+
+    // Linked SO (optional — inherited from PR when converting, or set directly)
     salesOrderId: text("sales_order_id").references(() => salesOrder.id),
 
     // Supplier
@@ -1655,6 +1671,55 @@ export const purchaseRequisitionCounter = pgTable("purchase_requisition_counter"
     .$onUpdate(() => new Date())
     .notNull(),
 });
+
+export const purchaseRequisition = pgTable(
+  "purchase_requisition",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    prNo: text("pr_no").notNull(),
+    salesOrderId: text("sales_order_id").references(() => salesOrder.id),
+    salesOrderNo: text("sales_order_no"),
+    // Which CPO within the SO this PR covers (null = covers the whole SO)
+    customerPoId: text("customer_po_id"),
+    customerPoNo: text("customer_po_no"),
+    status: text("status").notNull().default("draft"),
+    // draft | submitted | approved | partially_ordered | ordered | cancelled
+    notes: text("notes"),
+    requestedBy: text("requested_by").notNull().references(() => user.id),
+    approvedBy: text("approved_by").references(() => user.id),
+    approvedAt: timestamp("approved_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("purchase_requisition_no_org_uidx").on(t.organizationId, t.prNo),
+    index("purchase_requisition_org_idx").on(t.organizationId),
+  ],
+);
+
+export const purchaseRequisitionItem = pgTable(
+  "purchase_requisition_item",
+  {
+    id: text("id").primaryKey(),
+    purchaseRequisitionId: text("purchase_requisition_id").notNull().references(() => purchaseRequisition.id, { onDelete: "cascade" }),
+    rowNo: integer("row_no").notNull(),
+    productId: text("product_id"),
+    productCode: text("product_code"),
+    description: text("description"),
+    qty: text("qty").notNull().default("1"),
+    uom: text("uom"),
+    estimatedUnitCost: text("estimated_unit_cost").default("0"),
+    currency: text("currency").notNull().default("MYR"),
+    totalEstimatedCost: text("total_estimated_cost").default("0"),
+    preferredSupplierId: text("preferred_supplier_id"),
+    preferredSupplierName: text("preferred_supplier_name"),
+    purchaseOrderId: text("purchase_order_id"),
+    purchaseOrderNo: text("purchase_order_no"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("purchase_requisition_item_pr_idx").on(t.purchaseRequisitionId)],
+);
 
 export const goodsReceiptCounter = pgTable("goods_receipt_counter", {
   id: text("id").primaryKey(),
@@ -1871,6 +1936,10 @@ export const deliveryOrder = pgTable(
 
     salesOrderId: text("sales_order_id").references(() => salesOrder.id),
     salesOrderNo: text("sales_order_no"),
+
+    // Which CPO within the SO this delivery fulfils
+    customerPoId: text("customer_po_id").references((): AnyPgColumn => customerPurchaseOrder.id),
+    customerPoNo: text("customer_po_no"),
 
     customerId: text("customer_id").references(() => customer.id),
     customerSnapshot: json("customer_snapshot").$type<{
@@ -2789,6 +2858,8 @@ export const schema = {
   purchaseOrderItem,
   purchaseOrderCounter,
   purchaseRequisitionCounter,
+  purchaseRequisition,
+  purchaseRequisitionItem,
   purchaseOrderCustomerPo,
   purchaseOrderRelations,
   purchaseOrderItemRelations,

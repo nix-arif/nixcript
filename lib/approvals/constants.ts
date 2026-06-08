@@ -33,6 +33,14 @@ export const APPROVAL_MODULES = [
     ],
   },
   {
+    id: "purchase-requisition",
+    title: "Purchase Requisitions",
+    description: "Who can approve or reject internal purchase requisitions.",
+    permissions: [
+      { key: "purchase-requisition:approve", label: "Approve / Reject Purchase Requisitions" },
+    ],
+  },
+  {
     id: "procurement",
     title: "Purchase Orders",
     description: "Who can approve, reject or recall purchase orders.",
