@@ -52,6 +52,7 @@ const TITLES = [
   "Dr",
   "Matron",
   "Sr",
+  "MA",
   "Mr",
   "Ms",
   "Mdm",
