@@ -215,7 +215,7 @@ export function OrganizationProfileClient({ data }: Props) {
 
   // MOF & PKK
   const [mofNo, setMofNo] = useState(data.mofNo ?? "");
-  const [mofValidity, setMofValidity] = useState(data.mofValidity ?? "");
+  const [mofValidity, setMofValidity] = useState(data.mofValidity?.slice(0, 10) ?? "");
   const [pkkNo, setPkkNo] = useState(data.pkkNo ?? "");
 
   // MDA
@@ -223,7 +223,7 @@ export function OrganizationProfileClient({ data }: Props) {
     data.mdaEstablishmentNo ?? "",
   );
   const [mdaEstablishmentValidity, setMdaEstablishmentValidity] = useState(
-    data.mdaEstablishmentValidity ?? "",
+    data.mdaEstablishmentValidity?.slice(0, 10) ?? "",
   );
 
   // Warehouse
