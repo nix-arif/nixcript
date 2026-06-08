@@ -293,22 +293,47 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     }
   }
 
-  // ── Paginate rows — fixed 10 entries per page ─────────────────────────────
-  const ITEMS_PER_PAGE = 10;
+  // ── Paginate rows — height-based ─────────────────────────────────────────
+  const avail = Math.max(PAGE_ROW_AVAIL, RH_MIN * 3);
   const pageGroups: number[][] = [];
-  for (let i = 0; i < renderItems.length; i += ITEMS_PER_PAGE) {
-    pageGroups.push(
-      Array.from({ length: Math.min(ITEMS_PER_PAGE, renderItems.length - i) }, (_, j) => i + j)
-    );
+  let curGroup: number[] = [];
+  let used = 0;
+
+  for (let i = 0; i < renderItems.length; i++) {
+    const rh = renderItems[i].rowH;
+    if (used + rh > avail && curGroup.length > 0) {
+      pageGroups.push(curGroup);
+      curGroup = [i];
+      used = rh;
+    } else {
+      curGroup.push(i);
+      used += rh;
+    }
+  }
+  pageGroups.push(curGroup);
+
+  // Ensure last page has room for the totals/terms/closing section
+  {
+    const lastGroup  = pageGroups[pageGroups.length - 1];
+    const lastItemsH = lastGroup.reduce((s, i) => s + renderItems[i].rowH, 0);
+    if (lastItemsH + BOTTOM_RESERVE > avail && lastGroup.length > 1) {
+      let fitH = 0, splitAt = 0;
+      for (const idx of lastGroup) {
+        if (fitH + renderItems[idx].rowH + BOTTOM_RESERVE <= avail) { fitH += renderItems[idx].rowH; splitAt++; }
+        else break;
+      }
+      splitAt = Math.max(1, splitAt);
+      if (splitAt < lastGroup.length) {
+        pageGroups[pageGroups.length - 1] = lastGroup.slice(0, splitAt);
+        pageGroups.push(lastGroup.slice(splitAt));
+      }
+    }
   }
 
-  const _avail0        = Math.max(PAGE_ROW_AVAIL, RH_MIN * 3);
-  const _allItemsH     = renderItems.reduce((s, r) => s + r.rowH, 0);
-  const needsSummaryPage = pageGroups.length === 1 && _allItemsH + BOTTOM_RESERVE > _avail0;
-  const totalPages     = pageGroups.length + (needsSummaryPage ? 1 : 0);
+  const totalPages = pageGroups.length;
   // ── Draw pages ────────────────────────────────────────────────────────────
   for (let pi = 0; pi < pageGroups.length; pi++) {
-    const isLast    = !needsSummaryPage && pi === pageGroups.length - 1;
+    const isLast    = pi === pageGroups.length - 1;
     const page      = pdfDoc.addPage([W, H]);
     const pageItems = pageGroups[pi];
 
@@ -659,171 +684,6 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       }
 
     }
-  }
-
-  // ── Financial summary page (overflow totals when items fill page 1) ───────
-  if (needsSummaryPage) {
-    const sp  = pdfDoc.addPage([W, H]);
-    const spi = pageGroups.length;
-
-    // Footer
-    hLine(sp, MB + 22, ML, W - MR, accent, 0.6);
-    sp.drawText("Computer generated document. No signature required.", {
-      x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_LITE,
-    });
-    const sPgText = `${q.quotationNo}  ·  Page ${spi + 1} of ${totalPages}`;
-    const sPgW    = fontR.widthOfTextAtSize(sPgText, 7.5);
-    sp.drawText(sPgText, { x: W - MR - sPgW, y: MB + 10, size: 7.5, font: fontR, color: C_LITE });
-
-    // Full company header — same as every other page so the summary page
-    // looks like a proper document continuation, not a floating grand total.
-    let curY = H - MT;
-    drawCompanyHeader({
-      page: sp, startY: curY, accent, fontR, fontB, logoImg,
-      companyName: coName, companyAddress: orgCompanyAddress,
-      phone: orgPhone, email: orgEmail, website: orgWebsite,
-      oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
-      mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
-      nameSize, nameBold: !!(data.orgNameBold ?? 1),
-      nameUppercase: !!(data.orgNameUppercase ?? 0),
-      headerLayout: hLayout, docLabel: "",
-      docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
-      docLabelAlign: "center",
-      logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
-      mofNo: orgMofNo, inlineSsmMdaTaxStar: true, inlineContactsStar: true,
-    });
-    curY -= HEADER_BLOCK;
-    {
-      const qlFontSP = !!(data.orgQuotationLabelBold ?? 1) ? fontB : fontR;
-      const qlWSP    = qlFontSP.widthOfTextAtSize(QL_TEXT, QL_SIZE);
-      sp.drawText(QL_TEXT, { x: W - MR - qlWSP, y: curY + QL_SIZE + 2, size: QL_SIZE, font: qlFontSP, color: accent });
-    }
-    hLine(sp, curY, ML, W - MR, accent, 1.2);
-    curY -= DIVIDER_GAP;
-
-    // ── Totals + closing ─────────────────────────────────────────────────
-    curY -= 10;
-    hLine(sp, curY, ML, W - MR, C_LINE, 0.6);
-    curY -= 16;
-
-    let sBankEndY = curY;
-    if (bank) {
-      let by = curY;
-      sp.drawText("PAYMENT TO", { x: ML, y: by, size: 7.5, font: fontB, color: accent });
-      by -= 13;
-      for (const [lbl, val] of [
-        ["Bank", bank.bankName ?? ""],
-        ["Account Name", bank.accountHolder ?? ""],
-        ["Account No.", bank.accountNo ?? ""],
-      ] as [string, string][]) {
-        sp.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_LITE });
-        sp.drawText(trunc(String(val), fontB, 9.5, 170), { x: ML + 76, y: by, size: 9.5, font: fontB, color: C_DARK });
-        by -= 13;
-      }
-      sBankEndY = by;
-    }
-
-    const sTOT_ROW_H   = 20;
-    const sGRAND_ROW_H = 22;
-    const sTotW  = 260;
-    const sTotX  = W - MR - sTotW;
-    const sTPADX = 10;
-    let ty = curY;
-    const sTotItems: [string, string][] = [];
-    if (showDisc && itemDiscPerSet > 0) {
-      sTotItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
-      sTotItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
-      sTotItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
-    } else {
-      sTotItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
-    }
-    if (sets > 1) sTotItems.push([`× ${sets} sets`, fmtM(subtotal)]);
-    if (discAmt > 0) {
-      sTotItems.push([`Discount (${q.overallDiscountPct}%)`, `- ${fmtM(discAmt)}`]);
-      sTotItems.push(["After Discount", fmtM(afterDisc)]);
-    }
-    if (sstAmt > 0) sTotItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
-
-    const sTotalPanelH = sTotItems.length * sTOT_ROW_H + sGRAND_ROW_H;
-    sp.drawRectangle({ x: sTotX, y: ty - sTotalPanelH, width: sTotW, height: sTotalPanelH, color: rgb(1, 1, 1) });
-    for (let i = 0; i < sTotItems.length; i++) {
-      const [lbl, val] = sTotItems[i];
-      const rowBottom  = ty - sTOT_ROW_H;
-      if (i % 2 === 0) {
-        sp.drawRectangle({ x: sTotX, y: rowBottom, width: sTotW, height: sTOT_ROW_H, color: rgb(0.95, 0.95, 0.95) });
-      }
-      const textY = rowBottom + 6;
-      sp.drawText(lbl, { x: sTotX + sTPADX, y: textY, size: 9.5, font: fontR, color: C_MID });
-      const vw = fontR.widthOfTextAtSize(val, 9.5);
-      sp.drawText(val, { x: sTotX + sTotW - sTPADX - vw, y: textY, size: 9.5, font: fontR, color: C_DARK });
-      ty -= sTOT_ROW_H;
-    }
-    const sGtRowBottom = ty - sGRAND_ROW_H;
-    sp.drawRectangle({ x: sTotX, y: sGtRowBottom, width: sTotW, height: sGRAND_ROW_H, color: accent });
-    const sGtTextY = sGtRowBottom + 7;
-    sp.drawText("GRAND TOTAL", { x: sTotX + sTPADX, y: sGtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
-    const sGtAmt  = fmtM(grand);
-    const sGtAmtW = fontB.widthOfTextAtSize(sGtAmt, 9.5);
-    sp.drawText(sGtAmt, { x: sTotX + sTotW - sTPADX - sGtAmtW, y: sGtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
-    ty -= sGRAND_ROW_H;
-    sp.drawRectangle({ x: sTotX, y: ty, width: sTotW, height: sTotalPanelH, borderColor: accent, borderWidth: 0.6 });
-    curY = Math.min(ty, sBankEndY) - 6;
-
-    curY -= 10;
-    {
-      const TFS = 8.5;
-      const TLPAD = 10; const TRPAD = 10; const TVPAD = 8; const ROW_GAP = 4; const TLH = 12;
-      const TLABELW = Math.max(
-        fontB.widthOfTextAtSize("Brand",    TFS),
-        fontB.widthOfTextAtSize("Delivery", TFS),
-        fontB.widthOfTextAtSize("Validity", TFS),
-        fontB.widthOfTextAtSize("Warranty", TFS),
-        fontB.widthOfTextAtSize("Notes",    TFS),
-      ) + 14;
-      const TVALFITW = CW - TLPAD - TLABELW - TRPAD;
-      const termsData: { label: string; value: string }[] = [
-        { label: "Brand",    value: toSentenceCase(brandText) },
-        ...(q.deliveryTerm ? [{ label: "Delivery", value: toSentenceCase(q.deliveryTerm) }] : []),
-        ...(q.paymentTerm  ? [{ label: "Validity", value: toSentenceCase(q.paymentTerm)  }] : []),
-        ...((q as any).warranty ? [{ label: "Warranty", value: toSentenceCase((q as any).warranty) }] : []),
-        ...(q.notes ? [{ label: "Notes", value: q.notes }] : []),
-      ];
-      const termsRendered = termsData.map(r => ({
-        label: r.label, valLines: wrap(r.value, fontR, TFS, TVALFITW),
-      }));
-      let termsBoxH = TVPAD + 8;
-      for (let ri = 0; ri < termsRendered.length; ri++) {
-        termsBoxH += termsRendered[ri].valLines.length * TLH;
-        if (ri < termsRendered.length - 1) termsBoxH += ROW_GAP;
-      }
-      termsBoxH += TVPAD;
-      const termsBoxY = curY - termsBoxH;
-      sp.drawRectangle({
-        x: ML, y: termsBoxY, width: CW, height: termsBoxH,
-        color: rgb(0.97, 0.97, 0.97), borderColor: accent, borderWidth: 0.8,
-      });
-      let tty = curY - TVPAD - TFS - 1;
-      for (let ri = 0; ri < termsRendered.length; ri++) {
-        const { label, valLines } = termsRendered[ri];
-        sp.drawText(label, { x: ML + TLPAD, y: tty, size: TFS, font: fontB, color: accent });
-        for (let li = 0; li < valLines.length; li++) {
-          sp.drawText(valLines[li], {
-            x: ML + TLPAD + TLABELW, y: tty - li * TLH, size: TFS, font: fontR, color: C_DARK,
-          });
-        }
-        tty -= valLines.length * TLH + (ri < termsRendered.length - 1 ? ROW_GAP : 0);
-      }
-      curY = termsBoxY - 8;
-    }
-
-    curY -= 10;
-    const sCloseMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order. Should you have any enquiries, please do not hesitate to contact us.";
-    for (const cl of wrap(sCloseMsg, fontR, 8, CW - 40)) {
-      const clW = fontR.widthOfTextAtSize(cl, 8);
-      sp.drawText(cl, { x: (W - clW) / 2, y: curY, size: 8, font: fontR, color: C_LITE });
-      curY -= 12;
-    }
-
   }
 
   // ── Catalogue pages ──────────────────────────────────────────────────────
