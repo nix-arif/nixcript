@@ -263,7 +263,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const BOTTOM_RESERVE = TOTALS_H + TERMS_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
 
   // Header repeats on every page — same row availability for all pages
-  const PAGE_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 20;
+  const PAGE_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 30;
 
   // ── Build render entries (set headers interleaved with items) ────────────
   const SET_HDR_H = 18;

@@ -285,8 +285,8 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   const ACCEPT_H     = 0;
   const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
 
-  const P1_ROW_AVAIL = H - BAND_H - TITLE_BAR_H - TABLE_HDR_H - MB - 20;
-  const PN_ROW_AVAIL = H - BAND_H - TABLE_HDR_H - MB - 20;
+  const P1_ROW_AVAIL = H - BAND_H - TITLE_BAR_H - TABLE_HDR_H - MB - 26;
+  const PN_ROW_AVAIL = H - BAND_H - TABLE_HDR_H - MB - 26;
 
   // ── Build render entries (set headers interleaved with items) ────────────
   const SET_HDR_H = 18;

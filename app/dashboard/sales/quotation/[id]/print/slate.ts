@@ -333,9 +333,9 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   const ACCEPT_H      = 0;
   const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 12 + CLOSING_H + ACCEPT_H;
 
-  const P1_ROW_AVAIL = H - MB - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - 20;
+  const P1_ROW_AVAIL = H - MB - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - 40;
   const PN_HDR_H     = q.title ? 38 : 26; // continuation header height varies with title
-  const PN_ROW_AVAIL = H - ACCENT_BAR_H - PN_HDR_H - TABLE_HDR_H - MB - 20;
+  const PN_ROW_AVAIL = H - ACCENT_BAR_H - PN_HDR_H - TABLE_HDR_H - MB - 36;
 
   // ── Build render entries (set headers interleaved with items) ────────────
   const SET_HDR_H = 18;

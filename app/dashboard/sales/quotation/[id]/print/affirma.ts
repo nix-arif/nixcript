@@ -256,8 +256,8 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
   const ACCEPT_H     = 0;
   const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
 
-  const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 20;
-  const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 20;
+  const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 32;
+  const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 28;
 
   // ── Paginate rows ─────────────────────────────────────────────────────────
   const pageGroups: number[][] = [];
