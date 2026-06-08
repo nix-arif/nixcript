@@ -48,6 +48,7 @@ type CertField =
 interface BankEntry {
   id: string;
   bankName: string;
+  branchName: string;
   accountHolder: string;
   accountNo: string;
   accountType: string;
@@ -358,6 +359,7 @@ export function OrganizationProfileClient({ data }: Props) {
       {
         id: nanoid(),
         bankName: "",
+        branchName: "",
         accountHolder: "",
         accountNo: "",
         accountType: "current",
@@ -789,6 +791,19 @@ export function OrganizationProfileClient({ data }: Props) {
 
                     {/* Bank fields */}
                     <div className="p-3 grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">
+                          Branch name
+                        </label>
+                        <input
+                          value={bank.branchName}
+                          onChange={(e) =>
+                            updateBank(i, "branchName", e.target.value)
+                          }
+                          placeholder="e.g. Petaling Jaya"
+                          className="w-full h-8 border border-input rounded-md px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </div>
                       <div>
                         <label className="block text-[10px] font-medium text-muted-foreground mb-1">
                           Account holder

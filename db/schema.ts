@@ -820,6 +820,7 @@ export const organizationProfile = pgTable("organization_profile", {
       {
         id: string;
         bankName: string;
+        branchName: string;
         accountHolder: string;
         accountNo: string;
         accountType: string;

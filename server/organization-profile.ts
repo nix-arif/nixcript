@@ -309,6 +309,7 @@ export async function getFullOrganizationProfile() {
       (profile.bankingInfo as {
         id: string;
         bankName: string;
+        branchName: string;
         accountHolder: string;
         accountNo: string;
         accountType: string;
