@@ -543,10 +543,10 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
 
   const fromPr = !!input.purchaseRequisitionId;
 
-  // PR-sourced POs skip the draft phase — PR approval is the authorization
-  const prNo = fromPr ? null : await generatePrNo(orgId);
-  const poNo = fromPr ? await generatePoNo(orgId) : null;
-  const status = fromPr ? "confirmed" : "draft";
+  // All POs get a PO number and are created as confirmed — no draft/approval cycle here
+  const prNo = null;
+  const poNo = await generatePoNo(orgId);
+  const status = "confirmed";
 
   const [row] = await db
     .insert(purchaseOrder)

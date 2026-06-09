@@ -60,6 +60,9 @@ const TITLES = [
   "Dato",
   "Datin",
   "Tan Sri",
+  "Tuan",
+  "Puan",
+  "Encik",
 ];
 
 const AVATAR_COLORS = [

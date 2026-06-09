@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createPurchaseOrder,
-  submitPurchaseOrder,
   getSalesOrderItemsForPo,
   getPoSupplierQuotationUploadUrl,
   getPoItemImageUploadUrl,
@@ -89,17 +88,37 @@ function detectCurrency(items: { currency?: string | null }[]): string {
 
 const fmt = (n: number, currency: string) => `${currency} ${n.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
+function prItemToLine(pi: PrForPoConversion["items"][number]): LineItem {
+  return {
+    _key: crypto.randomUUID(),
+    rowNo: pi.rowNo,
+    productId: pi.productId ?? undefined,
+    productCode: pi.productCode ?? "",
+    description: pi.description ?? "",
+    qty: pi.qty,
+    uom: pi.uom ?? "",
+    unitPrice: pi.estimatedUnitCost,
+    currency: pi.currency,
+    totalPrice: (parseFloat(pi.qty) * parseFloat(pi.estimatedUnitCost)).toFixed(2),
+    imageKey: undefined,
+  };
+}
+
 export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], customerPos = [], initialSoId, prData }: Props) {
   const router = useRouter();
   const isPrMode = !!prData;
 
-  // Supplier (required)
-  const [supplierId, setSupplierId] = useState(() => {
+  // Keep original PR items for re-filtering when supplier changes
+  const prItemsRef = useRef(prData?.items ?? []);
+
+  // Derive initial supplier: pre-select only when all PR items share exactly one preferred supplier
+  const initialSupplierId = (() => {
     if (!prData) return "";
-    // Pre-select if all items share one preferred supplier
     const ids = [...new Set(prData.items.map((i) => i.preferredSupplierId).filter(Boolean))];
     return ids.length === 1 ? (ids[0] ?? "") : "";
-  });
+  })();
+
+  const [supplierId, setSupplierId] = useState(initialSupplierId);
 
   // Linked SO (direct mode only)
   const [selectedSo, setSelectedSo] = useState<ApprovedSo | null>(() =>
@@ -126,26 +145,32 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     setItems((prev) => prev.map((i) => ({ ...i, currency: next })));
   }
 
-  // Items — pre-filled from PR in PR mode
+  // Items — in PR mode: filtered by selected supplier; in direct mode: manual or from SO
   const [items, setItems] = useState<LineItem[]>(() => {
-    if (prData && prData.items.length > 0) {
-      return prData.items.map((pi) => ({
-        _key: crypto.randomUUID(),
-        rowNo: pi.rowNo,
-        productId: pi.productId ?? undefined,
-        productCode: pi.productCode ?? "",
-        description: pi.description ?? "",
-        qty: pi.qty,
-        uom: pi.uom ?? "",
-        unitPrice: pi.estimatedUnitCost,
-        currency: pi.currency,
-        totalPrice: (parseFloat(pi.qty) * parseFloat(pi.estimatedUnitCost)).toFixed(2),
-        imageKey: undefined,
-      }));
+    if (isPrMode) {
+      if (!initialSupplierId) return [];
+      return prItemsRef.current
+        .filter((pi) => !pi.preferredSupplierId || pi.preferredSupplierId === initialSupplierId)
+        .map(prItemToLine);
     }
     return [newLine(1)];
   });
   const [loadingSoItems, setLoadingSoItems] = useState(false);
+
+  // Supplier change: in PR mode, re-filter items by the new supplier
+  function handleSupplierChange(newId: string) {
+    setSupplierId(newId);
+    if (!isPrMode) return;
+    if (!newId) {
+      setItems([]);
+      return;
+    }
+    setItems(
+      prItemsRef.current
+        .filter((pi) => !pi.preferredSupplierId || pi.preferredSupplierId === newId)
+        .map(prItemToLine),
+    );
+  }
 
   // Auto-load items from SO when arriving with initialSoId (direct mode)
   useEffect(() => {
@@ -309,35 +334,6 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     }
   }
 
-  async function handleSave() {
-    setSaving(true);
-    try {
-      const po = await buildAndCreate();
-      if (!po) return;
-      toast.success(`Purchase requisition ${po.prNo ?? ""} created`);
-      router.push("/dashboard/procurement/purchase-order");
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleSaveAndSend() {
-    setSaving(true);
-    try {
-      const po = await buildAndCreate();
-      if (!po) return;
-      await submitPurchaseOrder(po.id);
-      toast.success(`Requisition ${po.prNo ?? ""} submitted for approval`);
-      router.push("/dashboard/procurement/purchase-order");
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
 
   const backHref = isPrMode
@@ -347,11 +343,11 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   return (
     <div className="p-6">
       <PageHeader
-        title={isPrMode ? "Create Purchase Order" : "New Purchase Requisition"}
+        title="Create Purchase Order"
         description={
           isPrMode
             ? `Converting ${prData!.prNo} to a supplier purchase order`
-            : "Raise an internal purchase requisition — it will be reviewed and approved before a supplier PO is issued"
+            : "Issue a purchase order directly to a supplier"
         }
         action={
           <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-2">
@@ -376,7 +372,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
               )}
             </div>
             <p className="text-xs text-blue-700 dark:text-blue-400">
-              SO and CPO linkage are inherited automatically from the requisition — no re-selection needed.
+              Select a supplier below — items will be filtered to show only those assigned to that supplier.
             </p>
           </section>
         )}
@@ -387,9 +383,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
             Supplier <span className="text-destructive">*</span>
           </h2>
           <p className="text-xs text-muted-foreground mb-3">
-            {isPrMode
-              ? "Select the supplier you are issuing this PO to"
-              : "Select the supplier you are purchasing from"}
+            Select the supplier you are issuing this PO to
           </p>
           {suppliers.length === 0 ? (
             <p className="text-sm text-muted-foreground">
@@ -402,11 +396,10 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
             <select
               className={`w-full h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${!supplierId ? "border-destructive/50" : "border-border"}`}
               value={supplierId}
-              onChange={(e) => setSupplierId(e.target.value)}
+              onChange={(e) => handleSupplierChange(e.target.value)}
             >
               <option value="">— Select supplier —</option>
               {isPrMode && (() => {
-                // Show preferred suppliers from PR at the top
                 const preferred = [...new Map(
                   prData!.items
                     .filter((i) => i.preferredSupplierId)
@@ -436,7 +429,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
         {!isPrMode && (
           <section className="border border-border rounded-xl p-4">
             <h2 className="text-sm font-semibold mb-1">Linked Sales Order</h2>
-            <p className="text-xs text-muted-foreground mb-3">Optional — link to a confirmed SO if this requisition is tied to a customer order.</p>
+            <p className="text-xs text-muted-foreground mb-3">Optional — link to a confirmed SO if this order is tied to a customer order.</p>
             {selectedSo ? (
               <div className="flex items-center gap-2 bg-muted/30 rounded-lg px-3 py-2">
                 <div className="flex-1">
@@ -639,67 +632,77 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
             <h2 className="text-sm font-semibold">
               Items
               {loadingSoItems && <span className="ml-2 text-xs font-normal text-muted-foreground">Loading from SO…</span>}
-              {isPrMode && <span className="ml-2 text-xs font-normal text-muted-foreground">Pre-filled from requisition — adjust actual prices</span>}
+              {isPrMode && supplierId && <span className="ml-2 text-xs font-normal text-muted-foreground">Filtered from requisition — adjust actual prices</span>}
             </h2>
             <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={addLine} disabled={loadingSoItems}>
               <PlusIcon className="w-3 h-3" /> Add row
             </Button>
           </div>
 
-          <div className="space-y-2">
-            {items.map((item) => (
-              <div key={item._key} className="border border-border/50 rounded-lg p-3">
-                <div className="grid grid-cols-12 gap-2 items-start">
-                  <div className="col-span-1 pt-1.5 text-xs text-muted-foreground text-center">{item.rowNo}</div>
+          {isPrMode && !supplierId ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              Select a supplier above to load items from this requisition.
+            </p>
+          ) : items.length === 0 && isPrMode ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              No items assigned to this supplier in the requisition.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {items.map((item) => (
+                <div key={item._key} className="border border-border/50 rounded-lg p-3">
+                  <div className="grid grid-cols-12 gap-2 items-start">
+                    <div className="col-span-1 pt-1.5 text-xs text-muted-foreground text-center">{item.rowNo}</div>
 
-                  <div className="col-span-4 space-y-1.5">
-                    <Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} placeholder="Product code" className="h-7 text-xs" />
-                    <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} placeholder="Description" className="h-7 text-xs" />
-                  </div>
-
-                  <div className="col-span-2 space-y-1.5">
-                    <Input value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} placeholder="Qty" className="h-7 text-xs text-right" />
-                    <Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} placeholder="UOM" className="h-7 text-xs" />
-                  </div>
-
-                  <div className="col-span-3 space-y-1.5">
-                    <div className="flex gap-1">
-                      <Input value={item.currency ?? "MYR"} onChange={(e) => updateItem(item._key, { currency: e.target.value.toUpperCase().slice(0, 3) })} className="h-7 text-xs w-14 shrink-0 font-mono" maxLength={3} />
-                      <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right flex-1" />
+                    <div className="col-span-4 space-y-1.5">
+                      <Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} placeholder="Product code" className="h-7 text-xs" />
+                      <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} placeholder="Description" className="h-7 text-xs" />
                     </div>
-                    <div className="h-7 px-3 flex items-center justify-end text-xs text-muted-foreground font-mono bg-muted/30 rounded-md">
-                      {fmt(parseFloat(item.totalPrice || "0"), item.currency ?? currency)}
-                    </div>
-                  </div>
 
-                  <div className="col-span-2 flex items-start gap-1 pt-0.5">
-                    <div className="flex-1">
-                      {item.imageKey || item._imageFile ? (
-                        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                          <ImageIcon className="w-3 h-3" />
-                          <span className="truncate flex-1">
-                            {item._imageUploading ? "Uploading…" : (item._imageFile?.name ?? "Image attached")}
-                          </span>
-                          {!item._imageUploading && (
-                            <button onClick={() => removeItemImage(item._key)}><XIcon className="w-3 h-3" /></button>
-                          )}
-                        </div>
-                      ) : (
-                        <label className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer transition-colors">
-                          <ImageIcon className="w-3 h-3" />
-                          <span>Add image</span>
-                          <input type="file" accept="image/*" className="hidden" onChange={(e) => handleItemImage(item._key, e)} />
-                        </label>
-                      )}
+                    <div className="col-span-2 space-y-1.5">
+                      <Input value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} placeholder="Qty" className="h-7 text-xs text-right" />
+                      <Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} placeholder="UOM" className="h-7 text-xs" />
                     </div>
-                    <button onClick={() => removeLine(item._key)} disabled={items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 mt-0.5">
-                      <TrashIcon className="w-3.5 h-3.5" />
-                    </button>
+
+                    <div className="col-span-3 space-y-1.5">
+                      <div className="flex gap-1">
+                        <Input value={item.currency ?? "MYR"} onChange={(e) => updateItem(item._key, { currency: e.target.value.toUpperCase().slice(0, 3) })} className="h-7 text-xs w-14 shrink-0 font-mono" maxLength={3} />
+                        <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right flex-1" />
+                      </div>
+                      <div className="h-7 px-3 flex items-center justify-end text-xs text-muted-foreground font-mono bg-muted/30 rounded-md">
+                        {fmt(parseFloat(item.totalPrice || "0"), item.currency ?? currency)}
+                      </div>
+                    </div>
+
+                    <div className="col-span-2 flex items-start gap-1 pt-0.5">
+                      <div className="flex-1">
+                        {item.imageKey || item._imageFile ? (
+                          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                            <ImageIcon className="w-3 h-3" />
+                            <span className="truncate flex-1">
+                              {item._imageUploading ? "Uploading…" : (item._imageFile?.name ?? "Image attached")}
+                            </span>
+                            {!item._imageUploading && (
+                              <button onClick={() => removeItemImage(item._key)}><XIcon className="w-3 h-3" /></button>
+                            )}
+                          </div>
+                        ) : (
+                          <label className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer transition-colors">
+                            <ImageIcon className="w-3 h-3" />
+                            <span>Add image</span>
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleItemImage(item._key, e)} />
+                          </label>
+                        )}
+                      </div>
+                      <button onClick={() => removeLine(item._key)} disabled={items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 mt-0.5">
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* ── Pricing summary ── */}
@@ -729,20 +732,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
 
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
-          {isPrMode ? (
-            <Button onClick={handleCreatePo} disabled={saving || pdfUploading} className="gap-2">
-              {saving ? "Creating…" : "Create Purchase Order"}
-            </Button>
-          ) : (
-            <>
-              <Button onClick={handleSaveAndSend} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
-                {saving ? "Submitting…" : "Submit for Approval"}
-              </Button>
-              <Button variant="outline" onClick={handleSave} disabled={saving || pdfUploading || loadingSoItems}>
-                Save as Draft (Requisition)
-              </Button>
-            </>
-          )}
+          <Button onClick={handleCreatePo} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
+            {saving ? "Creating…" : "Create Purchase Order"}
+          </Button>
           <Button variant="outline" onClick={() => router.push(backHref)}>Cancel</Button>
         </div>
       </div>

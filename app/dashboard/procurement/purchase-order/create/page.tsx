@@ -3,7 +3,6 @@ import { getSuppliers } from "@/server/supplier";
 import {
   getApprovedSalesOrders,
   getActiveCustomerPos,
-  getExistingDraftPo,
   getPrForPoConversion,
 } from "@/server/purchase-order";
 import { redirect } from "next/navigation";
@@ -13,7 +12,7 @@ export default async function CreatePurchaseOrderPage({ searchParams }: { search
   await requirePermission("purchase-order:create");
   const { soId, prId } = await searchParams;
 
-  // PR conversion path — no draft check, no SO/CPO pickers needed
+  // PR conversion path
   if (prId) {
     const [prData, suppliers] = await Promise.all([
       getPrForPoConversion(prId).catch(() => null),
@@ -24,9 +23,6 @@ export default async function CreatePurchaseOrderPage({ searchParams }: { search
   }
 
   // Direct creation path
-  const draft = await getExistingDraftPo();
-  if (draft) redirect(`/dashboard/procurement/purchase-order/${draft.id}?draft=1`);
-
   const [suppliers, approvedSos, customerPos] = await Promise.all([
     getSuppliers(),
     getApprovedSalesOrders(),
