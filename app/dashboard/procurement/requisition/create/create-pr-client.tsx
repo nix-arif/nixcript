@@ -8,17 +8,124 @@ import {
   searchSuppliersForPr,
   getSoItemsForPr,
   searchConfirmedSosForPr,
+  getPrItemImageUploadUrl,
+  deleteProcurementImages,
   type PrItemInput,
 } from "@/server/purchase-requisition";
+import { toggleSoItemPrExcluded } from "@/server/sales-order";
+import { getProductByCode } from "@/server/products";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
-import { ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon, ChevronDownIcon } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon, ChevronDownIcon, ImageIcon, UploadIcon, DatabaseIcon, ShoppingCartIcon, PencilIcon, BanIcon, Loader2Icon, FlaskConicalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
+const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+function validateImageFile(file: File): string | null {
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    return "Unsupported format — please use JPG, PNG, WebP, or GIF.";
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    return `File too large — maximum is 5 MB (this file is ${(file.size / 1024 / 1024).toFixed(1)} MB).`;
+  }
+  return null;
+}
+
+function uploadErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
+    return "Could not reach the upload server — check your internet connection, or the upload link may have expired. Try again.";
+  }
+  if (/HTTP 403/i.test(msg)) return "Upload rejected — the upload link has expired. Refresh the page and try again.";
+  if (/HTTP 413/i.test(msg)) return "File too large for the server — please use an image under 5 MB.";
+  if (/HTTP 4/.test(msg))    return `Upload rejected by server (${msg}) — try a different file.`;
+  if (/HTTP 5/.test(msg))    return `Server error (${msg}) — please try again in a moment.`;
+  return "Upload failed — please try again.";
+}
+
+function ProductImageCell({
+  productCode,
+  overrideUrl,
+  onReplace,
+}: {
+  productCode: string;
+  overrideUrl?: string;
+  onReplace: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen]     = useState(false);
+  const src = overrideUrl || (R2_PRODUCT_IMAGES && productCode ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg` : "");
+
+  // Reset failed when a fresh override URL arrives (e.g. after user uploads a replacement)
+  useEffect(() => { if (overrideUrl) setFailed(false); }, [overrideUrl]);
+
+  if (!src || failed) {
+    return (
+      <button
+        type="button"
+        onClick={onReplace}
+        title="Add image"
+        className="w-9 h-9 flex items-center justify-center rounded border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
+      >
+        <ImageIcon className="w-3.5 h-3.5" />
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="View image"
+        className="block w-9 h-9 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} className="w-full h-full object-cover" alt="" onError={() => setFailed(true)} />
+      </button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
+          <DialogTitle className="sr-only">{productCode}</DialogTitle>
+          <div className="relative bg-muted/30">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} className="w-full object-contain max-h-[65vh]" alt={productCode} onError={() => { setFailed(true); setOpen(false); }} />
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
+            >
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t">
+            <p className="text-xs text-muted-foreground font-mono truncate min-w-0">{productCode}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 shrink-0"
+              onClick={() => { setOpen(false); onReplace(); }}
+            >
+              <UploadIcon className="w-3.5 h-3.5" /> Replace Image
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 type SoOption = { id: string; soNo: string };
 
@@ -91,10 +198,17 @@ interface LineItem extends PrItemInput {
   _key: string;
   _supplierId?: string;
   _supplierName?: string;
-  // CPO tag — set when item was imported from an SO that has CPOs
-  _cpoId?:        string | null;
-  _cpoNo?:        string | null;
-  _customerName?: string | null;
+  _cpoId?:                string | null;
+  _cpoNo?:                string | null;
+  _customerName?:         string | null;
+  _customerOrganization?: string | null;
+  _imageKey?:        string | null;
+  _imagePresignedUrl?: string | null;
+  _imageUploading?:  boolean;
+  _descriptionSource?: "so" | "catalog" | "user";
+  _isAdditional?: boolean;
+  _editedBy?: string | null;
+  _soItemId?: string | null;
 }
 
 const newLine = (rowNo: number): LineItem => ({
@@ -106,6 +220,9 @@ const newLine = (rowNo: number): LineItem => ({
   uom: "",
   estimatedUnitCost: "0",
   currency: "MYR",
+  _imageKey: null,
+  _imagePresignedUrl: null,
+  _imageUploading: false,
 });
 
 function calcTotal(item: LineItem) {
@@ -117,9 +234,10 @@ function calcTotal(item: LineItem) {
 interface Props {
   initialSoId?: string;
   openSos: SoOption[];
+  currentUserName: string;
 }
 
-export function CreatePrClient({ initialSoId, openSos }: Props) {
+export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props) {
   const router = useRouter();
   const [lines, setLines]         = useState<LineItem[]>([newLine(1)]);
   const [notes, setNotes]         = useState("");
@@ -127,6 +245,51 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
   const [linkedSoNo, setLinkedSoNo] = useState<string | undefined>();
   const [saving, setSaving]       = useState(false);
   const [loadingSo, setLoadingSo] = useState(false);
+  const [togglingExclude, setTogglingExclude] = useState<string | null>(null);
+  const [prType, setPrType]       = useState<"customer_order" | "sample_demo">("customer_order");
+  const [samplePurpose, setSamplePurpose] = useState("");
+
+  const fileInputRef      = useRef<HTMLInputElement>(null);
+  const uploadTargetKey   = useRef<string | null>(null);
+  const committedRef      = useRef(false);
+  const linesRef          = useRef(lines);
+  useEffect(() => { linesRef.current = lines; }, [lines]);
+  useEffect(() => {
+    return () => {
+      if (committedRef.current) return;
+      const keys = linesRef.current.flatMap((l) => l._imageKey ? [l._imageKey] : []);
+      if (keys.length) deleteProcurementImages(keys).catch(() => {});
+    };
+  }, []);
+
+  function triggerImageUpload(lineKey: string) {
+    uploadTargetKey.current = lineKey;
+    fileInputRef.current?.click();
+  }
+
+  async function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !uploadTargetKey.current) return;
+    const key = uploadTargetKey.current;
+    e.target.value = "";
+
+    const err = validateImageFile(file);
+    if (err) { toast.error(err); return; }
+
+    setLine(key, { _imageUploading: true });
+    try {
+      const oldKey = linesRef.current.find((l) => l._key === key)?._imageKey;
+      const { uploadUrl, key: r2Key } = await getPrItemImageUploadUrl(file.name);
+      const res = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (oldKey) deleteProcurementImages([oldKey]).catch(() => {});
+      const previewUrl = URL.createObjectURL(file);
+      setLine(key, { _imageKey: r2Key, _imagePresignedUrl: previewUrl, _imageUploading: false });
+    } catch (err) {
+      toast.error(uploadErrorMessage(err));
+      setLine(key, { _imageUploading: false });
+    }
+  }
 
   const [soDropdownOpen, setSoDropdownOpen] = useState(false);
   const [soSearch, setSoSearch]             = useState("");
@@ -192,9 +355,17 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
         currency: "MYR",
         _supplierId: undefined,
         _supplierName: undefined,
-        _cpoId:        i.cpoId,
-        _cpoNo:        i.cpoNo,
-        _customerName: i.customerName,
+        _cpoId:                i.cpoId,
+        _cpoNo:                i.cpoNo,
+        _customerName:         i.customerName,
+        _customerOrganization: i.customerOrganization,
+        _imageKey:          null,
+        _imagePresignedUrl: null,
+        _imageUploading:    false,
+        _descriptionSource: i.description ? "so" : undefined,
+        _isAdditional:      i.isAdditional ?? false,
+        _editedBy:          i.editedBy ?? null,
+        _soItemId:          i.soItemId ?? null,
       })));
       if (result.items.length > 0) toast.success(`Imported ${result.items.length} items from ${result.soNo}`);
     } catch {
@@ -204,15 +375,49 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
     }
   }
 
+  async function handleExcludeFromPr(key: string, soItemId: string) {
+    setTogglingExclude(key);
+    try {
+      await toggleSoItemPrExcluded(soItemId, true);
+      setLines((prev) => prev.filter((l) => l._key !== key));
+      toast.success("Item excluded from PR");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setTogglingExclude(null);
+    }
+  }
+
   function selectSo(so: SoOption) {
     setSoDropdownOpen(false); setSoSearch(""); setSoResults([]); setSoHighlight(-1);
     if (so.id === linkedSoId) return;
+    if (linkedSoId) {
+      toast.error("SO is already linked. Remove all items first to change it.");
+      return;
+    }
     importSo(so.id, so.soNo);
   }
 
   function unlinkSo() {
+    if (lines.length > 0) {
+      toast.error("Remove all items before unlinking the SO.");
+      return;
+    }
     setLinkedSoId(undefined);
     setLinkedSoNo(undefined);
+  }
+
+  async function handleProductCodeBlur(key: string, code: string) {
+    if (!code.trim()) return;
+    const line = linesRef.current.find((l) => l._key === key);
+    if (!line || line.description) return;
+    const prod = await getProductByCode(code).catch(() => null);
+    if (!prod) return;
+    setLines((prev) => prev.map((l) =>
+      l._key === key && !l.description
+        ? { ...l, description: prod.description ?? "", _descriptionSource: "catalog" }
+        : l,
+    ));
   }
 
   function setLine(key: string, patch: Partial<LineItem>) {
@@ -224,6 +429,8 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
   }
 
   function removeLine(key: string) {
+    const removedKey = linesRef.current.find((l) => l._key === key)?._imageKey;
+    if (removedKey) deleteProcurementImages([removedKey]).catch(() => {});
     setLines((prev) => prev.filter((l) => l._key !== key).map((l, i) => ({ ...l, rowNo: i + 1 })));
   }
 
@@ -257,11 +464,13 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
     setSaving(true);
     try {
       const pr = await createPurchaseRequisition({
-        salesOrderId: linkedSoId,
-        salesOrderNo: linkedSoNo,
-        customerPoId: cpoId,
-        customerPoNo: cpoNo,
+        salesOrderId: prType === "customer_order" ? linkedSoId : undefined,
+        salesOrderNo: prType === "customer_order" ? linkedSoNo : undefined,
+        customerPoId: prType === "customer_order" ? cpoId : undefined,
+        customerPoNo: prType === "customer_order" ? cpoNo : undefined,
         notes: notes.trim() || undefined,
+        prType,
+        samplePurpose: prType === "sample_demo" ? (samplePurpose.trim() || undefined) : undefined,
         items: validLines.map((l) => ({
           rowNo: l.rowNo,
           productId: l.productId,
@@ -273,8 +482,16 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
           currency: l.currency,
           preferredSupplierId: l._supplierId,
           preferredSupplierName: l._supplierName,
+          imageKey: l._imageKey ?? undefined,
+          descriptionSource: l._descriptionSource ?? null,
+          isAdditional: l._isAdditional ?? false,
+          editedBy: l._editedBy ?? null,
+          cpoNo: l._cpoNo ?? null,
+          customerName: l._customerName ?? null,
+          customerOrganization: l._customerOrganization ?? null,
         })),
       });
+      committedRef.current = true;
       toast.success("Purchase requisition created");
       router.push(`/dashboard/procurement/requisition/${pr.id}`);
     } catch (e: any) {
@@ -289,6 +506,13 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
 
   return (
     <div className="p-6 space-y-6">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageFileChange}
+      />
       <PageHeader
         title="New Purchase Requisition"
         action={
@@ -303,7 +527,44 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
         }
       />
 
+      {/* ── PR Type ── */}
+      <section className="border border-border rounded-xl p-5 space-y-3">
+        <Label className="text-sm font-semibold">Requisition Type</Label>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setPrType("customer_order")}
+            className={`flex-1 flex flex-col gap-0.5 rounded-lg border px-4 py-3 text-left transition-colors ${prType === "customer_order" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:border-border/80"}`}
+          >
+            <span className="text-sm font-semibold">Customer Order</span>
+            <span className="text-[11px] text-muted-foreground">Items ordered to fulfil a sales order. Linked to an SO.</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPrType("sample_demo")}
+            className={`flex-1 flex flex-col gap-0.5 rounded-lg border px-4 py-3 text-left transition-colors ${prType === "sample_demo" ? "border-teal-500 bg-teal-50/50 dark:bg-teal-900/10 ring-1 ring-teal-500" : "border-border hover:border-border/80"}`}
+          >
+            <span className="flex items-center gap-1.5 text-sm font-semibold">
+              <FlaskConicalIcon className="w-3.5 h-3.5 text-teal-600" /> Sample / Demo
+            </span>
+            <span className="text-[11px] text-muted-foreground">Demo units, loaners, or supplier samples. Tracked in separate Demo stock.</span>
+          </button>
+        </div>
+        {prType === "sample_demo" && (
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Purpose (optional)</Label>
+            <Input
+              value={samplePurpose}
+              onChange={(e) => setSamplePurpose(e.target.value)}
+              placeholder="e.g. Customer demo for Acme Corp, Trade show loaner stock…"
+              className="h-8 text-sm"
+            />
+          </div>
+        )}
+      </section>
+
       {/* ── Sales Order ── */}
+      {prType === "customer_order" && (
       <section className="border border-border rounded-xl p-5 space-y-1.5">
         <Label className="text-sm font-semibold">Sales Order</Label>
         <p className="text-[11px] text-muted-foreground pb-1">
@@ -313,7 +574,7 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
         <div className="relative" ref={soDropdownRef}>
           <div
             className={`min-h-9 flex flex-wrap gap-1.5 items-center px-3 py-2 rounded-md border cursor-pointer transition-colors ${soDropdownOpen ? "border-ring ring-1 ring-ring" : "border-border hover:border-ring/50"}`}
-            onClick={() => { if (!linkedSoId || !loadingSo) setSoDropdownOpen((o) => !o); }}
+            onClick={() => { if (!linkedSoId && !loadingSo) setSoDropdownOpen((o) => !o); }}
           >
             {linkedSoId ? (
               <span className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md px-2 py-0.5 text-xs font-mono text-blue-700 dark:text-blue-300 leading-5">
@@ -363,6 +624,7 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
           )}
         </div>
       </section>
+      )}
 
       {/* ── Supplier summary ── */}
       {Object.keys(totalBySupplier).length > 0 && (
@@ -398,6 +660,7 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
             <thead>
               <tr className="border-b border-border bg-muted/30 text-muted-foreground">
                 <th className="text-left px-3 py-2 font-medium w-8">#</th>
+                <th className="text-left px-3 py-2 font-medium w-12">Image</th>
                 <th className="text-left px-3 py-2 font-medium w-28">Code</th>
                 <th className="text-left px-3 py-2 font-medium">Description</th>
                 <th className="text-left px-3 py-2 font-medium w-28">Qty</th>
@@ -414,16 +677,45 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
                 <tr key={line._key} className="group align-top">
                   <td className="px-3 py-2.5 text-muted-foreground">{line.rowNo}</td>
                   <td className="px-2 py-1.5">
+                    <div className="flex flex-col gap-0.5 items-start">
+                      {line._imageUploading ? (
+                        <div className="w-9 h-9 flex items-center justify-center rounded border border-border">
+                          <span className="text-[10px] text-muted-foreground animate-pulse">…</span>
+                        </div>
+                      ) : (
+                        <ProductImageCell
+                          productCode={line.productCode ?? ""}
+                          overrideUrl={line._imagePresignedUrl ?? undefined}
+                          onReplace={() => triggerImageUpload(line._key)}
+                        />
+                      )}
+                      {!line._imageUploading && (
+                        line._imagePresignedUrl ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                            <UploadIcon className="w-3 h-3 shrink-0" />
+                            uploaded
+                          </span>
+                        ) : line.productCode ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                            <DatabaseIcon className="w-3 h-3 shrink-0" />
+                            from catalog
+                          </span>
+                        ) : null
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-2 py-1.5">
                     <Input
                       value={line.productCode ?? ""}
                       onChange={(e) => setLine(line._key, { productCode: e.target.value })}
+                      onBlur={(e) => handleProductCodeBlur(line._key, e.target.value)}
                       className="h-7 text-xs"
                       placeholder="Code"
                     />
                   </td>
                   <td className="px-2 py-1.5">
                     {/* CPO + Customer badges */}
-                    {(line._cpoNo || line._customerName) && (
+                    {(line._cpoNo || line._customerName || line._customerOrganization) && (
                       <div className="flex flex-wrap gap-1 mb-1">
                         {line._cpoNo && (
                           <span className={cn(
@@ -431,6 +723,11 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
                             "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
                           )}>
                             {line._cpoNo}
+                          </span>
+                        )}
+                        {line._customerOrganization && (
+                          <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                            {line._customerOrganization}
                           </span>
                         )}
                         {line._customerName && (
@@ -442,10 +739,40 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
                     )}
                     <Input
                       value={line.description ?? ""}
-                      onChange={(e) => setLine(line._key, { description: e.target.value })}
+                      onChange={(e) => setLine(line._key, { description: e.target.value, _descriptionSource: "user" })}
                       className="h-7 text-xs"
                       placeholder="Description"
                     />
+                    {line._descriptionSource === "catalog" && (
+                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                        <DatabaseIcon className="w-3 h-3 shrink-0" />
+                        auto-filled from catalog
+                      </span>
+                    )}
+                    {line._descriptionSource === "so" && (
+                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                        <ShoppingCartIcon className="w-3 h-3 shrink-0" />
+                        from sales order
+                      </span>
+                    )}
+                    {line._descriptionSource === "user" && (
+                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                        <PencilIcon className="w-3 h-3 shrink-0" />
+                        {currentUserName} edited
+                      </span>
+                    )}
+                    {line._isAdditional && (
+                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                        <PlusIcon className="w-3 h-3 shrink-0" />
+                        additional row
+                      </span>
+                    )}
+                    {line._editedBy && line._descriptionSource === "so" && (
+                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                        <PencilIcon className="w-3 h-3 shrink-0" />
+                        {line._editedBy} edited
+                      </span>
+                    )}
                   </td>
                   <td className="px-2 py-1.5">
                     <Input type="number" value={line.qty ?? "1"} onChange={(e) => setLine(line._key, { qty: e.target.value })} className="h-7 text-xs text-center" />
@@ -477,9 +804,23 @@ export function CreatePrClient({ initialSoId, openSos }: Props) {
                     />
                   </td>
                   <td className="px-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => removeLine(line._key)} className="text-muted-foreground hover:text-destructive">
-                      <TrashIcon className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {line._soItemId && (
+                        <button
+                          title="Exclude from all future PRs"
+                          disabled={togglingExclude === line._key}
+                          onClick={() => handleExcludeFromPr(line._key, line._soItemId!)}
+                          className="text-muted-foreground hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                        >
+                          {togglingExclude === line._key
+                            ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" />
+                            : <BanIcon className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
+                      <button onClick={() => removeLine(line._key)} className="text-muted-foreground hover:text-destructive">
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -98,6 +98,7 @@ export interface CreateCustomerPoInput {
   amount?: string;
   currency?: string;
   documentKey?: string;
+  salesPersonName?: string;
   notes?: string;
   receivedDate?: Date;
   deliveryDate?: Date;
@@ -164,6 +165,8 @@ export type CustomerPoForSoCreate = {
   amount: string;
   currency: string;
   items: CpoItemInput[] | null;
+  deliveryDate: Date | null;
+  salesPersonName: string | null;
 };
 
 export async function getCustomerPoForSoCreate(id: string): Promise<CustomerPoForSoCreate | null> {
@@ -181,6 +184,8 @@ export async function getCustomerPoForSoCreate(id: string): Promise<CustomerPoFo
       amount: customerPurchaseOrder.amount,
       currency: customerPurchaseOrder.currency,
       items: customerPurchaseOrder.items,
+      deliveryDate: customerPurchaseOrder.deliveryDate,
+      salesPersonName: customerPurchaseOrder.salesPersonName,
     })
     .from(customerPurchaseOrder)
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
@@ -287,6 +292,7 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
       currency: input.currency ?? "MYR",
       documentKey: input.documentKey ?? null,
       notes: input.notes ?? null,
+      salesPersonName: input.salesPersonName ?? null,
       receivedDate: input.receivedDate ?? null,
       deliveryDate: input.deliveryDate ?? null,
       status: input.status ?? "received",
@@ -352,6 +358,7 @@ export async function updateCustomerPo(input: UpdateCustomerPoInput): Promise<Cu
       amount: input.amount ?? existing.amount,
       currency: input.currency ?? existing.currency,
       documentKey: input.documentKey !== undefined ? input.documentKey : existing.documentKey,
+      salesPersonName: input.salesPersonName !== undefined ? (input.salesPersonName ?? null) : existing.salesPersonName,
       notes: input.notes ?? null,
       receivedDate: input.receivedDate ?? null,
       deliveryDate: input.deliveryDate !== undefined ? (input.deliveryDate ?? null) : existing.deliveryDate,
@@ -601,6 +608,12 @@ export async function deleteCustomerPo(id: string): Promise<void> {
     .select()
     .from(customerPurchaseOrder)
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
-  if (existing?.documentKey) await deleteDocument(existing.documentKey);
+  if (!existing) throw new Error("Customer PO not found");
+  if (existing.salesOrderId) {
+    throw new Error(
+      `Cannot delete — this CPO is linked to sales order ${existing.salesOrderNo ?? existing.salesOrderId}. Remove the link from the sales order first.`,
+    );
+  }
+  if (existing.documentKey) await deleteDocument(existing.documentKey);
   await db.delete(customerPurchaseOrder).where(eq(customerPurchaseOrder.id, id));
 }

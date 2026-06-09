@@ -4,29 +4,33 @@ import {
   getApprovedSalesOrders,
   getActiveCustomerPos,
   getPrForPoConversion,
+  getDefaultDeliveryAddress,
 } from "@/server/purchase-order";
 import { redirect } from "next/navigation";
 import { CreatePurchaseOrderClient } from "./create-po-client";
 
-export default async function CreatePurchaseOrderPage({ searchParams }: { searchParams: Promise<{ soId?: string; prId?: string }> }) {
+export default async function CreatePurchaseOrderPage({ searchParams }: { searchParams: Promise<{ soId?: string; prId?: string; from?: string }> }) {
   await requirePermission("purchase-order:create");
-  const { soId, prId } = await searchParams;
+  const { soId, prId, from } = await searchParams;
+  const backHref = from ? decodeURIComponent(from) : undefined;
 
   // PR conversion path
   if (prId) {
-    const [prData, suppliers] = await Promise.all([
+    const [prData, suppliers, defaultDeliveryAddress] = await Promise.all([
       getPrForPoConversion(prId).catch(() => null),
       getSuppliers(),
+      getDefaultDeliveryAddress().catch(() => ""),
     ]);
     if (!prData) redirect("/dashboard/procurement/requisition");
-    return <CreatePurchaseOrderClient suppliers={suppliers} prData={prData} />;
+    return <CreatePurchaseOrderClient suppliers={suppliers} prData={prData} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} />;
   }
 
   // Direct creation path
-  const [suppliers, approvedSos, customerPos] = await Promise.all([
+  const [suppliers, approvedSos, customerPos, defaultDeliveryAddress] = await Promise.all([
     getSuppliers(),
     getApprovedSalesOrders(),
     getActiveCustomerPos(),
+    getDefaultDeliveryAddress().catch(() => ""),
   ]);
-  return <CreatePurchaseOrderClient suppliers={suppliers} approvedSos={approvedSos} customerPos={customerPos} initialSoId={soId} />;
+  return <CreatePurchaseOrderClient suppliers={suppliers} approvedSos={approvedSos} customerPos={customerPos} initialSoId={soId} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} />;
 }

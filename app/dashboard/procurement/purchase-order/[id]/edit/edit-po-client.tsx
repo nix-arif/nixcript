@@ -346,7 +346,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
                     setSoSearch("");
                     setLoadingSoItems(true);
                     try {
-                      const soItems = await getSalesOrderItemsForPo(so.id);
+                      const { items: soItems } = await getSalesOrderItemsForPo(so.id);
                       if (soItems.length > 0) {
                         const detected = detectCurrency(soItems);
                         setCurrency(detected);

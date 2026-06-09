@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createCustomerPo, type CpoItemInput } from "@/server/customer-purchase-order";
+import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
 import { searchQuotationsByNo, getQuotationForSO } from "@/server/quotation";
 import { Button } from "@/components/ui/button";
@@ -49,7 +50,7 @@ function sumItems(items: EditableItem[]): string {
     .toFixed(2);
 }
 
-export function CreateCustomerPoClient() {
+export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
   const router = useRouter();
 
   // ── Quotations (multiple) ──────────────────────────────────────────────────
@@ -71,6 +72,7 @@ export function CreateCustomerPoClient() {
   const [currency,       setCurrency]       = useState("MYR");
   const [receivedDate,   setReceivedDate]   = useState(new Date().toISOString().split("T")[0]);
   const [deliveryDate,   setDeliveryDate]   = useState("");
+  const [salesPersonName, setSalesPersonName] = useState("");
   const [status,         setStatus]         = useState("received");
   const [notes,          setNotes]          = useState("");
 
@@ -255,6 +257,7 @@ export function CreateCustomerPoClient() {
   async function handleSave() {
     if (linkedQuotations.length === 0) { toast.error("Please link at least one quotation"); return; }
     if (!customerPoNo.trim()) { toast.error("Customer PO number is required"); return; }
+    if (!salesPersonName) { toast.error("Sales person is required"); return; }
     setSaving(true);
     try {
       const primary = linkedQuotations[0];
@@ -269,6 +272,7 @@ export function CreateCustomerPoClient() {
         amount,
         currency,
         documentKey:     pdfKey,
+        salesPersonName: salesPersonName || undefined,
         notes:           notes || undefined,
         receivedDate:    receivedDate ? new Date(receivedDate) : undefined,
         deliveryDate:    deliveryDate ? new Date(deliveryDate) : undefined,
@@ -573,6 +577,19 @@ export function CreateCustomerPoClient() {
                 onChange={(e) => setDeliveryDate(e.target.value)}
                 className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Sales person <span className="text-destructive">*</span></Label>
+              <select
+                value={salesPersonName}
+                onChange={(e) => setSalesPersonName(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-background px-2.5 text-sm"
+              >
+                <option value="">— Select sales person —</option>
+                {members.map((m) => (
+                  <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Status</Label>

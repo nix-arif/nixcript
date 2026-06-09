@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { deleteDeliveryOrder, type DeliveryOrderListRow } from "@/server/delivery-order";
+import { deleteDeliveryOrder, type DeliveryOrderListRow, type PendingSoForDoRow } from "@/server/delivery-order";
 import { useAppStore } from "@/lib/store/use-app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
   PlusIcon, SearchIcon, XIcon, TruckIcon,
-  PencilIcon, TrashIcon, UserIcon, BuildingIcon, CalendarIcon,
+  PencilIcon, TrashIcon, UserIcon, BuildingIcon, CalendarIcon, ArrowRightIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,13 +32,17 @@ function StatusBadge({ status }: { status: string }) {
 const EDITABLE_STATUSES = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft"]);
 
+const fmtAmt = (v: string | null | undefined) =>
+  v ? parseFloat(v).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
+
 interface Props {
   initialOrders: DeliveryOrderListRow[];
+  pendingSos: PendingSoForDoRow[];
   permissions: string[];
   currentUserId: string;
 }
 
-export function DeliveryOrderListClient({ initialOrders, permissions, currentUserId }: Props) {
+export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions, currentUserId }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -90,6 +94,70 @@ export function DeliveryOrderListClient({ initialOrders, permissions, currentUse
           )
         }
       />
+
+      {pendingSos.length > 0 && can("delivery-order:create") && (
+        <div className="border border-teal-200 dark:border-teal-800/50 rounded-xl overflow-hidden mb-4">
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-teal-50 dark:bg-teal-950/20 border-b border-teal-200 dark:border-teal-800/50">
+            <TruckIcon className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
+            <span className="text-xs font-semibold text-teal-700 dark:text-teal-400">
+              Pending DO Creation
+            </span>
+            <span className="ml-auto text-[10px] text-teal-600 dark:text-teal-500 tabular-nums">
+              {pendingSos.length} sales order{pendingSos.length !== 1 ? "s" : ""} ready to deliver
+            </span>
+          </div>
+          <div className="divide-y divide-border/60">
+            {pendingSos.map((so) => (
+              <div
+                key={so.id}
+                className="flex items-center gap-3 px-4 py-3 bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                onClick={() => router.push(`/dashboard/fulfillment/delivery/create?soId=${so.id}&soNo=${encodeURIComponent(so.soNo)}`)}
+              >
+                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-teal-50 dark:bg-teal-900/20 shrink-0">
+                  <TruckIcon className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-sm font-medium">{so.soNo}</span>
+                    {so.customerPoNos.map((cpo) => (
+                      <span key={cpo} className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                        {cpo}
+                      </span>
+                    ))}
+                    <span className="text-[11px] font-semibold text-foreground tabular-nums ml-auto">
+                      MYR {fmtAmt(so.grandTotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                    {so.customers.length > 0 && (
+                      <span className="flex items-start gap-1 text-[11px] text-muted-foreground">
+                        <BuildingIcon className="w-3 h-3 shrink-0 mt-px" />
+                        <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                          {so.customers.map((c, i) => (
+                            <span key={i}>
+                              {c.name}
+                              {c.organizationName && (
+                                <span className="text-muted-foreground/60"> · {c.organizationName}</span>
+                              )}
+                            </span>
+                          ))}
+                        </span>
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <CalendarIcon className="w-3 h-3 shrink-0" />
+                      {fmtDate(so.createdAt)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] font-medium text-teal-600 dark:text-teal-400 shrink-0">
+                  Create DO <ArrowRightIcon className="w-3 h-3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="relative mb-4">
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />

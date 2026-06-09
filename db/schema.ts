@@ -1407,6 +1407,10 @@ export const salesOrderItem = pgTable(
     sourceQuotationId: text("source_quotation_id"),
     sourceCustomerPoId: text("source_customer_po_id"),
     sourceCustomerPoNo: text("source_customer_po_no"),
+    descriptionSource: text("description_source"),
+    editedBy: text("edited_by"),
+    isAdditional: boolean("is_additional").notNull().default(false),
+    prExcluded: boolean("pr_excluded").notNull().default(false),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -1640,6 +1644,10 @@ export const purchaseOrderItem = pgTable(
 
     imageKey: text("image_key"), // optional R2 key for product image
 
+    customerName: text("customer_name"),
+    customerOrganization: text("customer_organization"),
+    customerPoNo: text("customer_po_no"),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("purchase_order_item_po_idx").on(t.purchaseOrderId)],
@@ -1686,6 +1694,9 @@ export const purchaseRequisition = pgTable(
     customerPoNo: text("customer_po_no"),
     status: text("status").notNull().default("draft"),
     // draft | submitted | approved | partially_ordered | ordered | cancelled
+    prType: text("pr_type").notNull().default("customer_order"),
+    // customer_order | replenishment | sample_demo
+    samplePurpose: text("sample_purpose"),
     notes: text("notes"),
     requestedBy: text("requested_by").notNull().references(() => user.id),
     approvedBy: text("approved_by").references(() => user.id),
@@ -1717,6 +1728,13 @@ export const purchaseRequisitionItem = pgTable(
     preferredSupplierName: text("preferred_supplier_name"),
     purchaseOrderId: text("purchase_order_id"),
     purchaseOrderNo: text("purchase_order_no"),
+    imageKey: text("image_key"),
+    descriptionSource: text("description_source"),
+    isAdditional: boolean("is_additional").notNull().default(false),
+    editedBy: text("edited_by"),
+    cpoNo: text("cpo_no"),
+    customerName: text("customer_name"),
+    customerOrganization: text("customer_organization"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("purchase_requisition_item_pr_idx").on(t.purchaseRequisitionId)],
@@ -1898,6 +1916,7 @@ export const customerPurchaseOrder = pgTable(
 
     // Scanned / PDF copy of customer's PO (R2 private)
     documentKey: text("document_key"),
+    salesPersonName: text("sales_person_name"),
     notes: text("notes"),
     receivedDate: timestamp("received_date"),
     deliveryDate: timestamp("delivery_date"),

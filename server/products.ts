@@ -201,6 +201,18 @@ export async function getProductDetailsByCodes(codes: string[]) {
   });
 }
 
+export async function getProductByCode(code: string): Promise<{ description: string | null; uom: string | null } | null> {
+  if (!code.trim()) return null;
+  const { orgId } = await requireAccess("product:read");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const [row] = await db
+    .select({ description: product.description, uom: product.uom })
+    .from(product)
+    .where(and(inArray(product.organizationId, ownerOrgIds), eq(product.productCode, code.trim())))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function getProductPriceDetails(codes: string[]) {
   const { orgId } = await requireAccess("product:read");
   if (!codes.length) return [];

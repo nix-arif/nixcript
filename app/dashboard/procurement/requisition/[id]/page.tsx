@@ -15,5 +15,5 @@ export default async function PrDetailPage({ params }: { params: Promise<{ id: s
 
   if (!pr) notFound();
 
-  return <PrDetailClient pr={pr} permissions={permissions} currentUserId={session.user.id} />;
+  return <PrDetailClient pr={pr} permissions={permissions} currentUserId={session.user.id} currentUserName={session.user.name ?? ""} />;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -14,6 +14,7 @@ import {
   searchCustomerPosByNo,
   type CustomerPoSearchResult,
 } from "@/server/customer-purchase-order";
+import { getProductByCode } from "@/server/products";
 import { type OrgMember } from "@/server/members";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,9 @@ import {
   XIcon,
   BuildingIcon,
   LinkIcon,
+  PencilIcon,
+  DatabaseIcon,
+  FileTextIcon,
 } from "lucide-react";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
@@ -41,12 +45,17 @@ type LinkedCpo = {
     title?: string; name: string; organizationName?: string;
     organizationAddress?: string; email?: string; contactNo?: string;
   } | null;
+  deliveryDate: string;
+  salesPersonName: string | null;
 };
 
 interface LineItem extends SalesOrderItemInput {
   _key: string;
   sourceCustomerPoId: string;
   sourceCustomerPoNo: string;
+  _descriptionSource?: "cpo" | "catalog" | "user" | null;
+  _editedBy?: string | null;
+  _isAdditional?: boolean;
 }
 
 const SO_STATUS = ["draft", "confirmed", "fulfilled", "cancelled"] as const;
@@ -72,6 +81,8 @@ const newLine = (rowNo: number): LineItem => ({
   sourceQuotationId: "",
   sourceCustomerPoId: "",
   sourceCustomerPoNo: "",
+  _descriptionSource: null,
+  _isAdditional: true,
 });
 
 function calcLine(item: LineItem): LineItem {
@@ -101,16 +112,27 @@ function toDateInput(d: Date | string | null | undefined): string {
 interface Props {
   order: SalesOrderWithItems;
   members: OrgMember[];
+  currentUserName: string;
 }
 
-export function EditSalesOrderClient({ order, members }: Props) {
+export function EditSalesOrderClient({ order, members, currentUserName }: Props) {
   const router = useRouter();
   const snap = order.customerSnapshot as any;
 
   // ── Customer POs ─────────────────────────────────────────────────────────────
   const existingCpoLinks = (order.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null) ?? [];
   const [linkedCpos, setLinkedCpos] = useState<LinkedCpo[]>(
-    existingCpoLinks.map((c) => ({ id: c.customerPoId, customerPoNo: c.customerPoNo, customerId: null, customerSnapshot: null })),
+    existingCpoLinks.map((c) => {
+      const cpoCustomer = order.cpoCustomers.find((cc) => cc.customerPoId === c.customerPoId);
+      return {
+        id: c.customerPoId,
+        customerPoNo: c.customerPoNo,
+        customerId: cpoCustomer?.customerId ?? null,
+        customerSnapshot: cpoCustomer?.customerSnapshot ?? null,
+        deliveryDate: cpoCustomer?.deliveryDate ? new Date(cpoCustomer.deliveryDate).toISOString().slice(0, 10) : "",
+        salesPersonName: cpoCustomer?.salesPersonName ?? null,
+      };
+    }),
   );
   const [cpoSearch, setCpoSearch] = useState("");
   const [cpoResults, setCpoResults] = useState<CustomerPoSearchResult[]>([]);
@@ -172,12 +194,18 @@ export function EditSalesOrderClient({ order, members }: Props) {
           sourceQuotationId: i.sourceQuotationId ?? "",
           sourceCustomerPoId: (i as any).sourceCustomerPoId ?? "",
           sourceCustomerPoNo: (i as any).sourceCustomerPoNo ?? "",
+          _descriptionSource: ((i as any).descriptionSource as "cpo" | "catalog" | "user" | null)
+            ?? ((i as any).sourceCustomerPoId ? "cpo" : null),
+          _editedBy: (i as any).editedBy ?? null,
+          _isAdditional: (i as any).isAdditional === true,
         }))
       : [newLine(1)],
   );
 
   const [saving, setSaving] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
 
   // ── CPO search ──────────────────────────────────────────────────────────────
 
@@ -215,6 +243,8 @@ export function EditSalesOrderClient({ order, members }: Props) {
         customerPoNo: data.customerPoNo,
         customerId: data.customerId,
         customerSnapshot: data.customerSnapshot,
+        deliveryDate: data.deliveryDate ? new Date(data.deliveryDate).toISOString().slice(0, 10) : "",
+        salesPersonName: data.salesPersonName ?? null,
       }]);
       setShowAddCpo(false);
     } catch {
@@ -265,6 +295,20 @@ export function EditSalesOrderClient({ order, members }: Props) {
 
   function removeLine(key: string) {
     setItems((prev) => prev.filter((i) => i._key !== key).map((i, idx) => ({ ...i, rowNo: idx + 1 })));
+  }
+
+  async function handleProductCodeBlur(key: string, code: string) {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    const current = itemsRef.current.find((i) => i._key === key);
+    if (!current) return;
+    if (current.description && current._descriptionSource !== "user") return;
+    const product = await getProductByCode(trimmed);
+    if (!product?.description) return;
+    setItems((prev) => prev.map((i) => i._key === key
+      ? { ...i, description: product.description!, uom: product.uom ?? i.uom, _descriptionSource: "catalog", _editedBy: null }
+      : i,
+    ));
   }
 
   // ── Cell keyboard navigation ────────────────────────────────────────────────
@@ -332,6 +376,11 @@ export function EditSalesOrderClient({ order, members }: Props) {
     setSaving(true);
     try {
       const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
+      const inheritedSalesPerson = linkedCpos.find((c) => c.salesPersonName)?.salesPersonName ?? null;
+      const inheritedDeliveryAddress = linkedCpos.find((c) => c.customerSnapshot?.organizationAddress)?.customerSnapshot?.organizationAddress ?? null;
+      const finalDeliveryDate = linkedCpos.length > 0
+        ? (() => { const d = linkedCpos.find((c) => c.deliveryDate)?.deliveryDate; return d ? new Date(d) : undefined; })()
+        : deliveryDate ? new Date(deliveryDate) : undefined;
       await updateSalesOrder({
         id: order.id,
         customerId: primaryCustomerId,
@@ -340,10 +389,10 @@ export function EditSalesOrderClient({ order, members }: Props) {
           ? linkedCpos.map((c) => ({ customerPoId: c.id, customerPoNo: c.customerPoNo }))
           : undefined,
         status,
-        salesPersonName: salesPerson || undefined,
+        salesPersonName: (inheritedSalesPerson ?? salesPerson) || undefined,
         associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
-        deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
-        deliveryAddress: deliveryAddress || undefined,
+        deliveryDate: finalDeliveryDate,
+        deliveryAddress: (inheritedDeliveryAddress ?? deliveryAddress) || undefined,
         notes: notes || undefined,
         subtotal: subtotal.toFixed(2),
         overallDiscountPct: overallDiscPct,
@@ -351,10 +400,13 @@ export function EditSalesOrderClient({ order, members }: Props) {
         sstPct,
         sst: sstAmt.toFixed(2),
         grandTotal: grand.toFixed(2),
-        items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, ...rest }) => ({
+        items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, _descriptionSource, _editedBy, _isAdditional, ...rest }) => ({
           ...rest,
           sourceCustomerPoId: sourceCustomerPoId || undefined,
           sourceCustomerPoNo: sourceCustomerPoNo || undefined,
+          descriptionSource: _descriptionSource ?? null,
+          editedBy: _editedBy ?? null,
+          isAdditional: _isAdditional ?? false,
         })),
       });
       toast.success("Sales order updated");
@@ -474,9 +526,45 @@ export function EditSalesOrderClient({ order, members }: Props) {
 
         {/* ── 2. Customer ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Customer</h2>
+          <h2 className="text-sm font-semibold mb-3">
+            Customer{linkedCpos.length > 0 && linkedCpos.filter((c) => c.customerSnapshot).length > 1 ? "s" : ""}
+          </h2>
 
-          {selectedCustomer ? (
+          {linkedCpos.length > 0 ? (
+            /* Customers derived from linked CPO snapshots — group by customer, show all CPO numbers */
+            <div className="space-y-2">
+              {(() => {
+                const groupMap = new Map<string, { snap: NonNullable<LinkedCpo["customerSnapshot"]>; cpos: LinkedCpo[] }>();
+                linkedCpos.forEach((c) => {
+                  if (!c.customerSnapshot) return;
+                  const key = c.customerSnapshot.name;
+                  if (!groupMap.has(key)) groupMap.set(key, { snap: c.customerSnapshot, cpos: [] });
+                  groupMap.get(key)!.cpos.push(c);
+                });
+                return Array.from(groupMap.values()).map(({ snap, cpos }) => (
+                  <div key={snap.name} className="flex items-start gap-3 px-3 py-2 bg-muted/40 rounded-lg border border-border">
+                    <BuildingIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{[snap.title, snap.name].filter(Boolean).join(" ")}</p>
+                      {snap.organizationName && (
+                        <p className="text-[11px] text-muted-foreground">{snap.organizationName}</p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1 justify-end shrink-0">
+                      {cpos.map((c) => (
+                        <span key={c.id} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                          {c.customerPoNo}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
+              {linkedCpos.every((c) => !c.customerSnapshot) && (
+                <p className="text-[11px] text-muted-foreground">No customer info available. Remove and re-add CPOs to refresh.</p>
+              )}
+            </div>
+          ) : selectedCustomer ? (
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -554,6 +642,8 @@ export function EditSalesOrderClient({ order, members }: Props) {
         </section>
 
         {/* ── 3. Order details ── */}
+        {(() => {
+          return (
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Order details</h2>
           <div className="grid grid-cols-2 gap-3">
@@ -569,66 +659,123 @@ export function EditSalesOrderClient({ order, members }: Props) {
                 ))}
               </select>
             </div>
-            <div className="space-y-1.5">
+
+            {/* Due delivery date — read-only from CPO when linked */}
+            <div className={linkedCpos.length > 0 ? "col-span-2 space-y-1.5" : "space-y-1.5"}>
               <Label className="text-xs">Due delivery date</Label>
-              <input
-                type="date"
-                value={deliveryDate}
-                onChange={(e) => setDeliveryDate(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              />
+              {linkedCpos.length > 0 ? (
+                <div className="space-y-1.5 mt-1">
+                  {linkedCpos.map((c) => (
+                    <div key={c.id} className="flex items-center gap-2 h-9 px-3 rounded-md border border-border bg-muted/40">
+                      <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
+                      <span className="text-sm text-foreground flex-1">
+                        {c.deliveryDate ? new Date(c.deliveryDate).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : <span className="text-muted-foreground">—</span>}
+                      </span>
+                      <span className="text-[9px] text-muted-foreground">from CPO</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <input
+                  type="date"
+                  value={deliveryDate}
+                  onChange={(e) => setDeliveryDate(e.target.value)}
+                  className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              )}
             </div>
+
+            {/* Sales person — per-CPO when linked */}
             <div className="col-span-2 space-y-1.5">
               <Label className="text-xs">Sales person</Label>
-              <div className="flex items-center gap-2 flex-wrap">
-                <select
-                  value={salesPerson}
-                  onChange={(e) => setSalesPerson(e.target.value)}
-                  className="h-9 rounded-md border border-border bg-background px-2.5 text-sm shrink-0"
-                >
-                  <option value="">— Select —</option>
-                  {members.map((m) => (
-                    <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
+              {linkedCpos.length > 0 ? (
+                <div className="space-y-1.5 mt-1">
+                  {linkedCpos.map((c) => (
+                    <div key={c.id} className="flex items-center gap-2 h-9 px-3 rounded-md border border-border bg-muted/40">
+                      <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
+                      <span className="text-sm text-foreground flex-1">
+                        {c.salesPersonName ?? <span className="text-muted-foreground">—</span>}
+                      </span>
+                      <span className="text-[9px] text-muted-foreground shrink-0">from CPO</span>
+                    </div>
                   ))}
-                </select>
-                {associateSalesPersons.map((a) => (
-                  <span key={a.id} className="flex items-center gap-1 text-[11px] bg-muted rounded-full px-2.5 py-1 shrink-0">
-                    {a.name}
-                    <button
-                      onClick={() => setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id))}
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <XIcon className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const m = members.find((x) => x.userId === e.target.value);
-                    if (!m) return;
-                    if (associateSalesPersons.some((a) => a.id === m.userId)) return;
-                    setAssociateSalesPersons((prev) => [...prev, { id: m.userId, name: m.name ?? m.email }]);
-                  }}
-                  className="h-9 rounded-md border border-dashed border-border bg-background px-2.5 text-sm text-muted-foreground shrink-0"
-                >
-                  <option value="">+ Add associate…</option>
-                  {members
-                    .filter((m) => !associateSalesPersons.some((a) => a.id === m.userId))
-                    .map((m) => (
-                      <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <select
+                    value={salesPerson}
+                    onChange={(e) => setSalesPerson(e.target.value)}
+                    className="h-9 rounded-md border border-border bg-background px-2.5 text-sm shrink-0"
+                  >
+                    <option value="">— Select —</option>
+                    {members.map((m) => (
+                      <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
                     ))}
-                </select>
-              </div>
+                  </select>
+                  {associateSalesPersons.map((a) => (
+                    <span key={a.id} className="flex items-center gap-1 text-[11px] bg-muted rounded-full px-2.5 py-1 shrink-0">
+                      {a.name}
+                      <button
+                        onClick={() => setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id))}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const m = members.find((x) => x.userId === e.target.value);
+                      if (!m) return;
+                      if (associateSalesPersons.some((a) => a.id === m.userId)) return;
+                      setAssociateSalesPersons((prev) => [...prev, { id: m.userId, name: m.name ?? m.email }]);
+                    }}
+                    className="h-9 rounded-md border border-dashed border-border bg-background px-2.5 text-sm text-muted-foreground shrink-0"
+                  >
+                    <option value="">+ Add associate…</option>
+                    {members
+                      .filter((m) => !associateSalesPersons.some((a) => a.id === m.userId))
+                      .map((m) => (
+                        <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                      ))}
+                  </select>
+                </div>
+              )}
             </div>
-            <div className="space-y-1.5 col-span-2">
+
+            {/* Delivery address — per-CPO when linked */}
+            <div className={linkedCpos.length > 0 ? "col-span-2 space-y-1.5" : "space-y-1.5 col-span-2"}>
               <Label className="text-xs">Delivery address</Label>
-              <Input
-                value={deliveryAddress}
-                onChange={(e) => setDeliveryAddress(e.target.value)}
-                placeholder="Address"
-                className="h-9 text-sm"
-              />
+              {linkedCpos.length > 0 ? (
+                <div className="space-y-1.5 mt-1">
+                  {linkedCpos.map((c) => (
+                    <div key={c.id} className="flex items-start gap-2 min-h-9 px-3 py-2 rounded-md border border-border bg-muted/40">
+                      <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 shrink-0 pt-0.5">{c.customerPoNo}</span>
+                      <span className="text-sm text-foreground flex-1 leading-snug">
+                        {c.customerSnapshot?.organizationAddress ? (
+                          <>
+                            {c.customerSnapshot.organizationName && (
+                              <span className="block text-xs font-medium text-muted-foreground">{c.customerSnapshot.organizationName}</span>
+                            )}
+                            {c.customerSnapshot.organizationAddress}
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </span>
+                      <span className="text-[9px] text-muted-foreground shrink-0 pt-0.5">from CPO</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Input
+                  value={deliveryAddress}
+                  onChange={(e) => setDeliveryAddress(e.target.value)}
+                  placeholder="Address"
+                  className="h-9 text-sm"
+                />
+              )}
             </div>
           </div>
           <div className="mt-3 space-y-1.5">
@@ -642,6 +789,8 @@ export function EditSalesOrderClient({ order, members }: Props) {
             />
           </div>
         </section>
+          );
+        })()}
 
         {/* ── 4. Items table ── */}
         <section className="border border-border rounded-xl p-4">
@@ -681,10 +830,34 @@ export function EditSalesOrderClient({ order, members }: Props) {
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
                     <td className="py-1.5 pr-2">
-                      <Input data-row={rowIdx} data-col={0} value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 0)} className="h-7 text-xs" />
+                      <Input data-row={rowIdx} data-col={0} value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} onBlur={(e) => handleProductCodeBlur(item._key, e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 0)} className="h-7 text-xs" />
                     </td>
                     <td className="py-1.5 pr-2">
-                      <Input data-row={rowIdx} data-col={1} value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)} className="h-7 text-xs" />
+                      <Input data-row={rowIdx} data-col={1} value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value, _descriptionSource: "user", _editedBy: currentUserName || null } as Partial<LineItem>)} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)} className="h-7 text-xs" />
+                      {item._isAdditional && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                          <PlusIcon className="w-3 h-3 shrink-0" />
+                          additional row
+                        </span>
+                      )}
+                      {item._descriptionSource === "cpo" && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                          <FileTextIcon className="w-3 h-3 shrink-0" />
+                          from quotation
+                        </span>
+                      )}
+                      {item._descriptionSource === "catalog" && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                          <DatabaseIcon className="w-3 h-3 shrink-0" />
+                          from product table
+                        </span>
+                      )}
+                      {item._descriptionSource === "user" && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                          <PencilIcon className="w-3 h-3 shrink-0" />
+                          {item._editedBy || currentUserName || "user"} edited
+                        </span>
+                      )}
                     </td>
                     <td className="py-1.5 pr-2">
                       <Input data-row={rowIdx} data-col={2} value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)} className="h-7 text-xs text-right" />
@@ -703,18 +876,7 @@ export function EditSalesOrderClient({ order, members }: Props) {
                     </td>
                     {showCpoColumn && (
                       <td className="py-1.5 pr-2">
-                        {sourceCpo ? (
-                          <div className="space-y-0.5">
-                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-mono">
-                              {sourceCpo.customerPoNo}
-                            </span>
-                            {cpoCustomerName && (
-                              <p className="text-[10px] text-muted-foreground truncate max-w-25" title={cpoCustomerName}>
-                                {cpoCustomerName}
-                              </p>
-                            )}
-                          </div>
-                        ) : (
+                        {item._isAdditional ? (
                           <select
                             value={item.sourceCustomerPoId ?? ""}
                             onChange={(e) => {
@@ -735,6 +897,19 @@ export function EditSalesOrderClient({ order, members }: Props) {
                               return <option key={c.id} value={c.id}>{label}</option>;
                             })}
                           </select>
+                        ) : sourceCpo ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-mono">
+                              {sourceCpo.customerPoNo}
+                            </span>
+                            {cpoCustomerName && (
+                              <p className="text-[10px] text-muted-foreground truncate max-w-25" title={cpoCustomerName}>
+                                {cpoCustomerName}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">—</span>
                         )}
                       </td>
                     )}

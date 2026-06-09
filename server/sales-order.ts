@@ -28,6 +28,7 @@ import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
 import { adjustReservation } from "@/lib/inventory/create-movement";
+import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
 import { Resend } from "resend";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import SoNotificationEmail from "@/components/emails/so-notification";
@@ -134,7 +135,9 @@ export type CpoCustomer = {
   customerPoId: string;
   customerPoNo: string;
   customerId: string | null;
-  customerSnapshot: { title?: string; name: string; organizationName?: string } | null;
+  customerSnapshot: { title?: string; name: string; organizationName?: string; organizationAddress?: string } | null;
+  deliveryDate: Date | null;
+  salesPersonName: string | null;
 };
 
 export type SalesOrderListRow = SalesOrderRow & {
@@ -162,6 +165,9 @@ export interface SalesOrderItemInput {
   sourceQuotationId?: string;
   sourceCustomerPoId?: string;
   sourceCustomerPoNo?: string;
+  descriptionSource?: "cpo" | "catalog" | "user" | null;
+  editedBy?: string | null;
+  isAdditional?: boolean;
 }
 
 export interface CreateSalesOrderInput {
@@ -169,7 +175,7 @@ export interface CreateSalesOrderInput {
   customerCompanyId?: string;
   customerPoId?: string;
   customerPoNo?: string;
-  customerPoLinks?: { customerPoId: string; customerPoNo: string }[];
+  customerPoLinks?: { customerPoId: string; customerPoNo: string; deliveryDate?: string }[];
   quotationId?: string;
   quotationNo?: string;
   linkedQuotations?: { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string; organizationAddress?: string; email?: string; contactNo?: string } | null }[];
@@ -271,7 +277,7 @@ export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds)),
     allCpoIds.length > 0
       ? db
-          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot })
+          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot, deliveryDate: customerPurchaseOrder.deliveryDate, salesPersonName: customerPurchaseOrder.salesPersonName })
           .from(customerPurchaseOrder)
           .where(inArray(customerPurchaseOrder.id, allCpoIds))
       : Promise.resolve([]),
@@ -289,6 +295,8 @@ export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
         customerPoNo: l.customerPoNo,
         customerId: cpo?.customerId ?? null,
         customerSnapshot: (cpo?.customerSnapshot as CpoCustomer["customerSnapshot"]) ?? null,
+        deliveryDate: cpo?.deliveryDate ?? null,
+        salesPersonName: cpo?.salesPersonName ?? null,
       };
     });
     return { ...r, createdByName: nameOf(r.createdBy), cpoCustomers };
@@ -328,7 +336,7 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
       ),
     cpoIds.length > 0
       ? db
-          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot })
+          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot, deliveryDate: customerPurchaseOrder.deliveryDate, salesPersonName: customerPurchaseOrder.salesPersonName })
           .from(customerPurchaseOrder)
           .where(inArray(customerPurchaseOrder.id, cpoIds))
       : Promise.resolve([]),
@@ -345,6 +353,8 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
       customerPoNo: l.customerPoNo,
       customerId: cpo?.customerId ?? null,
       customerSnapshot: (cpo?.customerSnapshot as CpoCustomer["customerSnapshot"]) ?? null,
+      deliveryDate: cpo?.deliveryDate ?? null,
+      salesPersonName: cpo?.salesPersonName ?? null,
     };
   });
 
@@ -531,6 +541,9 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
         sourceQuotationId: item.sourceQuotationId || null,
         sourceCustomerPoId: item.sourceCustomerPoId || null,
         sourceCustomerPoNo: item.sourceCustomerPoNo || null,
+        descriptionSource: item.descriptionSource ?? null,
+        editedBy: item.descriptionSource === "user" ? (item.editedBy ?? null) : null,
+        isAdditional: item.isAdditional ?? false,
       })),
     );
   }
@@ -675,6 +688,9 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
         sourceQuotationId: item.sourceQuotationId || null,
         sourceCustomerPoId: item.sourceCustomerPoId || null,
         sourceCustomerPoNo: item.sourceCustomerPoNo || null,
+        descriptionSource: item.descriptionSource ?? null,
+        editedBy: item.descriptionSource === "user" ? (item.editedBy ?? null) : null,
+        isAdditional: item.isAdditional ?? false,
       })),
     );
   }
@@ -924,18 +940,25 @@ export async function approveSalesOrder(id: string): Promise<void> {
     .from(salesOrderItem)
     .where(eq(salesOrderItem.salesOrderId, id));
 
+  const itemsWithProduct = soItems.filter((i) => i.productId);
+
   await Promise.all(
-    soItems
-      .filter((i) => i.productId)
-      .map((i) =>
-        adjustReservation({
-          orgId,
-          productId: i.productId!,
-          warehouseLabel: "Default",
-          delta: parseFloat(i.qty ?? "1"),
-        }),
-      ),
+    itemsWithProduct.map((i) =>
+      adjustReservation({
+        orgId,
+        productId: i.productId!,
+        warehouseLabel: "Default",
+        delta: parseFloat(i.qty ?? "1"),
+      }),
+    ),
   );
+
+  // Auto-create replenishment PRs for products whose available stock dropped to/below reorder point
+  checkAndTriggerReplenishment(
+    orgId,
+    userId,
+    itemsWithProduct.map((i) => i.productId!),
+  ).catch(console.error);
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
@@ -1050,4 +1073,29 @@ export async function recallSalesOrder(id: string): Promise<void> {
     grandTotal: so.grandTotal ?? undefined,
     actorName,
   }).catch(console.error);
+}
+
+export async function toggleSoItemPrExcluded(itemId: string, excluded: boolean): Promise<void> {
+  const { orgId } = await requireAccess("sales-order:update");
+
+  // Verify the item belongs to an SO in this org
+  const [item] = await db
+    .select({ id: salesOrderItem.id, salesOrderId: salesOrderItem.salesOrderId })
+    .from(salesOrderItem)
+    .where(eq(salesOrderItem.id, itemId));
+  if (!item) throw new Error("Item not found");
+
+  const [so] = await db
+    .select({ id: salesOrder.id })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, item.salesOrderId), eq(salesOrder.organizationId, orgId)));
+  if (!so) throw new Error("Not authorised");
+
+  await db
+    .update(salesOrderItem)
+    .set({ prExcluded: excluded })
+    .where(eq(salesOrderItem.id, itemId));
+
+  revalidatePath(`/dashboard/sales/order/${item.salesOrderId}`);
+  revalidatePath("/dashboard/procurement/requisition");
 }

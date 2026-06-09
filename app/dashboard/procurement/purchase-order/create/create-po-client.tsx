@@ -8,9 +8,11 @@ import {
   getSalesOrderItemsForPo,
   getPoSupplierQuotationUploadUrl,
   getPoItemImageUploadUrl,
+  deleteProcurementImages,
   type PurchaseOrderItemInput,
   type PrForPoConversion,
 } from "@/server/purchase-order";
+import { getProductByCode, getProductDetailsByCodes } from "@/server/products";
 import type { Supplier } from "@/server/supplier";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,14 +29,117 @@ import {
   SearchIcon,
   ClipboardListIcon,
   LinkIcon,
+  UploadIcon,
+  DatabaseIcon,
+  AlertCircleIcon,
+  InfoIcon,
+  PencilIcon,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Highlight } from "@/components/highlight";
+
+const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+function validateImageFile(file: File): string | null {
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    return "Unsupported format — please use JPG, PNG, WebP, or GIF.";
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    return `File too large — maximum is 5 MB (this file is ${(file.size / 1024 / 1024).toFixed(1)} MB).`;
+  }
+  return null;
+}
+
+function uploadErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
+    return "Could not reach the upload server — check your internet connection, or the upload link may have expired. Try again.";
+  }
+  if (/HTTP 403/i.test(msg)) return "Upload rejected — the upload link has expired. Refresh the page and try again.";
+  if (/HTTP 413/i.test(msg)) return "File too large for the server — please use an image under 5 MB.";
+  if (/HTTP 4/.test(msg))    return `Upload rejected by server (${msg}) — try a different file.`;
+  if (/HTTP 5/.test(msg))    return `Server error (${msg}) — please try again in a moment.`;
+  return "Upload failed — please try again.";
+}
+
+function PoProductThumbnail({ productCode, overrideUrl, onReplace }: { productCode: string; overrideUrl?: string; onReplace: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen]     = useState(false);
+  const catalogSrc = R2_PRODUCT_IMAGES && productCode ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg` : "";
+  const src = overrideUrl || catalogSrc;
+
+  useEffect(() => { if (overrideUrl) setFailed(false); }, [overrideUrl]);
+
+  if (!src || failed) {
+    return (
+      <button
+        type="button"
+        onClick={onReplace}
+        title="Add image"
+        className="w-9 h-9 flex items-center justify-center rounded border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
+      >
+        <ImageIcon className="w-3.5 h-3.5" />
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="View image"
+        className="block w-9 h-9 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} className="w-full h-full object-cover" alt="" onError={() => setFailed(true)} />
+      </button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
+          <DialogTitle className="sr-only">{productCode}</DialogTitle>
+          <div className="relative bg-muted/30">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} className="w-full object-contain max-h-[65vh]" alt={productCode} onError={() => { setFailed(true); setOpen(false); }} />
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
+            >
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t">
+            <p className="text-xs text-muted-foreground font-mono truncate min-w-0">{productCode}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 shrink-0"
+              onClick={() => { setOpen(false); onReplace(); }}
+            >
+              <UploadIcon className="w-3.5 h-3.5" /> Replace Image
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 interface ApprovedSo { id: string; soNo: string; customerName: string | null }
 interface CustomerPoOption { id: string; customerPoNo: string; customerName: string | null; amount: string }
 
 interface Props {
   suppliers: Supplier[];
+  defaultDeliveryAddress?: string;
+  backHref?: string;
   // Direct creation mode
   approvedSos?: ApprovedSo[];
   customerPos?: CustomerPoOption[];
@@ -47,19 +152,28 @@ interface LineItem extends PurchaseOrderItemInput {
   _key: string;
   _imageFile?: File;
   _imageUploading?: boolean;
+  _imagePreviewUrl?: string;
+  _imageInherited?: boolean; // key came from PR — must not be deleted by PO form
+  _descriptionSource?: "product" | "pr"; // cleared when user edits the field
+  _cpoId?: string | null;
+  _isAdditional?: boolean;
+  _editedBy?: string | null;
 }
 
-const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(),
+const newLine = (rowNo: number, key?: string): LineItem => ({
+  _key: key ?? `row-${rowNo}`,
   rowNo,
   productCode: "",
   description: "",
   qty: "1",
-  uom: "",
+  uom: "pc",
   unitPrice: "0",
   currency: "MYR",
   totalPrice: "0",
   imageKey: undefined,
+  customerName: "",
+  customerOrganization: "",
+  customerPoNo: "",
 });
 
 function calcLine(item: LineItem): LineItem {
@@ -90,7 +204,7 @@ const fmt = (n: number, currency: string) => `${currency} ${n.toLocaleString("en
 
 function prItemToLine(pi: PrForPoConversion["items"][number]): LineItem {
   return {
-    _key: crypto.randomUUID(),
+    _key: pi.id, // stable DB id — safe for SSR
     rowNo: pi.rowNo,
     productId: pi.productId ?? undefined,
     productCode: pi.productCode ?? "",
@@ -100,11 +214,20 @@ function prItemToLine(pi: PrForPoConversion["items"][number]): LineItem {
     unitPrice: pi.estimatedUnitCost,
     currency: pi.currency,
     totalPrice: (parseFloat(pi.qty) * parseFloat(pi.estimatedUnitCost)).toFixed(2),
-    imageKey: undefined,
+    imageKey: pi.imageKey ?? undefined,
+    _imageInherited: !!pi.imageKey,
+    _imagePreviewUrl: pi.imageUrl ?? undefined,
+    _descriptionSource: pi.description ? "pr" : undefined,
+    customerName: pi.customerName ?? "",
+    customerOrganization: pi.customerOrganization ?? "",
+    customerPoNo: pi.cpoNo ?? "",
+    _cpoId: pi.cpoId ?? null,
+    _isAdditional: pi.isAdditional,
+    _editedBy: pi.editedBy ?? null,
   };
 }
 
-export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], customerPos = [], initialSoId, prData }: Props) {
+export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], customerPos = [], initialSoId, prData, defaultDeliveryAddress = "", backHref: backHrefProp }: Props) {
   const router = useRouter();
   const isPrMode = !!prData;
 
@@ -125,6 +248,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     initialSoId ? (approvedSos.find((s) => s.id === initialSoId) ?? null) : null,
   );
   const [soSearch, setSoSearch] = useState("");
+  // Tracks what's already ordered for the selected SO
+  const [orderedSupplierIds, setOrderedSupplierIds] = useState<string[]>([]);
+  const [orderedProductCodes, setOrderedProductCodes] = useState<string[]>([]);
 
   // Linked Customer POs (direct mode only)
   const [selectedCpos, setSelectedCpos] = useState<CustomerPoOption[]>([]);
@@ -132,7 +258,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
 
   // Header fields
   const [deliveryDate, setDeliveryDate] = useState("");
-  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState(defaultDeliveryAddress);
   const [notes, setNotes] = useState(prData?.notes ?? "");
   const [sstPct, setSstPct] = useState("0");
   const [currency, setCurrency] = useState(() => {
@@ -151,7 +277,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
       if (!initialSupplierId) return [];
       return prItemsRef.current
         .filter((pi) => !pi.preferredSupplierId || pi.preferredSupplierId === initialSupplierId)
-        .map(prItemToLine);
+        .map((pi) => prItemToLine(pi));
     }
     return [newLine(1)];
   });
@@ -168,7 +294,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     setItems(
       prItemsRef.current
         .filter((pi) => !pi.preferredSupplierId || pi.preferredSupplierId === newId)
-        .map(prItemToLine),
+        .map((pi) => prItemToLine(pi)),
     );
   }
 
@@ -176,7 +302,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   useEffect(() => {
     if (isPrMode || !initialSoId || !selectedSo) return;
     setLoadingSoItems(true);
-    getSalesOrderItemsForPo(initialSoId).then((soItems) => {
+    getSalesOrderItemsForPo(initialSoId).then(({ items: soItems, orderedSupplierIds: oids, orderedProductCodes: opcodes }) => {
+      setOrderedSupplierIds(oids);
+      setOrderedProductCodes(opcodes);
       if (soItems.length > 0) {
         const detected = detectCurrency(soItems);
         setCurrency(detected);
@@ -205,6 +333,35 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   const pdfRef = useRef<HTMLInputElement>(null);
 
   const [saving, setSaving] = useState(false);
+
+  const committedRef = useRef(false);
+  const itemsRef     = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => {
+    return () => {
+      if (committedRef.current) return;
+      const keys = itemsRef.current.flatMap((i) =>
+        i.imageKey && !i._imageInherited ? [i.imageKey] : [],
+      );
+      if (keys.length) deleteProcurementImages(keys).catch(() => {});
+    };
+  }, []);
+
+  // On mount, fill descriptions from product DB for items that have a productCode but no description
+  useEffect(() => {
+    const needsLookup = items.filter((i) => i.productCode && !i.description);
+    if (!needsLookup.length) return;
+    const codes = [...new Set(needsLookup.map((i) => i.productCode!))];
+    getProductDetailsByCodes(codes).then((rows) => {
+      const descMap = Object.fromEntries(rows.map((r) => [r.productCode, r.description ?? ""]));
+      setItems((prev) => prev.map((i) =>
+        i.productCode && !i.description && descMap[i.productCode]
+          ? { ...i, description: descMap[i.productCode], _descriptionSource: "product" }
+          : i
+      ));
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // SO search filter (direct mode)
   const filteredSos = approvedSos.filter((s) => {
@@ -242,10 +399,12 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   }
 
   function addLine() {
-    setItems((prev) => [...prev, newLine(prev.length + 1)]);
+    setItems((prev) => [...prev, newLine(prev.length + 1, crypto.randomUUID())]);
   }
 
   function removeLine(key: string) {
+    const removed = itemsRef.current.find((i) => i._key === key);
+    if (removed?.imageKey && !removed._imageInherited) deleteProcurementImages([removed.imageKey]).catch(() => {});
     setItems((prev) => {
       const next = prev.filter((i) => i._key !== key);
       return next.map((i, idx) => ({ ...i, rowNo: idx + 1 }));
@@ -255,20 +414,43 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   async function handleItemImage(key: string, e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
+
+    const err = validateImageFile(file);
+    if (err) { toast.error(err); return; }
+
+    const oldItem = itemsRef.current.find((i) => i._key === key);
     updateItem(key, { _imageFile: file, _imageUploading: true });
     try {
       const { key: r2Key, uploadUrl } = await getPoItemImageUploadUrl(file.name);
-      await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
-      updateItem(key, { imageKey: r2Key, _imageUploading: false });
-      toast.success("Image uploaded");
-    } catch {
-      toast.error("Failed to upload image");
+      const res = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (oldItem?.imageKey && !oldItem._imageInherited) deleteProcurementImages([oldItem.imageKey]).catch(() => {});
+      updateItem(key, { imageKey: r2Key, _imageUploading: false, _imagePreviewUrl: URL.createObjectURL(file), _imageInherited: false });
+    } catch (err) {
+      toast.error(uploadErrorMessage(err));
       updateItem(key, { _imageFile: undefined, _imageUploading: false });
     }
   }
 
+  async function handleProductCodeBlur(key: string, code: string) {
+    if (!code.trim()) return;
+    const item = itemsRef.current.find((i) => i._key === key);
+    if (!item || item.description) return; // don't overwrite a description the user already typed
+    const prod = await getProductByCode(code).catch(() => null);
+    if (!prod) return;
+    // Only fill description — re-check it's still empty in case the user typed while awaiting
+    setItems((prev) => prev.map((i) =>
+      i._key === key && !i.description
+        ? { ...i, description: prod.description ?? "", _descriptionSource: "product" }
+        : i
+    ));
+  }
+
   function removeItemImage(key: string) {
-    updateItem(key, { imageKey: undefined, _imageFile: undefined });
+    const item = itemsRef.current.find((i) => i._key === key);
+    if (item?.imageKey && !item._imageInherited) deleteProcurementImages([item.imageKey]).catch(() => {});
+    updateItem(key, { imageKey: undefined, _imageFile: undefined, _imagePreviewUrl: undefined, _imageInherited: false });
   }
 
   async function handlePdfSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -302,11 +484,17 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     if (items.some((i) => i._imageUploading)) { toast.error("Please wait for image uploads to finish"); return null; }
 
     const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
+
+    // In PR mode: collect unique CPO IDs from item-level cpoId fields
+    const prModeCpoIds = isPrMode
+      ? [...new Set(items.map((i) => i._cpoId).filter(Boolean) as string[])]
+      : [];
+
     return createPurchaseOrder({
       purchaseRequisitionId: prData?.id,
       supplierId,
       salesOrderId: isPrMode ? (prData?.salesOrderId ?? undefined) : selectedSo?.id,
-      customerPoIds: isPrMode ? [] : selectedCpos.map((c) => c.id),
+      customerPoIds: isPrMode ? prModeCpoIds : selectedCpos.map((c) => c.id),
       supplierQuotationKey: pdfKey,
       currency,
       subtotal: subtotal.toFixed(2),
@@ -316,7 +504,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
       notes: notes || undefined,
       expectedDeliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
       deliveryAddress: deliveryAddress || undefined,
-      items: items.map(({ _key, _imageFile, _imageUploading, ...rest }) => rest),
+      items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _descriptionSource, _cpoId, _isAdditional, _editedBy, ...rest }) => rest),
     });
   }
 
@@ -325,6 +513,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     try {
       const po = await buildAndCreate();
       if (!po) return;
+      committedRef.current = true;
       toast.success(`Purchase order ${po.poNo ?? ""} created`);
       router.push(`/dashboard/procurement/purchase-order/${po.id}`);
     } catch (e: any) {
@@ -336,9 +525,10 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
 
   const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
 
-  const backHref = isPrMode
-    ? `/dashboard/procurement/requisition/${prData!.id}`
-    : "/dashboard/procurement/purchase-order";
+  const backHref = backHrefProp
+    ?? (isPrMode
+      ? `/dashboard/procurement/requisition/${prData!.id}`
+      : "/dashboard/procurement/purchase-order");
 
   return (
     <div className="p-6">
@@ -363,13 +553,18 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
             <div className="flex items-center gap-2 text-xs font-semibold text-blue-800 dark:text-blue-300 uppercase tracking-wide">
               <ClipboardListIcon className="w-3.5 h-3.5" /> Source Requisition
             </div>
-            <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono font-medium text-sm">{prData!.prNo}</span>
               {prData!.salesOrderNo && (
                 <span className="flex items-center gap-1 text-xs text-muted-foreground">
                   <LinkIcon className="w-3 h-3" /> {prData!.salesOrderNo}
                 </span>
               )}
+              {prData!.cpoNos.map((cpo) => (
+                <span key={cpo} className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-100 dark:bg-blue-800/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700">
+                  {cpo}
+                </span>
+              ))}
             </div>
             <p className="text-xs text-blue-700 dark:text-blue-400">
               Select a supplier below — items will be filtered to show only those assigned to that supplier.
@@ -414,14 +609,29 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
                   </optgroup>
                 );
               })()}
-              <optgroup label={isPrMode ? "All suppliers" : "Suppliers"}>
-                {suppliers.map((s) => (
+              {!isPrMode && orderedSupplierIds.length > 0 && (
+                <optgroup label="Already have PO for this SO">
+                  {suppliers.filter((s) => orderedSupplierIds.includes(s.id)).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.registrationNo ? ` (${s.registrationNo})` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label={isPrMode ? "All suppliers" : (orderedSupplierIds.length > 0 ? "Other suppliers" : "Suppliers")}>
+                {suppliers.filter((s) => isPrMode || !orderedSupplierIds.includes(s.id)).map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}{s.registrationNo ? ` (${s.registrationNo})` : ""}
                   </option>
                 ))}
               </optgroup>
             </select>
+          )}
+          {!isPrMode && supplierId && orderedSupplierIds.includes(supplierId) && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+              <AlertCircleIcon className="w-3.5 h-3.5 shrink-0" />
+              This supplier already has an active PO for the selected sales order.
+            </div>
           )}
         </section>
 
@@ -431,16 +641,27 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
             <h2 className="text-sm font-semibold mb-1">Linked Sales Order</h2>
             <p className="text-xs text-muted-foreground mb-3">Optional — link to a confirmed SO if this order is tied to a customer order.</p>
             {selectedSo ? (
-              <div className="flex items-center gap-2 bg-muted/30 rounded-lg px-3 py-2">
-                <div className="flex-1">
-                  <span className="text-sm font-mono font-medium">{selectedSo.soNo}</span>
-                  {selectedSo.customerName && (
-                    <span className="text-xs text-muted-foreground ml-2">— {selectedSo.customerName}</span>
-                  )}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 bg-muted/30 rounded-lg px-3 py-2">
+                  <div className="flex-1">
+                    <span className="text-sm font-mono font-medium">{selectedSo.soNo}</span>
+                    {selectedSo.customerName && (
+                      <span className="text-xs text-muted-foreground ml-2">— {selectedSo.customerName}</span>
+                    )}
+                  </div>
+                  <button onClick={() => { setSelectedSo(null); setItems([newLine(1)]); setOrderedSupplierIds([]); setOrderedProductCodes([]); }} className="text-muted-foreground hover:text-foreground shrink-0">
+                    <XIcon className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <button onClick={() => { setSelectedSo(null); setItems([newLine(1)]); }} className="text-muted-foreground hover:text-foreground shrink-0">
-                  <XIcon className="w-3.5 h-3.5" />
-                </button>
+                {orderedProductCodes.length > 0 && (
+                  <div className="flex items-start gap-2 text-xs text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2">
+                    <InfoIcon className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      {orderedProductCodes.length} item{orderedProductCodes.length !== 1 ? "s" : ""} already covered by existing POs
+                      ({orderedProductCodes.join(", ")}) — showing remaining items only.
+                    </span>
+                  </div>
+                )}
               </div>
             ) : approvedSos.length === 0 ? (
               <p className="text-xs text-muted-foreground">No approved sales orders available</p>
@@ -464,7 +685,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
                       setSoSearch("");
                       setLoadingSoItems(true);
                       try {
-                        const soItems = await getSalesOrderItemsForPo(so.id);
+                        const { items: soItems, orderedSupplierIds: oids, orderedProductCodes: opcodes } = await getSalesOrderItemsForPo(so.id);
+                        setOrderedSupplierIds(oids);
+                        setOrderedProductCodes(opcodes);
                         if (soItems.length > 0) {
                           const detected = detectCurrency(soItems);
                           setCurrency(detected);
@@ -481,6 +704,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
                             totalPrice: si.totalPrice ?? "0",
                             imageKey: si.imageKey ?? undefined,
                           })));
+                        } else {
+                          setItems([newLine(1)]);
                         }
                       } catch {
                         toast.error("Failed to load SO items");
@@ -627,83 +852,211 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
         </section>
 
         {/* ── Items table ── */}
-        <section className="border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">
-              Items
-              {loadingSoItems && <span className="ml-2 text-xs font-normal text-muted-foreground">Loading from SO…</span>}
-              {isPrMode && supplierId && <span className="ml-2 text-xs font-normal text-muted-foreground">Filtered from requisition — adjust actual prices</span>}
-            </h2>
-            <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={addLine} disabled={loadingSoItems}>
-              <PlusIcon className="w-3 h-3" /> Add row
-            </Button>
+        <div className="rounded-xl border border-border bg-background overflow-hidden">
+          <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold">
+                Items
+              </h2>
+              {isPrMode && supplierId && (
+                <p className="text-[11px] text-muted-foreground mt-0.5">Filtered from requisition — adjust actual prices.</p>
+              )}
+            </div>
+            {loadingSoItems && <span className="text-xs text-muted-foreground animate-pulse">Loading…</span>}
           </div>
 
           {isPrMode && !supplierId ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
+            <p className="text-sm text-muted-foreground py-8 text-center">
               Select a supplier above to load items from this requisition.
             </p>
           ) : items.length === 0 && isPrMode ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
+            <p className="text-sm text-muted-foreground py-8 text-center">
               No items assigned to this supplier in the requisition.
             </p>
           ) : (
-            <div className="space-y-2">
-              {items.map((item) => (
-                <div key={item._key} className="border border-border/50 rounded-lg p-3">
-                  <div className="grid grid-cols-12 gap-2 items-start">
-                    <div className="col-span-1 pt-1.5 text-xs text-muted-foreground text-center">{item.rowNo}</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30 text-muted-foreground">
+                    <th className="text-left px-3 py-2 font-medium w-8">#</th>
+                    <th className="text-left px-3 py-2 font-medium w-12">Image</th>
+                    <th className="text-left px-3 py-2 font-medium w-28">Code</th>
+                    <th className="text-left px-3 py-2 font-medium">Description</th>
+                    <th className="text-left px-3 py-2 font-medium w-20">Qty</th>
+                    <th className="text-left px-3 py-2 font-medium w-14">OUM</th>
+                    <th className="text-left px-3 py-2 font-medium w-28">Unit Price</th>
+                    <th className="text-left px-3 py-2 font-medium w-24">Total</th>
+                    <th className="w-8" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {items.map((item) => (
+                    <tr key={item._key} className="group align-top">
+                      <td className="px-3 py-2.5 text-muted-foreground">{item.rowNo}</td>
 
-                    <div className="col-span-4 space-y-1.5">
-                      <Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} placeholder="Product code" className="h-7 text-xs" />
-                      <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} placeholder="Description" className="h-7 text-xs" />
-                    </div>
+                      {/* Image */}
+                      <td className="px-2 py-1.5">
+                        <input
+                          id={`po-img-${item._key}`}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleItemImage(item._key, e)}
+                        />
+                        {item._imageUploading ? (
+                          <div className="w-9 h-9 flex items-center justify-center rounded border border-border">
+                            <span className="text-[10px] text-muted-foreground animate-pulse">…</span>
+                          </div>
+                        ) : (
+                          <PoProductThumbnail
+                            productCode={item.productCode ?? ""}
+                            overrideUrl={item._imagePreviewUrl}
+                            onReplace={() => document.getElementById(`po-img-${item._key}`)?.click()}
+                          />
+                        )}
+                      </td>
 
-                    <div className="col-span-2 space-y-1.5">
-                      <Input value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} placeholder="Qty" className="h-7 text-xs text-right" />
-                      <Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} placeholder="UOM" className="h-7 text-xs" />
-                    </div>
+                      {/* Code */}
+                      <td className="px-2 py-1.5">
+                        <Input
+                          value={item.productCode ?? ""}
+                          onChange={(e) => updateItem(item._key, { productCode: e.target.value })}
+                          onBlur={(e) => handleProductCodeBlur(item._key, e.target.value)}
+                          className="h-7 text-xs"
+                          placeholder="Code"
+                        />
+                      </td>
 
-                    <div className="col-span-3 space-y-1.5">
-                      <div className="flex gap-1">
-                        <Input value={item.currency ?? "MYR"} onChange={(e) => updateItem(item._key, { currency: e.target.value.toUpperCase().slice(0, 3) })} className="h-7 text-xs w-14 shrink-0 font-mono" maxLength={3} />
-                        <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right flex-1" />
-                      </div>
-                      <div className="h-7 px-3 flex items-center justify-end text-xs text-muted-foreground font-mono bg-muted/30 rounded-md">
-                        {fmt(parseFloat(item.totalPrice || "0"), item.currency ?? currency)}
-                      </div>
-                    </div>
-
-                    <div className="col-span-2 flex items-start gap-1 pt-0.5">
-                      <div className="flex-1">
-                        {item.imageKey || item._imageFile ? (
-                          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <ImageIcon className="w-3 h-3" />
-                            <span className="truncate flex-1">
-                              {item._imageUploading ? "Uploading…" : (item._imageFile?.name ?? "Image attached")}
-                            </span>
+                      {/* Description + badges */}
+                      <td className="px-2 py-1.5">
+                        {(item.customerPoNo || item.customerOrganization || item.customerName) && (
+                          <div className="flex flex-wrap gap-1 mb-1">
+                            {item.customerPoNo && (
+                              <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                                {item.customerPoNo}
+                              </span>
+                            )}
+                            {item.customerOrganization && (
+                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                                {item.customerOrganization}
+                              </span>
+                            )}
+                            {item.customerName && (
+                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                                {item.customerName}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        <Input
+                          value={item.description ?? ""}
+                          onChange={(e) => updateItem(item._key, { description: e.target.value, _descriptionSource: undefined })}
+                          className="h-7 text-xs"
+                          placeholder="Description"
+                        />
+                        {item._descriptionSource === "product" && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                            <DatabaseIcon className="w-3 h-3 shrink-0" />
+                            auto-filled from catalog
+                          </span>
+                        )}
+                        {item._descriptionSource === "pr" && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                            <ClipboardListIcon className="w-3 h-3 shrink-0" />
+                            from purchase requisition
+                          </span>
+                        )}
+                        {item._isAdditional && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                            <PlusIcon className="w-3 h-3 shrink-0" />
+                            additional row
+                          </span>
+                        )}
+                        {item._editedBy && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                            <PencilIcon className="w-3 h-3 shrink-0" />
+                            {item._editedBy} edited
+                          </span>
+                        )}
+                        {item._imageFile && (
+                          <div className="flex items-center gap-1 mt-1 text-[10px] text-muted-foreground">
+                            <ImageIcon className="w-3 h-3 shrink-0" />
+                            <span className="truncate flex-1">{item._imageUploading ? "Uploading…" : item._imageFile.name}</span>
                             {!item._imageUploading && (
                               <button onClick={() => removeItemImage(item._key)}><XIcon className="w-3 h-3" /></button>
                             )}
                           </div>
-                        ) : (
-                          <label className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer transition-colors">
-                            <ImageIcon className="w-3 h-3" />
-                            <span>Add image</span>
-                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleItemImage(item._key, e)} />
-                          </label>
                         )}
-                      </div>
-                      <button onClick={() => removeLine(item._key)} disabled={items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 mt-0.5">
-                        <TrashIcon className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                      </td>
+
+                      {/* Qty */}
+                      <td className="px-2 py-1.5">
+                        <Input
+                          type="number"
+                          value={item.qty}
+                          onChange={(e) => updateItem(item._key, { qty: e.target.value })}
+                          className="h-7 text-xs text-center"
+                        />
+                      </td>
+
+                      {/* UOM */}
+                      <td className="px-2 py-1.5">
+                        <Input
+                          value={item.uom ?? ""}
+                          onChange={(e) => updateItem(item._key, { uom: e.target.value })}
+                          className="h-7 text-xs"
+                          placeholder="oum"
+                        />
+                      </td>
+
+                      {/* Unit Price */}
+                      <td className="px-2 py-1.5">
+                        <Input
+                          type="number"
+                          value={item.unitPrice ?? "0"}
+                          onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })}
+                          className="h-7 text-xs text-right"
+                          placeholder="0.00"
+                        />
+                      </td>
+
+                      {/* Total */}
+                      <td className="px-3 py-2.5 tabular-nums font-medium text-right">
+                        <span className="text-[10px] text-muted-foreground mr-0.5">{item.currency ?? currency}</span>
+                        {parseFloat(item.totalPrice || "0").toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                      </td>
+
+                      {/* Delete */}
+                      <td className="px-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => removeLine(item._key)}
+                          disabled={items.length === 1}
+                          className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"
+                        >
+                          <TrashIcon className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-        </section>
+
+          <div className="px-4 py-3 border-t border-border flex items-center justify-between">
+            <Button variant="ghost" size="sm" className="gap-1.5 text-xs" onClick={addLine} disabled={loadingSoItems}>
+              <PlusIcon className="w-3 h-3" /> Add Item
+            </Button>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums">
+              <span>
+                <span className="font-medium text-foreground">{currency}</span>{" "}
+                <span className="font-semibold text-foreground">
+                  {subtotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
 
         {/* ── Pricing summary ── */}
         <section className="border border-border rounded-xl p-4">

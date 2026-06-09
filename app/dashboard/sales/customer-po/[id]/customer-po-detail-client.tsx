@@ -216,7 +216,7 @@ export function CustomerPoDetailClient({
   const cpoStatusCfg = CPO_STATUS[cpo.status] ?? CPO_STATUS.received;
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
+    <div className="p-6 space-y-6">
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>

@@ -8,10 +8,13 @@ import {
   customer,
   customerCompany,
   user,
+  salesOrder,
+  salesOrderItem,
+  customerPurchaseOrder,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, isNotNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -350,4 +353,104 @@ export async function returnDeliveryOrder(id: string, warehouseLabel = "Default"
         }),
       ),
   );
+}
+
+export type PendingSoForDoRow = {
+  id: string;
+  soNo: string;
+  customers: { name: string; organizationName: string | null }[];
+  customerPoNos: string[];
+  grandTotal: string;
+  createdAt: Date;
+};
+
+export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
+  const { orgId } = await requireAccess("delivery-order:read");
+
+  // Confirmed SOs with stock fully reserved
+  const rows = await db
+    .select({
+      id: salesOrder.id,
+      soNo: salesOrder.soNo,
+      customerPoId: salesOrder.customerPoId,
+      customerPoNo: salesOrder.customerPoNo,
+      customerPoLinks: salesOrder.customerPoLinks,
+      grandTotal: salesOrder.grandTotal,
+      createdAt: salesOrder.createdAt,
+    })
+    .from(salesOrder)
+    .where(and(
+      eq(salesOrder.organizationId, orgId),
+      eq(salesOrder.status, "confirmed"),
+      eq(salesOrder.stockReservationStatus, "reserved"),
+    ))
+    .orderBy(desc(salesOrder.createdAt));
+
+  if (rows.length === 0) return [];
+
+  // Exclude SOs that already have at least one DO (any status)
+  const soIds = rows.map((r) => r.id);
+  const existingDoSoIds = await db
+    .selectDistinct({ salesOrderId: deliveryOrder.salesOrderId })
+    .from(deliveryOrder)
+    .where(and(
+      eq(deliveryOrder.organizationId, orgId),
+      isNotNull(deliveryOrder.salesOrderId),
+      inArray(deliveryOrder.salesOrderId, soIds),
+    ));
+
+  const soIdsWithDo = new Set(existingDoSoIds.map((r) => r.salesOrderId!));
+  const pendingRows = rows.filter((r) => !soIdsWithDo.has(r.id));
+
+  if (pendingRows.length === 0) return [];
+
+  // Fetch CPO customer snapshots for display
+  type CpoLink = { customerPoId: string; customerPoNo: string };
+  const allCpoIds = [
+    ...new Set(
+      pendingRows.flatMap((r) => {
+        const links = (r.customerPoLinks as CpoLink[] | null) ?? [];
+        return links.length > 0
+          ? links.map((l) => l.customerPoId)
+          : r.customerPoId ? [r.customerPoId] : [];
+      }),
+    ),
+  ];
+
+  const cpoSnapshotMap = new Map<string, { name?: string; organizationName?: string }>();
+  if (allCpoIds.length > 0) {
+    const cpos = await db
+      .select({ id: customerPurchaseOrder.id, customerSnapshot: customerPurchaseOrder.customerSnapshot })
+      .from(customerPurchaseOrder)
+      .where(inArray(customerPurchaseOrder.id, allCpoIds));
+    for (const cpo of cpos) {
+      if (cpo.customerSnapshot) cpoSnapshotMap.set(cpo.id, cpo.customerSnapshot as { name?: string; organizationName?: string });
+    }
+  }
+
+  return pendingRows.map((r) => {
+    const links = (r.customerPoLinks as CpoLink[] | null) ?? [];
+    const cpoIds = links.length > 0
+      ? links.map((l) => l.customerPoId)
+      : r.customerPoId ? [r.customerPoId] : [];
+
+    const customerPoNos = links.length > 0
+      ? [...new Set(links.map((l) => l.customerPoNo).filter(Boolean))]
+      : r.customerPoNo ? [r.customerPoNo] : [];
+
+    const seen = new Set<string>();
+    const customers: { name: string; organizationName: string | null }[] = [];
+    for (const cpoId of cpoIds) {
+      const s = cpoSnapshotMap.get(cpoId);
+      const name = s?.name?.trim();
+      if (!name) continue;
+      const orgName = s?.organizationName?.trim() || null;
+      const key = `${name}||${orgName ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      customers.push({ name, organizationName: orgName });
+    }
+
+    return { id: r.id, soNo: r.soNo, customers, customerPoNos, grandTotal: r.grandTotal, createdAt: r.createdAt };
+  });
 }

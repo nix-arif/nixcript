@@ -64,25 +64,30 @@ export async function getPoSupplierQuotationDownloadUrl(key: string): Promise<st
   return getSignedUrl(s3, cmd, { expiresIn: 3600 });
 }
 
-// ── R2 product image (purchase order item) ─────────────────────────────────
-const PRODUCT_IMAGE_BUCKET = process.env.R2_PRODUCT_IMAGE_BUCKET ?? process.env.R2_CERTIFICATES_BUCKET!;
+// ── R2 procurement item images (PO/PR attachments — isolated from product catalog) ──
+const PROCUREMENT_DOCS_BUCKET = process.env.R2_PROCUREMENT_IMAGES_BUCKET!;
 
 export async function getPoItemImageUploadUrl(
   filename: string,
 ): Promise<{ key: string; uploadUrl: string }> {
   await requireAccess("purchase-order:create");
-  const key = `po-product-images/${nanoid()}-${filename}`;
-  const cmd = new PutObjectCommand({
-    Bucket: PRODUCT_IMAGE_BUCKET,
-    Key: key,
-  });
+  const key = `po-item-images/${nanoid()}-${filename}`;
+  const cmd = new PutObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: key });
   const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
   return { key, uploadUrl };
 }
 
 export async function getPoItemImageDownloadUrl(key: string): Promise<string> {
-  const cmd = new GetObjectCommand({ Bucket: PRODUCT_IMAGE_BUCKET, Key: key });
+  const cmd = new GetObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: key });
   return getSignedUrl(s3, cmd, { expiresIn: 3600 });
+}
+
+export async function deleteProcurementImages(keys: string[]): Promise<void> {
+  if (!keys.length) return;
+  await requireAccess("purchase-order:create");
+  await Promise.allSettled(
+    keys.map((key) => s3.send(new DeleteObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: key }))),
+  );
 }
 
 async function deleteFile(bucket: string, key: string | null | undefined) {
@@ -164,6 +169,7 @@ async function generatePoNo(orgId: string): Promise<string> {
 
 export type PurchaseOrderRow = typeof purchaseOrder.$inferSelect;
 export type PurchaseOrderItem = typeof purchaseOrderItem.$inferSelect;
+export type PurchaseOrderItemEnriched = PurchaseOrderItem & { imageUrl: string | null };
 
 export interface PurchaseOrderItemInput {
   rowNo: number;
@@ -176,6 +182,9 @@ export interface PurchaseOrderItemInput {
   currency?: string;
   totalPrice?: string;
   imageKey?: string;
+  customerName?: string;
+  customerOrganization?: string;
+  customerPoNo?: string;
 }
 
 export interface CreatePurchaseOrderInput {
@@ -203,6 +212,7 @@ export type PrForPoConversion = {
   salesOrderId: string | null;
   salesOrderNo: string | null;
   notes: string | null;
+  cpoNos: string[]; // all unique CPO numbers across items
   items: Array<{
     id: string;
     rowNo: number;
@@ -215,6 +225,14 @@ export type PrForPoConversion = {
     currency: string;
     preferredSupplierId: string | null;
     preferredSupplierName: string | null;
+    imageKey: string | null;
+    imageUrl: string | null;
+    cpoNo: string | null;
+    cpoId: string | null;
+    customerName: string | null;
+    customerOrganization: string | null;
+    isAdditional: boolean;
+    editedBy: string | null;
   }>;
 };
 
@@ -227,11 +245,55 @@ export async function getPrForPoConversion(prId: string): Promise<PrForPoConvers
   if (!pr) return null;
   if (pr.status !== "approved" && pr.status !== "partially_ordered") return null;
 
-  const items = await db
-    .select()
-    .from(purchaseRequisitionItem)
-    .where(eq(purchaseRequisitionItem.purchaseRequisitionId, prId))
-    .orderBy(asc(purchaseRequisitionItem.rowNo));
+  const [items, cpos] = await Promise.all([
+    db.select().from(purchaseRequisitionItem)
+      .where(eq(purchaseRequisitionItem.purchaseRequisitionId, prId))
+      .orderBy(asc(purchaseRequisitionItem.rowNo)),
+    // Load CPOs linked to the SO so we can resolve cpoNo → cpoId
+    pr.salesOrderId
+      ? db.select({ id: customerPurchaseOrder.id, customerPoNo: customerPurchaseOrder.customerPoNo })
+          .from(customerPurchaseOrder)
+          .where(and(eq(customerPurchaseOrder.salesOrderId, pr.salesOrderId), eq(customerPurchaseOrder.organizationId, orgId)))
+      : Promise.resolve([]),
+  ]);
+
+  // Map cpoNo → cpoId for quick lookup
+  const cpoIdByNo = new Map(cpos.map((c) => [c.customerPoNo, c.id]));
+
+  const enrichedItems = await Promise.all(
+    items.map(async (i) => {
+      let imageUrl: string | null = null;
+      if (i.imageKey) {
+        try {
+          const cmd = new GetObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: i.imageKey });
+          imageUrl = await getSignedUrl(s3, cmd, { expiresIn: 7200 });
+        } catch {}
+      }
+      return {
+        id: i.id,
+        rowNo: i.rowNo,
+        productId: i.productId ?? null,
+        productCode: i.productCode ?? null,
+        description: i.description ?? null,
+        qty: i.qty ?? "1",
+        uom: i.uom ?? null,
+        estimatedUnitCost: i.estimatedUnitCost ?? "0",
+        currency: i.currency ?? "MYR",
+        preferredSupplierId: i.preferredSupplierId ?? null,
+        preferredSupplierName: i.preferredSupplierName ?? null,
+        imageKey: i.imageKey ?? null,
+        imageUrl,
+        cpoNo: i.cpoNo ?? null,
+        cpoId: i.cpoNo ? (cpoIdByNo.get(i.cpoNo) ?? null) : null,
+        customerName: i.customerName ?? null,
+        customerOrganization: i.customerOrganization ?? null,
+        isAdditional: i.isAdditional ?? false,
+        editedBy: i.editedBy ?? null,
+      };
+    }),
+  );
+
+  const cpoNos = [...new Set(enrichedItems.map((i) => i.cpoNo).filter(Boolean) as string[])];
 
   return {
     id: pr.id,
@@ -239,19 +301,8 @@ export async function getPrForPoConversion(prId: string): Promise<PrForPoConvers
     salesOrderId: pr.salesOrderId,
     salesOrderNo: pr.salesOrderNo,
     notes: pr.notes,
-    items: items.map((i) => ({
-      id: i.id,
-      rowNo: i.rowNo,
-      productId: i.productId ?? null,
-      productCode: i.productCode ?? null,
-      description: i.description ?? null,
-      qty: i.qty ?? "1",
-      uom: i.uom ?? null,
-      estimatedUnitCost: i.estimatedUnitCost ?? "0",
-      currency: i.currency ?? "MYR",
-      preferredSupplierId: i.preferredSupplierId ?? null,
-      preferredSupplierName: i.preferredSupplierName ?? null,
-    })),
+    cpoNos,
+    items: enrichedItems,
   };
 }
 
@@ -266,22 +317,7 @@ export interface UpdatePurchaseOrderInput extends Omit<CreatePurchaseOrderInput,
 export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: string; customerName: string | null }[]> {
   const { orgId } = await requireAccess("purchase-order:read");
 
-  // Exclude SOs that already have an active (non-cancelled) PO
-  const linkedSoIds = (
-    await db
-      .select({ salesOrderId: purchaseOrder.salesOrderId })
-      .from(purchaseOrder)
-      .where(
-        and(
-          eq(purchaseOrder.organizationId, orgId),
-          sql`${purchaseOrder.salesOrderId} is not null`,
-          sql`${purchaseOrder.status} != 'cancelled'`,
-        ),
-      )
-  )
-    .map((r) => r.salesOrderId)
-    .filter((id): id is string => !!id);
-
+  // Show all confirmed SOs — item-level filtering in getSalesOrderItemsForPo handles partial orders
   const rows = await db
     .select({
       id: salesOrder.id,
@@ -293,7 +329,6 @@ export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: stri
       and(
         eq(salesOrder.organizationId, orgId),
         eq(salesOrder.status, "confirmed"),
-        linkedSoIds.length > 0 ? notInArray(salesOrder.id, linkedSoIds) : undefined,
       ),
     )
     .orderBy(desc(salesOrder.createdAt));
@@ -322,6 +357,17 @@ export async function getActiveCustomerPos(): Promise<{ id: string; customerPoNo
   });
 }
 
+export async function getDefaultDeliveryAddress(): Promise<string> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  const [profile] = await db
+    .select({ warehouseAddresses: organizationProfile.warehouseAddresses })
+    .from(organizationProfile)
+    .where(eq(organizationProfile.organizationId, orgId))
+    .limit(1);
+  const addresses = (profile?.warehouseAddresses as { label: string; address: string }[] | null) ?? [];
+  return addresses[0]?.address ?? "";
+}
+
 export interface SoItemForPo {
   rowNo: number;
   productId: string | null;
@@ -335,20 +381,57 @@ export interface SoItemForPo {
   imageKey: string | null;
 }
 
-export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemForPo[]> {
+export interface SoItemsForPoResult {
+  items: SoItemForPo[];
+  orderedProductCodes: string[];
+  orderedSupplierIds: string[];
+}
+
+export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForPoResult> {
   await requireAccess("purchase-order:read");
-  const items = await db
+
+  // Find active (non-cancelled) POs already linked to this SO
+  const activePOs = await db
+    .select({ id: purchaseOrder.id, supplierId: purchaseOrder.supplierId })
+    .from(purchaseOrder)
+    .where(
+      and(
+        eq(purchaseOrder.salesOrderId, soId),
+        sql`${purchaseOrder.status} != 'cancelled'`,
+      ),
+    );
+
+  const orderedSupplierIds = [...new Set(
+    activePOs.map((p) => p.supplierId).filter((id): id is string => !!id),
+  )];
+
+  let orderedProductCodes: string[] = [];
+  if (activePOs.length > 0) {
+    const poIds = activePOs.map((p) => p.id);
+    const orderedItems = await db
+      .select({ productCode: purchaseOrderItem.productCode })
+      .from(purchaseOrderItem)
+      .where(inArray(purchaseOrderItem.purchaseOrderId, poIds));
+    orderedProductCodes = [...new Set(
+      orderedItems.map((i) => i.productCode).filter((c): c is string => !!c),
+    )];
+  }
+
+  const allItems = await db
     .select()
     .from(salesOrderItem)
     .where(eq(salesOrderItem.salesOrderId, soId))
     .orderBy(asc(salesOrderItem.rowNo));
 
-  if (items.length === 0) return [];
+  if (allItems.length === 0) return { items: [], orderedProductCodes, orderedSupplierIds };
 
-  const codes = items.map((i) => i.productCode).filter((c): c is string => !!c);
+  // Exclude items whose productCode is already covered by an active PO for this SO
+  const orderedSet = new Set(orderedProductCodes);
+  const unorderedItems = allItems.filter((i) => !i.productCode || !orderedSet.has(i.productCode));
+
+  const codes = unorderedItems.map((i) => i.productCode).filter((c): c is string => !!c);
   const imageMap: Record<string, string | null> = {};
   const costMap: Record<string, string | null> = {};
-
   const currencyMap: Record<string, string | null> = {};
 
   if (codes.length > 0) {
@@ -363,7 +446,7 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemForPo
     }
   }
 
-  return items.map((i) => {
+  const items = unorderedItems.map((i) => {
     const cost = i.productCode ? (costMap[i.productCode] ?? null) : null;
     const unitPrice = cost ?? "0";
     const qty = parseFloat(i.qty ?? "1");
@@ -381,23 +464,95 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemForPo
       imageKey: i.productCode ? (imageMap[i.productCode] ?? null) : null,
     };
   });
+
+  return { items, orderedProductCodes, orderedSupplierIds };
 }
 
 export type PurchaseOrderCustomerPoRow = typeof purchaseOrderCustomerPo.$inferSelect;
 export type GoodsReceiptSummary = { id: string; grNo: string; receivedDate: Date; createdAt: Date };
 export type PurchaseOrderWithItems = PurchaseOrderRow & {
-  items: PurchaseOrderItem[];
+  items: PurchaseOrderItemEnriched[];
   createdByName: string | null;
   salesOrderNo: string | null;
   customerPos: PurchaseOrderCustomerPoRow[];
   goodsReceipts: GoodsReceiptSummary[];
 };
-export type PurchaseOrderListRow = PurchaseOrderRow & { createdByName: string | null };
+export type PurchaseOrderListRow = PurchaseOrderRow & { createdByName: string | null; customerPoNos: string[] };
 
 const EDITABLE_STATUSES = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
 // ── Queries ────────────────────────────────────────────────────────────────
+
+export type PendingPrRow = {
+  id: string;
+  prNo: string;
+  status: string;
+  salesOrderNo: string | null;
+  customerPoNos: string[];
+  requestedByName: string | null;
+  itemCount: number;
+  createdAt: Date;
+};
+
+export async function getPendingPrsForPoConversion(): Promise<PendingPrRow[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+
+  const rows = await db
+    .select()
+    .from(purchaseRequisition)
+    .where(
+      and(
+        eq(purchaseRequisition.organizationId, orgId),
+        inArray(purchaseRequisition.status, ["approved", "partially_ordered"]),
+      ),
+    )
+    .orderBy(desc(purchaseRequisition.createdAt));
+
+  if (rows.length === 0) return [];
+
+  const userIds = [...new Set(rows.map((r) => r.requestedBy))];
+  const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds));
+  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+
+  const prIds = rows.map((r) => r.id);
+  const items = await db
+    .select({
+      purchaseRequisitionId: purchaseRequisitionItem.purchaseRequisitionId,
+      cpoNo: purchaseRequisitionItem.cpoNo,
+    })
+    .from(purchaseRequisitionItem)
+    .where(inArray(purchaseRequisitionItem.purchaseRequisitionId, prIds));
+
+  const countMap = new Map<string, number>();
+  const cpoMap = new Map<string, Set<string>>();
+  for (const i of items) {
+    countMap.set(i.purchaseRequisitionId, (countMap.get(i.purchaseRequisitionId) ?? 0) + 1);
+    if (i.cpoNo) {
+      const set = cpoMap.get(i.purchaseRequisitionId) ?? new Set();
+      set.add(i.cpoNo);
+      cpoMap.set(i.purchaseRequisitionId, set);
+    }
+  }
+
+  return rows.map((r) => {
+    // Collect from items; fall back to the PR-level customerPoNo for old records
+    const fromItems = [...(cpoMap.get(r.id) ?? [])];
+    const customerPoNos = fromItems.length > 0
+      ? fromItems
+      : r.customerPoNo ? [r.customerPoNo] : [];
+    return {
+      id: r.id,
+      prNo: r.prNo,
+      status: r.status,
+      salesOrderNo: r.salesOrderNo ?? null,
+      customerPoNos,
+      requestedByName: nameOf(r.requestedBy),
+      itemCount: countMap.get(r.id) ?? 0,
+      createdAt: r.createdAt,
+    };
+  });
+}
 
 export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
   const { orgId } = await requireAccess("purchase-order:read");
@@ -410,11 +565,23 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
 
   if (rows.length === 0) return [];
 
-  const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
-  const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds));
-  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+  const poIds = rows.map((r) => r.id);
+  const [users, cpoLinks] = await Promise.all([
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [...new Set(rows.map((r) => r.createdBy))])),
+    db.select({ purchaseOrderId: purchaseOrderCustomerPo.purchaseOrderId, customerPoNo: purchaseOrderCustomerPo.customerPoNo })
+      .from(purchaseOrderCustomerPo)
+      .where(inArray(purchaseOrderCustomerPo.purchaseOrderId, poIds)),
+  ]);
 
-  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy) }));
+  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+  const cpoMap = new Map<string, string[]>();
+  for (const link of cpoLinks) {
+    const arr = cpoMap.get(link.purchaseOrderId) ?? [];
+    arr.push(link.customerPoNo);
+    cpoMap.set(link.purchaseOrderId, arr);
+  }
+
+  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy), customerPoNos: cpoMap.get(r.id) ?? [] }));
 }
 
 export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderWithItems | null> {
@@ -440,9 +607,22 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
       .orderBy(desc(goodsReceipt.createdAt)),
   ]);
 
+  const enrichedItems: PurchaseOrderItemEnriched[] = await Promise.all(
+    items.map(async (i) => {
+      let imageUrl: string | null = null;
+      if (i.imageKey) {
+        try {
+          const cmd = new GetObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: i.imageKey });
+          imageUrl = await getSignedUrl(s3, cmd, { expiresIn: 7200 });
+        } catch {}
+      }
+      return { ...i, imageUrl };
+    }),
+  );
+
   return {
     ...po,
-    items,
+    items: enrichedItems,
     createdByName: users[0]?.name ?? null,
     salesOrderNo: soRows[0]?.soNo ?? null,
     customerPos,
@@ -478,6 +658,11 @@ export async function getPoForPrint(id: string) {
       newSsmNo: organizationProfile.newSsmNo,
       mdaEstablishmentNo: organizationProfile.mdaEstablishmentNo,
       bankingInfo: organizationProfile.bankingInfo,
+      pdfTemplate: organizationProfile.pdfTemplate,
+      headerLayout: organizationProfile.headerLayout,
+      tableRowStyle: organizationProfile.tableRowStyle,
+      tableFontSize: organizationProfile.tableFontSize,
+      orgNameSize: organizationProfile.orgNameSize,
     })
     .from(organization)
     .leftJoin(organizationProfile, eq(organizationProfile.organizationId, organization.id))
@@ -510,6 +695,11 @@ export async function getPoForPrint(id: string) {
     orgNewSsmNo: org?.newSsmNo ?? null,
     orgMdaEstablishmentNo: org?.mdaEstablishmentNo ?? null,
     orgBankingInfo: (org?.bankingInfo ?? []) as any[],
+    orgPdfTemplate:  org?.pdfTemplate  ?? "affirma",
+    orgHeaderLayout: org?.headerLayout ?? "standard",
+    orgTableRowStyle: org?.tableRowStyle ?? "default",
+    orgTableFontSize: org?.tableFontSize ?? "normal",
+    orgNameSize: org?.orgNameSize ?? "medium",
   };
 }
 
@@ -589,6 +779,9 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
         currency: item.currency ?? "MYR",
         totalPrice: item.totalPrice ?? "0",
         imageKey: item.imageKey ?? null,
+        customerName: item.customerName ?? null,
+        customerOrganization: item.customerOrganization ?? null,
+        customerPoNo: item.customerPoNo ?? null,
       })),
     );
   }
@@ -725,7 +918,7 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
   const newImageKeys = new Set(input.items.map((i) => i.imageKey).filter(Boolean));
   for (const old of oldItems) {
     if (old.imageKey && !newImageKeys.has(old.imageKey)) {
-      await deleteFile(PRODUCT_IMAGE_BUCKET, old.imageKey);
+      await deleteFile(PROCUREMENT_DOCS_BUCKET, old.imageKey);
     }
   }
 
@@ -746,6 +939,9 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
         currency: item.currency ?? "MYR",
         totalPrice: item.totalPrice ?? "0",
         imageKey: item.imageKey ?? null,
+        customerName: item.customerName ?? null,
+        customerOrganization: item.customerOrganization ?? null,
+        customerPoNo: item.customerPoNo ?? null,
       })),
     );
   }
@@ -796,7 +992,7 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
     .where(eq(purchaseOrderItem.purchaseOrderId, id));
 
   for (const item of items) {
-    if (item.imageKey) await deleteFile(PRODUCT_IMAGE_BUCKET, item.imageKey);
+    if (item.imageKey) await deleteFile(PROCUREMENT_DOCS_BUCKET, item.imageKey);
   }
 
   await db.delete(purchaseOrder).where(eq(purchaseOrder.id, id));
@@ -911,6 +1107,26 @@ export async function recallPurchaseOrder(id: string): Promise<void> {
     type: "po:recalled",
     title: `PO ${docRef} recalled`,
     body: `Purchase order ${docRef} has been recalled by ${session.user.name}.`,
+    link: `/dashboard/procurement/purchase-order/${po.id}`,
+  }).catch(console.error);
+}
+
+export async function reconfirmPurchaseOrder(id: string): Promise<void> {
+  const { orgId, session } = await requireAccess("purchase-order:approve");
+  const po = await getPoForWorkflow(id, orgId);
+  if (po.status !== "draft") throw new Error("Only draft purchase orders can be re-confirmed");
+  await db.update(purchaseOrder).set({ status: "confirmed" }).where(eq(purchaseOrder.id, id));
+
+  revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
+  revalidatePath("/dashboard/procurement/purchase-order");
+
+  const docRef = po.poNo ?? po.prNo ?? id;
+  createNotification({
+    organizationId: orgId,
+    userId: po.createdBy,
+    type: "po:approved",
+    title: `PO ${docRef} re-confirmed`,
+    body: `Purchase order ${docRef} has been re-confirmed by ${session.user.name}.`,
     link: `/dashboard/procurement/purchase-order/${po.id}`,
   }).catch(console.error);
 }

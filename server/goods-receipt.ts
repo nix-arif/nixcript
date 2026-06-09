@@ -7,6 +7,7 @@ import {
   goodsReceiptCounter,
   purchaseOrder,
   purchaseOrderItem,
+  purchaseRequisition,
   product,
   user,
   organization,
@@ -280,6 +281,16 @@ export async function createGoodsReceipt(input: CreateGoodsReceiptInput): Promis
     );
   }
 
+  // Determine warehouse: sample_demo PRs go to "Demo" stock, all others to "Default"
+  let warehouseLabel = "Default";
+  if (po.purchaseRequisitionId) {
+    const [pr] = await db
+      .select({ prType: purchaseRequisition.prType })
+      .from(purchaseRequisition)
+      .where(eq(purchaseRequisition.id, po.purchaseRequisitionId));
+    if (pr?.prType === "sample_demo") warehouseLabel = "Demo";
+  }
+
   // Create STOCK_IN inventory movement for items with productId and qty received > 0
   const poRef = po.poNo ?? po.prNo ?? po.id;
   await Promise.all(
@@ -290,7 +301,7 @@ export async function createGoodsReceipt(input: CreateGoodsReceiptInput): Promis
           orgId,
           userId,
           productId: item.productId!,
-          warehouseLabel: "Default",
+          warehouseLabel,
           movementType: MOVEMENT_TYPE.STOCK_IN,
           quantity: parseFloat(item.qtyReceived),
           unitCost: item.unitPrice ?? undefined,

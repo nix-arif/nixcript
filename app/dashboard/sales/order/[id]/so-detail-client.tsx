@@ -9,6 +9,7 @@ import {
   approveSalesOrder,
   rejectSalesOrder,
   recallSalesOrder,
+  toggleSoItemPrExcluded,
   type SalesOrderWithItems,
 } from "@/server/sales-order";
 import {
@@ -25,7 +26,7 @@ import {
   UserIcon, BuildingIcon, CalendarIcon, MapPinIcon,
   FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon, SendIcon, ClockIcon,
   PrinterIcon, ShoppingCartIcon, WarehouseIcon, AlertTriangleIcon, CheckCircle2Icon,
-  Loader2Icon, TruckIcon, LinkIcon,
+  Loader2Icon, TruckIcon, LinkIcon, PlusIcon, DatabaseIcon, BanIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +81,10 @@ export function SalesOrderDetailClient({
   const [releasing, setReleasing] = useState(false);
   const [reservationResult, setReservationResult] = useState<StockCheckResult | null>(null);
   const [stockStatus, setStockStatus] = useState<string | null>(order.stockReservationStatus ?? null);
+  const [prExcludedItems, setPrExcludedItems] = useState<Set<string>>(
+    () => new Set(order.items.filter((i) => (i as any).prExcluded).map((i) => i.id)),
+  );
+  const [togglingPrExclude, setTogglingPrExclude] = useState<string | null>(null);
 
   // Sync with server-refreshed prop
   useEffect(() => {
@@ -214,6 +219,24 @@ export function SalesOrderDetailClient({
     }
   }
 
+  async function handleTogglePrExclude(itemId: string) {
+    const nowExcluded = !prExcludedItems.has(itemId);
+    setTogglingPrExclude(itemId);
+    try {
+      await toggleSoItemPrExcluded(itemId, nowExcluded);
+      setPrExcludedItems((prev) => {
+        const next = new Set(prev);
+        if (nowExcluded) next.add(itemId); else next.delete(itemId);
+        return next;
+      });
+      toast.success(nowExcluded ? "Item excluded from PR" : "Item included in PR");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setTogglingPrExclude(null);
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       {draftRedirected && (
@@ -329,6 +352,9 @@ export function SalesOrderDetailClient({
                       <th className="text-right pb-2 pr-3 w-24">Unit price</th>
                       <th className="text-right pb-2 pr-3 w-14">Disc%</th>
                       <th className="text-right pb-2 w-24">Total</th>
+                      {can("purchase-order:create") && status === "confirmed" && (
+                        <th className="pb-2 w-8" />
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -355,24 +381,52 @@ export function SalesOrderDetailClient({
                       return order.items.map((item) => {
                         const info = cpoInfoMap.get((item as any).sourceCustomerPoId ?? "");
                         return (
-                          <tr key={item.id} className="border-b border-border/40 last:border-0">
+                          <tr key={item.id} className={cn("border-b border-border/40 last:border-0", prExcludedItems.has(item.id) && "opacity-50")}>
                             <td className="py-2 pr-3 text-muted-foreground">{item.rowNo}</td>
                             <td className="py-2 pr-3 font-mono text-muted-foreground">{item.productCode || "—"}</td>
                             <td className="py-2 pr-3">
                               <div className="flex flex-col gap-1">
                                 <span>{item.description || "—"}</span>
-                                {showTags && info && (
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    {info.customerName && (
-                                      <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
-                                        {info.customerName}
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {showTags && info && (
+                                    <>
+                                      {info.customerName && (
+                                        <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
+                                          {info.customerName}
+                                        </span>
+                                      )}
+                                      <span className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                                        {info.cpoNo}
                                       </span>
-                                    )}
-                                    <span className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                                      {info.cpoNo}
+                                    </>
+                                  )}
+                                  {prExcludedItems.has(item.id) && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
+                                      <BanIcon className="w-3 h-3 shrink-0" /> no PR
                                     </span>
-                                  </div>
-                                )}
+                                  )}
+                                  {(item as any).isAdditional && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                                      <PlusIcon className="w-3 h-3 shrink-0" /> additional row
+                                    </span>
+                                  )}
+                                  {(item as any).descriptionSource === "cpo" && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                                      <FileTextIcon className="w-3 h-3 shrink-0" /> from quotation
+                                    </span>
+                                  )}
+                                  {(item as any).descriptionSource === "catalog" && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                                      <DatabaseIcon className="w-3 h-3 shrink-0" /> from product table
+                                    </span>
+                                  )}
+                                  {(item as any).descriptionSource === "user" && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                      <PencilIcon className="w-3 h-3 shrink-0" />
+                                      {(item as any).editedBy ? `${(item as any).editedBy} edited` : "edited"}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </td>
                             <td className="py-2 pr-3 text-right tabular-nums">{item.qty}</td>
@@ -380,6 +434,25 @@ export function SalesOrderDetailClient({
                             <td className="py-2 pr-3 text-right tabular-nums">{fmt(item.unitPrice)}</td>
                             <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">{item.discountPct || "0"}%</td>
                             <td className="py-2 text-right tabular-nums font-medium">{fmt(item.totalPrice)}</td>
+                            {can("purchase-order:create") && status === "confirmed" && (
+                              <td className="py-2 pl-2">
+                                <button
+                                  title={prExcludedItems.has(item.id) ? "Include in PR" : "Exclude from PR"}
+                                  disabled={togglingPrExclude === item.id}
+                                  onClick={() => handleTogglePrExclude(item.id)}
+                                  className={cn(
+                                    "flex items-center justify-center w-6 h-6 rounded transition-colors",
+                                    prExcludedItems.has(item.id)
+                                      ? "text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100"
+                                      : "text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20",
+                                  )}
+                                >
+                                  {togglingPrExclude === item.id
+                                    ? <Loader2Icon className="w-3 h-3 animate-spin" />
+                                    : <BanIcon className="w-3 h-3" />}
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         );
                       });
@@ -791,7 +864,30 @@ export function SalesOrderDetailClient({
                 </div>
               );
             })()}
-            {order.salesPersonName && (
+            {/* Sales person — per-CPO when linked, else order-level */}
+            {order.cpoCustomers.length > 0 ? (
+              <div className="flex items-start gap-2">
+                <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] text-muted-foreground mb-1">Sales person</p>
+                  <div className="space-y-1">
+                    {order.cpoCustomers.map((c) => (
+                      <div key={c.customerPoId} className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
+                        <span className="text-xs">{c.salesPersonName ?? <span className="text-muted-foreground">—</span>}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {(order.associateSalesPersons as { id: string; name: string }[] | null)?.length ? (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {(order.associateSalesPersons as { id: string; name: string }[]).map((a) => (
+                        <span key={a.id} className="text-[10px] bg-muted rounded-full px-2 py-0.5">{a.name}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : order.salesPersonName ? (
               <div className="flex items-start gap-2">
                 <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                 <div>
@@ -806,8 +902,27 @@ export function SalesOrderDetailClient({
                   ) : null}
                 </div>
               </div>
-            )}
-            {order.deliveryDate && (
+            ) : null}
+
+            {/* Due delivery date — per-CPO when linked, else order-level */}
+            {order.cpoCustomers.length > 0 ? (
+              <div className="flex items-start gap-2">
+                <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] text-muted-foreground mb-1">Due delivery date</p>
+                  <div className="space-y-1">
+                    {order.cpoCustomers.map((c) => (
+                      <div key={c.customerPoId} className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
+                        <span className="text-xs">
+                          {c.deliveryDate ? fmtDate(c.deliveryDate) : <span className="text-muted-foreground">—</span>}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : order.deliveryDate ? (
               <div className="flex items-start gap-2">
                 <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                 <div>
@@ -815,8 +930,36 @@ export function SalesOrderDetailClient({
                   <p className="text-xs">{fmtDate(order.deliveryDate)}</p>
                 </div>
               </div>
-            )}
-            {order.deliveryAddress && (
+            ) : null}
+
+            {/* Delivery address — per-CPO when linked, else order-level */}
+            {order.cpoCustomers.length > 0 ? (
+              <div className="flex items-start gap-2">
+                <MapPinIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] text-muted-foreground mb-1">Delivery address</p>
+                  <div className="space-y-1.5">
+                    {order.cpoCustomers.map((c) => (
+                      <div key={c.customerPoId} className="flex items-start gap-1.5">
+                        <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0 pt-0.5">{c.customerPoNo}</span>
+                        <span className="text-xs leading-snug">
+                          {c.customerSnapshot?.organizationAddress ? (
+                            <>
+                              {c.customerSnapshot.organizationName && (
+                                <span className="block text-[10px] font-medium text-muted-foreground">{c.customerSnapshot.organizationName}</span>
+                              )}
+                              {c.customerSnapshot.organizationAddress}
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : order.deliveryAddress ? (
               <div className="flex items-start gap-2">
                 <MapPinIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                 <div>
@@ -824,7 +967,7 @@ export function SalesOrderDetailClient({
                   <p className="text-xs">{order.deliveryAddress}</p>
                 </div>
               </div>
-            )}
+            ) : null}
             <div className="flex items-start gap-2">
               <PackageIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
               <div>

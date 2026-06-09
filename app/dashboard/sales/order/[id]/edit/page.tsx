@@ -17,5 +17,5 @@ export default async function EditSalesOrderPage({ params }: { params: Promise<{
     redirect(`/dashboard/sales/order/${id}`);
   }
 
-  return <EditSalesOrderClient order={order} members={members} />;
+  return <EditSalesOrderClient order={order} members={members} currentUserName={session.user.name ?? ""} />;
 }

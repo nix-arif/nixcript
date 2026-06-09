@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   recallPurchaseOrder,
+  reconfirmPurchaseOrder,
+  submitPurchaseOrder,
   fulfillPurchaseOrder,
   cancelPurchaseOrder,
   type PurchaseOrderWithItems,
@@ -14,9 +16,62 @@ import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, BuildingIcon, CalendarIcon, PackageIcon,
   CheckIcon, XIcon, ArchiveIcon, PrinterIcon, RotateCcwIcon,
-  ClipboardListIcon, TruckIcon, LinkIcon,
+  ClipboardListIcon, TruckIcon, LinkIcon, ImageIcon, PencilIcon, SendIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+
+const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
+
+function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; productCode?: string | null }) {
+  const [open, setOpen] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const catalogSrc = R2_PRODUCT_IMAGES && productCode
+    ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg`
+    : "";
+  const src = imageUrl || catalogSrc;
+
+  if (!src || failed) return <span className="text-muted-foreground">—</span>;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="block w-9 h-9 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
+        title="View image"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} className="w-full h-full object-cover" alt="" onError={() => setFailed(true)} />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
+          <DialogTitle className="sr-only">{productCode ?? "Image"}</DialogTitle>
+          <div className="relative bg-muted/30">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              className="w-full object-contain max-h-[65vh]"
+              alt={productCode ?? ""}
+              onError={() => { setFailed(true); setOpen(false); }}
+            />
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
+            >
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="px-4 py-3 border-t">
+            <p className="text-xs text-muted-foreground font-mono truncate">{productCode ?? ""}</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 const fmt = (v: string | number | null | undefined, currency = "MYR") =>
   `${currency} ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -25,6 +80,8 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const PO_STATUS: Record<string, { label: string; className: string }> = {
+  draft:     { label: "Draft",     className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  submitted: { label: "Submitted", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
   confirmed: { label: "Confirmed", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
   fulfilled: { label: "Fulfilled",  className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
   cancelled: { label: "Cancelled",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
@@ -47,6 +104,7 @@ export function PurchaseOrderDetailClient({
   const router = useRouter();
   const [status, setStatus] = useState(order.status ?? "confirmed");
   const [actioning, setActioning] = useState<string | null>(null);
+  const [pdfWithImages, setPdfWithImages] = useState(true);
 
   useEffect(() => { setStatus(order.status ?? "confirmed"); }, [order.status]);
 
@@ -67,6 +125,7 @@ export function PurchaseOrderDetailClient({
     }
   }
 
+  const isDraft = status === "draft";
   const isConfirmed = status === "confirmed";
   const isFulfilled = status === "fulfilled";
 
@@ -80,10 +139,36 @@ export function PurchaseOrderDetailClient({
             <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/procurement/purchase-order")} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
-            {isConfirmed && (
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.open(`/api/purchase-order/${order.id}/pdf`, "_blank")}>
-                <PrinterIcon className="w-3.5 h-3.5" /> PDF
+            {isDraft && can("purchase-order:update") && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/edit`)}>
+                <PencilIcon className="w-3.5 h-3.5" /> Edit
               </Button>
+            )}
+            {isConfirmed && (
+              <div className="flex items-center rounded-md border border-border overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => window.open(`/api/purchase-order/${order.id}/pdf${pdfWithImages ? "?withImages=1" : ""}`, "_blank")}
+                  className="flex items-center gap-1.5 px-3 h-8 text-xs font-medium hover:bg-muted transition-colors"
+                >
+                  <PrinterIcon className="w-3.5 h-3.5" /> PDF
+                </button>
+                <div className="w-px h-5 bg-border" />
+                <button
+                  type="button"
+                  onClick={() => setPdfWithImages((v) => !v)}
+                  title={pdfWithImages ? "Images ON — click to exclude" : "Images OFF — click to include"}
+                  className={cn(
+                    "flex items-center gap-1 px-2 h-8 text-xs transition-colors",
+                    pdfWithImages
+                      ? "bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-400"
+                      : "text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  <span>{pdfWithImages ? "with images" : "no images"}</span>
+                </button>
+              </div>
             )}
             <StatusBadge status={status} />
           </div>
@@ -143,6 +228,7 @@ export function PurchaseOrderDetailClient({
                   <thead>
                     <tr className="border-b border-border text-muted-foreground">
                       <th className="text-left pb-2 pr-3 w-6">#</th>
+                      <th className="text-left pb-2 pr-3 w-10">Img</th>
                       <th className="text-left pb-2 pr-3 w-20">Code</th>
                       <th className="text-left pb-2 pr-3">Description</th>
                       <th className="text-right pb-2 pr-3 w-12">Qty</th>
@@ -156,6 +242,9 @@ export function PurchaseOrderDetailClient({
                     {order.items.map((item) => (
                       <tr key={item.id} className="border-b border-border/40 last:border-0">
                         <td className="py-2 pr-3 text-muted-foreground">{item.rowNo}</td>
+                        <td className="py-2 pr-3">
+                          <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
+                        </td>
                         <td className="py-2 pr-3 font-mono text-muted-foreground">{item.productCode || "—"}</td>
                         <td className="py-2 pr-3">{item.description || "—"}</td>
                         <td className="py-2 pr-3 text-right tabular-nums">{item.qty}</td>
@@ -216,6 +305,40 @@ export function PurchaseOrderDetailClient({
 
         {/* Right — actions + pricing + details */}
         <div className="space-y-5">
+          {isDraft && (
+            <section className="border border-amber-200 dark:border-amber-800/50 rounded-xl p-4 bg-amber-50/30 dark:bg-amber-950/10">
+              <h2 className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide mb-3">Draft — Recalled PO</h2>
+              <div className="flex flex-col gap-2">
+                {can("purchase-order:update") && (
+                  <Button
+                    size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
+                    onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/edit`)}
+                  >
+                    <PencilIcon className="w-3.5 h-3.5" /> Edit PO
+                  </Button>
+                )}
+                {can("purchase-order:update") && (
+                  <Button
+                    size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
+                    onClick={() => act("submit", () => submitPurchaseOrder(order.id), "submitted", "PO submitted for approval")}
+                  >
+                    <SendIcon className="w-3.5 h-3.5" />
+                    {actioning === "submit" ? "Submitting…" : "Submit for Approval"}
+                  </Button>
+                )}
+                {can("purchase-order:approve") && (
+                  <Button
+                    size="sm" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
+                    onClick={() => act("reconfirm", () => reconfirmPurchaseOrder(order.id), "confirmed", "Purchase order re-confirmed")}
+                  >
+                    <CheckIcon className="w-3.5 h-3.5" />
+                    {actioning === "reconfirm" ? "Re-confirming…" : "Re-confirm PO"}
+                  </Button>
+                )}
+              </div>
+            </section>
+          )}
+
           {isConfirmed && (
             <section className="border border-border rounded-xl p-4">
               <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Actions</h2>

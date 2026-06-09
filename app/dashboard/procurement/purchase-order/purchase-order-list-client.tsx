@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { type PurchaseOrderListRow } from "@/server/purchase-order";
+import { type PurchaseOrderListRow, type PendingPrRow } from "@/server/purchase-order";
 import { useAppStore } from "@/lib/store/use-app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
   PlusIcon, SearchIcon, XIcon, TruckIcon,
-  BuildingIcon, CalendarIcon, ClipboardListIcon, PackageIcon,
+  BuildingIcon, CalendarIcon, ClipboardListIcon, PackageIcon, ArrowRightIcon, AlertCircleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,12 +21,14 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const PO_STATUS: Record<string, { label: string; className: string }> = {
+  draft:     { label: "Draft",     className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  submitted: { label: "Submitted", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
   confirmed: { label: "Confirmed", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
   fulfilled: { label: "Fulfilled",  className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
   cancelled: { label: "Cancelled",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
 
-const PO_STATUSES = new Set(["confirmed", "fulfilled", "cancelled"]);
+const PO_STATUSES = new Set(["draft", "submitted", "confirmed", "fulfilled", "cancelled"]);
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = PO_STATUS[status];
@@ -34,13 +36,19 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
+const PR_PENDING_STATUS: Record<string, { label: string; className: string }> = {
+  approved:          { label: "Approved",          className: "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400" },
+  partially_ordered: { label: "Partially Ordered", className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+};
+
 interface Props {
   initialOrders: PurchaseOrderListRow[];
+  pendingPrs: PendingPrRow[];
   permissions: string[];
   currentUserId: string;
 }
 
-export function PurchaseOrderListClient({ initialOrders, permissions, currentUserId }: Props) {
+export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions, currentUserId }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const { isSwitchingOrg, setOrgSwitching } = useAppStore();
@@ -61,7 +69,8 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
       (o.prNo ?? "").toLowerCase().includes(s) ||
       snap?.name?.toLowerCase().includes(s) ||
       o.status.toLowerCase().includes(s) ||
-      o.createdByName?.toLowerCase().includes(s)
+      o.createdByName?.toLowerCase().includes(s) ||
+      o.customerPoNos.some((c) => c.toLowerCase().includes(s))
     );
   });
 
@@ -93,6 +102,67 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
           </button>
         )}
       </div>
+
+      {pendingPrs.length > 0 && (
+        <div className="mb-5 border border-amber-200 dark:border-amber-800/50 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800/50">
+            <AlertCircleIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+              Pending PO Conversion
+            </span>
+            <span className="ml-auto text-[10px] text-amber-600 dark:text-amber-500 tabular-nums">
+              {pendingPrs.length} requisition{pendingPrs.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="divide-y divide-border/60">
+            {pendingPrs.map((pr) => {
+              const prStatus = PR_PENDING_STATUS[pr.status] ?? { label: pr.status, className: "bg-muted text-muted-foreground" };
+              return (
+                <div
+                  key={pr.id}
+                  className="flex items-center gap-3 px-4 py-3 bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                  onClick={() => router.push(`/dashboard/procurement/purchase-order/create?prId=${pr.id}&from=${encodeURIComponent("/dashboard/procurement/purchase-order")}`)}
+                >
+                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-50 dark:bg-amber-900/20 shrink-0">
+                    <ClipboardListIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-sm font-medium">{pr.prNo}</span>
+                      <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", prStatus.className)}>
+                        {prStatus.label}
+                      </span>
+                      {pr.salesOrderNo && (
+                        <span className="text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">
+                          {pr.salesOrderNo}
+                        </span>
+                      )}
+                      {pr.customerPoNos.map((cpo) => (
+                        <span key={cpo} className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                          {cpo}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5">
+                      <span className="text-[11px] text-muted-foreground">
+                        {pr.itemCount} item{pr.itemCount !== 1 ? "s" : ""}
+                      </span>
+                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <CalendarIcon className="w-3 h-3 shrink-0" />
+                        {fmtDate(pr.createdAt)}
+                        {pr.requestedByName && ` · ${pr.requestedByName}`}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 shrink-0">
+                    Create PO <ArrowRightIcon className="w-3 h-3" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {isSwitchingOrg ? (
         <div className="space-y-2">
@@ -161,11 +231,11 @@ export function PurchaseOrderListClient({ initialOrders, permissions, currentUse
                             <Highlight text={o.prNo} query={search} />
                           </span>
                         )}
-                        {o.salesOrderId && (
-                          <span className="text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">
-                            Linked SO
+                        {o.customerPoNos.map((cpo) => (
+                          <span key={cpo} className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                            <Highlight text={cpo} query={search} />
                           </span>
-                        )}
+                        ))}
                       </div>
                       <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                         {snap?.name && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -14,6 +14,7 @@ import {
   type PrWithItems,
   type PrItemInput,
 } from "@/server/purchase-requisition";
+import { getProductByCode } from "@/server/products";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,8 +22,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import {
-  ArrowLeftIcon, PencilIcon, TrashIcon, SendIcon, CheckIcon, XIcon, PlusIcon, LinkIcon,
+  ArrowLeftIcon, PencilIcon, TrashIcon, SendIcon, CheckIcon, XIcon, PlusIcon, LinkIcon, ImageIcon,
+  DatabaseIcon, ShoppingCartIcon,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
 import { cn } from "@/lib/utils";
@@ -100,12 +103,77 @@ function SupplierCell({
   );
 }
 
+// ── Read-only image thumbnail ─────────────────────────────────────────────────
+
+const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
+
+function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; productCode?: string | null }) {
+  const [open, setOpen]   = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  // Custom uploaded image takes priority; otherwise fall back to public catalog URL.
+  const catalogSrc = R2_PRODUCT_IMAGES && productCode
+    ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg`
+    : "";
+  const src = imageUrl || catalogSrc;
+
+  if (!src || failed) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="block w-9 h-9 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
+        title="View image"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} className="w-full h-full object-cover" alt="" onError={() => setFailed(true)} />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
+          <DialogTitle className="sr-only">{productCode ?? "Image"}</DialogTitle>
+          <div className="relative bg-muted/30">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              className="w-full object-contain max-h-[65vh]"
+              alt={productCode ?? ""}
+              onError={() => { setFailed(true); setOpen(false); }}
+            />
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
+            >
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="px-4 py-3 border-t">
+            <p className="text-xs text-muted-foreground font-mono truncate">{productCode ?? ""}</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // ── Edit state ────────────────────────────────────────────────────────────────
 
 interface EditLine extends PrItemInput {
   _key: string;
   _supplierId?: string;
   _supplierName?: string;
+  _imageUrl?: string | null;
+  _imageKey?: string | null;
+  _cpoNo?: string | null;
+  _customerName?: string | null;
+  _customerOrganization?: string | null;
+  _descriptionSource?: "so" | "catalog" | "user" | null;
+  _isAdditional?: boolean;
+  _editedBy?: string | null;
 }
 
 function calcTotal(item: EditLine): number {
@@ -125,6 +193,14 @@ function toEditLine(item: PrWithItems["items"][number]): EditLine {
     currency: item.currency ?? "MYR",
     _supplierId: item.preferredSupplierId ?? undefined,
     _supplierName: item.preferredSupplierName ?? undefined,
+    _imageUrl: item.imageUrl,
+    _imageKey: item.imageKey,
+    _cpoNo: item.cpoNo,
+    _customerName: item.customerName,
+    _customerOrganization: item.customerOrganization,
+    _descriptionSource: item.descriptionSource as "so" | "catalog" | "user" | null,
+    _isAdditional: item.isAdditional ?? false,
+    _editedBy: item.editedBy ?? null,
   };
 }
 
@@ -134,13 +210,16 @@ interface Props {
   pr: PrWithItems;
   permissions: string[];
   currentUserId: string;
+  currentUserName: string;
 }
 
-export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
+export function PrDetailClient({ pr, permissions, currentUserId, currentUserName }: Props) {
   const router = useRouter();
   const [actioning, setActioning] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [lines, setLines] = useState<EditLine[]>(pr.items.map(toEditLine));
+  const linesRef = useRef(lines);
+  useEffect(() => { linesRef.current = lines; }, [lines]);
   const [notes, setNotes] = useState(pr.notes ?? "");
 
   const can = (p: string) => hasAccess(permissions, p);
@@ -148,7 +227,7 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
   const canEdit = can("purchase-order:update") && pr.status === "draft";
   const canSubmit = can("purchase-order:create") && pr.status === "draft" && (isOwner || can("purchase-order:update"));
   const canApprove = can("purchase-requisition:approve") && pr.status === "submitted";
-  const canCancel = can("purchase-order:update") && !["ordered", "cancelled"].includes(pr.status);
+  const canCancel = can("purchase-order:update") && !["draft", "ordered", "cancelled"].includes(pr.status);
   const canDelete = can("purchase-order:delete") && pr.status === "draft";
 
   async function act(key: string, fn: () => Promise<void>) {
@@ -191,12 +270,23 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
     setActioning("delete");
     try {
       await deletePurchaseRequisition(pr.id);
-      toast.success("Requisition deleted");
-      router.push("/dashboard/procurement/requisition");
     } catch (e: any) {
       toast.error(e.message);
       setActioning(null);
     }
+  }
+
+  async function handleProductCodeBlur(key: string, code: string) {
+    if (!code.trim()) return;
+    const line = linesRef.current.find((l) => l._key === key);
+    if (!line || line.description) return;
+    const prod = await getProductByCode(code).catch(() => null);
+    if (!prod) return;
+    setLines((prev) => prev.map((l) =>
+      l._key === key && !l.description
+        ? { ...l, description: prod.description ?? "", _descriptionSource: "catalog" }
+        : l,
+    ));
   }
 
   async function handleSaveEdit() {
@@ -205,6 +295,8 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
     await act("save", async () => {
       await updatePurchaseRequisition({
         id: pr.id,
+        salesOrderId: pr.salesOrderId ?? undefined,
+        salesOrderNo: pr.salesOrderNo ?? undefined,
         notes: notes.trim() || undefined,
         items: validLines.map((l) => ({
           rowNo: l.rowNo,
@@ -217,6 +309,13 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
           currency: l.currency,
           preferredSupplierId: l._supplierId,
           preferredSupplierName: l._supplierName,
+          imageKey: l._imageKey ?? undefined,
+          descriptionSource: l._descriptionSource ?? null,
+          isAdditional: l._isAdditional ?? false,
+          editedBy: l._editedBy ?? null,
+          cpoNo: l._cpoNo ?? null,
+          customerName: l._customerName ?? null,
+          customerOrganization: l._customerOrganization ?? null,
         })),
       });
       toast.success("Requisition updated");
@@ -260,7 +359,7 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
   const displayItems = editing ? lines : pr.items;
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
+    <div className="p-6 space-y-6">
       <PageHeader
         title={pr.prNo}
         description={`Purchase Requisition · ${fmtDate(pr.createdAt)}`}
@@ -375,6 +474,7 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
             <thead>
               <tr className="border-b border-border bg-muted/30 text-muted-foreground">
                 <th className="text-left px-3 py-2 font-medium w-8">#</th>
+                <th className="text-left px-3 py-2 font-medium w-12">Image</th>
                 <th className="text-left px-3 py-2 font-medium w-28">Code</th>
                 <th className="text-left px-3 py-2 font-medium">Description</th>
                 <th className="text-left px-3 py-2 font-medium w-16">Qty</th>
@@ -391,11 +491,87 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
                 ? lines.map((line) => (
                     <tr key={line._key} className="group">
                       <td className="px-3 py-2 text-muted-foreground">{line.rowNo}</td>
-                      <td className="px-2 py-1.5">
-                        <Input value={line.productCode ?? ""} onChange={(e) => setLine(line._key, { productCode: e.target.value })} className="h-7 text-xs" placeholder="Code" />
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col gap-0.5 items-start">
+                          <ItemImageThumb imageUrl={line._imageUrl ?? null} productCode={line.productCode} />
+                          {line._imageUrl ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                              <ImageIcon className="w-3 h-3 shrink-0" />
+                              uploaded
+                            </span>
+                          ) : line.productCode ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                              <DatabaseIcon className="w-3 h-3 shrink-0" />
+                              from catalog
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-2 py-1.5">
-                        <Input value={line.description ?? ""} onChange={(e) => setLine(line._key, { description: e.target.value })} className="h-7 text-xs" placeholder="Description" />
+                        <Input
+                          value={line.productCode ?? ""}
+                          onChange={(e) => setLine(line._key, { productCode: e.target.value })}
+                          onBlur={(e) => handleProductCodeBlur(line._key, e.target.value)}
+                          className="h-7 text-xs"
+                          placeholder="Code"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {(line._cpoNo || line._customerName || line._customerOrganization) && (
+                          <div className="flex flex-wrap gap-1 mb-1">
+                            {line._cpoNo && (
+                              <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                                {line._cpoNo}
+                              </span>
+                            )}
+                            {line._customerOrganization && (
+                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                                {line._customerOrganization}
+                              </span>
+                            )}
+                            {line._customerName && (
+                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                                {line._customerName}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        <Input
+                          value={line.description ?? ""}
+                          onChange={(e) => setLine(line._key, { description: e.target.value, _descriptionSource: "user" })}
+                          className="h-7 text-xs"
+                          placeholder="Description"
+                        />
+                        {line._descriptionSource === "catalog" && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                            <DatabaseIcon className="w-3 h-3 shrink-0" />
+                            auto-filled from catalog
+                          </span>
+                        )}
+                        {line._descriptionSource === "so" && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                            <ShoppingCartIcon className="w-3 h-3 shrink-0" />
+                            from sales order
+                          </span>
+                        )}
+                        {line._descriptionSource === "user" && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                            <PencilIcon className="w-3 h-3 shrink-0" />
+                            {currentUserName} edited
+                          </span>
+                        )}
+                        {line._isAdditional && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                            <PlusIcon className="w-3 h-3 shrink-0" />
+                            additional row
+                          </span>
+                        )}
+                        {line._editedBy && line._descriptionSource === "so" && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                            <PencilIcon className="w-3 h-3 shrink-0" />
+                            {line._editedBy} edited
+                          </span>
+                        )}
                       </td>
                       <td className="px-2 py-1.5">
                         <Input type="number" value={line.qty ?? "1"} onChange={(e) => setLine(line._key, { qty: e.target.value })} className="h-7 text-xs" />
@@ -439,8 +615,75 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
                     return (
                       <tr key={item.id} className="hover:bg-muted/20">
                         <td className="px-3 py-2.5 text-muted-foreground">{item.rowNo}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-col gap-0.5 items-start">
+                            <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
+                            {item.imageUrl ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                <ImageIcon className="w-3 h-3 shrink-0" />
+                                uploaded
+                              </span>
+                            ) : item.productCode ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                                <DatabaseIcon className="w-3 h-3 shrink-0" />
+                                from catalog
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
                         <td className="px-3 py-2.5 font-mono">{item.productCode || "—"}</td>
-                        <td className="px-3 py-2.5">{item.description || "—"}</td>
+                        <td className="px-3 py-2.5">
+                          {(item.cpoNo || item.customerName || item.customerOrganization) && (
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {item.cpoNo && (
+                                <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                                  {item.cpoNo}
+                                </span>
+                              )}
+                              {item.customerOrganization && (
+                                <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                                  {item.customerOrganization}
+                                </span>
+                              )}
+                              {item.customerName && (
+                                <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                                  {item.customerName}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          <span>{item.description || "—"}</span>
+                          {item.descriptionSource === "catalog" && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                              <DatabaseIcon className="w-3 h-3 shrink-0" />
+                              auto-filled from catalog
+                            </span>
+                          )}
+                          {item.descriptionSource === "so" && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                              <ShoppingCartIcon className="w-3 h-3 shrink-0" />
+                              from sales order
+                            </span>
+                          )}
+                          {item.descriptionSource === "user" && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                              <PencilIcon className="w-3 h-3 shrink-0" />
+                              {pr.requestedByName ?? "user"} edited
+                            </span>
+                          )}
+                          {item.isAdditional && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                              <PlusIcon className="w-3 h-3 shrink-0" />
+                              additional row
+                            </span>
+                          )}
+                          {item.editedBy && item.descriptionSource === "so" && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                              <PencilIcon className="w-3 h-3 shrink-0" />
+                              {item.editedBy} edited
+                            </span>
+                          )}
+                        </td>
                         <td className="px-3 py-2.5 tabular-nums">{item.qty}</td>
                         <td className="px-3 py-2.5 text-muted-foreground">{item.uom || "—"}</td>
                         <td className="px-3 py-2.5 text-xs font-medium">{item.currency ?? "MYR"}</td>
@@ -530,7 +773,7 @@ export function PrDetailClient({ pr, permissions, currentUserId }: Props) {
           </p>
           <Button
             size="sm"
-            onClick={() => router.push(`/dashboard/procurement/purchase-order/create?prId=${pr.id}`)}
+            onClick={() => router.push(`/dashboard/procurement/purchase-order/create?prId=${pr.id}&from=${encodeURIComponent(`/dashboard/procurement/requisition/${pr.id}`)}`)}
           >
             Create Purchase Order
           </Button>

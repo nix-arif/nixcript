@@ -1,13 +1,24 @@
 import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, StandardFonts } from "pdf-lib";
 import {
   drawCompanyHeader, estimateHeaderH,
-  wrap, trunc, fmtD, fmtM,
+  wrap, trunc, fmtD,
   hLine, sanitizeText,
   C_DARK, C_MID, C_LITE, C_LINE, C_WHITE,
 } from "@/app/dashboard/sales/quotation/[id]/print/_pdf-header";
 import type { getPoForPrint } from "@/server/purchase-order";
 
 type Data = NonNullable<Awaited<ReturnType<typeof getPoForPrint>>>;
+
+export interface PoPdfOptions {
+  /** Include a product-image column in the items table. Defaults to false. */
+  withImages?: boolean;
+  /**
+   * Image bytes keyed by item rowNo.
+   * Only used when withImages is true.
+   * Values may be JPEG or PNG — the caller must know which format.
+   */
+  itemImages?: Map<number, { bytes: Uint8Array; format: "jpg" | "png" }>;
+}
 
 // ── A4 dimensions & margins ────────────────────────────────────────────────
 const W  = 595.28;
@@ -45,28 +56,48 @@ function dashedLine(page: PDFPage, y: number, x1 = ML, x2 = W - MR) {
   }
 }
 
-export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> {
+export async function generatePurchaseOrderPdf(data: Data, options: PoPdfOptions = {}): Promise<Uint8Array> {
+  const { withImages = false, itemImages = new Map() } = options;
+
   const {
     order: po, items,
     createdByName, salesOrderNo,
     orgName, orgLogoUrl, orgBrandColor,
     orgCompanyName, orgCompanyAddress, orgTaxNo, orgPhone, orgEmail, orgWebsite,
     orgOldSsmNo, orgNewSsmNo, orgMdaEstablishmentNo,
-    orgBankingInfo,
+    orgPdfTemplate, orgHeaderLayout, orgTableRowStyle, orgTableFontSize, orgNameSize,
   } = data;
 
-  // poNo is set at approval; prNo is the requisition number. For PDF (confirmed POs) poNo should exist.
   const poNoDisplay = po.poNo ?? po.prNo ?? "";
 
   const DEFAULT_ACCENT = rgb(0.05, 0.14, 0.30);
   const accent  = hexToRgb(orgBrandColor, DEFAULT_ACCENT);
   const coName  = orgCompanyName ?? orgName;
   const snap    = po.supplierSnapshot as any;
-  const bank    = orgBankingInfo.find((b: any) => b.isPrimary) ?? orgBankingInfo[0] ?? null;
+
+  const currency = po.currency ?? "MYR";
+  const fmtC = (v: string | number | null | undefined) =>
+    `${currency} ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
   const subtotal = Number(po.subtotal ?? 0);
   const sstAmt   = Number(po.sst ?? 0);
   const grand    = Number(po.grandTotal ?? 0);
+
+  // ── Template-driven style parameters ─────────────────────────────────────
+  const tpl         = orgPdfTemplate ?? "affirma";
+  const hLayout     = orgHeaderLayout ?? "standard";
+  const rowStyle    = orgTableRowStyle ?? "default";
+  const tfs         = orgTableFontSize ?? "normal";
+  const nameSize    = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string, number>)[orgNameSize ?? "medium"] ?? 13;
+
+  // Table header rendering style per template
+  // "filled-dark"  — nexus/mono: dark accent band, white labels
+  // "accent-line"  — ember/affirma/aura: accent underline only, no band
+  // "shaded-band"  — zinc/slate: light grey band, accent labels
+  const tHdrStyle: "filled-dark" | "accent-line" | "shaded-band" =
+    ["nexus", "nexus-ocean", "nexus-wine", "mono"].includes(tpl) ? "filled-dark" :
+    ["ember", "affirma", "aura"].includes(tpl)                   ? "accent-line" :
+    "shaded-band"; // zinc, slate, default
 
   const pdfDoc = await PDFDocument.create();
   const fontR  = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -86,28 +117,45 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
     } catch { /* no logo */ }
   }
 
+  // ── Pre-embed item images ─────────────────────────────────────────────────
+  const embeddedItemImgs = new Map<number, PDFImage>();
+  if (withImages) {
+    for (const [rowNo, img] of itemImages.entries()) {
+      try {
+        const embedded = img.format === "png"
+          ? await pdfDoc.embedPng(img.bytes)
+          : await pdfDoc.embedJpg(img.bytes);
+        embeddedItemImgs.set(rowNo, embedded);
+      } catch { /* skip bad image */ }
+    }
+  }
+
   // ── Column widths ─────────────────────────────────────────────────────────
   const C_NO   = 22;
+  const C_IMG  = withImages ? 126 : 0;   // image column (0 when disabled)
   const C_CODE = 62;
   const C_QTY  = 32;
   const C_UOM  = 36;
   const C_UP   = 72;
   const C_TOT  = 76;
-  const C_DESC = CW - C_NO - C_CODE - C_QTY - C_UOM - C_UP - C_TOT;
+  const C_DESC = CW - C_NO - C_IMG - C_CODE - C_QTY - C_UOM - C_UP - C_TOT;
 
   const X_NO   = ML;
-  const X_CODE = X_NO   + C_NO;
+  const X_IMG  = X_NO   + C_NO;
+  const X_CODE = X_IMG  + C_IMG;
   const X_DESC = X_CODE + C_CODE;
   const X_QTY  = X_DESC + C_DESC;
   const X_UOM  = X_QTY  + C_QTY;
   const X_UP   = X_UOM  + C_UOM;
   const X_TOT  = X_UP   + C_UP;
 
-  const FS_DESC = 9.5;
-  const FS_CODE = 9;
-  const FS_NUM  = 8.5;
-  const LH      = 11.5;
-  const RH_MIN  = 24;
+  const FS_DESC = tfs === "small" ? 8   : tfs === "large" ? 11   : 9.5;
+  const FS_CODE = tfs === "small" ? 7.5 : tfs === "large" ? 10   : 9;
+  const FS_NUM  = tfs === "small" ? 7.5 : tfs === "large" ? 9.5  : 8.5;
+  const LH      = tfs === "small" ? 10  : tfs === "large" ? 13.5 : 11.5;
+  // Minimum row height: taller when images are shown so the thumbnail fits
+  const IMG_SZ  = 108;
+  const RH_MIN  = withImages ? IMG_SZ + 12 : 24;
 
   // ── Pre-compute row heights ───────────────────────────────────────────────
   type RowInfo = { item: typeof items[number]; descLines: string[]; rowH: number };
@@ -123,7 +171,7 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
     companyAddress: orgCompanyAddress, phone: orgPhone, email: orgEmail,
     website: orgWebsite, oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
     mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
-    nameSize: 13, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX, headerLayout: "standard",
+    nameSize, logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX, headerLayout: hLayout,
     logoImg, fontR, skipDocLabel: true, inlineSsmMdaTax: true,
   }) + 6 + QL_BAND_H;
 
@@ -134,7 +182,6 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
   const IPAD_T       = 10;
   const IPAD_B       = 8;
 
-  // Left box height (supplier info)
   let leftH = IPAD_T + INFO_FS + 6;
   if (snap) {
     if (snap.name) leftH += INFO_FS + 4;
@@ -145,7 +192,6 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
   } else { leftH += INFO_LH; }
   leftH += IPAD_B;
 
-  // Right box height (PO details)
   const detailRowCount = 2
     + (po.expectedDeliveryDate ? 1 : 0)
     + (salesOrderNo ? 1 : 0)
@@ -237,8 +283,8 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
         phone: orgPhone, email: orgEmail, website: orgWebsite,
         oldSsmNo: orgOldSsmNo, newSsmNo: orgNewSsmNo,
         mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
-        nameSize: 13, nameBold: true, nameUppercase: false,
-        headerLayout: "standard", docLabel: "",
+        nameSize, nameBold: true, nameUppercase: false,
+        headerLayout: hLayout, docLabel: "",
         docLabelSize: 7, docLabelBold: true,
         logoHMax: LOGO_H_MAX, logoWMax: LOGO_W_MAX,
         inlineSsmMdaTax: true,
@@ -250,7 +296,6 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
         x: ML, y: curY + QL_BAND_H - 22,
         size: 16, font: fontB, color: accent,
       });
-      // PO number (right-aligned)
       const poNoW = fontB.widthOfTextAtSize(poNoDisplay, 11);
       page.drawText(poNoDisplay, {
         x: W - MR - poNoW, y: curY + QL_BAND_H - 22,
@@ -276,7 +321,6 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
         page.drawRectangle({ x: ML, y: boxTop - boxH, width: INFO_LEFT_W - 3, height: boxH, borderColor: accent, borderWidth: 0.6 });
         page.drawRectangle({ x: INFO_RIGHT_X + 3, y: boxTop - boxH, width: INFO_RIGHT_W - 3, height: boxH, borderColor: accent, borderWidth: 0.6 });
 
-        // ── Left: SUPPLIER ──────────────────────────────────────────────
         const leftX    = ML + IPAD_H;
         const leftMaxW = INFO_LEFT_W - 3 - IPAD_H * 2;
         let ly = boxTop - IPAD_T - INFO_FS;
@@ -311,7 +355,6 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
           page.drawText("—", { x: leftX, y: ly, size: INFO_FS, font: fontR, color: C_LITE });
         }
 
-        // ── Right: PURCHASE ORDER DETAILS ────────────────────────────────
         const rightX    = INFO_RIGHT_X + 3 + IPAD_H;
         const rightMaxW = INFO_RIGHT_W - 3 - IPAD_H * 2;
         const rightEdge = INFO_RIGHT_X + 3 + INFO_RIGHT_W - 3 - IPAD_H;
@@ -352,8 +395,20 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
 
     // ── Table header ──────────────────────────────────────────────────────────
     const tHdrY = curY - TABLE_HDR_H;
+
+    // Band background
+    if (tHdrStyle === "filled-dark") {
+      page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: TABLE_HDR_H, color: accent });
+    } else if (tHdrStyle === "shaded-band") {
+      page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: TABLE_HDR_H, color: rgb(0.96, 0.965, 0.975) });
+    }
+    // "accent-line" — no band fill, label text + underline only
+
+    const labelColor = tHdrStyle === "filled-dark" ? C_WHITE : accent;
+
     const thdrs = [
       { label: "No",          x: X_NO,   w: C_NO   },
+      ...(withImages ? [{ label: "Image", x: X_IMG, w: C_IMG }] : []),
       { label: "Code",        x: X_CODE, w: C_CODE  },
       { label: "Description", x: X_DESC, w: C_DESC  },
       { label: "Qty",         x: X_QTY,  w: C_QTY   },
@@ -364,9 +419,10 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
     for (const col of thdrs) {
       const tw = fontB.widthOfTextAtSize(col.label, 7.5);
       const tx = col.x + (col.w - tw) / 2;
-      page.drawText(col.label.toUpperCase(), { x: tx, y: tHdrY + 8, size: 7.5, font: fontB, color: accent });
+      page.drawText(col.label.toUpperCase(), { x: tx, y: tHdrY + 8, size: 7.5, font: fontB, color: labelColor });
     }
-    page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: 1.8, color: accent });
+    // Bottom rule (all styles)
+    page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: tHdrStyle === "filled-dark" ? 0 : 1.8, color: accent });
     curY = tHdrY;
 
     // ── Item rows ──────────────────────────────────────────────────────────────
@@ -375,6 +431,11 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
       const rowY         = curY - rowH;
       const textBaseline = curY - 11;
 
+      // Alternate row tint (skip for "simple" row style)
+      if (rowIdx % 2 === 1 && rowStyle !== "simple") {
+        page.drawRectangle({ x: ML, y: rowY, width: CW, height: rowH, color: rgb(0.975, 0.977, 0.983) });
+      }
+
       // Row number badge
       const badgeX = X_NO + (C_NO - BADGE_SZ) / 2;
       const badgeY = textBaseline - 3;
@@ -382,6 +443,29 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
       const noStr = String(item.rowNo);
       const noW   = fontB.widthOfTextAtSize(noStr, 7);
       page.drawText(noStr, { x: badgeX + (BADGE_SZ - noW) / 2, y: badgeY + 3, size: 7, font: fontB, color: C_WHITE });
+
+      // ── Product image ────────────────────────────────────────────────────
+      if (withImages && C_IMG > 0) {
+        const img = embeddedItemImgs.get(item.rowNo);
+        const IMG_TOP_PAD = 6;
+        if (img) {
+          const scale = Math.min(IMG_SZ / img.height, IMG_SZ / img.width, 1);
+          const iw = img.width  * scale;
+          const ih = img.height * scale;
+          page.drawImage(img, {
+            x: X_IMG + (C_IMG - iw) / 2, y: curY - IMG_TOP_PAD - ih,
+            width: iw, height: ih,
+          });
+        } else {
+          // Placeholder box when no image
+          const bx = X_IMG + (C_IMG - IMG_SZ) / 2;
+          const by = curY - IMG_TOP_PAD - IMG_SZ;
+          page.drawRectangle({
+            x: bx, y: by, width: IMG_SZ, height: IMG_SZ,
+            color: rgb(0.95, 0.95, 0.95), borderColor: C_LINE, borderWidth: 0.5,
+          });
+        }
+      }
 
       // Code
       page.drawText(trunc(item.productCode ?? "—", fontB, FS_CODE, C_CODE - TABLE_PAD), {
@@ -406,13 +490,13 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
 
       // Unit price
       page.drawRectangle({ x: X_UP, y: rowY, width: 2, height: rowH, color: rgb(0.88, 0.90, 0.95) });
-      const up  = `RM ${Number(item.unitPrice ?? 0).toFixed(2)}`;
+      const up  = fmtC(item.unitPrice);
       const upW = fontR.widthOfTextAtSize(up, FS_NUM);
       page.drawText(up, { x: X_UP + (C_UP - upW) / 2, y: textBaseline, size: FS_NUM, font: fontR, color: C_MID });
 
       // Total
       page.drawRectangle({ x: X_TOT, y: rowY, width: C_TOT, height: rowH, color: rgb(0.965, 0.967, 0.975) });
-      const tot  = `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`;
+      const tot  = fmtC(item.totalPrice);
       const totW = fontR.widthOfTextAtSize(tot, FS_DESC);
       page.drawText(tot, { x: X_TOT + (C_TOT - totW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK });
 
@@ -426,33 +510,14 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
       hLine(page, curY, ML, W - MR, C_LINE, 0.5);
       curY -= 14;
 
-      // Bank info box
-      if (bank) {
-        const bBoxH = 58;
-        const bBoxW = CW * 0.46;
-        page.drawRectangle({ x: ML, y: curY - bBoxH, width: bBoxW, height: bBoxH, color: rgb(0.955, 0.957, 0.963), borderColor: C_LINE, borderWidth: 0.4 });
-        page.drawText("PAYMENT TO", { x: ML + 10, y: curY - 13, size: 6.5, font: fontB, color: accent });
-        let by = curY - 28;
-        for (const [lbl, val] of [
-          ["Bank", bank.bankName ?? ""],
-          ["Account Name", bank.accountHolder ?? ""],
-          ["Account No.", bank.accountNo ?? ""],
-        ] as [string, string][]) {
-          const lw = fontR.widthOfTextAtSize(`${lbl}: `, 8.5);
-          page.drawText(`${lbl}: `, { x: ML + 10, y: by, size: 8.5, font: fontR, color: C_MID });
-          page.drawText(trunc(String(val), fontB, 9, bBoxW - lw - 24), { x: ML + 10 + lw, y: by, size: 9, font: fontB, color: C_DARK });
-          by -= 13;
-        }
-      }
-
       // Totals
       const totColW = 200;
       const totX    = W - MR - totColW;
       let ty        = curY;
 
       const totItems: [string, string][] = [
-        ["Subtotal", fmtM(subtotal)],
-        ...(sstAmt > 0 ? [[`SST (${po.sstPct}%)`, fmtM(sstAmt)]] as [string, string][] : []),
+        ["Subtotal", fmtC(subtotal)],
+        ...(sstAmt > 0 ? [[`SST (${po.sstPct}%)`, fmtC(sstAmt)]] as [string, string][] : []),
       ];
 
       for (const [lbl, val] of totItems) {
@@ -463,7 +528,6 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
       }
 
       ty -= 8;
-      // Dashed separator
       let dx = totX;
       while (dx < W - MR) {
         const end = Math.min(dx + 4, W - MR);
@@ -474,7 +538,7 @@ export async function generatePurchaseOrderPdf(data: Data): Promise<Uint8Array> 
 
       page.drawText("GRAND TOTAL", { x: totX, y: ty, size: 8, font: fontB, color: accent });
       ty -= 22;
-      const gtStr = fmtM(grand);
+      const gtStr = fmtC(grand);
       const gtW   = fontB.widthOfTextAtSize(gtStr, 18);
       page.drawText(gtStr, { x: W - MR - gtW, y: ty, size: 18, font: fontB, color: accent });
 
