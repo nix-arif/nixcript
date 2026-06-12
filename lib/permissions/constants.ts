@@ -58,8 +58,10 @@ export const ALL_PERMISSIONS = [
   { key: "customer:delete", label: "Delete Customer" },
 
   // Product
-  { key: "product:read", label: "View Products" },
-  { key: "product:seed", label: "Seed Products" },
+  { key: "product:read",         label: "View Products" },
+  { key: "product:seed",         label: "Seed Products" },
+  { key: "product:update-price", label: "Update Product Selling Prices" },
+  { key: "product:upload-image", label: "Upload Product Images" },
 
   // Member management
   { key: "member:read",   label: "View Members" },
@@ -182,7 +184,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
       "goods-receipt:create",
       "customer:read", "customer:create", "customer:update", "customer:delete",
-      "product:read",
+      "product:read", "product:update-price", "product:upload-image",
       "member:read", "member:invite", "member:remove",
       "department:read", "department:create",
       "profile:read", "profile:update", "profile:read:all",
@@ -290,7 +292,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
 
   engineering: {
     manager: [
-      "product:read", "product:seed",
+      "product:read", "product:seed", "product:update-price", "product:upload-image",
       "quotation:read",
       "sales-order:read",
       "delivery-order:read",
@@ -517,5 +519,11 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Supplier Manager",
     description: "Create and manage supplier records.",
     permissions: ["supplier:read", "supplier:create", "supplier:update"],
+  },
+  {
+    id: "product-data-manager",
+    label: "Product Data Manager",
+    description: "Update product selling prices and upload product images. Requires product read.",
+    permissions: ["product:read", "product:update-price", "product:upload-image"],
   },
 ];

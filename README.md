@@ -174,3 +174,24 @@ After selecting an SO in SoPicker, if it has >1 CPOs the flow pauses on a CPO se
 buildPrefill() filters SO items by sourceCustomerPoId for the chosen CPO, uses the CPO's customer snapshot, and sets customerPoId/customerPoNo
 The linked SO banner in DoForm shows a CPO: {poNo} badge when a CPO is selected
 handleSave passes customerPoId/customerPoNo through to createDeliveryOrder
+
+# All the remaining errors are pre-existing (scripts, payroll page, auth library, etc.) — none related to my changes. The implementation is complete and clean.
+
+Here's a summary of everything that was built:
+
+Stock replenishment trigger (automatic)
+
+When a sales order is approved, checkAndTriggerReplenishment runs (fire-and-forget, non-blocking) for every product on that SO. If a product's available stock (quantity − reservedQty) hits or drops below its reorderPoint, a draft replenishment PR is auto-created — unless a pending replenishment PR for that product already exists. The reorder quantity is maxStock − available if maxStock is set, otherwise equals reorderPoint.
+
+Sample / demo / loaner ordering
+
+The PR create form now has a Requisition Type toggle at the top: "Customer Order" (default, links to an SO) or "Sample / Demo" (no SO link, optional purpose text like "Trade show loaner stock"). When a GR is received against a PO that originated from a sample_demo PR, stock goes to the "Demo" warehouse bucket instead of "Default" — keeping it separate from sellable inventory.
+
+Schema changes (already pushed)
+
+purchaseRequisition.prType — "customer_order" (default) | "replenishment" | "sample_demo"
+purchaseRequisition.samplePurpose — free text, used for sample/demo orders
+UI
+
+PR list shows orange "Replenishment" or teal "Sample / Demo" badge under the PR number for non-customer-order types
+PR create form has the type selector with contextual description

@@ -94,6 +94,8 @@ export const navConfig: NavGroup[] = [
       { title: "Catalogue",               url: "/dashboard/products/catalogue",                 permission: "product:read" },
       { title: "MDA Certificate Generator", url: "/dashboard/products/mda-certificate-generator", permission: "product:read" },
       { title: "Items Price Check",       url: "/dashboard/products/items-price",               permission: "product:read" },
+      { title: "Update Selling Price",    url: "/dashboard/products/update-price",              permission: "product:update-price" },
+      { title: "Upload Product Images",   url: "/dashboard/products/upload-images",             permission: "product:upload-image" },
     ],
   },
   {

@@ -7,6 +7,18 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
 import { eq, and, sql, asc, or, ilike, isNotNull, inArray } from "drizzle-orm";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+const s3 = new S3Client({
+  region: "auto",
+  endpoint: process.env.R2_ENDPOINT!,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+});
+const PRODUCT_IMAGES_BUCKET = process.env.R2_PRODUCT_IMAGES_BUCKET!;
 
 async function requireAccess(permission: string) {
   const session = await getCachedSession();
@@ -247,4 +259,76 @@ export async function getDistinctBrands() {
     .orderBy(asc(product.brand));
 
   return rows.map((r) => r.brand).filter(Boolean) as string[];
+}
+
+export async function updateProductSellingPrices(
+  rows: { productCode: string; sellingUnitPrice: string; currency?: string }[],
+): Promise<{ updated: number; notFound: string[] }> {
+  const { orgId } = await requireAccess("product:update-price");
+  if (!rows.length) return { updated: 0, notFound: [] };
+
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const codes = [...new Set(rows.map((r) => r.productCode.trim()).filter(Boolean))];
+
+  const existing = await db
+    .select({ productCode: product.productCode, organizationId: product.organizationId })
+    .from(product)
+    .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, codes)));
+
+  const existingMap = new Map<string, string>(); // productCode → orgId
+  for (const e of existing) {
+    if (!existingMap.has(e.productCode)) existingMap.set(e.productCode, e.organizationId);
+  }
+
+  const notFound = codes.filter((c) => !existingMap.has(c));
+  const toUpdate = rows.filter((r) => existingMap.has(r.productCode.trim()));
+  if (!toUpdate.length) return { updated: 0, notFound };
+
+  await Promise.all(
+    toUpdate.map((r) =>
+      db
+        .update(product)
+        .set({
+          sellingUnitPrice: r.sellingUnitPrice,
+          ...(r.currency ? { sellingPriceCurrency: r.currency } : {}),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(product.organizationId, existingMap.get(r.productCode.trim())!),
+            eq(product.productCode, r.productCode.trim()),
+          ),
+        ),
+    ),
+  );
+
+  return { updated: toUpdate.length, notFound };
+}
+
+export async function getProductImageUploadUrls(
+  productCodes: string[],
+): Promise<{ productCode: string; uploadUrl: string }[]> {
+  await requireAccess("product:upload-image");
+  return Promise.all(
+    productCodes.map(async (code) => {
+      const cmd = new PutObjectCommand({ Bucket: PRODUCT_IMAGES_BUCKET, Key: `${code}.jpg` });
+      const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
+      return { productCode: code, uploadUrl };
+    }),
+  );
+}
+
+export async function checkProductCodesExist(
+  codes: string[],
+): Promise<Record<string, boolean>> {
+  if (!codes.length) return {};
+  const { orgId } = await requireAccess("product:upload-image");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const unique = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
+  const rows = await db
+    .select({ productCode: product.productCode })
+    .from(product)
+    .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, unique)));
+  const found = new Set(rows.map((r) => r.productCode));
+  return Object.fromEntries(unique.map((c) => [c, found.has(c)]));
 }
