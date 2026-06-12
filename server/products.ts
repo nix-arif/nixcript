@@ -263,9 +263,9 @@ export async function getDistinctBrands() {
 
 export async function updateProductSellingPrices(
   rows: { productCode: string; sellingUnitPrice?: string; currency?: string; description?: string }[],
-): Promise<{ updated: number; notFound: string[] }> {
+): Promise<{ updated: number }> {
   const { orgId } = await requireAccess("product:update-price");
-  if (!rows.length) return { updated: 0, notFound: [] };
+  if (!rows.length) return { updated: 0 };
 
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   const codes = [...new Set(rows.map((r) => r.productCode.trim()).filter(Boolean))];
@@ -280,12 +280,15 @@ export async function updateProductSellingPrices(
     if (!existingMap.has(e.productCode)) existingMap.set(e.productCode, e.organizationId);
   }
 
-  const notFound = codes.filter((c) => !existingMap.has(c));
-  const toUpdate = rows.filter((r) => existingMap.has(r.productCode.trim()));
-  if (!toUpdate.length) return { updated: 0, notFound };
+  const unknown = codes.filter((c) => !existingMap.has(c));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Update only — ${unknown.length} code${unknown.length !== 1 ? "s" : ""} not found in database: ${unknown.slice(0, 5).join(", ")}${unknown.length > 5 ? "…" : ""}`,
+    );
+  }
 
   await Promise.all(
-    toUpdate.map((r) =>
+    rows.map((r) =>
       db
         .update(product)
         .set({
@@ -303,7 +306,7 @@ export async function updateProductSellingPrices(
     ),
   );
 
-  return { updated: toUpdate.length, notFound };
+  return { updated: rows.length };
 }
 
 export async function getProductImageUploadUrls(

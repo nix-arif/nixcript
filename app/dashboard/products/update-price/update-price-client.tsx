@@ -49,7 +49,7 @@ export function UpdatePriceClient() {
   const [error, setError]     = useState<string | null>(null);
   const [drag, setDrag]       = useState(false);
   const [applied, setApplied] = useState(false);
-  const [result, setResult]   = useState<{ updated: number; notFound: string[] } | null>(null);
+  const [result, setResult]   = useState<{ updated: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(f: File) {
@@ -111,8 +111,6 @@ export function UpdatePriceClient() {
       setResult(res);
       setApplied(true);
       toast.success(`Updated ${res.updated} product${res.updated !== 1 ? "s" : ""}`);
-      if (res.notFound.length)
-        toast.warning(`${res.notFound.length} product code${res.notFound.length !== 1 ? "s" : ""} not found in database`);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -214,14 +212,7 @@ export function UpdatePriceClient() {
       {applied && result && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-sm text-green-700 dark:text-green-400 mb-4">
           <CheckCircleIcon className="w-4 h-4 mt-0.5 shrink-0" />
-          <div>
-            <span className="font-semibold">{result.updated} product{result.updated !== 1 ? "s" : ""} updated.</span>
-            {result.notFound.length > 0 && (
-              <span className="text-green-600 dark:text-green-500 ml-1.5">
-                {result.notFound.length} code{result.notFound.length !== 1 ? "s" : ""} not found: {result.notFound.slice(0, 5).join(", ")}{result.notFound.length > 5 ? "…" : ""}
-              </span>
-            )}
-          </div>
+          <span className="font-semibold">{result.updated} product{result.updated !== 1 ? "s" : ""} updated.</span>
         </div>
       )}
 
