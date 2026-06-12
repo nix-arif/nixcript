@@ -92,6 +92,20 @@ export function ItemsPriceClient() {
     if (inputRef.current) inputRef.current.value = "";
   };
 
+  const handleExportTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["Product Code"],
+      ["BMS-001"],
+      ["BMS-002"],
+      ["BMS-003"],
+    ]);
+    ws["!cols"] = [{ wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Items Price Check");
+    XLSX.writeFile(wb, "items-price-check-template.xlsx");
+    toast.success("Template downloaded");
+  };
+
   const handleExport = () => {
     const sheetData = [
       ["No.", "Product Code", "Description", "Unit Price (RM)", "UOM", "MDA Reg No."],
@@ -137,11 +151,53 @@ export function ItemsPriceClient() {
         description="Upload a spreadsheet with product codes to retrieve pricing and product details"
       />
 
+      {/* ── Template guide ── */}
+      {!file && (
+        <div className="border border-border rounded-xl overflow-hidden mb-5">
+          <div className="flex items-center justify-between px-4 py-3 bg-muted/30 border-b border-border">
+            <div>
+              <div className="text-sm font-semibold">Step 1 — Download the template</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Fill in your product codes, then upload the file below to retrieve pricing details.</div>
+            </div>
+            <Button size="sm" className="gap-1.5 shrink-0" onClick={handleExportTemplate}>
+              <DownloadIcon className="w-3.5 h-3.5" /> Download Template (.xlsx)
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted/20 border-b border-border">
+                  <th className="px-4 py-2 text-left font-semibold text-foreground">Product Code</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {["BMS-001", "BMS-002", "BMS-003"].map((code) => (
+                  <tr key={code} className="text-muted-foreground">
+                    <td className="px-4 py-2 font-mono">{code}</td>
+                  </tr>
+                ))}
+                <tr className="text-muted-foreground/40 italic">
+                  <td className="px-4 py-2 font-mono">…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-2.5 border-t border-border bg-muted/10 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1"><InfoIcon className="w-3 h-3 shrink-0" /><strong className="text-foreground">Product Code</strong> — must match exactly what is in the system</span>
+            <span>One code per row. The system will return description, selling price, UOM, and MDA reg no.</span>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive mb-4">
           <InfoIcon className="w-4 h-4 mt-0.5 shrink-0" />
           {error}
         </div>
+      )}
+
+      {!file && (
+        <div className="text-sm font-semibold mb-2">Step 2 — Upload the completed file</div>
       )}
 
       <div className="grid grid-cols-2 gap-3 mb-3">
