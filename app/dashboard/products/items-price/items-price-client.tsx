@@ -219,7 +219,7 @@ export function ItemsPriceClient() {
           <input
             ref={inputRef}
             type="file"
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx,.xls,.csv,.ods"
             className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
           />
@@ -230,7 +230,7 @@ export function ItemsPriceClient() {
             <div className="text-sm font-medium">
               {loading ? "Reading file…" : file ? "Change file" : "Click or drag & drop"}
             </div>
-            <div className="text-xs text-muted-foreground mt-1">.xlsx · .xls · .csv</div>
+            <div className="text-xs text-muted-foreground mt-1">.xlsx · .xls · .csv · .ods</div>
           </div>
           <div className="text-xs text-muted-foreground/70">Needs a "product code" column</div>
         </div>

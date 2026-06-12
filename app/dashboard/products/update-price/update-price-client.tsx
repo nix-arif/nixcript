@@ -232,14 +232,14 @@ export function UpdatePriceClient() {
             drag ? "border-primary bg-primary/5" : file ? "border-border bg-muted/10 opacity-60 hover:opacity-100" : "border-border hover:border-primary/40 hover:bg-muted/20",
           )}
         >
-          <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
+          <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv,.ods" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
           <div className="w-11 h-11 rounded-full bg-muted flex items-center justify-center">
             <FileSpreadsheetIcon className="w-5 h-5 text-muted-foreground" />
           </div>
           <div>
             <div className="text-sm font-medium">{loading ? "Reading file…" : file ? "Change file" : "Click or drag & drop"}</div>
-            <div className="text-xs text-muted-foreground mt-1">.xlsx · .xls · .csv</div>
+            <div className="text-xs text-muted-foreground mt-1">.xlsx · .xls · .csv · .ods</div>
           </div>
           <div className="text-xs text-muted-foreground/70">Needs "product code" + "selling price" and/or "description" columns</div>
         </div>
