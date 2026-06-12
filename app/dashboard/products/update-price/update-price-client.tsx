@@ -16,6 +16,7 @@ type ParsedRow = {
   productCode: string;
   newPrice: string;
   currency: string;
+  newDescription: string;
 };
 
 type ProductDetail = {
@@ -24,8 +25,6 @@ type ProductDetail = {
   sellingUnitPrice: string | null;
   uom: string | null;
 };
-
-const CURRENCIES = ["MYR", "USD", "SGD", "EUR", "GBP", "AUD", "JPY"];
 
 function normalizeKey(k: string) {
   return k.toLowerCase().replace(/[\s_\-\.]/g, "");
@@ -68,15 +67,21 @@ export function UpdatePriceClient() {
       const raw = XLSX.utils.sheet_to_json(ws, { defval: "" }) as Record<string, any>[];
 
       const parsed: ParsedRow[] = raw.map((row) => {
-        const productCode = extractField(row, ["productcode", "code", "itemcode", "kodproduk", "productno"]);
-        const rawPrice    = extractField(row, ["sellingprice", "sellingunitprice", "unitprice", "price", "harga", "saleprice"]);
-        const currency    = extractField(row, ["currency", "matawang", "ccy"]) || "MYR";
-        const priceNum    = parseFloat(rawPrice.replace(/[^0-9.]/g, ""));
-        return { productCode, newPrice: isNaN(priceNum) ? "" : priceNum.toFixed(2), currency };
-      }).filter((r) => r.productCode && r.newPrice);
+        const productCode    = extractField(row, ["productcode", "code", "itemcode", "kodproduk", "productno"]);
+        const rawPrice       = extractField(row, ["sellingprice", "sellingunitprice", "unitprice", "price", "harga", "saleprice"]);
+        const currency       = extractField(row, ["currency", "matawang", "ccy"]) || "MYR";
+        const newDescription = extractField(row, ["description", "desc", "productdescription", "itemdescription", "keterangan", "namabarang"]);
+        const priceNum       = parseFloat(rawPrice.replace(/[^0-9.]/g, ""));
+        return {
+          productCode,
+          newPrice: isNaN(priceNum) ? "" : priceNum.toFixed(2),
+          currency,
+          newDescription,
+        };
+      }).filter((r) => r.productCode && (r.newPrice || r.newDescription));
 
       if (!parsed.length)
-        throw new Error("No valid rows found — spreadsheet needs a 'product code' column and a 'selling price' / 'price' column");
+        throw new Error("No valid rows found — spreadsheet needs a 'product code' column and at least a 'selling price' or 'description' column");
 
       setRows(parsed);
       const codes = [...new Set(parsed.map((r) => r.productCode))];
@@ -91,17 +96,23 @@ export function UpdatePriceClient() {
   }
 
   async function handleApply() {
-    const valid = rows.filter((r) => r.newPrice && parseFloat(r.newPrice) > 0);
-    if (!valid.length) { toast.error("No valid prices to apply"); return; }
+    const valid = rows.filter((r) => details.has(r.productCode) && (r.newPrice || r.newDescription));
+    if (!valid.length) { toast.error("No valid rows to apply"); return; }
     setApplying(true);
     try {
       const res = await updateProductSellingPrices(
-        valid.map((r) => ({ productCode: r.productCode, sellingUnitPrice: r.newPrice, currency: r.currency })),
+        valid.map((r) => ({
+          productCode: r.productCode,
+          sellingUnitPrice: r.newPrice || undefined,
+          currency: r.newPrice ? r.currency : undefined,
+          description: r.newDescription || undefined,
+        })),
       );
       setResult(res);
       setApplied(true);
       toast.success(`Updated ${res.updated} product${res.updated !== 1 ? "s" : ""}`);
-      if (res.notFound.length) toast.warning(`${res.notFound.length} product code${res.notFound.length !== 1 ? "s" : ""} not found in database`);
+      if (res.notFound.length)
+        toast.warning(`${res.notFound.length} product code${res.notFound.length !== 1 ? "s" : ""} not found in database`);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -111,14 +122,14 @@ export function UpdatePriceClient() {
 
   function handleExportTemplate() {
     const ws = XLSX.utils.aoa_to_sheet([
-      ["Product Code", "Selling Price", "Currency"],
-      ["SAMPLE001", "125.00", "MYR"],
-      ["SAMPLE002", "88.50", "MYR"],
+      ["Product Code", "Description", "Selling Price", "Currency"],
+      ["SAMPLE001", "Blood Pressure Monitor Wrist", "125.00", "MYR"],
+      ["SAMPLE002", "Digital Thermometer",          "88.50",  "MYR"],
     ]);
-    ws["!cols"] = [{ wch: 20 }, { wch: 16 }, { wch: 10 }];
+    ws["!cols"] = [{ wch: 20 }, { wch: 36 }, { wch: 16 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Price Update");
-    XLSX.writeFile(wb, "price-update-template.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, "Product Update");
+    XLSX.writeFile(wb, "product-update-template.xlsx");
     toast.success("Template downloaded");
   }
 
@@ -128,15 +139,16 @@ export function UpdatePriceClient() {
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  const matchedRows  = rows.filter((r) => details.has(r.productCode));
-  const unmatchedRows = rows.filter((r) => !details.has(r.productCode));
-  const validPrices  = rows.filter((r) => r.newPrice && parseFloat(r.newPrice) > 0).length;
+  const matchedRows       = rows.filter((r) => details.has(r.productCode));
+  const unmatchedRows     = rows.filter((r) => !details.has(r.productCode));
+  const validRowCount     = rows.filter((r) => r.newPrice || r.newDescription).length;
+  const hasDescUpdates    = rows.some((r) => r.newDescription);
 
   return (
     <div className="p-6 max-w-5xl">
       <PageHeader
-        title="Update Selling Price"
-        description="Download the template, fill in the prices, then upload the completed file."
+        title="Update Product Data"
+        description="Download the template, fill in new prices and/or descriptions, then upload the completed file."
       />
 
       {/* ── Template guide ── */}
@@ -145,30 +157,31 @@ export function UpdatePriceClient() {
           <div className="flex items-center justify-between px-4 py-3 bg-muted/30 border-b border-border">
             <div>
               <div className="text-sm font-semibold">Step 1 — Download the template</div>
-              <div className="text-xs text-muted-foreground mt-0.5">Fill in the selling prices, then upload the completed file below.</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Fill in descriptions and/or selling prices, then upload below.</div>
             </div>
             <Button size="sm" className="gap-1.5 shrink-0" onClick={handleExportTemplate}>
               <DownloadIcon className="w-3.5 h-3.5" /> Download Template (.xlsx)
             </Button>
           </div>
-          {/* Format preview */}
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-muted/20 border-b border-border">
                   <th className="px-4 py-2 text-left font-semibold text-foreground">Product Code</th>
+                  <th className="px-4 py-2 text-left font-semibold text-foreground">Description</th>
                   <th className="px-4 py-2 text-left font-semibold text-foreground">Selling Price</th>
                   <th className="px-4 py-2 text-left font-semibold text-foreground">Currency</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
                 {[
-                  { code: "BMS-001", price: "125.00", ccy: "MYR" },
-                  { code: "BMS-002", price: "88.50",  ccy: "MYR" },
-                  { code: "BMS-003", price: "210.00", ccy: "MYR" },
+                  { code: "BMS-001", desc: "Blood Pressure Monitor Wrist",   price: "125.00", ccy: "MYR" },
+                  { code: "BMS-002", desc: "Digital Thermometer",             price: "88.50",  ccy: "MYR" },
+                  { code: "BMS-003", desc: "Pulse Oximeter Fingertip",        price: "210.00", ccy: "MYR" },
                 ].map((row) => (
                   <tr key={row.code} className="text-muted-foreground">
                     <td className="px-4 py-2 font-mono">{row.code}</td>
+                    <td className="px-4 py-2">{row.desc}</td>
                     <td className="px-4 py-2 tabular-nums">{row.price}</td>
                     <td className="px-4 py-2">{row.ccy}</td>
                   </tr>
@@ -177,13 +190,15 @@ export function UpdatePriceClient() {
                   <td className="px-4 py-2 font-mono">…</td>
                   <td className="px-4 py-2">…</td>
                   <td className="px-4 py-2">…</td>
+                  <td className="px-4 py-2">…</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div className="px-4 py-2.5 border-t border-border bg-muted/10 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1"><InfoIcon className="w-3 h-3 shrink-0" /><strong className="text-foreground">Product Code</strong> — must match exactly what is in the system</span>
-            <span><strong className="text-foreground">Selling Price</strong> — numeric value, e.g. 125.00</span>
+            <span><strong className="text-foreground">Description</strong> — optional; leave blank to keep existing</span>
+            <span><strong className="text-foreground">Selling Price</strong> — optional; numeric value, e.g. 125.00</span>
             <span><strong className="text-foreground">Currency</strong> — optional, defaults to MYR</span>
           </div>
         </div>
@@ -210,7 +225,6 @@ export function UpdatePriceClient() {
         </div>
       )}
 
-      {/* ── Step 2 label ── */}
       {!file && (
         <div className="text-sm font-semibold mb-2">Step 2 — Upload the completed file</div>
       )}
@@ -236,7 +250,7 @@ export function UpdatePriceClient() {
             <div className="text-sm font-medium">{loading ? "Reading file…" : file ? "Change file" : "Click or drag & drop"}</div>
             <div className="text-xs text-muted-foreground mt-1">.xlsx · .xls · .csv</div>
           </div>
-          <div className="text-xs text-muted-foreground/70">Needs "product code" + "selling price" columns</div>
+          <div className="text-xs text-muted-foreground/70">Needs "product code" + "selling price" and/or "description" columns</div>
         </div>
 
         {/* Summary card */}
@@ -252,7 +266,10 @@ export function UpdatePriceClient() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate">{file.name}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{rows.length} rows · {validPrices} with valid prices</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {rows.length} rows · {validRowCount} with updates
+                  {hasDescUpdates && ` · ${rows.filter((r) => r.newDescription).length} with new descriptions`}
+                </div>
               </div>
               <button onClick={(e) => { e.stopPropagation(); reset(); }} className="text-muted-foreground hover:text-foreground p-1">
                 <XIcon className="w-4 h-4" />
@@ -285,38 +302,52 @@ export function UpdatePriceClient() {
               <span className="text-xs font-medium text-muted-foreground">{rows.length} rows from file</span>
               <span className="text-xs text-muted-foreground">{matchedRows.length} matched · {unmatchedRows.length} not found</span>
             </div>
-            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+            <div className="overflow-x-auto max-h-105 overflow-y-auto">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted/30">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b border-border w-10">#</th>
                     <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b border-border">Product Code</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b border-border">Description</th>
+                    <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b border-border">Current Description</th>
+                    {hasDescUpdates && (
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b border-border">New Description</th>
+                    )}
                     <th className="px-3 py-2 text-right font-medium text-muted-foreground border-b border-border w-28">Current Price</th>
                     <th className="px-3 py-2 text-right font-medium text-muted-foreground border-b border-border w-28">New Price</th>
                     <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b border-border w-14">CCY</th>
-                    <th className="px-3 py-2 text-center font-medium text-muted-foreground border-b border-border w-20">Status</th>
+                    <th className="px-3 py-2 text-center font-medium text-muted-foreground border-b border-border w-24">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, i) => {
                     const d = details.get(row.productCode);
-                    const unchanged = d?.sellingUnitPrice &&
-                      parseFloat(d.sellingUnitPrice).toFixed(2) === parseFloat(row.newPrice).toFixed(2);
+                    const priceChanged = d && row.newPrice &&
+                      parseFloat(d.sellingUnitPrice ?? "0").toFixed(2) !== parseFloat(row.newPrice).toFixed(2);
+                    const descChanged = d && row.newDescription &&
+                      row.newDescription !== (d.description ?? "");
+                    const unchanged = !priceChanged && !descChanged;
                     return (
                       <tr key={i} className={cn("border-b border-border/40 last:border-0", !d && "opacity-50")}>
                         <td className="px-3 py-2 text-muted-foreground tabular-nums">{i + 1}</td>
                         <td className="px-3 py-2 font-mono font-medium">{row.productCode}</td>
-                        <td className="px-3 py-2 text-muted-foreground max-w-xs truncate">
+                        <td className="px-3 py-2 text-muted-foreground max-w-50 truncate" title={d?.description ?? undefined}>
                           {d?.description ?? <span className="italic text-muted-foreground/40">not found</span>}
                         </td>
+                        {hasDescUpdates && (
+                          <td className={cn(
+                            "px-3 py-2 max-w-50 truncate",
+                            descChanged ? "text-blue-600 dark:text-blue-400 font-medium" : "text-muted-foreground/40 italic",
+                          )} title={row.newDescription || undefined}>
+                            {row.newDescription || "—"}
+                          </td>
+                        )}
                         <td className="px-3 py-2 text-right tabular-nums font-mono text-muted-foreground">
                           {d?.sellingUnitPrice
                             ? Number(d.sellingUnitPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })
                             : <span className="italic text-muted-foreground/40">—</span>}
                         </td>
                         <td className={cn("px-3 py-2 text-right tabular-nums font-mono font-semibold",
-                          d && !unchanged ? "text-blue-600 dark:text-blue-400" : "")}>
+                          priceChanged ? "text-blue-600 dark:text-blue-400" : "")}>
                           {row.newPrice
                             ? Number(row.newPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })
                             : <span className="italic text-muted-foreground/40">—</span>}
@@ -328,7 +359,9 @@ export function UpdatePriceClient() {
                           ) : unchanged ? (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">No change</span>
                           ) : (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400">Update</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400">
+                              {priceChanged && descChanged ? "Price + Desc" : priceChanged ? "Price" : "Desc"}
+                            </span>
                           )}
                         </td>
                       </tr>

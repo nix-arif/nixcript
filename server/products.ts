@@ -262,7 +262,7 @@ export async function getDistinctBrands() {
 }
 
 export async function updateProductSellingPrices(
-  rows: { productCode: string; sellingUnitPrice: string; currency?: string }[],
+  rows: { productCode: string; sellingUnitPrice?: string; currency?: string; description?: string }[],
 ): Promise<{ updated: number; notFound: string[] }> {
   const { orgId } = await requireAccess("product:update-price");
   if (!rows.length) return { updated: 0, notFound: [] };
@@ -289,8 +289,9 @@ export async function updateProductSellingPrices(
       db
         .update(product)
         .set({
-          sellingUnitPrice: r.sellingUnitPrice,
-          ...(r.currency ? { sellingPriceCurrency: r.currency } : {}),
+          ...(r.sellingUnitPrice ? { sellingUnitPrice: r.sellingUnitPrice } : {}),
+          ...(r.sellingUnitPrice && r.currency ? { sellingPriceCurrency: r.currency } : {}),
+          ...(r.description !== undefined && r.description !== "" ? { description: r.description } : {}),
           updatedAt: new Date(),
         })
         .where(
