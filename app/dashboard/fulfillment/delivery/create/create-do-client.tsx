@@ -292,7 +292,9 @@ function SoPicker({ onSelect }: SoPickerProps) {
 
         {results.length === 0 && !loading ? (
           <p className="text-xs text-muted-foreground py-4 text-center">
-            {query.length === 0 ? "Type to search confirmed sales orders" : "No confirmed sales orders match your search"}
+            {query.length === 0
+              ? "Type to search — only SOs with stock reserved are shown"
+              : "No matching SO found, or its stock has not been reserved yet"}
           </p>
         ) : (
           <div className="divide-y divide-border/40 rounded-lg border border-border overflow-hidden">

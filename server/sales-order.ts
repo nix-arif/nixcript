@@ -241,6 +241,7 @@ export async function searchConfirmedSalesOrders(
       and(
         eq(salesOrder.organizationId, orgId),
         inArray(salesOrder.status, statuses),
+        eq(salesOrder.stockReservationStatus, "reserved"),
         query.trim().length >= 1
           ? ilike(salesOrder.soNo, q)
           : undefined,
