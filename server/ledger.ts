@@ -339,8 +339,7 @@ export async function getTrialBalance(asOfDate?: string): Promise<AccountBalance
 //   each entry, so you can see who owes how much (debtors) or is owed how
 //   much (creditors).
 
-export const SUBSIDIARY_STAKEHOLDER_TYPES = ["CUSTOMER", "SUPPLIER", "MEMBER"] as const;
-export type SubsidiaryStakeholderType = (typeof SUBSIDIARY_STAKEHOLDER_TYPES)[number];
+export type SubsidiaryStakeholderType = "CUSTOMER" | "SUPPLIER" | "MEMBER";
 
 export type SubsidiaryLedgerRow = {
   stakeholderId: string;
