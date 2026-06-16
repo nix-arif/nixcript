@@ -332,19 +332,27 @@ export async function getTrialBalance(asOfDate?: string): Promise<AccountBalance
   });
 }
 
-// ── Member Balances (sub-ledger breakdown by stakeholder) ──────────────────
+// ── Subsidiary Ledger (sub-ledger breakdown by stakeholder) ────────────────
 //   The Chart of Accounts only holds one combined total per control account
-//   (e.g. "Advances to Member"). This breaks that total down per member, using
-//   the stakeholderId tagged on each entry, so you can see who owes how much.
+//   (e.g. "Trade Receivables", "Trade Payables", "Advances to Member"). This
+//   breaks that total down per stakeholder, using the stakeholderId tagged on
+//   each entry, so you can see who owes how much (debtors) or is owed how
+//   much (creditors).
 
-export type MemberBalanceRow = {
-  memberId: string;
-  memberName: string;
-  role: string;
+export const SUBSIDIARY_STAKEHOLDER_TYPES = ["CUSTOMER", "SUPPLIER", "MEMBER"] as const;
+export type SubsidiaryStakeholderType = (typeof SUBSIDIARY_STAKEHOLDER_TYPES)[number];
+
+export type SubsidiaryLedgerRow = {
+  stakeholderId: string;
+  stakeholderName: string;
+  role: string | null; // only populated for MEMBER
   balance: string; // debit - credit on the selected account, POSTED entries only
 };
 
-export async function getMemberBalances(accountId: string): Promise<MemberBalanceRow[]> {
+export async function getSubsidiaryLedger(
+  accountId: string,
+  stakeholderType: SubsidiaryStakeholderType,
+): Promise<SubsidiaryLedgerRow[]> {
   const { orgId } = await requireAccess("account:read");
 
   const [account] = await db.select().from(ledgerAccount)
@@ -364,7 +372,7 @@ export async function getMemberBalances(accountId: string): Promise<MemberBalanc
     .where(and(
       eq(ledgerEntry.organizationId, orgId),
       eq(ledgerEntry.status, "POSTED"),
-      eq(ledgerEntry.stakeholderType, "MEMBER"),
+      eq(ledgerEntry.stakeholderType, stakeholderType),
       eq(ledgerLine.accountId, accountId),
     ));
 
@@ -378,20 +386,23 @@ export async function getMemberBalances(accountId: string): Promise<MemberBalanc
 
   if (balanceMap.size === 0) return [];
 
-  const memberIds = [...balanceMap.keys()];
-  const members = await db.select({ id: member.id, role: member.role })
-    .from(member)
-    .where(inArray(member.id, memberIds));
-  const roleMap = Object.fromEntries(members.map((m) => [m.id, m.role]));
+  const stakeholderIds = [...balanceMap.keys()];
+  let roleMap: Record<string, string> = {};
+  if (stakeholderType === "MEMBER") {
+    const members = await db.select({ id: member.id, role: member.role })
+      .from(member)
+      .where(inArray(member.id, stakeholderIds));
+    roleMap = Object.fromEntries(members.map((m) => [m.id, m.role]));
+  }
 
   return [...balanceMap.entries()]
-    .map(([memberId, v]) => ({
-      memberId,
-      memberName: v.name,
-      role: roleMap[memberId] ?? "member",
+    .map(([stakeholderId, v]) => ({
+      stakeholderId,
+      stakeholderName: v.name,
+      role: stakeholderType === "MEMBER" ? (roleMap[stakeholderId] ?? "member") : null,
       balance: v.balance.toFixed(2),
     }))
-    .sort((a, b) => a.memberName.localeCompare(b.memberName));
+    .sort((a, b) => a.stakeholderName.localeCompare(b.stakeholderName));
 }
 
 // ── Reference data (for entry form selects) ───────────────────────────────
