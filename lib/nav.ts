@@ -83,7 +83,7 @@ export const navConfig: NavGroup[] = [
       { title: "Journal Entries",   url: "/dashboard/ledger/entries",       permission: "account:read" },
       { title: "Chart of Accounts", url: "/dashboard/ledger/accounts",      permission: "account:read" },
       { title: "Trial Balance",     url: "/dashboard/ledger/trial-balance",  permission: "account:read" },
-      { title: "Member Balances",   url: "/dashboard/ledger/member-balances", permission: "account:read" },
+      { title: "Subsidiary Ledger", url: "/dashboard/ledger/subsidiary-ledger", permission: "account:read" },
     ],
   },
   {

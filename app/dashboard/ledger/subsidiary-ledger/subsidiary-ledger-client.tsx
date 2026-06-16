@@ -45,7 +45,7 @@ const fmtMYR = (n: number) =>
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export function MemberBalancesClient({ accounts }: Props) {
+export function SubsidiaryLedgerClient({ accounts }: Props) {
   const [accountId, setAccountId] = useState("");
   const [balances, setBalances] = useState<MemberBalanceRow[] | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -57,7 +57,7 @@ export function MemberBalancesClient({ accounts }: Props) {
         const data = await getMemberBalances(id);
         setBalances(data);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to load member balances");
+        toast.error(err instanceof Error ? err.message : "Failed to load subsidiary ledger");
       }
     });
   }
@@ -70,7 +70,7 @@ export function MemberBalancesClient({ accounts }: Props) {
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold flex items-center gap-2">
           <UsersIcon className="h-5 w-5 text-muted-foreground" />
-          Member Balances
+          Subsidiary Ledger — Members
         </h1>
         <p className="text-sm text-muted-foreground">
           Breaks down a control account's total by member, so you can see who owes
@@ -82,7 +82,7 @@ export function MemberBalancesClient({ accounts }: Props) {
       <div className="flex flex-col gap-1.5 max-w-sm">
         <Select value={accountId} onValueChange={handleAccountChange}>
           <SelectTrigger>
-            <SelectValue placeholder="Select an account..." />
+            <SelectValue placeholder="Select a control account..." />
           </SelectTrigger>
           <SelectContent>
             {accounts.map((a) => (
@@ -96,7 +96,7 @@ export function MemberBalancesClient({ accounts }: Props) {
 
       {!accountId ? (
         <div className="text-center text-muted-foreground py-12">
-          Select an account above to see the breakdown by member.
+          Select a control account above to see the subsidiary breakdown by member.
         </div>
       ) : isPending ? (
         <div className="text-center text-muted-foreground py-12">Loading...</div>
