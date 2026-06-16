@@ -47,6 +47,7 @@ import {
 type Props = {
   entries: LedgerEntryListRow[];
   permissions: string[];
+  initialSearch?: string;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -103,12 +104,12 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export function LedgerEntriesClient({ entries, permissions }: Props) {
+export function LedgerEntriesClient({ entries, permissions, initialSearch }: Props) {
   const router = useRouter();
   const canCreate = permissions.includes("*") || permissions.includes("account:create");
   const canUpdate = permissions.includes("*") || permissions.includes("account:update");
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch ?? "");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [typeFilter, setTypeFilter] = useState("ALL");
 

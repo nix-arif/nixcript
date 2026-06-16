@@ -332,6 +332,68 @@ export async function getTrialBalance(asOfDate?: string): Promise<AccountBalance
   });
 }
 
+// ── Member Balances (sub-ledger breakdown by stakeholder) ──────────────────
+//   The Chart of Accounts only holds one combined total per control account
+//   (e.g. "Advances to Member"). This breaks that total down per member, using
+//   the stakeholderId tagged on each entry, so you can see who owes how much.
+
+export type MemberBalanceRow = {
+  memberId: string;
+  memberName: string;
+  role: string;
+  balance: string; // debit - credit on the selected account, POSTED entries only
+};
+
+export async function getMemberBalances(accountId: string): Promise<MemberBalanceRow[]> {
+  const { orgId } = await requireAccess("account:read");
+
+  const [account] = await db.select().from(ledgerAccount)
+    .where(and(eq(ledgerAccount.id, accountId), eq(ledgerAccount.organizationId, orgId)))
+    .limit(1);
+  if (!account) throw new Error("Account not found");
+
+  const rows = await db
+    .select({
+      stakeholderId: ledgerEntry.stakeholderId,
+      stakeholderName: ledgerEntry.stakeholderName,
+      debit: ledgerLine.debit,
+      credit: ledgerLine.credit,
+    })
+    .from(ledgerLine)
+    .innerJoin(ledgerEntry, eq(ledgerLine.entryId, ledgerEntry.id))
+    .where(and(
+      eq(ledgerEntry.organizationId, orgId),
+      eq(ledgerEntry.status, "POSTED"),
+      eq(ledgerEntry.stakeholderType, "MEMBER"),
+      eq(ledgerLine.accountId, accountId),
+    ));
+
+  const balanceMap = new Map<string, { name: string; balance: number }>();
+  for (const r of rows) {
+    if (!r.stakeholderId) continue;
+    const entry = balanceMap.get(r.stakeholderId) ?? { name: r.stakeholderName ?? "Unknown", balance: 0 };
+    entry.balance += parseFloat(r.debit) - parseFloat(r.credit);
+    balanceMap.set(r.stakeholderId, entry);
+  }
+
+  if (balanceMap.size === 0) return [];
+
+  const memberIds = [...balanceMap.keys()];
+  const members = await db.select({ id: member.id, role: member.role })
+    .from(member)
+    .where(inArray(member.id, memberIds));
+  const roleMap = Object.fromEntries(members.map((m) => [m.id, m.role]));
+
+  return [...balanceMap.entries()]
+    .map(([memberId, v]) => ({
+      memberId,
+      memberName: v.name,
+      role: roleMap[memberId] ?? "member",
+      balance: v.balance.toFixed(2),
+    }))
+    .sort((a, b) => a.memberName.localeCompare(b.memberName));
+}
+
 // ── Reference data (for entry form selects) ───────────────────────────────
 
 export async function getLedgerReferenceData() {
