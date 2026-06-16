@@ -18,6 +18,7 @@ const s3 = new S3Client({
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
   },
   forcePathStyle: true,
+  requestChecksumCalculation: "WHEN_REQUIRED",
 });
 const PRODUCT_IMAGES_BUCKET = process.env.R2_PRODUCT_IMAGES_BUCKET!;
 
