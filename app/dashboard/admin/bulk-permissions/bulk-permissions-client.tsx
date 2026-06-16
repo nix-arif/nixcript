@@ -48,6 +48,15 @@ export function BulkPermissionsClient({
     setGrantedBundles(new Set());
   };
 
+  const allowedKeys = React.useMemo(
+    () => new Set(selectedMember?.permissions.filter((p) => p.allowed).map((p) => p.key) ?? []),
+    [selectedMember],
+  );
+  const deniedKeys = React.useMemo(
+    () => new Set(selectedMember?.permissions.filter((p) => !p.allowed).map((p) => p.key) ?? []),
+    [selectedMember],
+  );
+
   const handleGrantBundle = async (bundleId: string, permissionKeys: string[]) => {
     if (!selectedMember) return;
     setGrantingBundle(bundleId);
@@ -131,8 +140,14 @@ export function BulkPermissionsClient({
                         <span className="capitalize">{selectedMember.role}</span>
                       </div>
                     </div>
-                    <div className="ml-auto text-xs text-muted-foreground">
-                      Granting a preset always sets those permissions to allowed
+                    <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-green-500" /> already allowed
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-red-500" /> explicitly denied
+                      </span>
+                      <span>Granting always sets to allowed</span>
                     </div>
                   </div>
                 );
@@ -142,7 +157,11 @@ export function BulkPermissionsClient({
               <div className="divide-y divide-border">
                 {PERMISSION_BUNDLES.map((bundle) => {
                   const isExpanded = expandedBundle === bundle.id;
-                  const isGranted = grantedBundles.has(bundle.id);
+                  const grantedCount = bundle.permissions.filter((k) =>
+                    allowedKeys.has(k),
+                  ).length;
+                  const fullyGranted = grantedCount === bundle.permissions.length;
+                  const isGranted = grantedBundles.has(bundle.id) || fullyGranted;
                   const isGranting = grantingBundle === bundle.id;
 
                   return (
@@ -154,6 +173,18 @@ export function BulkPermissionsClient({
                             <Badge variant="secondary" className="text-xs font-mono">
                               {bundle.permissions.length} permissions
                             </Badge>
+                            {grantedCount > 0 && (
+                              <Badge
+                                variant="outline"
+                                className={`text-xs ${
+                                  fullyGranted
+                                    ? "border-green-300 text-green-700 dark:text-green-400 dark:border-green-800"
+                                    : "border-amber-300 text-amber-700 dark:text-amber-400 dark:border-amber-800"
+                                }`}
+                              >
+                                {grantedCount}/{bundle.permissions.length} already on
+                              </Badge>
+                            )}
                           </div>
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {bundle.description}
@@ -174,14 +205,32 @@ export function BulkPermissionsClient({
 
                           {isExpanded && (
                             <div className="mt-2 flex flex-wrap gap-1">
-                              {bundle.permissions.map((key) => (
-                                <span
-                                  key={key}
-                                  className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded"
-                                >
-                                  {key}
-                                </span>
-                              ))}
+                              {bundle.permissions.map((key) => {
+                                const allowed = allowedKeys.has(key);
+                                const denied = deniedKeys.has(key);
+                                return (
+                                  <span
+                                    key={key}
+                                    title={
+                                      allowed
+                                        ? "Already allowed via override"
+                                        : denied
+                                          ? "Explicitly denied via override"
+                                          : "No override — inherits role default"
+                                    }
+                                    className={`font-mono text-xs px-1.5 py-0.5 rounded border ${
+                                      allowed
+                                        ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800"
+                                        : denied
+                                          ? "bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800"
+                                          : "bg-muted border-border/50"
+                                    }`}
+                                  >
+                                    {allowed ? "✓ " : denied ? "✗ " : ""}
+                                    {key}
+                                  </span>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
