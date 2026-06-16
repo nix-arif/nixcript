@@ -226,40 +226,41 @@ export async function createLedgerEntry(data: CreateLedgerEntryInput): Promise<s
   const accounts = await db.select().from(ledgerAccount).where(inArray(ledgerAccount.id, accountIds));
   const accountMap = Object.fromEntries(accounts.map((a) => [a.id, a]));
 
-  await db.transaction(async (tx) => {
-    await tx.insert(ledgerEntry).values({
-      id: entryId,
-      organizationId: orgId,
-      entryNo,
-      date: data.date,
-      description: data.description,
-      transactionType: data.transactionType,
-      referenceType: data.referenceType || "NONE",
-      referenceId: data.referenceId || null,
-      referenceNo: data.referenceNo || null,
-      stakeholderType: data.stakeholderType || "NONE",
-      stakeholderId: data.stakeholderId || null,
-      stakeholderName: data.stakeholderName || null,
-      totalAmount: totalDebit.toFixed(2),
-      status: "DRAFT",
-      createdBy: userId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    const lineRows = data.lines.map((l) => ({
-      id: nanoid(),
-      entryId,
-      accountId: l.accountId,
-      accountCode: accountMap[l.accountId]?.code ?? "",
-      accountName: accountMap[l.accountId]?.name ?? "",
-      debit: l.debit || "0",
-      credit: l.credit || "0",
-      description: l.description || null,
-      createdAt: new Date(),
-    }));
-    await tx.insert(ledgerLine).values(lineRows);
+  // neon-http driver has no transaction support — insert sequentially.
+  // A DRAFT entry left without lines (if the line insert below ever fails)
+  // is harmless: drafts don't affect balances and can be deleted.
+  await db.insert(ledgerEntry).values({
+    id: entryId,
+    organizationId: orgId,
+    entryNo,
+    date: data.date,
+    description: data.description,
+    transactionType: data.transactionType,
+    referenceType: data.referenceType || "NONE",
+    referenceId: data.referenceId || null,
+    referenceNo: data.referenceNo || null,
+    stakeholderType: data.stakeholderType || "NONE",
+    stakeholderId: data.stakeholderId || null,
+    stakeholderName: data.stakeholderName || null,
+    totalAmount: totalDebit.toFixed(2),
+    status: "DRAFT",
+    createdBy: userId,
+    createdAt: new Date(),
+    updatedAt: new Date(),
   });
+
+  const lineRows = data.lines.map((l) => ({
+    id: nanoid(),
+    entryId,
+    accountId: l.accountId,
+    accountCode: accountMap[l.accountId]?.code ?? "",
+    accountName: accountMap[l.accountId]?.name ?? "",
+    debit: l.debit || "0",
+    credit: l.credit || "0",
+    description: l.description || null,
+    createdAt: new Date(),
+  }));
+  await db.insert(ledgerLine).values(lineRows);
 
   return entryId;
 }
