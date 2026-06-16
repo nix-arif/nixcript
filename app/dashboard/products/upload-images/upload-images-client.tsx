@@ -117,8 +117,9 @@ export function UploadImagesClient() {
     setEntries((prev) => prev.map((e) => toUpload.some((t) => t.id === e.id) ? { ...e, uploadState: "uploading" } : e));
 
     try {
-      const codes = toUpload.map((e) => e.productCode);
-      const urlMap = await getProductImageUploadUrls(codes);
+      const urlMap = await getProductImageUploadUrls(
+        toUpload.map((e) => ({ productCode: e.productCode, contentType: e.file.type || "image/jpeg" })),
+      );
       const urlByCode = Object.fromEntries(urlMap.map((u) => [u.productCode, u.uploadUrl]));
 
       await Promise.allSettled(

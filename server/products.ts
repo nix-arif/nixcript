@@ -310,14 +310,18 @@ export async function updateProductSellingPrices(
 }
 
 export async function getProductImageUploadUrls(
-  productCodes: string[],
+  items: { productCode: string; contentType: string }[],
 ): Promise<{ productCode: string; uploadUrl: string }[]> {
   await requireAccess("product:upload-image");
   return Promise.all(
-    productCodes.map(async (code) => {
-      const cmd = new PutObjectCommand({ Bucket: PRODUCT_IMAGES_BUCKET, Key: `${code}.jpg` });
+    items.map(async ({ productCode, contentType }) => {
+      const cmd = new PutObjectCommand({
+        Bucket: PRODUCT_IMAGES_BUCKET,
+        Key: `${productCode}.jpg`,
+        ContentType: contentType,
+      });
       const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
-      return { productCode: code, uploadUrl };
+      return { productCode, uploadUrl };
     }),
   );
 }
