@@ -181,9 +181,16 @@ export function UploadImagesClient() {
         }),
       );
 
-      // Stamp imageUploadedAt on successfully uploaded products so URLs get cache-busted
       if (uploadedCodes.length) markProductImagesUploaded(uploadedCodes).catch(() => {});
-      toast.success(`Upload complete`);
+
+      const failedCount = toUpload.length - uploadedCodes.length;
+      if (uploadedCodes.length === 0) {
+        toast.error("All uploads failed — check the errors on each image");
+      } else if (failedCount > 0) {
+        toast.warning(`${uploadedCodes.length} uploaded, ${failedCount} failed`);
+      } else {
+        toast.success(`${uploadedCodes.length} image${uploadedCodes.length !== 1 ? "s" : ""} uploaded`);
+      }
     } catch (e: any) {
       toast.error(e.message);
     } finally {
