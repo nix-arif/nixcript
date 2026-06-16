@@ -5,9 +5,9 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { bulkGrantPermissions, bulkRevokePermissions } from "@/server/permissions";
 import { PERMISSION_BUNDLES } from "@/lib/permissions/constants";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ChevronDownIcon } from "lucide-react";
 
 type Member = {
   memberId: string;
@@ -183,11 +183,16 @@ export function BulkPermissionsClient({
                   const grantedCount = bundle.permissions.filter((k) =>
                     allowedKeys.has(k),
                   ).length;
+                  const deniedCount = bundle.permissions.filter((k) =>
+                    deniedKeys.has(k),
+                  ).length;
                   const fullyGranted = grantedCount === bundle.permissions.length;
+                  const fullyDenied = deniedCount === bundle.permissions.length;
                   const isGranting =
                     pendingAction?.id === bundle.id && pendingAction.type === "grant";
                   const isRevoking =
                     pendingAction?.id === bundle.id && pendingAction.type === "revoke";
+                  const radioValue = fullyGranted ? "allow" : fullyDenied ? "deny" : undefined;
 
                   return (
                     <div key={bundle.id} className="px-4 py-3">
@@ -260,37 +265,27 @@ export function BulkPermissionsClient({
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Button
-                            size="sm"
-                            variant={fullyGranted ? "outline" : "default"}
-                            disabled={isGranting || isRevoking}
-                            onClick={() =>
-                              handleGrantBundle(bundle.id, bundle.permissions as string[])
+                        <RadioGroup
+                          value={radioValue}
+                          onValueChange={(v) => {
+                            if (v === "allow") {
+                              handleGrantBundle(bundle.id, bundle.permissions as string[]);
+                            } else {
+                              handleRevokeBundle(bundle.id, bundle.permissions as string[]);
                             }
-                          >
-                            {fullyGranted ? (
-                              <>
-                                <CheckIcon className="w-3.5 h-3.5 mr-1.5" />
-                                Granted
-                              </>
-                            ) : isGranting ? (
-                              "Granting..."
-                            ) : (
-                              "Grant"
-                            )}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={isGranting || isRevoking || grantedCount === 0}
-                            onClick={() =>
-                              handleRevokeBundle(bundle.id, bundle.permissions as string[])
-                            }
-                          >
-                            {isRevoking ? "Revoking..." : "Ungrant"}
-                          </Button>
-                        </div>
+                          }}
+                          disabled={isGranting || isRevoking}
+                          className="flex items-center gap-3 shrink-0"
+                        >
+                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                            <RadioGroupItem value="allow" />
+                            {isGranting ? "Granting…" : "Allow"}
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                            <RadioGroupItem value="deny" />
+                            {isRevoking ? "Revoking…" : "Deny"}
+                          </label>
+                        </RadioGroup>
                       </div>
                     </div>
                   );
