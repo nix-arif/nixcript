@@ -3,7 +3,7 @@
 import React from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
-import { bulkGrantPermissions } from "@/server/permissions";
+import { bulkGrantPermissions, bulkRevokePermissions } from "@/server/permissions";
 import { PERMISSION_BUNDLES } from "@/lib/permissions/constants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,34 +40,57 @@ export function BulkPermissionsClient({
 }) {
   const [selectedMember, setSelectedMember] = React.useState<Member | null>(null);
   const [expandedBundle, setExpandedBundle] = React.useState<string | null>(null);
-  const [grantingBundle, setGrantingBundle] = React.useState<string | null>(null);
-  const [grantedBundles, setGrantedBundles] = React.useState<Set<string>>(new Set());
+  const [overrides, setOverrides] = React.useState<Map<string, boolean>>(new Map());
+  const [pendingAction, setPendingAction] = React.useState<
+    { id: string; type: "grant" | "revoke" } | null
+  >(null);
 
   const handleSelectMember = (m: Member) => {
     setSelectedMember(m);
-    setGrantedBundles(new Set());
+    setOverrides(new Map(m.permissions.map((p) => [p.key, p.allowed])));
   };
 
   const allowedKeys = React.useMemo(
-    () => new Set(selectedMember?.permissions.filter((p) => p.allowed).map((p) => p.key) ?? []),
-    [selectedMember],
+    () => new Set([...overrides].filter(([, allowed]) => allowed).map(([key]) => key)),
+    [overrides],
   );
   const deniedKeys = React.useMemo(
-    () => new Set(selectedMember?.permissions.filter((p) => !p.allowed).map((p) => p.key) ?? []),
-    [selectedMember],
+    () => new Set([...overrides].filter(([, allowed]) => !allowed).map(([key]) => key)),
+    [overrides],
   );
 
   const handleGrantBundle = async (bundleId: string, permissionKeys: string[]) => {
     if (!selectedMember) return;
-    setGrantingBundle(bundleId);
+    setPendingAction({ id: bundleId, type: "grant" });
     const res = await bulkGrantPermissions(selectedMember.userId, organizationId, permissionKeys);
     if (res.success) {
-      setGrantedBundles((prev) => new Set([...prev, bundleId]));
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        for (const key of permissionKeys) next.set(key, true);
+        return next;
+      });
       toast.success(`Bundle granted to ${selectedMember.name}.`);
     } else {
       toast.error("Failed to grant bundle.");
     }
-    setGrantingBundle(null);
+    setPendingAction(null);
+  };
+
+  const handleRevokeBundle = async (bundleId: string, permissionKeys: string[]) => {
+    if (!selectedMember) return;
+    setPendingAction({ id: bundleId, type: "revoke" });
+    const res = await bulkRevokePermissions(selectedMember.userId, organizationId, permissionKeys);
+    if (res.success) {
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        for (const key of permissionKeys) next.set(key, false);
+        return next;
+      });
+      toast.success(`Bundle revoked from ${selectedMember.name}.`);
+    } else {
+      toast.error("Failed to revoke bundle.");
+    }
+    setPendingAction(null);
   };
 
   return (
@@ -161,8 +184,10 @@ export function BulkPermissionsClient({
                     allowedKeys.has(k),
                   ).length;
                   const fullyGranted = grantedCount === bundle.permissions.length;
-                  const isGranted = grantedBundles.has(bundle.id) || fullyGranted;
-                  const isGranting = grantingBundle === bundle.id;
+                  const isGranting =
+                    pendingAction?.id === bundle.id && pendingAction.type === "grant";
+                  const isRevoking =
+                    pendingAction?.id === bundle.id && pendingAction.type === "revoke";
 
                   return (
                     <div key={bundle.id} className="px-4 py-3">
@@ -235,26 +260,37 @@ export function BulkPermissionsClient({
                           )}
                         </div>
 
-                        <Button
-                          size="sm"
-                          variant={isGranted ? "outline" : "default"}
-                          disabled={isGranting}
-                          onClick={() =>
-                            handleGrantBundle(bundle.id, bundle.permissions as string[])
-                          }
-                          className="shrink-0"
-                        >
-                          {isGranted ? (
-                            <>
-                              <CheckIcon className="w-3.5 h-3.5 mr-1.5" />
-                              Granted
-                            </>
-                          ) : isGranting ? (
-                            "Granting..."
-                          ) : (
-                            "Grant"
-                          )}
-                        </Button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Button
+                            size="sm"
+                            variant={fullyGranted ? "outline" : "default"}
+                            disabled={isGranting || isRevoking}
+                            onClick={() =>
+                              handleGrantBundle(bundle.id, bundle.permissions as string[])
+                            }
+                          >
+                            {fullyGranted ? (
+                              <>
+                                <CheckIcon className="w-3.5 h-3.5 mr-1.5" />
+                                Granted
+                              </>
+                            ) : isGranting ? (
+                              "Granting..."
+                            ) : (
+                              "Grant"
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isGranting || isRevoking || grantedCount === 0}
+                            onClick={() =>
+                              handleRevokeBundle(bundle.id, bundle.permissions as string[])
+                            }
+                          >
+                            {isRevoking ? "Revoking..." : "Ungrant"}
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   );
