@@ -2421,8 +2421,11 @@ export const ledgerLine = pgTable(
       .references(() => ledgerAccount.id),
     accountCode: text("account_code").notNull(),   // snapshot
     accountName: text("account_name").notNull(),   // snapshot
-    debit: text("debit").notNull().default("0"),
-    credit: text("credit").notNull().default("0"),
+    debit: text("debit").notNull().default("0"),     // MYR (functional currency) — books of record
+    credit: text("credit").notNull().default("0"),   // MYR (functional currency) — books of record
+    currency: text("currency"),                      // foreign currency code, e.g. "USD" — null = MYR-only line
+    amountForeign: text("amount_foreign"),            // original foreign-currency amount on this line
+    exchangeRate: text("exchange_rate"),              // rate used to convert to MYR debit/credit above
     description: text("description"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

@@ -9,9 +9,18 @@ import {
   voidLedgerEntry,
   createLedgerDocumentRecord,
   deleteLedgerDocument,
+  updateLedgerEntryMetadata,
 } from "@/server/ledger";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -37,15 +46,45 @@ import {
   FileIcon,
   XIcon,
   TrashIcon,
+  PencilIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+type RefCustomer = { id: string; name: string; organizationName: string | null };
+type RefSupplier = { id: string; name: string };
+type RefInvoice = { id: string; invoiceNo: string };
+type RefPO = { id: string; prNo: string | null; poNo: string | null };
+type RefMember = { id: string; name: string; role: string };
+
+type RefData = {
+  customers: RefCustomer[];
+  suppliers: RefSupplier[];
+  invoices: RefInvoice[];
+  purchaseOrders: RefPO[];
+  members: RefMember[];
+};
+
 type Props = {
   entry: LedgerEntryWithDetails;
+  refData: RefData;
   permissions: string[];
 };
+
+const STAKEHOLDER_TYPES = [
+  { value: "NONE", label: "None" },
+  { value: "CUSTOMER", label: "Customer" },
+  { value: "SUPPLIER", label: "Supplier" },
+  { value: "MEMBER", label: "Member" },
+];
+
+const REFERENCE_TYPES = [
+  { value: "NONE", label: "None" },
+  { value: "INVOICE", label: "Invoice" },
+  { value: "PURCHASE_ORDER", label: "Purchase Order" },
+  { value: "PAYROLL_PERIOD", label: "Payroll Period" },
+];
 
 type QueuedFile = {
   id: string;
@@ -117,7 +156,7 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export function EntryDetailClient({ entry, permissions }: Props) {
+export function EntryDetailClient({ entry, refData, permissions }: Props) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canUpdate = permissions.includes("*") || permissions.includes("account:update");
@@ -132,9 +171,84 @@ export function EntryDetailClient({ entry, permissions }: Props) {
   const [uploading, setUploading] = useState(false);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
+  // Edit metadata dialog
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editDescription, setEditDescription] = useState(entry.description);
+  const [editStakeholderType, setEditStakeholderType] = useState(entry.stakeholderType);
+  const [editStakeholderId, setEditStakeholderId] = useState(entry.stakeholderId ?? "");
+  const [editReferenceType, setEditReferenceType] = useState(entry.referenceType);
+  const [editReferenceId, setEditReferenceId] = useState(entry.referenceId ?? "");
+  const [editPayrollRef, setEditPayrollRef] = useState(
+    entry.referenceType === "PAYROLL_PERIOD" ? entry.referenceNo ?? "" : ""
+  );
+  const [editLoading, setEditLoading] = useState(false);
+
+  function openEditDialog() {
+    setEditDescription(entry.description);
+    setEditStakeholderType(entry.stakeholderType);
+    setEditStakeholderId(entry.stakeholderId ?? "");
+    setEditReferenceType(entry.referenceType);
+    setEditReferenceId(entry.referenceId ?? "");
+    setEditPayrollRef(entry.referenceType === "PAYROLL_PERIOD" ? entry.referenceNo ?? "" : "");
+    setEditDialogOpen(true);
+  }
+
+  const editStakeholderName = (() => {
+    if (editStakeholderType === "CUSTOMER") {
+      const c = refData.customers.find((c) => c.id === editStakeholderId);
+      return c ? c.organizationName || c.name : "";
+    }
+    if (editStakeholderType === "SUPPLIER") {
+      return refData.suppliers.find((s) => s.id === editStakeholderId)?.name ?? "";
+    }
+    if (editStakeholderType === "MEMBER") {
+      return refData.members.find((m) => m.id === editStakeholderId)?.name ?? "";
+    }
+    return "";
+  })();
+
+  const editReferenceNo = (() => {
+    if (editReferenceType === "INVOICE") {
+      return refData.invoices.find((i) => i.id === editReferenceId)?.invoiceNo ?? "";
+    }
+    if (editReferenceType === "PURCHASE_ORDER") {
+      const po = refData.purchaseOrders.find((p) => p.id === editReferenceId);
+      return po ? (po.poNo ?? po.prNo ?? "") : "";
+    }
+    if (editReferenceType === "PAYROLL_PERIOD") return editPayrollRef;
+    return "";
+  })();
+
+  async function handleEditSave() {
+    if (!editDescription.trim()) {
+      toast.error("Description is required");
+      return;
+    }
+    setEditLoading(true);
+    try {
+      await updateLedgerEntryMetadata(entry.id, {
+        description: editDescription.trim(),
+        stakeholderType: editStakeholderType === "NONE" ? undefined : editStakeholderType,
+        stakeholderId: editStakeholderId || undefined,
+        stakeholderName: editStakeholderName || undefined,
+        referenceType: editReferenceType === "NONE" ? undefined : editReferenceType,
+        referenceId: editReferenceType === "PAYROLL_PERIOD" ? undefined : editReferenceId || undefined,
+        referenceNo: editReferenceNo || undefined,
+      });
+      toast.success("Entry details updated");
+      setEditDialogOpen(false);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update entry details");
+    } finally {
+      setEditLoading(false);
+    }
+  }
+
   // Line totals
   const totalDebit = entry.lines.reduce((s, l) => s + parseFloat(l.debit || "0"), 0);
   const totalCredit = entry.lines.reduce((s, l) => s + parseFloat(l.credit || "0"), 0);
+  const hasFx = entry.lines.some((l) => l.currency);
 
   async function handlePost() {
     setPostLoading(true);
@@ -267,6 +381,12 @@ export function EntryDetailClient({ entry, permissions }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {canUpdate && (
+            <Button variant="outline" size="sm" onClick={openEditDialog}>
+              <PencilIcon className="h-4 w-4 mr-1" />
+              Edit Details
+            </Button>
+          )}
           {canUpdate && entry.status === "DRAFT" && (
             <Button
               size="sm"
@@ -344,6 +464,7 @@ export function EntryDetailClient({ entry, permissions }: Props) {
                 <TableHead className="w-[100px]">Code</TableHead>
                 <TableHead>Account Name</TableHead>
                 <TableHead>Description</TableHead>
+                {hasFx && <TableHead>Foreign Amount</TableHead>}
                 <TableHead className="text-right w-[140px]">Debit (MYR)</TableHead>
                 <TableHead className="text-right w-[140px]">Credit (MYR)</TableHead>
               </TableRow>
@@ -356,6 +477,13 @@ export function EntryDetailClient({ entry, permissions }: Props) {
                   <TableCell className="text-sm text-muted-foreground">
                     {line.description ?? "—"}
                   </TableCell>
+                  {hasFx && (
+                    <TableCell className="text-xs text-muted-foreground">
+                      {line.currency && line.amountForeign
+                        ? `${line.currency} ${parseFloat(line.amountForeign).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} @ ${line.exchangeRate ?? "—"}`
+                        : "—"}
+                    </TableCell>
+                  )}
                   <TableCell className="text-right font-mono text-sm">
                     {parseFloat(line.debit || "0") > 0 ? fmtMoney(line.debit) : "—"}
                   </TableCell>
@@ -366,7 +494,7 @@ export function EntryDetailClient({ entry, permissions }: Props) {
               ))}
               {/* Totals */}
               <TableRow className="bg-muted/30 font-semibold">
-                <TableCell colSpan={3} className="text-right text-sm pr-4">
+                <TableCell colSpan={hasFx ? 4 : 3} className="text-right text-sm pr-4">
                   Totals
                 </TableCell>
                 <TableCell className="text-right font-mono text-sm">
@@ -511,6 +639,142 @@ export function EntryDetailClient({ entry, permissions }: Props) {
           </div>
         )}
       </div>
+
+      {/* Edit Details Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Entry Details</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 flex flex-col gap-4">
+            <p className="text-sm text-muted-foreground">
+              Only descriptive details can be changed here — the journal lines, amounts, and status are never touched.
+            </p>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="editDescription">Description</Label>
+              <Input
+                id="editDescription"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label>Stakeholder Type</Label>
+                <Select
+                  value={editStakeholderType}
+                  onValueChange={(v) => { setEditStakeholderType(v); setEditStakeholderId(""); }}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {STAKEHOLDER_TYPES.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {editStakeholderType !== "NONE" && (
+                <div className="flex flex-col gap-1.5">
+                  <Label>Stakeholder</Label>
+                  {editStakeholderType === "CUSTOMER" && (
+                    <Select value={editStakeholderId} onValueChange={setEditStakeholderId}>
+                      <SelectTrigger><SelectValue placeholder="Select customer..." /></SelectTrigger>
+                      <SelectContent>
+                        {refData.customers.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.organizationName || c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {editStakeholderType === "SUPPLIER" && (
+                    <Select value={editStakeholderId} onValueChange={setEditStakeholderId}>
+                      <SelectTrigger><SelectValue placeholder="Select supplier..." /></SelectTrigger>
+                      <SelectContent>
+                        {refData.suppliers.map((s) => (
+                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {editStakeholderType === "MEMBER" && (
+                    <Select value={editStakeholderId} onValueChange={setEditStakeholderId}>
+                      <SelectTrigger><SelectValue placeholder="Select member..." /></SelectTrigger>
+                      <SelectContent>
+                        {refData.members.map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.name}{m.role === "owner" ? " (Owner)" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label>Reference Type</Label>
+                <Select
+                  value={editReferenceType}
+                  onValueChange={(v) => { setEditReferenceType(v); setEditReferenceId(""); setEditPayrollRef(""); }}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {REFERENCE_TYPES.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {editReferenceType !== "NONE" && (
+                <div className="flex flex-col gap-1.5">
+                  <Label>Reference</Label>
+                  {editReferenceType === "INVOICE" && (
+                    <Select value={editReferenceId} onValueChange={setEditReferenceId}>
+                      <SelectTrigger><SelectValue placeholder="Select invoice..." /></SelectTrigger>
+                      <SelectContent>
+                        {refData.invoices.map((inv) => (
+                          <SelectItem key={inv.id} value={inv.id}>{inv.invoiceNo}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {editReferenceType === "PURCHASE_ORDER" && (
+                    <Select value={editReferenceId} onValueChange={setEditReferenceId}>
+                      <SelectTrigger><SelectValue placeholder="Select PO..." /></SelectTrigger>
+                      <SelectContent>
+                        {refData.purchaseOrders.map((po) => (
+                          <SelectItem key={po.id} value={po.id}>{po.poNo ?? po.prNo ?? po.id}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {editReferenceType === "PAYROLL_PERIOD" && (
+                    <Input
+                      placeholder="Payroll period reference..."
+                      value={editPayrollRef}
+                      onChange={(e) => setEditPayrollRef(e.target.value)}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)} disabled={editLoading}>
+              Cancel
+            </Button>
+            <Button onClick={handleEditSave} disabled={editLoading || !editDescription.trim()}>
+              {editLoading ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Void Dialog */}
       <Dialog open={voidDialogOpen} onOpenChange={setVoidDialogOpen}>

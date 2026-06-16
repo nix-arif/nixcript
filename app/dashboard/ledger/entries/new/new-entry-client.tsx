@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -35,6 +35,7 @@ import {
   FileIcon,
   XIcon,
   ArrowLeftIcon,
+  Globe2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -69,7 +70,13 @@ type LineItem = {
   debit: string;
   credit: string;
   description: string;
+  currency: string;       // "" = MYR-only line
+  amountForeign: string;
+  exchangeRate: string;
+  showFx: boolean;
 };
+
+const FOREIGN_CURRENCIES = ["USD", "SGD", "EUR", "GBP", "CNY", "JPY", "AUD", "HKD", "IDR", "THB", "INR"];
 
 type QueuedFile = {
   id: string;
@@ -104,7 +111,11 @@ const REFERENCE_TYPES = [
 ];
 
 function newLine(): LineItem {
-  return { id: Math.random().toString(36).slice(2), accountId: "", debit: "", credit: "", description: "" };
+  return {
+    id: Math.random().toString(36).slice(2),
+    accountId: "", debit: "", credit: "", description: "",
+    currency: "", amountForeign: "", exchangeRate: "", showFx: false,
+  };
 }
 
 function fmtFileSize(bytes: number): string {
@@ -147,6 +158,31 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
         if (field === "debit" && value) updated.credit = "";
         if (field === "credit" && value) updated.debit = "";
         return updated;
+      })
+    );
+  }
+
+  function toggleFx(id: string) {
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.id !== id) return l;
+        if (l.showFx) return { ...l, showFx: false, currency: "", amountForeign: "", exchangeRate: "" };
+        return { ...l, showFx: true };
+      })
+    );
+  }
+
+  function applyFxConversion(id: string, side: "debit" | "credit") {
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.id !== id) return l;
+        const amt = parseFloat(l.amountForeign || "0");
+        const rate = parseFloat(l.exchangeRate || "0");
+        if (!amt || !rate) return l;
+        const converted = (amt * rate).toFixed(2);
+        return side === "debit"
+          ? { ...l, debit: converted, credit: "" }
+          : { ...l, credit: converted, debit: "" };
       })
     );
   }
@@ -264,6 +300,9 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
           debit: l.debit || "0",
           credit: l.credit || "0",
           description: l.description || undefined,
+          currency: l.currency || undefined,
+          amountForeign: l.amountForeign || undefined,
+          exchangeRate: l.exchangeRate || undefined,
         })),
       };
 
@@ -515,7 +554,8 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
             </TableHeader>
             <TableBody>
               {lines.map((line) => (
-                <TableRow key={line.id}>
+                <Fragment key={line.id}>
+                <TableRow>
                   <TableCell className="p-1.5">
                     <div className="flex flex-col gap-1">
                       <Input
@@ -569,12 +609,24 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
                     />
                   </TableCell>
                   <TableCell className="p-1.5">
-                    <Input
-                      placeholder="Optional note..."
-                      value={line.description}
-                      onChange={(e) => updateLine(line.id, "description", e.target.value)}
-                      className="h-7 text-xs"
-                    />
+                    <div className="flex items-center gap-1">
+                      <Input
+                        placeholder="Optional note..."
+                        value={line.description}
+                        onChange={(e) => updateLine(line.id, "description", e.target.value)}
+                        className="h-7 text-xs"
+                      />
+                      <Button
+                        type="button"
+                        variant={line.showFx ? "secondary" : "ghost"}
+                        size="sm"
+                        className="h-7 w-7 p-0 shrink-0"
+                        title="Record foreign currency amount"
+                        onClick={() => toggleFx(line.id)}
+                      >
+                        <Globe2Icon className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </TableCell>
                   <TableCell className="p-1.5">
                     <Button
@@ -587,6 +639,80 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
                     </Button>
                   </TableCell>
                 </TableRow>
+                {line.showFx && (
+                  <TableRow className="bg-blue-50/50 dark:bg-blue-950/20">
+                    <TableCell colSpan={5} className="p-2">
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs text-muted-foreground">Currency</Label>
+                          <Select
+                            value={line.currency}
+                            onValueChange={(v) => updateLine(line.id, "currency", v)}
+                          >
+                            <SelectTrigger className="h-7 text-xs w-[90px]">
+                              <SelectValue placeholder="Currency" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {FOREIGN_CURRENCIES.map((c) => (
+                                <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs text-muted-foreground">Foreign Amount</Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={line.amountForeign}
+                            onChange={(e) => updateLine(line.id, "amountForeign", e.target.value)}
+                            className="h-7 text-xs w-[110px]"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs text-muted-foreground">Exchange Rate</Label>
+                          <Input
+                            type="number"
+                            step="0.0001"
+                            min="0"
+                            placeholder="0.0000"
+                            value={line.exchangeRate}
+                            onChange={(e) => updateLine(line.id, "exchangeRate", e.target.value)}
+                            className="h-7 text-xs w-[100px]"
+                          />
+                        </div>
+                        {line.amountForeign && line.exchangeRate && (
+                          <>
+                            <span className="text-xs text-muted-foreground pb-1.5">
+                              ≈ RM {(parseFloat(line.amountForeign) * parseFloat(line.exchangeRate)).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => applyFxConversion(line.id, "debit")}
+                            >
+                              Use as Debit
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => applyFxConversion(line.id, "credit")}
+                            >
+                              Use as Credit
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+                </Fragment>
               ))}
               {/* Totals row */}
               <TableRow className="bg-muted/30 font-medium">

@@ -208,7 +208,15 @@ export type CreateLedgerEntryInput = {
   stakeholderType?: string;
   stakeholderId?: string;
   stakeholderName?: string;
-  lines: { accountId: string; debit: string; credit: string; description?: string }[];
+  lines: {
+    accountId: string;
+    debit: string;
+    credit: string;
+    description?: string;
+    currency?: string;       // foreign currency code, e.g. "USD" — omit for MYR-only lines
+    amountForeign?: string;  // original foreign-currency amount
+    exchangeRate?: string;   // rate used to derive the MYR debit/credit above
+  }[];
 };
 
 export async function createLedgerEntry(data: CreateLedgerEntryInput): Promise<string> {
@@ -257,6 +265,9 @@ export async function createLedgerEntry(data: CreateLedgerEntryInput): Promise<s
     accountName: accountMap[l.accountId]?.name ?? "",
     debit: l.debit || "0",
     credit: l.credit || "0",
+    currency: l.currency || null,
+    amountForeign: l.amountForeign || null,
+    exchangeRate: l.exchangeRate || null,
     description: l.description || null,
     createdAt: new Date(),
   }));
@@ -274,6 +285,39 @@ export async function postLedgerEntry(id: string): Promise<void> {
   if (entry[0].status !== "DRAFT") throw new Error("Only DRAFT entries can be posted");
   await db.update(ledgerEntry).set({ status: "POSTED", postedAt: new Date(), updatedAt: new Date() })
     .where(eq(ledgerEntry.id, id));
+}
+
+export type UpdateLedgerEntryMetadataInput = {
+  description?: string;
+  referenceType?: string;
+  referenceId?: string;
+  referenceNo?: string;
+  stakeholderType?: string;
+  stakeholderId?: string;
+  stakeholderName?: string;
+};
+
+// Updates descriptive metadata only — never the lines, amounts, or status.
+// Allowed regardless of entry status (DRAFT/POSTED/VOID) so a posted entry
+// can later be linked to an invoice/PO or tagged to a stakeholder without
+// touching the figures that the audit trail depends on.
+export async function updateLedgerEntryMetadata(id: string, data: UpdateLedgerEntryMetadataInput): Promise<void> {
+  const { orgId } = await requireAccess("account:update");
+  const entry = await db.select().from(ledgerEntry)
+    .where(and(eq(ledgerEntry.id, id), eq(ledgerEntry.organizationId, orgId)))
+    .limit(1);
+  if (!entry[0]) throw new Error("Entry not found");
+
+  await db.update(ledgerEntry).set({
+    description: data.description?.trim() ?? entry[0].description,
+    referenceType: data.referenceType || "NONE",
+    referenceId: data.referenceId || null,
+    referenceNo: data.referenceNo || null,
+    stakeholderType: data.stakeholderType || "NONE",
+    stakeholderId: data.stakeholderId || null,
+    stakeholderName: data.stakeholderName || null,
+    updatedAt: new Date(),
+  }).where(eq(ledgerEntry.id, id));
 }
 
 export async function voidLedgerEntry(id: string, reason: string): Promise<void> {
