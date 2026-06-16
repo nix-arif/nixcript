@@ -549,6 +549,7 @@ export const product = pgTable(
 
     // Image
     imageKey: text("image_key"), // R2 key for product catalogue image
+    imageUploadedAt: timestamp("image_uploaded_at"), // bumped on every image upload for cache-busting
 
     // Certificate
     mdaRegistrationNo: text("mda_registration_no"),

@@ -320,7 +320,7 @@
 //   return (
 //     <div className="bg-background border border-border rounded-xl p-4 flex items-center gap-4 hover:border-border/80 hover:bg-muted/10 transition-colors">
 //       <div className="w-14 h-14 rounded-lg bg-muted border border-border overflow-hidden shrink-0">
-//         <ProductImage productCode={p.productCode} className="w-full h-full" />
+//         <ProductImage productCode={p.productCode} imageUploadedAt={p.imageUploadedAt} className="w-full h-full" />
 //       </div>
 
 //       <div className="flex-1 min-w-0">
@@ -763,15 +763,18 @@ function CertBadge({ status }: { status: "certified" | "expired" | "nocert" }) {
 
 function ProductImage({
   productCode,
+  imageUploadedAt,
   className,
 }: {
   productCode: string;
+  imageUploadedAt?: Date | string | null;
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
   const [extIndex, setExtIndex] = useState(0);
   const exts = ["jpg", "jpeg", "png", "webp"];
   const base = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL;
+  const v = imageUploadedAt ? new Date(imageUploadedAt).getTime() : null;
 
   if (!base || failed || extIndex >= exts.length) {
     return (
@@ -783,9 +786,11 @@ function ProductImage({
     );
   }
 
+  const src = `${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}${v ? `?v=${v}` : ""}`;
+
   return (
     <img
-      src={`${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}`}
+      src={src}
       alt={productCode}
       className={cn("object-contain", className)}
       onError={() => {
@@ -883,6 +888,7 @@ function ProductSlideOver({
           <div className="w-full aspect-square bg-muted border-b border-border overflow-hidden">
             <ProductImage
               productCode={p.productCode}
+              imageUploadedAt={p.imageUploadedAt}
               className="w-full h-full"
             />
           </div>
@@ -1000,7 +1006,7 @@ function ProductCard({
   return (
     <div className="bg-background border border-border rounded-xl p-4 flex items-center gap-4 hover:border-border/80 hover:bg-muted/10 transition-colors">
       <div className="w-14 h-14 rounded-lg bg-muted border border-border overflow-hidden shrink-0">
-        <ProductImage productCode={p.productCode} className="w-full h-full" />
+        <ProductImage productCode={p.productCode} imageUploadedAt={p.imageUploadedAt} className="w-full h-full" />
       </div>
 
       <div className="flex-1 min-w-0">

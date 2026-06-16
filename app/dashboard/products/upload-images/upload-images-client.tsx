@@ -10,10 +10,23 @@ import {
   AlertCircleIcon, RefreshCwIcon, CheckIcon, Loader2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getProductImageUploadUrls, checkProductCodesExist } from "@/server/products";
+import { getProductImageUploadUrls, checkProductCodesExist, markProductImagesUploaded } from "@/server/products";
 
 const MAX_FILES = 50;
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const REQUIRED_WIDTH  = 726;
+const REQUIRED_HEIGHT = 451;
+const MAX_SIZE_BYTES  = 100 * 1024; // 100 KB
+
+function checkImageDimensions(file: File): Promise<{ w: number; h: number }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload  = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read image")); };
+    img.src = url;
+  });
+}
 
 type UploadState = "idle" | "uploading" | "done" | "error";
 
@@ -65,16 +78,38 @@ export function UploadImagesClient() {
     }, 600);
   }, [entries]);
 
-  function addFiles(files: File[]) {
+  async function addFiles(files: File[]) {
     const allowed = files.filter((f) => ALLOWED_TYPES.includes(f.type));
-    if (allowed.length < files.length) toast.warning(`${files.length - allowed.length} non-image file${files.length - allowed.length !== 1 ? "s" : ""} skipped`);
+    if (allowed.length < files.length)
+      toast.warning(`${files.length - allowed.length} non-image file${files.length - allowed.length !== 1 ? "s" : ""} skipped`);
 
     const remaining = MAX_FILES - entries.length;
     if (remaining <= 0) { toast.error(`Maximum ${MAX_FILES} images per upload`); return; }
-    const toAdd = allowed.slice(0, remaining);
-    if (toAdd.length < allowed.length) toast.warning(`Only ${remaining} slot${remaining !== 1 ? "s" : ""} remaining — ${allowed.length - toAdd.length} file${allowed.length - toAdd.length !== 1 ? "s" : ""} not added`);
+    const candidates = allowed.slice(0, remaining);
+    if (candidates.length < allowed.length)
+      toast.warning(`Only ${remaining} slot${remaining !== 1 ? "s" : ""} remaining — ${allowed.length - candidates.length} file${allowed.length - candidates.length !== 1 ? "s" : ""} not added`);
 
-    const newEntries: ImageEntry[] = toAdd.map((file) => ({
+    const valid: File[] = [];
+    for (const file of candidates) {
+      if (file.size > MAX_SIZE_BYTES) {
+        toast.error(`${file.name}: ${(file.size / 1024).toFixed(0)} KB — must be under 100 KB`);
+        continue;
+      }
+      try {
+        const { w, h } = await checkImageDimensions(file);
+        if (w !== REQUIRED_WIDTH || h !== REQUIRED_HEIGHT) {
+          toast.error(`${file.name}: ${w}×${h}px — must be exactly ${REQUIRED_WIDTH}×${REQUIRED_HEIGHT}px`);
+          continue;
+        }
+      } catch {
+        toast.error(`${file.name}: could not read image dimensions`);
+        continue;
+      }
+      valid.push(file);
+    }
+
+    if (!valid.length) return;
+    const newEntries: ImageEntry[] = valid.map((file) => ({
       id: `${Date.now()}-${Math.random()}`,
       file,
       previewUrl: URL.createObjectURL(file),
@@ -122,6 +157,8 @@ export function UploadImagesClient() {
       );
       const urlByCode = Object.fromEntries(urlMap.map((u) => [u.productCode, u.uploadUrl]));
 
+      const uploadedCodes: string[] = [];
+
       await Promise.allSettled(
         toUpload.map(async (entry) => {
           const uploadUrl = urlByCode[entry.productCode];
@@ -137,13 +174,15 @@ export function UploadImagesClient() {
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             setEntries((prev) => prev.map((e) => e.id === entry.id ? { ...e, uploadState: "done" } : e));
+            uploadedCodes.push(entry.productCode);
           } catch (err: any) {
             setEntries((prev) => prev.map((e) => e.id === entry.id ? { ...e, uploadState: "error", errorMsg: err.message } : e));
           }
         }),
       );
 
-      const done  = entries.filter((e) => toUpload.some((t) => t.id === e.id)).length; // approximate after state
+      // Stamp imageUploadedAt on successfully uploaded products so URLs get cache-busted
+      if (uploadedCodes.length) markProductImagesUploaded(uploadedCodes).catch(() => {});
       toast.success(`Upload complete`);
     } catch (e: any) {
       toast.error(e.message);
@@ -184,8 +223,9 @@ export function UploadImagesClient() {
           <div className="text-sm font-medium">Click or drag & drop images</div>
           <div className="text-xs text-muted-foreground mt-1">JPEG · PNG · WebP · GIF · up to {MAX_FILES} files</div>
         </div>
-        <div className="text-xs text-muted-foreground/70">
-          Filename becomes the product code — e.g. <span className="font-mono">BMS-001.jpg</span> → code <span className="font-mono">BMS-001</span>
+        <div className="text-xs text-muted-foreground/70 space-y-0.5">
+          <div>{REQUIRED_WIDTH}×{REQUIRED_HEIGHT}px · max 100 KB per image</div>
+          <div>Filename becomes the product code — e.g. <span className="font-mono">BMS-001.jpg</span> → code <span className="font-mono">BMS-001</span></div>
         </div>
         {entries.length > 0 && (
           <div className="text-xs text-muted-foreground">{entries.length} / {MAX_FILES} images added</div>

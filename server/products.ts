@@ -326,6 +326,22 @@ export async function getProductImageUploadUrls(
   );
 }
 
+export async function markProductImagesUploaded(productCodes: string[]): Promise<void> {
+  if (!productCodes.length) return;
+  const { orgId } = await requireAccess("product:upload-image");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const unique = [...new Set(productCodes.map((c) => c.trim()).filter(Boolean))];
+  const now = new Date();
+  await Promise.all(
+    unique.map((code) =>
+      db
+        .update(product)
+        .set({ imageUploadedAt: now })
+        .where(and(inArray(product.organizationId, ownerOrgIds), eq(product.productCode, code))),
+    ),
+  );
+}
+
 export async function checkProductCodesExist(
   codes: string[],
 ): Promise<Record<string, boolean>> {
