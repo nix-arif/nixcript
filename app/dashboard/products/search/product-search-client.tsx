@@ -1256,7 +1256,7 @@ export function ProductSearch() {
         )}
 
         {/* Loading skeleton */}
-        {loading && (
+        {loading && results.length === 0 && (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
               <div
@@ -1297,7 +1297,7 @@ export function ProductSearch() {
         )}
 
         {/* Results */}
-        {!loading && paged.length > 0 && (
+        {paged.length > 0 && (
           <div className="space-y-2">
             {paged.map((p) => (
               <ProductCard

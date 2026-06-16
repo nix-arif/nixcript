@@ -63,6 +63,7 @@ const TITLES = [
   "Tuan",
   "Puan",
   "Encik",
+  "KJ",
 ];
 
 const AVATAR_COLORS = [
