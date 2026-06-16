@@ -49,8 +49,8 @@ export const navConfig: NavGroup[] = [
     items: [
       { title: "Customers",    url: "/dashboard/sales/customer",      permission: "customer:read"    },
       { title: "Quotations",   url: "/dashboard/sales/quotation",     permission: "quotation:read"   },
-      { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
       { title: "Customer POs", url: "/dashboard/sales/customer-po",   permission: "customer-po:read" },
+      { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
       { title: "Consignment",  url: "/dashboard/sales/consignment",   permission: "sales-order:read" },
     ],
   },
@@ -60,7 +60,7 @@ export const navConfig: NavGroup[] = [
     icon: React.createElement(ProcurementIcon),
     items: [
       { title: "Suppliers",            url: "/dashboard/procurement/supplier",        permission: "supplier:read"       },
-      { title: "Purchase Requisition", url: "/dashboard/procurement/requisition",   permission: "purchase-order:read" },
+      { title: "Purchase Requisition", url: "/dashboard/procurement/requisition",   permission: "purchase-requisition:read" },
       { title: "Purchase Orders",      url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
       { title: "Goods Receipts",       url: "/dashboard/procurement/goods-receipt",  permission: "purchase-order:read" },
     ],
@@ -118,7 +118,7 @@ export const navConfig: NavGroup[] = [
       { title: "Departments",          url: "/dashboard/organization/departments",          permission: "department:read"           },
       { title: "Approvals",            url: "/dashboard/organization/approvals",            permission: "permission:read"           },
       { title: "Roles",                url: "/dashboard/organization/roles",                permission: "organization-role:update"  },
-      { title: "Organization Profile", url: "/dashboard/organization/organization-profile", permission: "organization-profile:update" },
+      { title: "Organization Profile", url: "/dashboard/organization/organization-profile", permission: "organization-profile:read" },
       { title: "Document Settings",    url: "/dashboard/organization/document-settings",    permission: "organization-profile:update" },
     ],
   },

@@ -39,7 +39,7 @@ const PROCUREMENT_DOCS_BUCKET = process.env.R2_PROCUREMENT_IMAGES_BUCKET!;
 export async function getPrItemImageUploadUrl(
   filename: string
 ): Promise<{ uploadUrl: string; key: string }> {
-  await requireAccess("purchase-order:create");
+  await requireAccess("purchase-requisition:create");
   const key = `pr-item-images/${nanoid()}-${filename}`;
   const cmd = new PutObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: key });
   const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
@@ -47,14 +47,14 @@ export async function getPrItemImageUploadUrl(
 }
 
 export async function getPrItemImageDownloadUrl(key: string): Promise<string> {
-  await requireAccess("purchase-order:read");
+  await requireAccess("purchase-requisition:read");
   const cmd = new GetObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: key });
   return getSignedUrl(s3, cmd, { expiresIn: 7200 });
 }
 
 export async function deleteProcurementImages(keys: string[]): Promise<void> {
   if (!keys.length) return;
-  await requireAccess("purchase-order:create");
+  await requireAccess("purchase-requisition:create");
   await Promise.allSettled(
     keys.map((key) => s3.send(new DeleteObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: key }))),
   );
@@ -149,7 +149,7 @@ export interface UpdatePrInput extends CreatePrInput {
 // ── Queries ────────────────────────────────────────────────────────────────
 
 export async function getPurchaseRequisitions(): Promise<PrListRow[]> {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
   const rows = await db
     .select()
     .from(purchaseRequisition)
@@ -176,7 +176,7 @@ export async function getPurchaseRequisitions(): Promise<PrListRow[]> {
 }
 
 export async function getPurchaseRequisitionDetail(id: string): Promise<PrWithItems | null> {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
   const [row] = await db
     .select()
     .from(purchaseRequisition)
@@ -254,7 +254,7 @@ export async function getPurchaseRequisitionDetail(id: string): Promise<PrWithIt
 }
 
 export async function getPrsBySoId(soId: string): Promise<PrListRow[]> {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
   const rows = await db
     .select()
     .from(purchaseRequisition)
@@ -283,7 +283,7 @@ export async function getPrsBySoId(soId: string): Promise<PrListRow[]> {
 // ── Mutations ──────────────────────────────────────────────────────────────
 
 export async function createPurchaseRequisition(input: CreatePrInput): Promise<PrRow> {
-  const { orgId, userId } = await requireAccess("purchase-order:create");
+  const { orgId, userId } = await requireAccess("purchase-requisition:create");
   const prNo = await generatePrNo(orgId);
 
   // Derive salesOrderNo from salesOrderId if client didn't supply it
@@ -342,7 +342,7 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
 }
 
 export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<PrRow> {
-  const { orgId } = await requireAccess("purchase-order:update");
+  const { orgId } = await requireAccess("purchase-requisition:update");
   const [existing] = await db
     .select()
     .from(purchaseRequisition)
@@ -400,7 +400,7 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
 }
 
 export async function deletePurchaseRequisition(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-order:delete");
+  const { orgId } = await requireAccess("purchase-requisition:delete");
   const [existing] = await db
     .select()
     .from(purchaseRequisition)
@@ -413,7 +413,7 @@ export async function deletePurchaseRequisition(id: string): Promise<void> {
 }
 
 export async function submitPurchaseRequisition(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-order:create");
+  const { orgId } = await requireAccess("purchase-requisition:create");
   const [existing] = await db
     .select()
     .from(purchaseRequisition)
@@ -452,7 +452,7 @@ export async function rejectPurchaseRequisition(id: string): Promise<void> {
 }
 
 export async function cancelPurchaseRequisition(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-order:update");
+  const { orgId } = await requireAccess("purchase-requisition:update");
   const [existing] = await db
     .select()
     .from(purchaseRequisition)
@@ -468,7 +468,7 @@ export async function cancelPurchaseRequisition(id: string): Promise<void> {
 
 export async function searchSuppliersForPr(query: string) {
   if (!query.trim()) return [];
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
   return db
     .select({ id: supplier.id, name: supplier.name })
     .from(supplier)
@@ -496,7 +496,7 @@ export async function getCposForSo(soId: string): Promise<{
   currency: string;
   items: CpoLineItem[] | null;
 }[]> {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
   return db
     .select({
       id: customerPurchaseOrder.id,
@@ -511,7 +511,7 @@ export async function getCposForSo(soId: string): Promise<{
 }
 
 export async function getSoItemsForPr(soId: string) {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
   const [so] = await db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo, customerPoLinks: salesOrder.customerPoLinks })
     .from(salesOrder)
@@ -639,7 +639,7 @@ export async function getSoItemsForPr(soId: string) {
 }
 
 export async function searchConfirmedSosForPr(query: string) {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
   return db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo })
     .from(salesOrder)
@@ -653,7 +653,7 @@ export async function searchConfirmedSosForPr(query: string) {
 }
 
 export async function getOpenSosForPr() {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
   return db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo })
     .from(salesOrder)
@@ -675,7 +675,7 @@ export type PendingSoForPrRow = {
 };
 
 export async function getPendingSosForPr(): Promise<PendingSoForPrRow[]> {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-requisition:read");
 
   // Fetch all confirmed SOs
   const rows = await db

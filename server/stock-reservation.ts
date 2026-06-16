@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { salesOrder, salesOrderItem, stockLevel } from "@/db/schema";
+import { salesOrder, salesOrderItem, stockLevel, product } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -35,38 +35,46 @@ export interface StockCheckResult {
   items: StockCheckItem[];
 }
 
-export async function checkAndReserveStock(soId: string): Promise<StockCheckResult> {
-  const { orgId, userId } = await requireAccess("delivery-order:create");
-
-  const [so] = await db
-    .select()
-    .from(salesOrder)
-    .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
-  if (!so) throw new Error("Sales order not found");
-  if (so.status !== "confirmed") throw new Error("Only confirmed sales orders can have stock reserved");
-  if (so.stockReservationStatus === "reserved") throw new Error("Stock is already reserved for this sales order");
-
+async function computeStockCheckItems(orgId: string, soId: string) {
   const items = await db
     .select()
     .from(salesOrderItem)
     .where(eq(salesOrderItem.salesOrderId, soId));
 
-  const productItems = items.filter((i) => i.productId);
+  // Items can end up without a linked productId (e.g. imported from a CPO/quotation
+  // whose code didn't match at the time). Resolve those by productCode against the
+  // catalog and persist the link, so stock is actually checked instead of silently
+  // skipped as "untracked".
+  const unlinked = items.filter((i) => !i.productId && i.productCode);
+  if (unlinked.length > 0) {
+    const codes = [...new Set(unlinked.map((i) => i.productCode!))];
+    const matches = await db
+      .select({ id: product.id, productCode: product.productCode })
+      .from(product)
+      .where(and(eq(product.organizationId, orgId), inArray(product.productCode, codes)));
+    const matchMap = new Map(matches.map((m) => [m.productCode, m.id]));
 
-  // No trackable items — mark reserved immediately so DO can be created
-  if (productItems.length === 0) {
-    await db
-      .update(salesOrder)
-      .set({ stockReservationStatus: "reserved", stockReservedAt: new Date(), stockReservedBy: userId })
-      .where(eq(salesOrder.id, soId));
-    return { canReserve: true, items: [] };
+    for (const item of unlinked) {
+      const matchedId = matchMap.get(item.productCode!);
+      if (matchedId) {
+        await db.update(salesOrderItem).set({ productId: matchedId }).where(eq(salesOrderItem.id, item.id));
+        item.productId = matchedId;
+      }
+    }
   }
+
+  const productItems = items.filter((i) => i.productId);
+  if (productItems.length === 0) return { productItems, result: [] as StockCheckItem[] };
 
   const productIds = [...new Set(productItems.map((i) => i.productId!))];
   const levels = await db
     .select()
     .from(stockLevel)
-    .where(and(eq(stockLevel.organizationId, orgId), inArray(stockLevel.productId, productIds)));
+    .where(and(
+      eq(stockLevel.organizationId, orgId),
+      eq(stockLevel.warehouseLabel, "Default"),
+      inArray(stockLevel.productId, productIds),
+    ));
 
   const levelMap = new Map(levels.map((l) => [l.productId, l]));
 
@@ -87,6 +95,59 @@ export async function checkAndReserveStock(soId: string): Promise<StockCheckResu
       shortage: Math.max(0, required - available),
     };
   });
+
+  return { productItems, result };
+}
+
+/**
+ * Read-only stock insight for the SO detail page — never mutates reservedQty.
+ */
+export async function getStockInsight(soId: string): Promise<StockCheckResult> {
+  const { orgId } = await requireAccess("delivery-order:create");
+
+  const [so] = await db
+    .select({ id: salesOrder.id })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
+  if (!so) throw new Error("Sales order not found");
+
+  const { result } = await computeStockCheckItems(orgId, soId);
+  return { canReserve: result.every((r) => r.shortage === 0), items: result };
+}
+
+export async function checkAndReserveStock(soId: string): Promise<StockCheckResult> {
+  const { orgId, userId } = await requireAccess("delivery-order:create");
+  return performStockCheckAndReserve(orgId, userId, soId);
+}
+
+/**
+ * Core shortage-checked reservation logic, shared by the manual "Recheck"
+ * action and the automatic attempt on SO approval. No permission check —
+ * callers must already have verified the caller's access.
+ */
+export async function performStockCheckAndReserve(
+  orgId: string,
+  userId: string,
+  soId: string,
+): Promise<StockCheckResult> {
+  const [so] = await db
+    .select()
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
+  if (!so) throw new Error("Sales order not found");
+  if (so.status !== "confirmed") throw new Error("Only confirmed sales orders can have stock reserved");
+  if (so.stockReservationStatus === "reserved") throw new Error("Stock is already reserved for this sales order");
+
+  const { productItems, result } = await computeStockCheckItems(orgId, soId);
+
+  // No trackable items — mark reserved immediately so DO can be created
+  if (productItems.length === 0) {
+    await db
+      .update(salesOrder)
+      .set({ stockReservationStatus: "reserved", stockReservedAt: new Date(), stockReservedBy: userId })
+      .where(eq(salesOrder.id, soId));
+    return { canReserve: true, items: [] };
+  }
 
   const canReserve = result.every((r) => r.shortage === 0);
 
@@ -113,37 +174,4 @@ export async function checkAndReserveStock(soId: string): Promise<StockCheckResu
   }
 
   return { canReserve, items: result };
-}
-
-export async function releaseStockReservation(soId: string): Promise<void> {
-  const { orgId } = await requireAccess("delivery-order:create");
-
-  const [so] = await db
-    .select()
-    .from(salesOrder)
-    .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
-  if (!so || so.stockReservationStatus !== "reserved") return;
-
-  const items = await db
-    .select()
-    .from(salesOrderItem)
-    .where(eq(salesOrderItem.salesOrderId, soId));
-
-  await Promise.all(
-    items
-      .filter((i) => i.productId)
-      .map((i) =>
-        adjustReservation({
-          orgId,
-          productId: i.productId!,
-          warehouseLabel: "Default",
-          delta: -parseFloat(i.qty ?? "1"),
-        }),
-      ),
-  );
-
-  await db
-    .update(salesOrder)
-    .set({ stockReservationStatus: null, stockReservedAt: null, stockReservedBy: null })
-    .where(eq(salesOrder.id, soId));
 }

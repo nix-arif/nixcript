@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { PrDetailClient } from "./pr-detail-client";
 
 export default async function PrDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requirePermission("purchase-order:read");
+  const session = await requirePermission("purchase-requisition:read");
   const { id } = await params;
 
   const [pr, permissions] = await Promise.all([

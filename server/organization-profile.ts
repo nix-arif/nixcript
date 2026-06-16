@@ -3,6 +3,8 @@
 import { db } from "@/db";
 import { organizationProfile, organization } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import {
@@ -29,6 +31,16 @@ async function getOrgId(): Promise<string> {
   if (!session) throw new Error("Unauthorized");
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
+  return orgId;
+}
+
+async function requireAccess(permission: string): Promise<string> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) throw new Error("No active organization");
+  const perms = await getUserPermissions(session.user.id, orgId);
+  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
   return orgId;
 }
 
@@ -73,7 +85,7 @@ export async function upsertOrganizationProfile(
     >
   >,
 ) {
-  const orgId = await getOrgId();
+  const orgId = await requireAccess("organization-profile:update");
 
   await db
     .insert(organizationProfile)
@@ -101,11 +113,7 @@ export async function upsertOrganizationProfile(
 
 // ── Upload organization logo (public bucket) ───────────────────────────────
 export async function uploadOrganizationLogo(formData: FormData) {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
-
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
+  const orgId = await requireAccess("organization-profile:update");
 
   const file = formData.get("file") as File;
   if (!file) throw new Error("No file provided");
@@ -140,7 +148,7 @@ export async function uploadOrgCertificate(
   formData: FormData,
   field: CertField,
 ) {
-  const orgId = await getOrgId();
+  const orgId = await requireAccess("organization-profile:update");
 
   const file = formData.get("file") as File;
   if (!file) throw new Error("No file provided");
@@ -198,7 +206,7 @@ export async function getOrganizationWithProfile() {
 // ── Delete certificate ─────────────────────────────────────────────────────
 
 export async function removeOrgCertificate(field: CertField) {
-  const orgId = await getOrgId();
+  const orgId = await requireAccess("organization-profile:update");
 
   // Get current key before nulling it
   const [current] = await db

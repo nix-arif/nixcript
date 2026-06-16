@@ -9,7 +9,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, sql } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, sql, isNull } from "drizzle-orm";
 
 // ── Session helper ─────────────────────────────────────────────────────────
 
@@ -335,7 +335,7 @@ export async function getTrialBalance(asOfDate?: string): Promise<AccountBalance
 
 export async function getLedgerReferenceData() {
   const { orgId } = await requireAccess("account:read");
-  const [accounts, customers, suppliers, invoices, purchaseOrders] = await Promise.all([
+  const [accounts, customers, suppliers, invoices, purchaseOrders, members] = await Promise.all([
     db.select({ id: ledgerAccount.id, code: ledgerAccount.code, name: ledgerAccount.name, type: ledgerAccount.type, normalBalance: ledgerAccount.normalBalance })
       .from(ledgerAccount)
       .where(and(eq(ledgerAccount.organizationId, orgId), eq(ledgerAccount.isActive, true)))
@@ -358,8 +358,15 @@ export async function getLedgerReferenceData() {
       .where(eq(purchaseOrder.organizationId, orgId))
       .orderBy(desc(purchaseOrder.createdAt))
       .limit(100),
+    // Includes every member regardless of role — owners are members too (member.role = "owner")
+    // and must be taggable on transactions just like regular members.
+    db.select({ id: member.id, name: user.name, role: member.role })
+      .from(member)
+      .innerJoin(user, eq(member.userId, user.id))
+      .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt)))
+      .orderBy(asc(user.name)),
   ]);
-  return { accounts, customers, suppliers, invoices, purchaseOrders };
+  return { accounts, customers, suppliers, invoices, purchaseOrders, members };
 }
 
 // ── Document record creation (called after R2 upload completes) ────────────

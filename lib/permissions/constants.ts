@@ -40,6 +40,10 @@ export const ALL_PERMISSIONS = [
   { key: "supplier:delete", label: "Delete Supplier" },
 
   // Purchase Requisition
+  { key: "purchase-requisition:read",    label: "View Purchase Requisitions" },
+  { key: "purchase-requisition:create",  label: "Create Purchase Requisition" },
+  { key: "purchase-requisition:update",  label: "Update Purchase Requisition" },
+  { key: "purchase-requisition:delete",  label: "Delete Purchase Requisition" },
   { key: "purchase-requisition:approve", label: "Approve Purchase Requisitions" },
 
   // Purchase Order
@@ -50,6 +54,12 @@ export const ALL_PERMISSIONS = [
 
   // Goods Receipt
   { key: "goods-receipt:create", label: "Record Goods Receipt" },
+
+  // Ledger / Chart of Accounts
+  { key: "account:read",   label: "View Ledger & Chart of Accounts" },
+  { key: "account:create", label: "Create Journal Entry / Account" },
+  { key: "account:update", label: "Update Journal Entry / Account" },
+  { key: "account:delete", label: "Delete Journal Entry / Account" },
 
   // Customer
   { key: "customer:read",   label: "View Customers" },
@@ -108,7 +118,10 @@ export const ALL_PERMISSIONS = [
   { key: "inventory:request", label: "Request Stock Allocation" },
 
   // Leave management
-  { key: "leave:manage", label: "Manage Leave Types & Entitlements" },
+  { key: "leave:read:own", label: "View Own Leave Applications" },
+  { key: "leave:read:all", label: "View All Employees' Leave Applications" },
+  { key: "leave:apply",    label: "Submit Leave Application" },
+  { key: "leave:manage",   label: "Manage Leave Types & Entitlements" },
 
   // Claim management
   { key: "claim:read:own", label: "View Own Claims" },
@@ -155,6 +168,8 @@ export const STAKEHOLDER_PERMISSIONS: PermissionKey[] = [
   "invoice:read",
   "supplier:read",
   "purchase-order:read",
+  "purchase-requisition:read",
+  "account:read",
   "customer:read",
   "product:read",
   "member:read",
@@ -182,6 +197,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
+      "purchase-requisition:read", "purchase-requisition:create", "purchase-requisition:update", "purchase-requisition:delete",
       "goods-receipt:create",
       "customer:read", "customer:create", "customer:update", "customer:delete",
       "product:read", "product:update-price", "product:upload-image",
@@ -191,7 +207,9 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own", "payslip:read:all",
       "organization-profile:read", "organization-profile:create", "organization-profile:update",
       "organization-role:create", "organization-role:update", "organization-role:delete",
+      "account:read", "account:create", "account:update", "account:delete",
       "claim:read:own", "claim:apply", "claim:approve",
+      "leave:read:own", "leave:apply",
     ],
     member: [
       "quotation:read", "quotation:create", "quotation:update",
@@ -201,6 +219,8 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "invoice:read",
       "supplier:read",
       "purchase-order:read",
+      "purchase-requisition:read",
+      "account:read",
       "customer:read",
       "product:read",
       "member:read",
@@ -209,6 +229,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "organization-profile:read",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
   },
 
@@ -227,6 +248,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
     member: [
       "quotation:read", "quotation:create", "quotation:update",
@@ -241,6 +263,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
   },
 
@@ -248,20 +271,24 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     manager: [
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
+      "account:read", "account:create", "account:update", "account:delete",
       "sales-order:read",
       "delivery-order:read",
       "customer:read",
       "supplier:read",
       "purchase-order:read",
+      "purchase-requisition:read",
       "member:read",
       "department:read",
       "profile:read", "profile:update",
       "organization-profile:read",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
     member: [
       "invoice:read", "invoice:create",
       "payslip:read:own",
+      "account:read", "account:create",
       "sales-order:read",
       "delivery-order:read",
       "customer:read",
@@ -269,6 +296,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "department:read",
       "profile:read", "profile:update",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
   },
 
@@ -280,6 +308,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
       "organization-profile:read",
       "claim:read:own", "claim:apply", "claim:approve", "claim:manage",
+      "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all",
     ],
     member: [
       "member:read",
@@ -287,6 +316,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
   },
 
@@ -301,6 +331,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
     member: [
       "product:read",
@@ -310,6 +341,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
   },
 
@@ -317,6 +349,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     manager: [
       "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
+      "purchase-requisition:read", "purchase-requisition:create", "purchase-requisition:update", "purchase-requisition:delete",
       "goods-receipt:create",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
       "inventory:read", "inventory:adjust", "inventory:manage",
@@ -327,10 +360,12 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
     member: [
       "delivery-order:read", "delivery-order:create", "delivery-order:update",
       "purchase-order:read",
+      "purchase-requisition:read",
       "goods-receipt:create",
       "supplier:read",
       "inventory:read", "inventory:adjust",
@@ -341,6 +376,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
   },
 
@@ -355,6 +391,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
     member: [
       "customer:read",
@@ -365,6 +402,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
   },
 
@@ -381,6 +419,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
     member: [
       "quotation:read",
@@ -392,6 +431,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "payslip:read:own",
       "claim:read:own", "claim:apply",
+      "leave:read:own", "leave:apply",
     ],
   },
 };
@@ -463,7 +503,7 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Purchase Requisition Creator",
     description: "Raise and manage purchase requisitions linked to sales orders. Requires sales order and product read.",
     permissions: [
-      "purchase-order:read", "purchase-order:create", "purchase-order:update",
+      "purchase-requisition:read", "purchase-requisition:create", "purchase-requisition:update",
       "sales-order:read", "product:read", "supplier:read",
     ],
   },
@@ -473,7 +513,7 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     description: "Approve or return purchase requisitions for revision.",
     permissions: [
       "purchase-requisition:approve",
-      "purchase-order:read",
+      "purchase-requisition:read",
     ],
   },
   {
@@ -525,5 +565,11 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Product Data Manager",
     description: "Update product selling prices and upload product images. Requires product read.",
     permissions: ["product:read", "product:update-price", "product:upload-image"],
+  },
+  {
+    id: "account-manager",
+    label: "Account / Ledger Manager",
+    description: "Full ledger management: create, post, edit, and delete journal entries and chart of accounts.",
+    permissions: ["account:read", "account:create", "account:update", "account:delete"],
   },
 ];

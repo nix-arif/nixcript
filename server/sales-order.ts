@@ -29,6 +29,7 @@ import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
 import { adjustReservation } from "@/lib/inventory/create-movement";
 import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
+import { performStockCheckAndReserve } from "@/server/stock-reservation";
 import { Resend } from "resend";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import SoNotificationEmail from "@/components/emails/so-notification";
@@ -779,7 +780,7 @@ export async function updateSalesOrderStatus(id: string, status: string): Promis
   const { orgId } = await requireAccess("sales-order:update");
 
   const [existing] = await db
-    .select({ status: salesOrder.status })
+    .select({ status: salesOrder.status, stockReservationStatus: salesOrder.stockReservationStatus })
     .from(salesOrder)
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
@@ -790,8 +791,8 @@ export async function updateSalesOrderStatus(id: string, status: string): Promis
     .set({ status })
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
-  // Release reservation when cancelling a confirmed order
-  if (existing.status === "confirmed" && status === "cancelled") {
+  // Release reservation when cancelling a confirmed order that actually holds stock
+  if (existing.status === "confirmed" && status === "cancelled" && existing.stockReservationStatus === "reserved") {
     const soItems = await db
       .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
       .from(salesOrderItem)
@@ -935,31 +936,18 @@ export async function approveSalesOrder(id: string): Promise<void> {
 
   await db.update(salesOrder).set({ status: "confirmed", approvedBy: userId, approvedAt: new Date() }).where(eq(salesOrder.id, id));
 
-  // Reserve stock for all items with a linked productId
   const soItems = await db
-    .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
+    .select({ productId: salesOrderItem.productId })
     .from(salesOrderItem)
     .where(eq(salesOrderItem.salesOrderId, id));
 
-  const itemsWithProduct = soItems.filter((i) => i.productId);
+  const productIds = soItems.filter((i) => i.productId).map((i) => i.productId!);
 
-  await Promise.all(
-    itemsWithProduct.map((i) =>
-      adjustReservation({
-        orgId,
-        productId: i.productId!,
-        warehouseLabel: "Default",
-        delta: parseFloat(i.qty ?? "1"),
-      }),
-    ),
-  );
+  // Attempt to reserve stock; insufficient stock is recorded on the SO rather than blocking approval
+  await performStockCheckAndReserve(orgId, userId, id).catch(console.error);
 
   // Auto-create replenishment PRs for products whose available stock dropped to/below reorder point
-  checkAndTriggerReplenishment(
-    orgId,
-    userId,
-    itemsWithProduct.map((i) => i.productId!),
-  ).catch(console.error);
+  checkAndTriggerReplenishment(orgId, userId, productIds).catch(console.error);
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
@@ -1026,7 +1014,7 @@ export async function recallSalesOrder(id: string): Promise<void> {
   const { orgId, session } = await requireAccess("sales-order:approve");
 
   const [so] = await db
-    .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy, stockReservationStatus: salesOrder.stockReservationStatus })
     .from(salesOrder)
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
@@ -1035,24 +1023,26 @@ export async function recallSalesOrder(id: string): Promise<void> {
 
   await db.update(salesOrder).set({ status: "draft", approvedBy: null, approvedAt: null, stockReservationStatus: null, stockReservedAt: null, stockReservedBy: null }).where(eq(salesOrder.id, id));
 
-  // Release reserved stock
-  const soItems = await db
-    .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
-    .from(salesOrderItem)
-    .where(eq(salesOrderItem.salesOrderId, id));
+  // Release reserved stock (only if it was actually reserved)
+  if (so.stockReservationStatus === "reserved") {
+    const soItems = await db
+      .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
+      .from(salesOrderItem)
+      .where(eq(salesOrderItem.salesOrderId, id));
 
-  await Promise.all(
-    soItems
-      .filter((i) => i.productId)
-      .map((i) =>
-        adjustReservation({
-          orgId,
-          productId: i.productId!,
-          warehouseLabel: "Default",
-          delta: -parseFloat(i.qty ?? "1"),
-        }),
-      ),
-  );
+    await Promise.all(
+      soItems
+        .filter((i) => i.productId)
+        .map((i) =>
+          adjustReservation({
+            orgId,
+            productId: i.productId!,
+            warehouseLabel: "Default",
+            delta: -parseFloat(i.qty ?? "1"),
+          }),
+        ),
+    );
+  }
 
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");

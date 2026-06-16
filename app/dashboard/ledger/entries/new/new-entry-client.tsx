@@ -52,6 +52,7 @@ type RefCustomer = { id: string; name: string; organizationName: string | null }
 type RefSupplier = { id: string; name: string };
 type RefInvoice = { id: string; invoiceNo: string };
 type RefPO = { id: string; prNo: string | null; poNo: string | null };
+type RefMember = { id: string; name: string; role: string };
 
 type RefData = {
   accounts: RefAccount[];
@@ -59,6 +60,7 @@ type RefData = {
   suppliers: RefSupplier[];
   invoices: RefInvoice[];
   purchaseOrders: RefPO[];
+  members: RefMember[];
 };
 
 type LineItem = {
@@ -166,6 +168,10 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
     if (stakeholderType === "SUPPLIER") {
       const s = refData.suppliers.find((s) => s.id === stakeholderId);
       return s?.name ?? "";
+    }
+    if (stakeholderType === "MEMBER") {
+      const m = refData.members.find((m) => m.id === stakeholderId);
+      return m?.name ?? "";
     }
     return "";
   })();
@@ -406,11 +412,18 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
               </Select>
             )}
             {stakeholderType === "MEMBER" && (
-              <Input
-                placeholder="Member name..."
-                value={stakeholderId}
-                onChange={(e) => setStakeholderId(e.target.value)}
-              />
+              <Select value={stakeholderId} onValueChange={setStakeholderId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select member..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {refData.members.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}{m.role === "owner" ? " (Owner)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
           </div>
         )}

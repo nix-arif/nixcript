@@ -1,26 +1,10 @@
-import { getCachedSession } from "@/lib/auth/cached-session";
-import { redirect } from "next/navigation";
-import { db } from "@/db";
-import { member } from "@/db/schema";
-import { and, eq, isNull } from "drizzle-orm";
+import { requirePermission } from "@/lib/auth/require-permission";
 import { getApprovalMembers } from "@/server/approvals";
 import { APPROVAL_MODULES } from "@/lib/approvals/constants";
 import { ApprovalsClient } from "./approvals-client";
 
 export default async function ApprovalsPage() {
-  const session = await getCachedSession();
-  if (!session) redirect("/auth/sign-in");
-
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) redirect("/dashboard");
-
-  const [m] = await db
-    .select({ role: member.role })
-    .from(member)
-    .where(and(eq(member.userId, session.user.id), eq(member.organizationId, orgId), isNull(member.deletedAt)))
-    .limit(1);
-
-  if (!m || !["owner", "admin"].includes(m.role)) redirect("/dashboard");
+  await requirePermission("permission:read");
 
   const members = await getApprovalMembers();
 

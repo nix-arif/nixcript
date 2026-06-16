@@ -42,9 +42,9 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
   const [search, setSearch] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const canCreate  = hasAccess(permissions, "purchase-order:create");
-  const canDelete  = hasAccess(permissions, "purchase-order:delete");
-  const canApprove = hasAccess(permissions, "purchase-order:approve");
+  const canCreate  = hasAccess(permissions, "purchase-requisition:create");
+  const canDelete  = hasAccess(permissions, "purchase-requisition:delete");
+  const canApprove = hasAccess(permissions, "purchase-requisition:approve");
 
   const counts = {
     draft:     requisitions.filter((r) => r.status === "draft").length,

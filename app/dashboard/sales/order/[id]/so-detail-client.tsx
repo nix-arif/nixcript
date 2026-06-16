@@ -14,7 +14,7 @@ import {
 } from "@/server/sales-order";
 import {
   checkAndReserveStock,
-  releaseStockReservation,
+  getStockInsight,
   type StockCheckResult,
 } from "@/server/stock-reservation";
 import { type QuotationBasic } from "@/server/quotation";
@@ -77,9 +77,9 @@ export function SalesOrderDetailClient({
   const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState(order.status ?? "draft");
   const [actioning, setActioning] = useState<"submit" | "approve" | "reject" | "recall" | null>(null);
-  const [reserving, setReserving] = useState(false);
-  const [releasing, setReleasing] = useState(false);
-  const [reservationResult, setReservationResult] = useState<StockCheckResult | null>(null);
+  const [rechecking, setRechecking] = useState(false);
+  const [insight, setInsight] = useState<StockCheckResult | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
   const [stockStatus, setStockStatus] = useState<string | null>(order.stockReservationStatus ?? null);
   const [prExcludedItems, setPrExcludedItems] = useState<Set<string>>(
     () => new Set(order.items.filter((i) => (i as any).prExcluded).map((i) => i.id)),
@@ -91,6 +91,18 @@ export function SalesOrderDetailClient({
     setStatus(order.status ?? "draft");
     setStockStatus(order.stockReservationStatus ?? null);
   }, [order.status, order.stockReservationStatus]);
+
+  // Read-only stock insight for confirmed orders
+  useEffect(() => {
+    if (status !== "confirmed" || !can("delivery-order:create")) return;
+    let cancelled = false;
+    setInsightLoading(true);
+    getStockInsight(order.id)
+      .then((r) => { if (!cancelled) setInsight(r); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setInsightLoading(false); });
+    return () => { cancelled = true; };
+  }, [order.id, status, stockStatus]);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = order.createdBy === currentUserId;
@@ -183,39 +195,22 @@ export function SalesOrderDetailClient({
     }
   }
 
-  async function handleReserveStock() {
-    setReserving(true);
-    setReservationResult(null);
+  async function handleRecheckStock() {
+    setRechecking(true);
     try {
       const result = await checkAndReserveStock(order.id);
-      setReservationResult(result);
+      setInsight(result);
       setStockStatus(result.canReserve ? "reserved" : "insufficient");
       if (result.canReserve) {
         toast.success("Stock reserved successfully");
       } else {
-        toast.warning("Insufficient stock — see shortage details below");
+        toast.warning("Still insufficient — see shortage details below");
       }
       router.refresh();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
-      setReserving(false);
-    }
-  }
-
-  async function handleReleaseReservation() {
-    if (!confirm("Release stock reservation? This will free the reserved quantities.")) return;
-    setReleasing(true);
-    try {
-      await releaseStockReservation(order.id);
-      setStockStatus(null);
-      setReservationResult(null);
-      toast.success("Stock reservation released");
-      router.refresh();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setReleasing(false);
+      setRechecking(false);
     }
   }
 
@@ -258,7 +253,7 @@ export function SalesOrderDetailClient({
                 <PrinterIcon className="w-3.5 h-3.5" /> PDF
               </Button>
             )}
-            {status === "confirmed" && can("purchase-order:create") && (
+            {status === "confirmed" && can("purchase-requisition:create") && (
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/requisition/create?soId=${order.id}`)}>
                 <ShoppingCartIcon className="w-3.5 h-3.5" /> Raise Requisition
               </Button>
@@ -352,7 +347,7 @@ export function SalesOrderDetailClient({
                       <th className="text-right pb-2 pr-3 w-24">Unit price</th>
                       <th className="text-right pb-2 pr-3 w-14">Disc%</th>
                       <th className="text-right pb-2 w-24">Total</th>
-                      {can("purchase-order:create") && status === "confirmed" && (
+                      {can("sales-order:update") && status === "confirmed" && (
                         <th className="pb-2 w-8" />
                       )}
                     </tr>
@@ -434,7 +429,7 @@ export function SalesOrderDetailClient({
                             <td className="py-2 pr-3 text-right tabular-nums">{fmt(item.unitPrice)}</td>
                             <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">{item.discountPct || "0"}%</td>
                             <td className="py-2 text-right tabular-nums font-medium">{fmt(item.totalPrice)}</td>
-                            {can("purchase-order:create") && status === "confirmed" && (
+                            {can("sales-order:update") && status === "confirmed" && (
                               <td className="py-2 pl-2">
                                 <button
                                   title={prExcludedItems.has(item.id) ? "Include in PR" : "Exclude from PR"}
@@ -540,7 +535,7 @@ export function SalesOrderDetailClient({
             </div>
           </section>
 
-          {/* Stock Reservation — only shown on confirmed SOs */}
+          {/* Stock Insight — only shown on confirmed SOs */}
           {status === "confirmed" && can("delivery-order:create") && (
             <section className={cn(
               "border rounded-xl p-4 space-y-3",
@@ -551,7 +546,7 @@ export function SalesOrderDetailClient({
               <div className="flex items-center justify-between">
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
                   <WarehouseIcon className="w-3.5 h-3.5" />
-                  Stock Reservation
+                  Stock Insight
                 </h2>
                 {stockStatus === "reserved" && (
                   <span className="flex items-center gap-1 text-[11px] font-medium text-green-700 dark:text-green-400">
@@ -565,22 +560,67 @@ export function SalesOrderDetailClient({
                 )}
               </div>
 
-              {/* Not yet checked */}
-              {!stockStatus && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    Check and reserve stock for all items in this sales order before creating a delivery order.
-                  </p>
-                  <Button
-                    size="sm"
-                    className="w-full gap-1.5 h-8 text-xs"
-                    onClick={handleReserveStock}
-                    disabled={reserving}
-                  >
-                    {reserving ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> : <WarehouseIcon className="w-3.5 h-3.5" />}
-                    {reserving ? "Checking stock…" : "Check & Reserve Stock"}
-                  </Button>
+              {/* Read-only per-item stock data */}
+              {insightLoading ? (
+                <p className="text-xs text-muted-foreground">Loading stock data…</p>
+              ) : insight && insight.items.length > 0 ? (
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="border-b border-border text-muted-foreground bg-muted/30">
+                        <th className="text-left px-2 py-1.5">Item</th>
+                        <th className="text-right px-2 py-1.5">Need</th>
+                        <th className="text-right px-2 py-1.5">On hand</th>
+                        <th className="text-right px-2 py-1.5">Reserved</th>
+                        <th className="text-right px-2 py-1.5">Available</th>
+                        <th className="text-right px-2 py-1.5">Short</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {insight.items.map((i) => (
+                        <tr
+                          key={i.productId}
+                          className={cn(
+                            "border-b border-border/40 last:border-0",
+                            i.shortage > 0 && "bg-red-50/50 dark:bg-red-900/10",
+                          )}
+                        >
+                          <td className="px-2 py-1.5">
+                            <div className="font-mono">{i.productCode ?? i.productId}</div>
+                            {i.description && (
+                              <div className="text-muted-foreground truncate max-w-35">{i.description}</div>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{i.required}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{i.onHand}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{i.reserved}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{i.available}</td>
+                          <td className={cn(
+                            "px-2 py-1.5 text-right tabular-nums font-medium",
+                            i.shortage > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground",
+                          )}>
+                            {i.shortage > 0 ? i.shortage : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">No trackable items on this order.</p>
+              )}
+
+              {/* Not yet checked (legacy orders confirmed before auto-reservation) */}
+              {!stockStatus && (
+                <Button
+                  size="sm"
+                  className="w-full gap-1.5 h-8 text-xs"
+                  onClick={handleRecheckStock}
+                  disabled={rechecking}
+                >
+                  {rechecking ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> : <WarehouseIcon className="w-3.5 h-3.5" />}
+                  {rechecking ? "Checking stock…" : "Check stock"}
+                </Button>
               )}
 
               {/* Reserved — ready for DO */}
@@ -655,45 +695,13 @@ export function SalesOrderDetailClient({
                       </Button>
                     </>
                   )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="w-full gap-1.5 h-7 text-xs text-muted-foreground hover:text-destructive"
-                    onClick={handleReleaseReservation}
-                    disabled={releasing}
-                  >
-                    {releasing ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <XIcon className="w-3 h-3" />}
-                    Release reservation
-                  </Button>
                 </div>
               )}
 
-              {/* Insufficient stock */}
+              {/* Insufficient stock — narrow recovery actions */}
               {stockStatus === "insufficient" && (
-                <div className="space-y-2">
-                  {reservationResult && reservationResult.items.some((i) => i.shortage > 0) && (
-                    <div className="rounded-lg border border-red-200 dark:border-red-800/50 overflow-hidden">
-                      <div className="px-3 py-2 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800/50">
-                        <p className="text-[11px] font-medium text-red-700 dark:text-red-400">Items with shortage</p>
-                      </div>
-                      <div className="divide-y divide-red-100 dark:divide-red-900/30">
-                        {reservationResult.items
-                          .filter((i) => i.shortage > 0)
-                          .map((i) => (
-                            <div key={i.productId} className="px-3 py-2">
-                              <p className="text-[11px] font-medium font-mono">{i.productCode ?? i.productId}</p>
-                              <p className="text-[10px] text-muted-foreground truncate">{i.description}</p>
-                              <div className="flex items-center gap-3 mt-1 text-[10px] tabular-nums">
-                                <span className="text-muted-foreground">Need <span className="font-medium text-foreground">{i.required}</span></span>
-                                <span className="text-muted-foreground">Available <span className="font-medium text-foreground">{i.available}</span></span>
-                                <span className="text-red-600 dark:text-red-400 font-medium">Short {i.shortage}</span>
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex gap-2">
+                <div className="flex gap-2">
+                  {can("purchase-requisition:create") && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -703,31 +711,31 @@ export function SalesOrderDetailClient({
                       <ShoppingCartIcon className="w-3.5 h-3.5" />
                       Raise Requisition
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 gap-1.5 h-8 text-xs"
-                      onClick={handleReserveStock}
-                      disabled={reserving}
-                    >
-                      {reserving ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <RotateCcwIcon className="w-3 h-3" />}
-                      Retry
-                    </Button>
-                  </div>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 gap-1.5 h-8 text-xs"
+                    onClick={handleRecheckStock}
+                    disabled={rechecking}
+                  >
+                    {rechecking ? <Loader2Icon className="w-3 h-3 animate-spin" /> : <RotateCcwIcon className="w-3 h-3" />}
+                    Recheck availability
+                  </Button>
                 </div>
               )}
             </section>
           )}
 
           {/* Purchase Requisitions */}
-          {(linkedPrs.length > 0 || (can("purchase-order:read") && (status === "confirmed" || status === "fulfilled"))) && (
+          {(linkedPrs.length > 0 || (can("purchase-requisition:read") && (status === "confirmed" || status === "fulfilled"))) && (
             <section className="border border-border rounded-xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
                   <ShoppingCartIcon className="w-3.5 h-3.5" />
                   Purchase Requisitions
                 </h2>
-                {can("purchase-order:create") && (
+                {can("purchase-requisition:create") && (
                   <button
                     onClick={() => router.push(`/dashboard/procurement/requisition/create?soId=${order.id}`)}
                     className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline"

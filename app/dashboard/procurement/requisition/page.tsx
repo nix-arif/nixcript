@@ -4,7 +4,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { PrListClient } from "./pr-list-client";
 
 export default async function PurchaseRequisitionPage() {
-  const session = await requirePermission("purchase-order:read");
+  const session = await requirePermission("purchase-requisition:read");
   const [requisitions, pendingSos, permissions] = await Promise.all([
     getPurchaseRequisitions(),
     getPendingSosForPr(),

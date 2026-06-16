@@ -224,11 +224,11 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
 
   const can = (p: string) => hasAccess(permissions, p);
   const isOwner = pr.requestedBy === currentUserId;
-  const canEdit = can("purchase-order:update") && pr.status === "draft";
-  const canSubmit = can("purchase-order:create") && pr.status === "draft" && (isOwner || can("purchase-order:update"));
+  const canEdit = can("purchase-requisition:update") && pr.status === "draft";
+  const canSubmit = can("purchase-requisition:create") && pr.status === "draft" && (isOwner || can("purchase-requisition:update"));
   const canApprove = can("purchase-requisition:approve") && pr.status === "submitted";
-  const canCancel = can("purchase-order:update") && !["draft", "ordered", "cancelled"].includes(pr.status);
-  const canDelete = can("purchase-order:delete") && pr.status === "draft";
+  const canCancel = can("purchase-requisition:update") && !["draft", "ordered", "cancelled"].includes(pr.status);
+  const canDelete = can("purchase-requisition:delete") && pr.status === "draft";
 
   async function act(key: string, fn: () => Promise<void>) {
     setActioning(key);
