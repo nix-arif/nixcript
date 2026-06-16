@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/page-header";
 import { bulkGrantPermissions, bulkRevokePermissions } from "@/server/permissions";
 import { PERMISSION_BUNDLES } from "@/lib/permissions/constants";
 import { Badge } from "@/components/ui/badge";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
 import { ChevronDownIcon } from "lucide-react";
 
 type Member = {
@@ -183,16 +183,11 @@ export function BulkPermissionsClient({
                   const grantedCount = bundle.permissions.filter((k) =>
                     allowedKeys.has(k),
                   ).length;
-                  const deniedCount = bundle.permissions.filter((k) =>
-                    deniedKeys.has(k),
-                  ).length;
                   const fullyGranted = grantedCount === bundle.permissions.length;
-                  const fullyDenied = deniedCount === bundle.permissions.length;
                   const isGranting =
                     pendingAction?.id === bundle.id && pendingAction.type === "grant";
                   const isRevoking =
                     pendingAction?.id === bundle.id && pendingAction.type === "revoke";
-                  const radioValue = fullyGranted ? "allow" : fullyDenied ? "deny" : undefined;
 
                   return (
                     <div key={bundle.id} className="px-4 py-3">
@@ -265,27 +260,28 @@ export function BulkPermissionsClient({
                           )}
                         </div>
 
-                        <RadioGroup
-                          value={radioValue}
-                          onValueChange={(v) => {
-                            if (v === "allow") {
-                              handleGrantBundle(bundle.id, bundle.permissions as string[]);
-                            } else {
-                              handleRevokeBundle(bundle.id, bundle.permissions as string[]);
-                            }
-                          }}
-                          disabled={isGranting || isRevoking}
-                          className="flex items-center gap-3 shrink-0"
-                        >
-                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                            <RadioGroupItem value="allow" />
-                            {isGranting ? "Granting…" : "Allow"}
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                            <RadioGroupItem value="deny" />
-                            {isRevoking ? "Revoking…" : "Deny"}
-                          </label>
-                        </RadioGroup>
+                        <label className="flex items-center gap-2 text-xs shrink-0 cursor-pointer">
+                          <span className="text-muted-foreground">
+                            {isGranting
+                              ? "Granting…"
+                              : isRevoking
+                                ? "Revoking…"
+                                : fullyGranted
+                                  ? "Allowed"
+                                  : "Denied"}
+                          </span>
+                          <Switch
+                            checked={fullyGranted}
+                            disabled={isGranting || isRevoking}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                handleGrantBundle(bundle.id, bundle.permissions as string[]);
+                              } else {
+                                handleRevokeBundle(bundle.id, bundle.permissions as string[]);
+                              }
+                            }}
+                          />
+                        </label>
                       </div>
                     </div>
                   );
