@@ -663,15 +663,17 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
 
       {/* Edit Details Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Edit Entry Details</DialogTitle>
           </DialogHeader>
-          <div className="py-2 flex flex-col gap-4">
-            <p className="text-sm text-muted-foreground">
-              Only descriptive details can be changed here — the journal lines, amounts, and status are never touched.
+
+          <div className="flex-1 overflow-y-auto py-2 flex flex-col gap-5 pr-1">
+            <p className="text-xs text-muted-foreground">
+              Only descriptive details can be changed here — journal lines, amounts, and status are never touched.
             </p>
 
+            {/* Description */}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="editDescription">Description</Label>
               <Input
@@ -681,7 +683,8 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            {/* Stakeholder */}
+            <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Stakeholder Type</Label>
                 <Select
@@ -696,7 +699,6 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
                   </SelectContent>
                 </Select>
               </div>
-
               {editStakeholderType !== "NONE" && (
                 <div className="flex flex-col gap-1.5">
                   <Label>Stakeholder</Label>
@@ -736,7 +738,8 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            {/* Reference */}
+            <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Reference Type</Label>
                 <Select
@@ -751,7 +754,6 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
                   </SelectContent>
                 </Select>
               </div>
-
               {editReferenceType !== "NONE" && (
                 <div className="flex flex-col gap-1.5">
                   <Label>Reference</Label>
@@ -782,7 +784,7 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
                           })}
                         </div>
                       )}
-                      <div className="max-h-40 overflow-y-auto flex flex-col gap-0.5">
+                      <div className="max-h-44 overflow-y-auto flex flex-col gap-0.5">
                         {refData.invoices
                           .filter((inv) =>
                             !editInvoiceSearch || inv.invoiceNo.toLowerCase().includes(editInvoiceSearch.toLowerCase())
@@ -826,11 +828,63 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
                 </div>
               )}
             </div>
+
+            {/* Attach Documents */}
+            {canCreate && (
+              <div className="flex flex-col gap-3 border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <Label>Attach Documents</Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <UploadIcon className="h-3 w-3" />
+                    Add Files
+                  </Button>
+                </div>
+                {queuedFiles.length > 0 && (
+                  <div className="flex flex-col gap-1.5">
+                    {queuedFiles.map((qf) => (
+                      <div key={qf.id} className="flex items-center gap-2 text-xs p-2 rounded-md bg-muted/40">
+                        <FileIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <span className="flex-1 truncate">{qf.file.name}</span>
+                        <span className="text-muted-foreground shrink-0">{fmtFileSize(qf.file.size)}</span>
+                        {qf.status === "uploading" && <span className="text-blue-500 shrink-0">Uploading...</span>}
+                        {qf.status === "done" && <CheckCircle2Icon className="h-3.5 w-3.5 text-green-500 shrink-0" />}
+                        {qf.status === "error" && <span className="text-destructive shrink-0">Failed</span>}
+                        {qf.status === "pending" && (
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setQueuedFiles((prev) => prev.filter((f) => f.id !== qf.id))}
+                          >
+                            <XIcon className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditDialogOpen(false)} disabled={editLoading}>
+
+          <DialogFooter className="pt-3 border-t border-border">
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)} disabled={editLoading || uploading}>
               Cancel
             </Button>
+            {queuedFiles.some((f) => f.status === "pending") && (
+              <Button
+                variant="outline"
+                onClick={handleUploadAll}
+                disabled={uploading}
+              >
+                {uploading ? "Uploading..." : `Upload ${queuedFiles.filter((f) => f.status === "pending").length} file(s)`}
+              </Button>
+            )}
             <Button onClick={handleEditSave} disabled={editLoading || !editDescription.trim()}>
               {editLoading ? "Saving..." : "Save Changes"}
             </Button>
