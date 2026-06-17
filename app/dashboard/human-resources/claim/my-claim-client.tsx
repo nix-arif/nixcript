@@ -424,6 +424,10 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         const otherValid = otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0);
         const flightMissingReceipt = travelRows.find(r => r.mode === TRAVEL_MODE.FLIGHT && !r.flightFile);
         if (flightMissingReceipt) { toast.error("Flight receipt is required for flight travel"); setSubmitting(false); return; }
+        const accomMissingReceipt = travelRows.find(r => parseFloat(r.accomAmount) > 0 && !r.accomFile);
+        if (accomMissingReceipt) { toast.error("Accommodation receipt is required"); setSubmitting(false); return; }
+        const tEntMissingReceipt = travelRows.find(r => parseFloat(r.tEntAmount) > 0 && !r.tEntFile);
+        if (tEntMissingReceipt) { toast.error("Travel entertainment receipt is required"); setSubmitting(false); return; }
         const missingReceipt = [...miscValid, ...inEntValid, ...otherValid].find(r => !r.file);
         if (missingReceipt) { toast.error("Each expense item requires an attached receipt"); setSubmitting(false); return; }
 
@@ -814,7 +818,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                                 <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.accomAmount} onChange={e => updateTravel(row.id,"accomAmount",e.target.value)} className={inputCls+" w-28"}/>
                               </div>
                               <TravelSubFilePicker file={row.accomFile} onPick={f => setTravelFile(row.id,"accomFile",f)} onRemove={() => setTravelFile(row.id,"accomFile",undefined)}/>
-                              {accomAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
+                              {accomAmt > 0 && !row.accomFile && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
+                              {accomAmt > 0 && row.accomFile && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
                             </div>
 
                             {/* Travel entertainment */}
@@ -825,7 +830,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                                 <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.tEntAmount} onChange={e => updateTravel(row.id,"tEntAmount",e.target.value)} className={inputCls+" w-28"}/>
                               </div>
                               <TravelSubFilePicker file={row.tEntFile} onPick={f => setTravelFile(row.id,"tEntFile",f)} onRemove={() => setTravelFile(row.id,"tEntFile",undefined)}/>
-                              {tEntAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tEntAmt)}</span>}
+                              {tEntAmt > 0 && !row.tEntFile && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
+                              {tEntAmt > 0 && row.tEntFile && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tEntAmt)}</span>}
                             </div>
                           </div>
                         </div>
