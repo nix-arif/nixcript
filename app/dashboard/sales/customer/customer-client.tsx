@@ -44,6 +44,7 @@ import {
   ChevronUpIcon,
   StarIcon,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
@@ -476,11 +477,11 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
             </button>
           )}
         </div>
-        <div className="text-xs text-muted-foreground whitespace-nowrap">
-          {searching
-            ? "Searching…"
-            : `${customers.length} customer${customers.length !== 1 ? "s" : ""}`}
-        </div>
+        {!searching && (
+          <div className="text-xs text-muted-foreground whitespace-nowrap">
+            {customers.length} customer{customers.length !== 1 ? "s" : ""}
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -498,7 +499,29 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
           )}
         </div>
 
-        {paginated.length === 0 ? (
+        {searching ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div
+              key={i}
+              className="grid grid-cols-[2fr_2fr_1.5fr_1fr_80px] px-4 py-3 items-center border-b border-border last:border-0"
+            >
+              <div className="flex items-center gap-3">
+                <Skeleton className="w-8 h-8 rounded-lg shrink-0" />
+                <div className="flex flex-col gap-1.5">
+                  <Skeleton className="h-3.5 w-28" />
+                  <Skeleton className="h-3 w-20" />
+                </div>
+              </div>
+              <Skeleton className="h-3.5 w-36" />
+              <Skeleton className="h-3.5 w-24" />
+              <Skeleton className="h-3.5 w-20" />
+              <div className="flex justify-end gap-1">
+                <Skeleton className="h-7 w-7 rounded-md" />
+                <Skeleton className="h-7 w-7 rounded-md" />
+              </div>
+            </div>
+          ))
+        ) : paginated.length === 0 ? (
           <div className="py-16 text-center text-muted-foreground">
             <div className="text-sm font-medium mb-1">No customers found</div>
             <div className="text-xs mb-4">
