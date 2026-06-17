@@ -3,7 +3,7 @@
 import { db } from "@/db";
 import {
   ledgerAccount, ledgerEntry, ledgerLine, ledgerDocument,
-  customer, supplier, member, invoice, purchaseOrder, user,
+  customer, customerCompany, supplier, member, invoice, purchaseOrder, user,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -457,7 +457,7 @@ export async function getLedgerReferenceData() {
       .from(ledgerAccount)
       .where(and(eq(ledgerAccount.organizationId, orgId), eq(ledgerAccount.isActive, true)))
       .orderBy(asc(ledgerAccount.code)),
-    db.select({ id: customer.id, name: customer.name, organizationName: customer.organizationName })
+    db.select({ id: customer.id, name: customer.name, legacyOrgName: customer.organizationName })
       .from(customer)
       .where(eq(customer.organizationId, orgId))
       .orderBy(asc(customer.name)),
@@ -483,7 +483,24 @@ export async function getLedgerReferenceData() {
       .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt)))
       .orderBy(asc(user.name)),
   ]);
-  return { accounts, customers, suppliers, invoices, purchaseOrders, members };
+  // Enrich customers with their primary company name from customerCompany table.
+  // The legacy customer.organizationName column is only populated for old records;
+  // newer customers store affiliations in the separate customerCompany table.
+  const customerIds = customers.map((c) => c.id);
+  const primaryCompanies = customerIds.length
+    ? await db
+        .select({ customerId: customerCompany.customerId, organizationName: customerCompany.organizationName })
+        .from(customerCompany)
+        .where(and(inArray(customerCompany.customerId, customerIds), eq(customerCompany.isPrimary, true)))
+    : [];
+  const primaryMap = Object.fromEntries(primaryCompanies.map((c) => [c.customerId, c.organizationName]));
+  const enrichedCustomers = customers.map((c) => ({
+    id: c.id,
+    name: c.name,
+    organizationName: primaryMap[c.id] ?? c.legacyOrgName ?? null,
+  }));
+
+  return { accounts, customers: enrichedCustomers, suppliers, invoices, purchaseOrders, members };
 }
 
 // ── Document record creation (called after R2 upload completes) ────────────
