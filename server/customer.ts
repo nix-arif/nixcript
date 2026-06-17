@@ -57,13 +57,22 @@ export async function getCustomers(search?: string) {
 
   if (search && search.trim().length > 0) {
     const q = `%${search.trim()}%`;
-    conditions.push(
-      or(
-        ilike(customer.name, q),
-        ilike(customer.email, q),
-        ilike(customer.contactNo, q),
-      )!,
-    );
+
+    // Find customers that have a matching company affiliation
+    const matchingCompanies = await db
+      .select({ customerId: customerCompany.customerId })
+      .from(customerCompany)
+      .where(ilike(customerCompany.organizationName, q));
+    const matchingIds = [...new Set(matchingCompanies.map((c) => c.customerId))];
+
+    const orClauses: ReturnType<typeof ilike>[] = [
+      ilike(customer.name, q),
+      ilike(customer.email, q),
+      ilike(customer.contactNo, q),
+    ];
+    if (matchingIds.length > 0) orClauses.push(inArray(customer.id, matchingIds) as any);
+
+    conditions.push(or(...orClauses)!);
   }
 
   const rows = await db

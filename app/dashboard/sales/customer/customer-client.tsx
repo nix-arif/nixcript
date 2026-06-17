@@ -464,7 +464,7 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
           <Input
             value={search}
             onChange={(e) => handleSearch(e.target.value)}
-            placeholder="Search by name, email, contact..."
+            placeholder="Search by name, organization, email, contact..."
             className="pl-9 h-9 text-sm"
           />
           {search && (
