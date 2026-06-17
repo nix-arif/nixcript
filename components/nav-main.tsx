@@ -18,6 +18,16 @@ import {
 import { ChevronRightIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
+
+// Returns true only if this url is the best match for pathname.
+// "Best match" means: no sibling url is a longer, more specific match.
+function isActiveSub(url: string, siblings: string[], pathname: string): boolean {
+  if (pathname !== url && !pathname.startsWith(url + "/")) return false;
+  return !siblings.some(
+    (s) => s !== url && s.startsWith(url) && (pathname === s || pathname.startsWith(s + "/")),
+  );
+}
 
 export function NavMain({
   items,
@@ -35,6 +45,12 @@ export function NavMain({
 }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
+  const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
+
+  // Reset manual overrides whenever the route changes
+  useEffect(() => {
+    setManualOpen({});
+  }, [pathname]);
 
   const closeMobile = () => {
     if (isMobile) setOpenMobile(false);
@@ -44,15 +60,22 @@ export function NavMain({
     <SidebarGroup className="px-2 py-1">
       <SidebarMenu className="gap-0.5">
         {items.map((item) => {
-          const isGroupActive = item.items?.some(
-            (sub) => pathname === sub.url || pathname.startsWith(sub.url + "/")
-          );
+          const subUrls = item.items?.map((s) => s.url) ?? [];
+
+          const isGroupActive = item.items?.some((sub) =>
+            isActiveSub(sub.url, subUrls, pathname),
+          ) ?? false;
+
+          const isOpen = isGroupActive || (manualOpen[item.title] ?? false);
 
           return (
             <Collapsible
               key={item.title}
               asChild
-              defaultOpen={isGroupActive}
+              open={isOpen}
+              onOpenChange={(open) =>
+                setManualOpen((prev) => ({ ...prev, [item.title]: open }))
+              }
               className="group/collapsible"
             >
               <SidebarMenuItem>
@@ -75,9 +98,7 @@ export function NavMain({
                 <CollapsibleContent>
                   <SidebarMenuSub className="ml-5 border-l border-sidebar-border/60 pl-2 py-0.5 gap-0">
                     {item.items?.map((subItem) => {
-                      const isActive =
-                        pathname === subItem.url ||
-                        pathname.startsWith(subItem.url + "/");
+                      const isActive = isActiveSub(subItem.url, subUrls, pathname);
                       return (
                         <SidebarMenuSubItem key={subItem.title}>
                           <SidebarMenuSubButton
