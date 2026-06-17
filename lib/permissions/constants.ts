@@ -132,6 +132,7 @@ export const ALL_PERMISSIONS = [
 // Approval-only keys (managed exclusively via Org Approvals, not in ALL_PERMISSIONS)
 export const APPROVAL_ONLY_KEYS = [
   "leave:approve",
+  "claim:check",
   "claim:approve",
   "payslip:approve",
   "payslip:publish",
@@ -307,7 +308,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update", "profile:read:all", "profile:update:all", "profile:delete:all",
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
       "organization-profile:read",
-      "claim:read:own", "claim:apply", "claim:approve", "claim:manage",
+      "claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage",
       "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all",
     ],
     member: [
@@ -571,5 +572,23 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Account / Ledger Manager",
     description: "Full ledger management: create, post, edit, and delete journal entries and chart of accounts.",
     permissions: ["account:read", "account:create", "account:update", "account:delete"],
+  },
+  {
+    id: "claim-staff",
+    label: "Claim Staff",
+    description: "Submit expense claims and view own claim history.",
+    permissions: ["claim:read:own", "claim:apply"],
+  },
+  {
+    id: "claim-checker",
+    label: "Claim Checker",
+    description: "First-level review of submitted claims before forwarding to approver.",
+    permissions: ["claim:read:own", "claim:apply", "claim:check"],
+  },
+  {
+    id: "claim-manager",
+    label: "Claim Manager",
+    description: "Full claim management: submit, check, approve/reject, and manage claim types.",
+    permissions: ["claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage"],
   },
 ];

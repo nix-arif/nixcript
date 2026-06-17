@@ -10,9 +10,10 @@ export const APPROVAL_MODULES = [
   {
     id: "claim",
     title: "Claim Management",
-    description: "Who can approve or reject expense claims.",
+    description: "Who can check (first-level review) or approve expense claims.",
     permissions: [
-      { key: "claim:approve", label: "Approve / Reject Claims" },
+      { key: "claim:check",   label: "Check Claims (1st level)" },
+      { key: "claim:approve", label: "Approve / Reject Claims (final)" },
     ],
   },
   {

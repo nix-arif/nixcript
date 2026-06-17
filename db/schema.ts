@@ -2787,7 +2787,12 @@ export const claimApplication = pgTable(
     quantity: text("quantity"),
     ratePerUnit: text("rate_per_unit"),
     amount: text("amount").notNull().default("0"),     // total in MYR
-    status: text("status").notNull().default("PENDING"), // PENDING | APPROVED | REJECTED | CANCELLED
+    status: text("status").notNull().default("PENDING"), // DRAFT | PENDING | CHECKED | APPROVED | REJECTED | CANCELLED
+    // Checker (first-level review)
+    checkedBy: text("checked_by").references(() => user.id),
+    checkedAt: timestamp("checked_at"),
+    checkerComment: text("checker_comment"),
+    // Approver (final review)
     reviewedBy: text("reviewed_by").references(() => user.id),
     reviewedAt: timestamp("reviewed_at"),
     reviewComment: text("review_comment"),

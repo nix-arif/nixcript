@@ -18,11 +18,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type {
-  ClaimApplicationWithDetails, ClaimTypeRow,
+  ClaimApplicationWithDetails, ClaimTypeRow, ClaimLineItemRow,
   ClaimLineItemInput, ClaimEntertainmentDetailInput,
 } from "@/server/claim";
 import {
-  cancelClaim, submitClaim, createClaimDocumentRecord,
+  deleteClaim, submitClaim, saveDraftClaim, updateDraftClaim,
+  finalizeDraftClaim, resubmitRejectedClaim, createClaimDocumentRecord,
 } from "@/server/claim";
 import { CLAIM_FORM, LINE_CATEGORY, TRAVEL_MODE, TRAVEL_MODE_LABELS } from "@/lib/claim/constants";
 import {
@@ -81,6 +82,71 @@ const emptyTravel = (): TravelRow => ({
 const emptyMisc     = (): MiscRow       => ({ id:newId(), subType:"TOLL", lineDate:"", description:"", amountMyr:"" });
 const emptyInEnt    = (): InEntRow      => ({ id:newId(), lineDate:"", venue:"", description:"", amountMyr:"" });
 const emptyOther    = (): OtherLocalRow => ({ id:newId(), lineDate:"", description:"", amountMyr:"" });
+
+// ── Form reconstruction from existing claim ───────────────────────────────────
+
+function lineItemsToTravelRows(items: ClaimLineItemRow[]): TravelRow[] {
+  const sorted = [...items].sort((a, b) => a.sortOrder - b.sortOrder);
+  const rows: TravelRow[] = [];
+  let current: TravelRow | null = null;
+  for (const item of sorted) {
+    if (item.category === LINE_CATEGORY.TRAVEL) {
+      if (current) rows.push(current);
+      current = {
+        id: item.id, lineDate: item.lineDate,
+        fromLocation: item.fromLocation ?? "", toLocation: item.toLocation ?? "",
+        distanceKm: item.distanceKm ?? "", mode: "", purpose: item.description ?? "",
+        dailyId: newId(), breakfastDays: "", lunchDays: "", dinnerDays: "",
+        accomId: newId(), accomAmount: "",
+        tEntId: newId(), tEntAmount: "",
+      };
+    } else if (current && item.category === LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE) {
+      current.dailyId = item.id;
+      const bf = item.description?.match(/Breakfast ×(\d+(?:\.\d+)?)d/);
+      const ln = item.description?.match(/Lunch ×(\d+(?:\.\d+)?)d/);
+      const dn = item.description?.match(/Dinner ×(\d+(?:\.\d+)?)d/);
+      if (bf) current.breakfastDays = bf[1];
+      if (ln) current.lunchDays = ln[1];
+      if (dn) current.dinnerDays = dn[1];
+    } else if (current && item.category === LINE_CATEGORY.TRAVEL_ACCOMMODATION) {
+      current.accomId = item.id;
+      current.accomAmount = item.amountMyr;
+    } else if (current && item.category === LINE_CATEGORY.TRAVEL_ENTERTAINMENT) {
+      current.tEntId = item.id;
+      current.tEntAmount = item.amountMyr;
+    }
+  }
+  if (current) rows.push(current);
+  return rows.length > 0 ? rows : [emptyTravel()];
+}
+
+function buildFormRows(items: ClaimLineItemRow[]) {
+  const travelCats = new Set<string>([
+    LINE_CATEGORY.TRAVEL, LINE_CATEGORY.TRAVEL_ACCOMMODATION,
+    LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, LINE_CATEGORY.TRAVEL_ENTERTAINMENT,
+  ]);
+  const travelItems = items.filter(i => travelCats.has(i.category as string));
+  const travelRows  = lineItemsToTravelRows(travelItems);
+  const miscRows: MiscRow[] = items
+    .filter(i => i.category === LINE_CATEGORY.TOLL || i.category === LINE_CATEGORY.PARKING || i.category === LINE_CATEGORY.MOBILE)
+    .map(i => ({ id: i.id, subType: i.category as "TOLL"|"PARKING"|"MOBILE", lineDate: i.lineDate, description: i.description ?? "", amountMyr: i.amountMyr }));
+  const inEntRows: InEntRow[] = items
+    .filter(i => i.category === LINE_CATEGORY.IN_BASE_ENT)
+    .map(i => ({ id: i.id, lineDate: i.lineDate, venue: i.venue ?? "", description: i.description ?? "", amountMyr: i.amountMyr }));
+  const otherRows: OtherLocalRow[] = items
+    .filter(i => i.category === LINE_CATEGORY.OTHER_LOCAL)
+    .map(i => ({ id: i.id, lineDate: i.lineDate, description: i.description ?? "", amountMyr: i.amountMyr }));
+  const ovMyrRows: OvMyrRow[] = items
+    .filter(i => i.category === LINE_CATEGORY.OVERSEAS_MYR)
+    .map(i => ({ id: i.id, lineDate: i.lineDate, destination: i.destination ?? "", description: i.description ?? "", amountMyr: i.amountMyr }));
+  const ovFxRows: OvFxRow[] = items
+    .filter(i => i.category === LINE_CATEGORY.OVERSEAS_FX)
+    .map(i => ({ id: i.id, lineDate: i.lineDate, destination: i.destination ?? "", currency: i.currency ?? "USD", amountForeign: i.amountForeign ?? "", exchangeRate: i.exchangeRate ?? "" }));
+  const ovOtherRows: OvOtherRow[] = items
+    .filter(i => i.category === LINE_CATEGORY.OVERSEAS_OTHER)
+    .map(i => ({ id: i.id, lineDate: i.lineDate, description: i.description ?? "", amountMyr: i.amountMyr }));
+  return { travelRows, miscRows, inEntRows, otherRows, ovMyrRows, ovFxRows, ovOtherRows };
+}
 
 const ALLOWED_RECEIPT_TYPES = ["image/jpeg","image/png","image/webp","application/pdf"];
 const MAX_RECEIPT_SIZE = 5 * 1024 * 1024;
@@ -180,12 +246,14 @@ function fxMyr(fc: string, rate: string): number {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string,string> = {
+    DRAFT:     "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-100 dark:bg-slate-800/50 dark:text-slate-400 dark:border-slate-600",
     PENDING:   "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700",
+    CHECKED:   "bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700",
     APPROVED:  "bg-green-100 text-green-800 border-green-200 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700",
     REJECTED:  "bg-red-100 text-red-800 border-red-200 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700",
     CANCELLED: "bg-muted text-muted-foreground border-border hover:bg-muted",
   };
-  const labels: Record<string,string> = { PENDING:"Pending", APPROVED:"Approved", REJECTED:"Rejected", CANCELLED:"Cancelled" };
+  const labels: Record<string,string> = { DRAFT:"Draft", PENDING:"Pending", CHECKED:"Checked", APPROVED:"Approved", REJECTED:"Rejected", CANCELLED:"Cancelled" };
   return <Badge className={`border text-xs ${map[status] ?? "border-border"}`}>{labels[status] ?? status}</Badge>;
 }
 
@@ -258,10 +326,12 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const [, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Cancel state ──────────────────────────────────────────────────────────
+  // ── Action states ────────────────────────────────────────────────────────
   const [cancelTarget, setCancelTarget] = useState<ClaimApplicationWithDetails | null>(null);
   const [viewDocsApp, setViewDocsApp] = useState<ClaimApplicationWithDetails | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [editingApp, setEditingApp] = useState<ClaimApplicationWithDetails | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
 
   // ── Sheet state ───────────────────────────────────────────────────────────
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -321,10 +391,38 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
 
   // ── Reset ─────────────────────────────────────────────────────────────────
   function resetForm() {
+    setEditingApp(null);
     setSelectedTypeId(""); setClaimPeriod(""); setNote(""); setQueuedFiles([]);
     setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     setEntDate(""); setEntRest(""); setEntCust(""); setEntDeptOrg(""); setEntPurpose(""); setEntAmount("");
+  }
+
+  function loadAppIntoForm(app: ClaimApplicationWithDetails) {
+    setEditingApp(app);
+    setSelectedTypeId(app.claimTypeId);
+    const periodMatch = app.claimDate.match(/^(\d{4}-\d{2})-\d{2}$/);
+    setClaimPeriod(periodMatch ? periodMatch[1] : app.claimDate);
+    setNote(app.description !== "Draft" ? app.description : "");
+    setQueuedFiles([]);
+    if (app.entertainmentDetail) {
+      setEntDate(app.entertainmentDetail.eventDate);
+      setEntRest(app.entertainmentDetail.restaurantName);
+      setEntCust(app.entertainmentDetail.customerName);
+      setEntDeptOrg(app.entertainmentDetail.departmentOrganization);
+      setEntPurpose(app.entertainmentDetail.purpose);
+      setEntAmount(app.entertainmentDetail.amount);
+    } else {
+      const { travelRows, miscRows, inEntRows, otherRows, ovMyrRows, ovFxRows, ovOtherRows } = buildFormRows(app.lineItems);
+      setTravelRows(travelRows);
+      setMiscRows(miscRows);
+      setInEntRows(inEntRows);
+      setOtherRows(otherRows);
+      setOvMyrRows(ovMyrRows);
+      setOvFxRows(ovFxRows);
+      setOvOtherRows(ovOtherRows);
+    }
+    setSubmitOpen(true);
   }
 
   function handleTypeChange(id: string) {
@@ -400,13 +498,14 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   async function handleCancel() {
     if (!cancelTarget) return;
     setCancelling(true);
+    const isDraft = cancelTarget.status === "DRAFT";
     try {
-      await cancelClaim(cancelTarget.id);
-      toast.success("Claim cancelled");
+      await deleteClaim(cancelTarget.id);
+      toast.success(isDraft ? "Draft deleted" : "Claim withdrawn");
       setCancelTarget(null);
       startTransition(() => router.refresh());
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to cancel");
+      toast.error(err instanceof Error ? err.message : "Failed to delete");
     } finally { setCancelling(false); }
   }
 
@@ -491,7 +590,18 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         ? (note.trim() || `Overseas Claim — ${new Date(claimPeriod+"-02").toLocaleDateString("en-MY",{month:"long",year:"numeric"})}`)
         : (entPurpose.trim() || "Entertainment");
 
-      const appId = await submitClaim({ claimTypeId: selectedType.id, claimPeriod, description: autoDesc, lineItems, entertainmentDetail });
+      const claimData = { claimTypeId: selectedType.id, claimPeriod, description: autoDesc, lineItems, entertainmentDetail };
+
+      let appId: string;
+      if (editingApp?.status === "DRAFT") {
+        await finalizeDraftClaim(editingApp.id, claimData);
+        appId = editingApp.id;
+      } else if (editingApp?.status === "REJECTED") {
+        await resubmitRejectedClaim(editingApp.id, claimData);
+        appId = editingApp.id;
+      } else {
+        appId = await submitClaim(claimData);
+      }
 
       // Build upload queue: line-item receipts + any global files
       type UploadJob = { file: File; lineItemId?: string };
@@ -502,7 +612,6 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         ...miscRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
         ...inEntRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
         ...otherRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
-
         ...queuedFiles.map(qf => ({ file: qf.file })),
       ];
 
@@ -515,12 +624,77 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         await createClaimDocumentRecord({ applicationId:appId, lineItemId:job.lineItemId, fileName:job.file.name, fileKey:key, fileSize:job.file.size, mimeType:job.file.type });
       }
 
-      toast.success("Claim submitted");
+      toast.success(editingApp?.status === "DRAFT" ? "Draft submitted" : editingApp?.status === "REJECTED" ? "Claim resubmitted" : "Claim submitted");
       setSubmitOpen(false); resetForm();
       startTransition(() => router.refresh());
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to submit");
     } finally { setSubmitting(false); }
+  }
+
+  async function handleSaveDraft() {
+    if (!selectedType) { toast.error("Select a claim type first"); return; }
+    setSavingDraft(true);
+    try {
+      const claimData = {
+        claimTypeId: selectedType.id,
+        claimPeriod: claimPeriod || new Date().toISOString().slice(0,7),
+        description: note.trim() || "Draft",
+        lineItems: formType === CLAIM_FORM.LOCAL ? [
+          ...travelRows.flatMap(r => {
+            if (!r.lineDate) return [];
+            const items: ClaimLineItemInput[] = [];
+            const km = parseFloat(r.distanceKm);
+            const usesMileage = r.mode !== TRAVEL_MODE.FLIGHT && r.mode !== TRAVEL_MODE.COMPANY_CAR;
+            const mileageAmt = usesMileage && km > 0 ? km * ratePerKm : 0;
+            if (r.lineDate && (r.fromLocation.trim() || r.toLocation.trim() || r.purpose.trim() || r.mode)) {
+              items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
+            }
+            const bf = parseFloat(r.breakfastDays)||0;
+            const ln = parseFloat(r.lunchDays)||0;
+            const dn = parseFloat(r.dinnerDays)||0;
+            const dailyTotal = bf*mealBreakfastRate + ln*mealLunchRate + dn*mealDinnerRate;
+            if (dailyTotal > 0) {
+              const parts: string[] = [];
+              if (bf > 0) parts.push(`Breakfast ×${bf}d`);
+              if (ln > 0) parts.push(`Lunch ×${ln}d`);
+              if (dn > 0) parts.push(`Dinner ×${dn}d`);
+              items.push({ id: r.dailyId, category: LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, lineDate: r.lineDate, description: parts.join(", "), amountMyr: dailyTotal.toFixed(2) });
+            }
+            if (parseFloat(r.accomAmount) > 0) items.push({ id: r.accomId, category: LINE_CATEGORY.TRAVEL_ACCOMMODATION, lineDate: r.lineDate, amountMyr: r.accomAmount });
+            if (parseFloat(r.tEntAmount) > 0) items.push({ id: r.tEntId, category: LINE_CATEGORY.TRAVEL_ENTERTAINMENT, lineDate: r.lineDate, amountMyr: r.tEntAmount });
+            return items;
+          }),
+          ...miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+        ] : [],
+      };
+
+      let appId: string;
+      if (editingApp?.status === "DRAFT") {
+        await updateDraftClaim(editingApp.id, claimData);
+        appId = editingApp.id;
+      } else {
+        appId = await saveDraftClaim(claimData);
+      }
+
+      // Upload any queued files to the draft
+      for (const qf of queuedFiles) {
+        const res = await fetch("/api/claim/upload-url", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ appId, fileName:qf.file.name, mimeType:qf.file.type, fileSize:qf.file.size }) });
+        if (!res.ok) continue;
+        const { uploadUrl, key } = await res.json();
+        const upload = await fetch(uploadUrl, { method:"PUT", headers:{"Content-Type":qf.file.type}, body:qf.file });
+        if (!upload.ok) continue;
+        await createClaimDocumentRecord({ applicationId:appId, fileName:qf.file.name, fileKey:key, fileSize:qf.file.size, mimeType:qf.file.type });
+      }
+
+      toast.success("Draft saved");
+      setSubmitOpen(false); resetForm();
+      startTransition(() => router.refresh());
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to save draft");
+    } finally { setSavingDraft(false); }
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -597,8 +771,18 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                               {app.documents.length > 1 ? `${app.documents.length} docs` : "Doc"}
                             </Button>
                           )}
-                          {app.status === "PENDING" && (
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setCancelTarget(app)} title="Cancel">
+                          {app.status === "DRAFT" && (
+                            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50" onClick={() => loadAppIntoForm(app)}>
+                              Continue
+                            </Button>
+                          )}
+                          {app.status === "REJECTED" && (
+                            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={() => loadAppIntoForm(app)}>
+                              Edit &amp; Resubmit
+                            </Button>
+                          )}
+                          {(app.status === "DRAFT" || app.status === "PENDING" || app.status === "CHECKED") && (
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setCancelTarget(app)} title={app.status === "DRAFT" ? "Delete draft" : "Withdraw"}>
                               <XIcon className="h-3.5 w-3.5"/>
                             </Button>
                           )}
@@ -621,11 +805,16 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
             <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 flex items-start gap-3">
               <AlertTriangleIcon className="h-4 w-4 text-destructive mt-0.5 shrink-0"/>
               <p className="text-sm text-destructive leading-relaxed">
-                Cancel <strong>{cancelTarget?.claimTypeName} ({cancelTarget?.applicationNo})</strong> for <strong>{fmtAmount(cancelTarget?.amount ?? "0")}</strong>? This cannot be undone.
+                {cancelTarget?.status === "DRAFT"
+                  ? <>Delete draft <strong>{cancelTarget?.claimTypeName} ({cancelTarget?.applicationNo})</strong>? This will permanently remove the draft.</>
+                  : <>Withdraw <strong>{cancelTarget?.claimTypeName} ({cancelTarget?.applicationNo})</strong> for <strong>{fmtAmount(cancelTarget?.amount ?? "0")}</strong>? This cannot be undone.</>
+                }
               </p>
             </div>
             <div className="flex gap-2 pt-2">
-              <Button variant="destructive" onClick={handleCancel} disabled={cancelling} className="flex-1">{cancelling ? "Cancelling…" : "Yes, Cancel"}</Button>
+              <Button variant="destructive" onClick={handleCancel} disabled={cancelling} className="flex-1">
+                {cancelling ? "Deleting…" : cancelTarget?.status === "DRAFT" ? "Yes, Delete" : "Yes, Withdraw"}
+              </Button>
               <Button variant="outline" onClick={() => setCancelTarget(null)} disabled={cancelling}>Keep</Button>
             </div>
           </div>
@@ -675,8 +864,23 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
       <Sheet open={submitOpen} onOpenChange={open => { if (submitting) return; if (!open) resetForm(); setSubmitOpen(open); }}>
         <SheetContent className="w-full sm:max-w-2xl max-w-full! overflow-y-auto px-6">
           <SheetHeader className="mb-5">
-            <SheetTitle className="flex items-center gap-2"><ReceiptIcon className="h-5 w-5 text-muted-foreground"/>Submit Claim</SheetTitle>
+            <SheetTitle className="flex items-center gap-2">
+              <ReceiptIcon className="h-5 w-5 text-muted-foreground"/>
+              {editingApp?.status === "DRAFT" ? "Continue Draft" : editingApp?.status === "REJECTED" ? "Edit & Resubmit" : "Submit Claim"}
+            </SheetTitle>
           </SheetHeader>
+
+          {editingApp?.status === "REJECTED" && (editingApp.reviewComment || editingApp.checkerComment) && (
+            <div className="mb-4 rounded-md border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-700 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+              <span className="font-semibold">Rejection reason: </span>
+              {editingApp.checkerComment || editingApp.reviewComment}
+            </div>
+          )}
+          {editingApp?.status === "DRAFT" && (
+            <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-700 px-4 py-3 text-sm text-blue-700 dark:text-blue-400">
+              Continuing draft <span className="font-mono font-semibold">{editingApp.applicationNo}</span>. Files must be re-attached before submitting.
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-5 pb-6">
             {/* Claim Type */}
@@ -1200,11 +1404,16 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
 
             {/* Actions */}
             {selectedType && (
-              <div className="flex gap-3 pt-1">
-                <Button type="submit" disabled={submitting || !selectedTypeId || !claimPeriod} className="flex-1 sm:flex-none sm:min-w-44">
-                  {submitting ? "Submitting…" : `Submit ${FORM_LABELS[formType ?? ""] ?? "Claim"}`}
+              <div className="flex flex-wrap gap-3 pt-1">
+                <Button type="submit" disabled={submitting || savingDraft || !selectedTypeId || !claimPeriod} className="flex-1 sm:flex-none sm:min-w-44">
+                  {submitting ? "Submitting…" : editingApp?.status === "DRAFT" ? "Submit Draft" : editingApp?.status === "REJECTED" ? "Resubmit Claim" : `Submit ${FORM_LABELS[formType ?? ""] ?? "Claim"}`}
                 </Button>
-                <Button type="button" variant="outline" disabled={submitting} onClick={() => { resetForm(); setSubmitOpen(false); }}>Cancel</Button>
+                {(!editingApp || editingApp.status === "DRAFT") && formType !== CLAIM_FORM.ENTERTAINMENT_FORM && (
+                  <Button type="button" variant="outline" disabled={submitting || savingDraft || !selectedTypeId} onClick={handleSaveDraft} className="flex-1 sm:flex-none">
+                    {savingDraft ? "Saving…" : "Save as Draft"}
+                  </Button>
+                )}
+                <Button type="button" variant="outline" disabled={submitting || savingDraft} onClick={() => { resetForm(); setSubmitOpen(false); }}>Cancel</Button>
               </div>
             )}
           </form>

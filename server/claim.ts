@@ -139,7 +139,7 @@ async function notifyUsersWithPermission(
   orgId: string,
   permKey: string,
   notifData: { type: string; title: string; body: string; link: string },
-) {
+): Promise<boolean> {
   const approvers = await db
     .select({ userId: userPermission.userId })
     .from(userPermission)
@@ -150,7 +150,7 @@ async function notifyUsersWithPermission(
         eq(userPermission.allowed, true),
       ),
     );
-  if (approvers.length === 0) return;
+  if (approvers.length === 0) return false;
   const notifs = approvers.map((a) => ({
     id: nanoid(),
     organizationId: orgId,
@@ -160,6 +160,7 @@ async function notifyUsersWithPermission(
     createdAt: new Date(),
   }));
   await db.insert(notification).values(notifs);
+  return true;
 }
 
 async function notifyUser(
@@ -422,7 +423,7 @@ export async function getPendingClaimApprovals(): Promise<ClaimApplicationWithDe
     .select({ app: claimApplication, applicantName: user.name })
     .from(claimApplication)
     .leftJoin(user, eq(claimApplication.userId, user.id))
-    .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "PENDING")))
+    .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "CHECKED")))
     .orderBy(asc(claimApplication.claimDate));
 
   if (apps.length === 0) return [];
@@ -621,12 +622,21 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
     });
   }
 
-  await notifyUsersWithPermission(orgId, "claim:approve", {
+  // Notify checkers first; if none exist, fall through to approvers
+  const checkersNotified = await notifyUsersWithPermission(orgId, "claim:check", {
     type: "claim:submitted",
     title: `Claim: ${ct.name}`,
     body: `${userName} submitted a ${ct.name} for RM ${totalAmount.toFixed(2)}`,
-    link: `/dashboard/human-resources/claim/approvals`,
+    link: `/dashboard/human-resources/claim/checker`,
   });
+  if (!checkersNotified) {
+    await notifyUsersWithPermission(orgId, "claim:approve", {
+      type: "claim:submitted",
+      title: `Claim: ${ct.name}`,
+      body: `${userName} submitted a ${ct.name} for RM ${totalAmount.toFixed(2)}`,
+      link: `/dashboard/human-resources/claim/approvals`,
+    });
+  }
 
   return appId;
 }
@@ -639,7 +649,7 @@ export async function approveClaim(appId: string, comment?: string): Promise<voi
     .where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId)))
     .limit(1);
   if (!app[0]) throw new Error("Application not found");
-  if (app[0].status !== "PENDING") throw new Error("Only pending applications can be approved");
+  if (app[0].status !== "CHECKED" && app[0].status !== "PENDING") throw new Error("Only checked applications can be approved");
   if (app[0].userId === userId) throw new Error("You cannot approve your own claim");
 
   await db
@@ -819,7 +829,7 @@ export async function rejectClaim(appId: string, reason: string): Promise<void> 
     .where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId)))
     .limit(1);
   if (!app[0]) throw new Error("Application not found");
-  if (app[0].status !== "PENDING") throw new Error("Only pending applications can be rejected");
+  if (app[0].status !== "CHECKED" && app[0].status !== "PENDING") throw new Error("Only checked or pending applications can be rejected");
 
   await db
     .update(claimApplication)
@@ -851,6 +861,302 @@ export async function cancelClaim(appId: string, reason?: string): Promise<void>
     .update(claimApplication)
     .set({ status: "CANCELLED", cancelledBy: userId, cancelledAt: new Date(), cancelReason: reason?.trim() ?? null, updatedAt: new Date() })
     .where(eq(claimApplication.id, appId));
+}
+
+/* =========================
+   DRAFT / EDIT / RESUBMIT
+========================= */
+
+// Shared helper: replace line items + entertainment detail for an existing application
+async function replaceClaimItems(
+  appId: string,
+  orgId: string,
+  data: ApplyClaimInput,
+  ct: ClaimTypeRow,
+): Promise<number> {
+  const formType = ct.category as ClaimFormType;
+  let totalAmount: number;
+  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
+    totalAmount = data.entertainmentDetail ? parseFloat(data.entertainmentDetail.amount) : 0;
+  } else {
+    totalAmount = (data.lineItems ?? []).reduce((s, li) => s + parseFloat(li.amountMyr), 0);
+  }
+
+  await db.delete(claimLineItem).where(eq(claimLineItem.applicationId, appId));
+  await db.delete(claimEntertainmentDetail).where(eq(claimEntertainmentDetail.applicationId, appId));
+
+  if (data.lineItems && data.lineItems.length > 0) {
+    const rows = data.lineItems.map((li, idx) => ({
+      id: li.id ?? nanoid(),
+      applicationId: appId,
+      organizationId: orgId,
+      category: li.category,
+      lineDate: li.lineDate,
+      description: li.description?.trim() ?? null,
+      fromLocation: li.fromLocation?.trim() ?? null,
+      toLocation: li.toLocation?.trim() ?? null,
+      distanceKm: li.distanceKm != null ? String(li.distanceKm) : null,
+      ratePerUnit: li.ratePerUnit ?? null,
+      venue: li.venue?.trim() ?? null,
+      destination: li.destination?.trim() ?? null,
+      currency: li.currency ?? null,
+      amountForeign: li.amountForeign ?? null,
+      exchangeRate: li.exchangeRate ?? null,
+      amountMyr: li.amountMyr,
+      sortOrder: idx,
+      createdAt: new Date(),
+    }));
+    await db.insert(claimLineItem).values(rows);
+  }
+  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetail) {
+    const ed = data.entertainmentDetail;
+    await db.insert(claimEntertainmentDetail).values({
+      id: nanoid(),
+      applicationId: appId,
+      organizationId: orgId,
+      eventDate: ed.eventDate,
+      restaurantName: ed.restaurantName.trim(),
+      customerName: ed.customerName.trim(),
+      departmentOrganization: ed.departmentOrganization.trim(),
+      purpose: ed.purpose.trim(),
+      amount: ed.amount,
+      createdAt: new Date(),
+    });
+  }
+  return totalAmount;
+}
+
+export async function saveDraftClaim(data: ApplyClaimInput): Promise<string> {
+  const { orgId, userId } = await requireAccess("claim:apply");
+  const type = await db.select().from(claimType).where(and(eq(claimType.id, data.claimTypeId), eq(claimType.organizationId, orgId))).limit(1);
+  if (!type[0]) throw new Error("Claim type not found");
+  const ct = type[0];
+  const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
+  const applicationNo = await generateApplicationNo(orgId);
+  const appId = nanoid();
+  await db.insert(claimApplication).values({
+    id: appId,
+    organizationId: orgId,
+    applicationNo,
+    userId,
+    claimTypeId: ct.id,
+    claimTypeName: ct.name,
+    claimTypeCode: ct.code,
+    claimDate,
+    description: data.description.trim() || "Draft",
+    unitType: ct.unitType,
+    quantity: null,
+    ratePerUnit: ct.ratePerUnit ?? null,
+    amount: "0",
+    status: "DRAFT",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  await replaceClaimItems(appId, orgId, data, ct);
+  return appId;
+}
+
+export async function updateDraftClaim(draftId: string, data: ApplyClaimInput): Promise<void> {
+  const { orgId, userId } = await requireAccess("claim:apply");
+  const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, draftId), eq(claimApplication.organizationId, orgId))).limit(1);
+  if (!app[0] || app[0].userId !== userId) throw new Error("Draft not found");
+  if (app[0].status !== "DRAFT") throw new Error("Only drafts can be updated this way");
+  const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
+  const ct = app[0];
+  const type = await db.select().from(claimType).where(eq(claimType.id, data.claimTypeId)).limit(1);
+  if (!type[0]) throw new Error("Claim type not found");
+  const totalAmount = await replaceClaimItems(draftId, orgId, data, type[0]);
+  await db.update(claimApplication).set({
+    claimTypeId: data.claimTypeId,
+    claimTypeName: type[0].name,
+    claimTypeCode: type[0].code,
+    claimDate,
+    description: data.description.trim() || "Draft",
+    amount: totalAmount.toFixed(2),
+    updatedAt: new Date(),
+  }).where(eq(claimApplication.id, draftId));
+}
+
+export async function finalizeDraftClaim(draftId: string, data: ApplyClaimInput): Promise<void> {
+  const { orgId, userId, userName } = await requireAccess("claim:apply");
+  const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, draftId), eq(claimApplication.organizationId, orgId))).limit(1);
+  if (!app[0] || app[0].userId !== userId) throw new Error("Draft not found");
+  if (app[0].status !== "DRAFT") throw new Error("Only drafts can be finalized");
+  const type = await db.select().from(claimType).where(and(eq(claimType.id, data.claimTypeId), eq(claimType.organizationId, orgId))).limit(1);
+  if (!type[0] || !type[0].isActive) throw new Error("Claim type not found or inactive");
+  const ct = type[0];
+  const formType = ct.category as ClaimFormType;
+  let totalAmount: number;
+  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
+    if (!data.entertainmentDetail) throw new Error("Entertainment details required");
+    totalAmount = parseFloat(data.entertainmentDetail.amount);
+  } else {
+    if (!data.lineItems || data.lineItems.length === 0) throw new Error("At least one expense item required");
+    totalAmount = data.lineItems.reduce((s, li) => s + parseFloat(li.amountMyr), 0);
+  }
+  if (isNaN(totalAmount) || totalAmount <= 0) throw new Error("Total amount must be greater than 0");
+  const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
+  const totalAmountFinal = await replaceClaimItems(draftId, orgId, data, ct);
+  await db.update(claimApplication).set({
+    claimTypeId: ct.id,
+    claimTypeName: ct.name,
+    claimTypeCode: ct.code,
+    claimDate,
+    description: data.description.trim(),
+    amount: totalAmountFinal.toFixed(2),
+    status: "PENDING",
+    updatedAt: new Date(),
+  }).where(eq(claimApplication.id, draftId));
+  const checkersNotified = await notifyUsersWithPermission(orgId, "claim:check", {
+    type: "claim:submitted",
+    title: `Claim: ${ct.name}`,
+    body: `${userName} submitted a ${ct.name} for RM ${totalAmountFinal.toFixed(2)}`,
+    link: `/dashboard/human-resources/claim/checker`,
+  });
+  if (!checkersNotified) {
+    await notifyUsersWithPermission(orgId, "claim:approve", {
+      type: "claim:submitted",
+      title: `Claim: ${ct.name}`,
+      body: `${userName} submitted a ${ct.name} for RM ${totalAmountFinal.toFixed(2)}`,
+      link: `/dashboard/human-resources/claim/approvals`,
+    });
+  }
+}
+
+export async function resubmitRejectedClaim(appId: string, data: ApplyClaimInput): Promise<void> {
+  const { orgId, userId, userName } = await requireAccess("claim:apply");
+  const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId))).limit(1);
+  if (!app[0] || app[0].userId !== userId) throw new Error("Application not found");
+  if (app[0].status !== "REJECTED") throw new Error("Only rejected claims can be resubmitted");
+  const type = await db.select().from(claimType).where(and(eq(claimType.id, data.claimTypeId), eq(claimType.organizationId, orgId))).limit(1);
+  if (!type[0] || !type[0].isActive) throw new Error("Claim type not found or inactive");
+  const ct = type[0];
+  const formType = ct.category as ClaimFormType;
+  let totalAmount: number;
+  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
+    if (!data.entertainmentDetail) throw new Error("Entertainment details required");
+    totalAmount = parseFloat(data.entertainmentDetail.amount);
+  } else {
+    if (!data.lineItems || data.lineItems.length === 0) throw new Error("At least one expense item required");
+    totalAmount = data.lineItems.reduce((s, li) => s + parseFloat(li.amountMyr), 0);
+  }
+  if (isNaN(totalAmount) || totalAmount <= 0) throw new Error("Total amount must be greater than 0");
+  const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
+  const totalAmountFinal = await replaceClaimItems(appId, orgId, data, ct);
+  await db.update(claimApplication).set({
+    claimDate,
+    description: data.description.trim(),
+    amount: totalAmountFinal.toFixed(2),
+    status: "PENDING",
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewComment: null,
+    checkedBy: null,
+    checkedAt: null,
+    checkerComment: null,
+    updatedAt: new Date(),
+  }).where(eq(claimApplication.id, appId));
+  const checkersNotified = await notifyUsersWithPermission(orgId, "claim:check", {
+    type: "claim:submitted",
+    title: `Claim: ${ct.name}`,
+    body: `${userName} resubmitted a ${ct.name} for RM ${totalAmountFinal.toFixed(2)}`,
+    link: `/dashboard/human-resources/claim/checker`,
+  });
+  if (!checkersNotified) {
+    await notifyUsersWithPermission(orgId, "claim:approve", {
+      type: "claim:submitted",
+      title: `Claim: ${ct.name}`,
+      body: `${userName} resubmitted a ${ct.name} for RM ${totalAmountFinal.toFixed(2)}`,
+      link: `/dashboard/human-resources/claim/approvals`,
+    });
+  }
+}
+
+export async function deleteClaim(appId: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("claim:apply");
+  const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId))).limit(1);
+  if (!app[0]) throw new Error("Application not found");
+  if (app[0].userId !== userId) throw new Error("You can only delete your own claims");
+  if (app[0].status === "APPROVED") throw new Error("Approved claims cannot be deleted");
+  if (app[0].status === "DRAFT" || app[0].status === "CANCELLED") {
+    // Hard delete — cascade removes line items, entertainment, documents
+    await db.delete(claimApplication).where(eq(claimApplication.id, appId));
+  } else {
+    // Soft delete: mark as CANCELLED
+    await db.update(claimApplication).set({
+      status: "CANCELLED",
+      cancelledBy: userId,
+      cancelledAt: new Date(),
+      cancelReason: "Withdrawn by submitter",
+      updatedAt: new Date(),
+    }).where(eq(claimApplication.id, appId));
+  }
+}
+
+/* =========================
+   CHECKER WORKFLOW
+========================= */
+
+export async function getPendingClaimChecks(): Promise<ClaimApplicationWithDetails[]> {
+  const { orgId } = await requireAccess("claim:check");
+  const apps = await db
+    .select({ app: claimApplication, applicantName: user.name })
+    .from(claimApplication)
+    .leftJoin(user, eq(claimApplication.userId, user.id))
+    .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "PENDING")))
+    .orderBy(asc(claimApplication.claimDate));
+  if (apps.length === 0) return [];
+  const appIds = apps.map((a) => a.app.id);
+  const { docMap, lineMap, entMap } = await loadExtras(appIds);
+  return apps.map(({ app, applicantName }) => ({
+    ...app,
+    applicantName: applicantName ?? null,
+    documents: docMap[app.id] ?? [],
+    lineItems: lineMap[app.id] ?? [],
+    entertainmentDetail: entMap[app.id] ?? null,
+  }));
+}
+
+export async function checkClaim(appId: string, comment?: string): Promise<void> {
+  const { orgId, userId, userName } = await requireAccess("claim:check");
+  const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId))).limit(1);
+  if (!app[0]) throw new Error("Application not found");
+  if (app[0].status !== "PENDING") throw new Error("Only pending applications can be checked");
+  if (app[0].userId === userId) throw new Error("You cannot check your own claim");
+  await db.update(claimApplication).set({
+    status: "CHECKED",
+    checkedBy: userId,
+    checkedAt: new Date(),
+    checkerComment: comment?.trim() ?? null,
+    updatedAt: new Date(),
+  }).where(eq(claimApplication.id, appId));
+  await notifyUsersWithPermission(orgId, "claim:approve", {
+    type: "claim:checked",
+    title: `Claim Ready for Approval`,
+    body: `${userName} checked a claim from ${app[0].claimTypeName} — RM ${app[0].amount}`,
+    link: `/dashboard/human-resources/claim/approvals`,
+  });
+}
+
+export async function rejectByChecker(appId: string, reason: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("claim:check");
+  const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId))).limit(1);
+  if (!app[0]) throw new Error("Application not found");
+  if (app[0].status !== "PENDING") throw new Error("Only pending applications can be rejected by checker");
+  if (app[0].userId === userId) throw new Error("You cannot reject your own claim");
+  await db.update(claimApplication).set({
+    status: "REJECTED",
+    checkedBy: userId,
+    checkedAt: new Date(),
+    checkerComment: reason.trim(),
+    updatedAt: new Date(),
+  }).where(eq(claimApplication.id, appId));
+  await notifyUser(orgId, app[0].userId, {
+    type: "claim:rejected",
+    title: "Claim Rejected",
+    body: `Your ${app[0].claimTypeName} claim was rejected by the checker: ${reason.trim()}`,
+    link: `/dashboard/human-resources/claim`,
+  });
 }
 
 /* =========================
