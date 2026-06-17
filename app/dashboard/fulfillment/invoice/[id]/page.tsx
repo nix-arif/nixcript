@@ -1,5 +1,5 @@
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getInvoiceDetail } from "@/server/invoice";
+import { getInvoiceDetail, getLinkedJournalEntries } from "@/server/invoice";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { notFound } from "next/navigation";
 import { InvoiceDetailClient } from "./invoice-detail-client";
@@ -15,5 +15,14 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
 
   if (!invoice) notFound();
 
-  return <InvoiceDetailClient invoice={invoice} permissions={permissions} currentUserId={session.user.id} />;
+  const linkedEntries = await getLinkedJournalEntries(id);
+
+  return (
+    <InvoiceDetailClient
+      invoice={invoice}
+      permissions={permissions}
+      currentUserId={session.user.id}
+      linkedEntries={linkedEntries}
+    />
+  );
 }

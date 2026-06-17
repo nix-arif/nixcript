@@ -195,3 +195,81 @@ UI
 
 PR list shows orange "Replenishment" or teal "Sample / Demo" badge under the PR number for non-customer-order types
 PR create form has the type selector with contextual description
+
+# Implementation Plan: Invoice Payment via Journal Entries
+
+Why this is non-trivial
+Right now invoice.status and invoice.paidAmount are manually set fields (seeded from Excel). The end state is: payment status is derived from posted journal entries that reference the invoice, using the AR account balance per invoice as the source of truth.
+
+You can't do this in one step because:
+
+~hundreds of existing "paid" invoices have no corresponding journal entries
+The ledger itself has no historical data yet
+Changing how status works would break the SOA, reports, and commission tracking overnight
+Phase 1 — Keep manual system, add the link (now)
+Goal: Let the journal entry form tag a payment entry to a specific invoice, and surface that link on the invoice detail page. No change to how status is computed yet.
+
+What to build:
+
+ledgerEntry.referenceType = "INVOICE" already works — the form can already pick an invoice. Verify this actually saves referenceId = invoice.id.
+On the invoice detail page, add a "Linked Journal Entries" section that queries ledgerEntry where referenceId = invoice.id — shows date, entry no, debit/credit totals, status. Read-only for now.
+No schema changes needed.
+Value: You can start posting real payment entries against invoices immediately and see them linked. The manual paidAmount/status still drives everything else.
+
+Phase 2 — Add invoicePayment junction table (schema migration)
+Goal: Formally record which journal entry lines represent payment against which invoice, and how much each line settles.
+
+New table:
+
+invoicePayment (
+id, invoiceId → invoice.id,
+ledgerEntryId → ledgerEntry.id,
+ledgerLineId → ledgerLine.id, // the specific CR to AR
+amount text, // how much of the invoice this line settles
+createdAt
+)
+What to build:
+
+Push schema to DB (additive, no data loss)
+When posting a journal entry with referenceType = "INVOICE", auto-create invoicePayment rows for lines that credit the AR account
+getInvoiceDetail enriched with payments[] from this table
+Value: Clean audit trail of exactly which journal entry line paid which invoice and how much.
+
+Phase 3 — Compute computedPaidAmount alongside manual fields
+Goal: Show both values — the manually set amount (legacy) and the journal-entry-derived amount — so you can see the discrepancy and trust the new system before cutting over.
+
+What to build:
+
+getInvoiceDetail and getInvoices compute computedPaidAmount = sum(invoicePayment.amount) per invoice
+Invoice detail shows both: "Recorded payment: RM X" (manual) and "From journal entries: RM Y"
+A reconciliation view: invoices where the two values differ — these are the ones still needing journal entries
+Value: You can work through your backlog of paid invoices and post journal entries for them, watching the reconciliation list shrink. No cutover risk.
+
+Phase 4 — Migrate historical paid invoices
+Goal: Create journal entries for all invoices that have status = "paid" but no invoicePayment rows.
+
+What to build:
+
+A script (or a UI "Migrate" button for admins) that for each fully-paid invoice with no journal entry:
+Creates a posted journal entry: Dr AR (invoice amount), Cr Bank
+Creates the invoicePayment row linking it
+Run it once — the script is idempotent (skips invoices that already have entries)
+Phase 5 — Cut over (when ready)
+Goal: invoice.status and invoice.paidAmount are now derived from journal entries, not set manually.
+
+What to build:
+
+getInvoices / getInvoiceDetail compute status from invoicePayment total vs grandTotal:
+0 paid → sent
+0 < paid < grandTotal → partial
+paid >= grandTotal → paid
+Remove the manual markInvoicePaid server action (or keep it for exceptional overrides with a manualOverride flag)
+The invoice list "Mark as Paid" button becomes "Post Payment Entry" — opens the journal entry form pre-filled with the correct AR debit
+Suggested order
+Phase When Risk
+1 This week Zero — read-only link
+2 Next sprint Low — additive schema
+3 After phase 2 Low — display only
+4 When backlog is small Medium — bulk data creation
+5 When phase 4 is 100% done High — changes live behaviour
+Start with Phase 1 — want me to implement it now?

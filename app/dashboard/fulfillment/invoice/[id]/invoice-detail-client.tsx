@@ -10,13 +10,14 @@ import {
   markInvoiceOverdue,
   cancelInvoice,
   type InvoiceWithDetails,
+  type LinkedJournalEntry,
 } from "@/server/invoice";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, PackageIcon,
-  SendIcon, CheckIcon, AlertCircleIcon, XIcon, ReceiptIcon,
+  SendIcon, CheckIcon, AlertCircleIcon, XIcon, ReceiptIcon, BookOpenIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -39,14 +40,35 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
+const ENTRY_STATUS: Record<string, { label: string; className: string }> = {
+  DRAFT:  { label: "Draft",  className: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400" },
+  POSTED: { label: "Posted", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
+  VOID:   { label: "Void",   className: "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400" },
+};
+
+const TRANSACTION_TYPE_LABELS: Record<string, string> = {
+  CAPITAL_INVESTMENT: "Capital Investment",
+  SUPPLIER_PAYMENT: "Supplier Payment",
+  CUSTOMER_PAYMENT: "Customer Payment",
+  REVENUE_RECOGNITION: "Revenue Recognition",
+  PURCHASE: "Purchase",
+  PAYROLL: "Payroll",
+  GENERAL_EXPENSE: "General Expense",
+  JOURNAL_ADJUSTMENT: "Journal Adjustment",
+  STATUTORY_PAYMENT: "Statutory Payment",
+  TAX_PAYMENT: "Tax Payment",
+};
+
 export function InvoiceDetailClient({
   invoice,
   permissions,
   currentUserId,
+  linkedEntries,
 }: {
   invoice: InvoiceWithDetails;
   permissions: string[];
   currentUserId: string;
+  linkedEntries: LinkedJournalEntry[];
 }) {
   const router = useRouter();
   const [status, setStatus] = useState(invoice.status ?? "draft");
@@ -211,6 +233,65 @@ export function InvoiceDetailClient({
               <p className="text-sm text-muted-foreground whitespace-pre-wrap">{invoice.notes}</p>
             </section>
           )}
+
+          <section className="border border-border rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <BookOpenIcon className="w-3.5 h-3.5 text-muted-foreground" />
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Linked Journal Entries
+                {linkedEntries.length > 0 && (
+                  <span className="font-normal ml-1">({linkedEntries.length})</span>
+                )}
+              </h2>
+            </div>
+            {linkedEntries.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No journal entries linked to this invoice.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="text-left pb-2 pr-3">Date</th>
+                      <th className="text-left pb-2 pr-3">Entry No</th>
+                      <th className="text-left pb-2 pr-3">Type</th>
+                      <th className="text-left pb-2 pr-3">Status</th>
+                      <th className="text-right pb-2 pr-3">Debit</th>
+                      <th className="text-right pb-2">Credit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {linkedEntries.map((entry) => {
+                      const eStatus = ENTRY_STATUS[entry.status] ?? ENTRY_STATUS.DRAFT;
+                      return (
+                        <tr
+                          key={entry.id}
+                          className="border-b border-border/40 last:border-0 hover:bg-muted/30 cursor-pointer"
+                          onClick={() => router.push(`/dashboard/ledger/entries/${entry.id}`)}
+                        >
+                          <td className="py-2 pr-3 tabular-nums text-muted-foreground">{entry.date}</td>
+                          <td className="py-2 pr-3 font-mono">{entry.entryNo}</td>
+                          <td className="py-2 pr-3 text-muted-foreground">
+                            {TRANSACTION_TYPE_LABELS[entry.transactionType] ?? entry.transactionType}
+                          </td>
+                          <td className="py-2 pr-3">
+                            <span className={cn("text-[10px] font-medium rounded px-1.5 py-0.5", eStatus.className)}>
+                              {eStatus.label}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-3 text-right tabular-nums font-mono">
+                            {parseFloat(entry.totalDebit) > 0 ? fmtMoney(entry.totalDebit) : "—"}
+                          </td>
+                          <td className="py-2 text-right tabular-nums font-mono">
+                            {parseFloat(entry.totalCredit) > 0 ? fmtMoney(entry.totalCredit) : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </div>
 
         {/* Right — status + pricing + details */}

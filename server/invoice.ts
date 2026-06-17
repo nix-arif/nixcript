@@ -12,6 +12,8 @@ import {
   purchaseOrder,
   supplier,
   user,
+  ledgerEntry,
+  ledgerLine,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -369,6 +371,64 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceWithDetails |
     expenses,
     createdByName: nameOf(inv.createdBy),
   };
+}
+
+export type LinkedJournalEntry = {
+  id: string;
+  entryNo: string;
+  date: string;
+  description: string;
+  transactionType: string;
+  status: string;
+  totalDebit: string;
+  totalCredit: string;
+};
+
+export async function getLinkedJournalEntries(invoiceId: string): Promise<LinkedJournalEntry[]> {
+  const { orgId } = await requireAccess("invoice:read");
+  const entries = await db
+    .select({
+      id: ledgerEntry.id,
+      entryNo: ledgerEntry.entryNo,
+      date: ledgerEntry.date,
+      description: ledgerEntry.description,
+      transactionType: ledgerEntry.transactionType,
+      status: ledgerEntry.status,
+    })
+    .from(ledgerEntry)
+    .where(
+      and(
+        eq(ledgerEntry.organizationId, orgId),
+        eq(ledgerEntry.referenceType, "INVOICE"),
+        eq(ledgerEntry.referenceId, invoiceId),
+      ),
+    )
+    .orderBy(asc(ledgerEntry.date), asc(ledgerEntry.entryNo));
+
+  if (entries.length === 0) return [];
+
+  const entryIds = entries.map((e) => e.id);
+  const lines = await db
+    .select({ entryId: ledgerLine.entryId, debit: ledgerLine.debit, credit: ledgerLine.credit })
+    .from(ledgerLine)
+    .where(inArray(ledgerLine.entryId, entryIds));
+
+  const totals = new Map<string, { debit: number; credit: number }>();
+  for (const l of lines) {
+    const t = totals.get(l.entryId) ?? { debit: 0, credit: 0 };
+    t.debit += parseFloat(l.debit ?? "0");
+    t.credit += parseFloat(l.credit ?? "0");
+    totals.set(l.entryId, t);
+  }
+
+  return entries.map((e) => {
+    const t = totals.get(e.id) ?? { debit: 0, credit: 0 };
+    return {
+      ...e,
+      totalDebit: t.debit.toFixed(2),
+      totalCredit: t.credit.toFixed(2),
+    };
+  });
 }
 
 // ── Mutations ──────────────────────────────────────────────────────────────
