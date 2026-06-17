@@ -111,7 +111,7 @@ for (const r of rows) {
 /** Pick the org with the most rows; fall back to Affirma if tied */
 function primaryOrgId(entry: CustomerEntry): string {
   let max = 0;
-  let best = ORG.affirma;
+  let best: string = ORG.affirma;
   for (const [orgId, count] of entry.orgCounts) {
     if (count > max) { max = count; best = orgId; }
   }
