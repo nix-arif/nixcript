@@ -30,14 +30,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { ClaimTypeRow } from "@/server/claim";
+import type { ClaimTypeRow, ClaimCategoryAccountRow } from "@/server/claim";
+import type { LedgerAccountRow } from "@/server/ledger";
 import {
   createClaimType,
   updateClaimType,
   deleteClaimType,
   seedDefaultClaimTypes,
+  setClaimCategoryAccount,
 } from "@/server/claim";
-import { PlusIcon, PencilIcon, Trash2Icon, TagsIcon, SproutIcon } from "lucide-react";
+import { PlusIcon, PencilIcon, Trash2Icon, TagsIcon, SproutIcon, BookOpenIcon } from "lucide-react";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -74,6 +76,7 @@ interface FormState {
   mealDinnerRate: string;
   description: string;
   sortOrder: string;
+  debitAccountId: string;
 }
 
 const emptyForm = (): FormState => ({
@@ -91,6 +94,7 @@ const emptyForm = (): FormState => ({
   mealDinnerRate: "",
   description: "",
   sortOrder: "0",
+  debitAccountId: "",
 });
 
 function formFromRow(row: ClaimTypeRow): FormState {
@@ -109,16 +113,37 @@ function formFromRow(row: ClaimTypeRow): FormState {
     mealDinnerRate: row.mealDinnerRate ?? "",
     description: row.description ?? "",
     sortOrder: String(row.sortOrder),
+    debitAccountId: row.debitAccountId ?? "",
   };
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
 
+// All categories that can be mapped, with friendly labels and groups
+const CATEGORY_MAPPINGS: { value: string; label: string; group: string }[] = [
+  { value: "TRAVEL",                label: "Travel — Mileage / Petrol",    group: "Local" },
+  { value: "TRAVEL_DAILY_ALLOWANCE",label: "Travel — Daily Allowance",     group: "Local" },
+  { value: "TRAVEL_ACCOMMODATION",  label: "Travel — Accommodation",       group: "Local" },
+  { value: "TRAVEL_CASE_ALLOWANCE", label: "Travel — Case Allowance",      group: "Local" },
+  { value: "TRAVEL_ENTERTAINMENT",  label: "Travel — Entertainment",       group: "Local" },
+  { value: "TOLL",                  label: "Toll",                         group: "Local" },
+  { value: "PARKING",               label: "Parking",                      group: "Local" },
+  { value: "MOBILE",                label: "Mobile / Phone",               group: "Local" },
+  { value: "IN_BASE_ENT",           label: "In-base Entertainment",        group: "Local" },
+  { value: "OTHER_LOCAL",           label: "Other Local",                  group: "Local" },
+  { value: "OVERSEAS_MYR",          label: "Overseas (MYR)",               group: "Overseas" },
+  { value: "OVERSEAS_FX",           label: "Overseas (Foreign Currency)",  group: "Overseas" },
+  { value: "OVERSEAS_OTHER",        label: "Overseas — Other",             group: "Overseas" },
+  { value: "ENTERTAINMENT_FORM",    label: "Entertainment Form (whole claim)", group: "Entertainment" },
+];
+
 interface Props {
   claimTypes: ClaimTypeRow[];
+  expenseAccounts: LedgerAccountRow[];
+  initialCategoryMappings: ClaimCategoryAccountRow[];
 }
 
-export function ClaimTypesClient({ claimTypes }: Props) {
+export function ClaimTypesClient({ claimTypes, expenseAccounts, initialCategoryMappings }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -131,6 +156,12 @@ export function ClaimTypesClient({ claimTypes }: Props) {
   const [deleting, setDeleting] = useState(false);
 
   const [seeding, setSeeding] = useState(false);
+
+  // Category → account mappings state
+  const [categoryMap, setCategoryMap] = useState<Record<string, string>>(
+    Object.fromEntries(initialCategoryMappings.map((m) => [m.category, m.ledgerAccountId])),
+  );
+  const [savingCategory, setSavingCategory] = useState<string | null>(null);
 
   function openCreate() {
     setEditTarget(null);
@@ -171,6 +202,7 @@ export function ClaimTypesClient({ claimTypes }: Props) {
         mealDinnerRate: form.mealDinnerRate || undefined,
         description: form.description || undefined,
         sortOrder: parseInt(form.sortOrder, 10) || 0,
+        debitAccountId: form.debitAccountId || undefined,
       };
       if (editTarget) {
         await updateClaimType(editTarget.id, {
@@ -182,6 +214,7 @@ export function ClaimTypesClient({ claimTypes }: Props) {
           mealBreakfastRate: form.mealBreakfastRate || null,
           mealLunchRate: form.mealLunchRate || null,
           mealDinnerRate: form.mealDinnerRate || null,
+          debitAccountId: form.debitAccountId || null,
         });
         toast.success("Claim type updated");
       } else {
@@ -209,6 +242,24 @@ export function ClaimTypesClient({ claimTypes }: Props) {
       toast.error(err instanceof Error ? err.message : "Failed to delete");
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function handleCategoryAccountChange(category: string, accountId: string) {
+    const value = accountId === "__none__" ? null : accountId;
+    setSavingCategory(category);
+    try {
+      await setClaimCategoryAccount(category, value);
+      setCategoryMap((prev) => {
+        const next = { ...prev };
+        if (value) next[category] = value;
+        else delete next[category];
+        return next;
+      });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to save mapping");
+    } finally {
+      setSavingCategory(null);
     }
   }
 
@@ -281,6 +332,7 @@ export function ClaimTypesClient({ claimTypes }: Props) {
                 <TableHead className="w-20">Code</TableHead>
                 <TableHead className="w-28">Category</TableHead>
                 <TableHead>Rate / Cap</TableHead>
+                <TableHead className="w-36">Expense Account</TableHead>
                 <TableHead className="w-24">Status</TableHead>
                 <TableHead className="w-24 text-right">Actions</TableHead>
               </TableRow>
@@ -344,6 +396,15 @@ export function ClaimTypesClient({ claimTypes }: Props) {
                         </Badge>
                       )}
                     </div>
+                  </TableCell>
+                  <TableCell>
+                    {ct.debitAccountId ? (
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {expenseAccounts.find((a) => a.id === ct.debitAccountId)?.code ?? "—"}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/50">—</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge
@@ -618,6 +679,43 @@ export function ClaimTypesClient({ claimTypes }: Props) {
               />
             </div>
 
+            {/* Expense account for journal posting */}
+            <div className="flex flex-col gap-1.5 rounded-md border border-border p-4 bg-muted/10">
+              <div className="flex items-center gap-2 mb-1">
+                <BookOpenIcon className="h-4 w-4 text-muted-foreground" />
+                <Label htmlFor="ct-account" className="text-sm font-medium">
+                  Expense account{" "}
+                  <span className="text-muted-foreground font-normal text-xs">(for auto journal on approval)</span>
+                </Label>
+              </div>
+              {expenseAccounts.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No EXPENSE accounts in your Chart of Accounts yet. Add one first under Ledger → Accounts.
+                </p>
+              ) : (
+                <Select
+                  value={form.debitAccountId || "__none__"}
+                  onValueChange={(v) => set("debitAccountId", v === "__none__" ? "" : v)}
+                >
+                  <SelectTrigger id="ct-account">
+                    <SelectValue placeholder="Not mapped — no journal will be posted" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Not mapped</SelectItem>
+                    {expenseAccounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.code} — {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <p className="text-xs text-muted-foreground mt-1">
+                Also ensure a <strong>Staff Claims Payable</strong> account with subtype{" "}
+                <code className="font-mono text-[11px]">STAFF_CLAIMS_PAYABLE</code> exists in your COA — that is used as the credit side.
+              </p>
+            </div>
+
             {/* Actions */}
             <div className="flex gap-2 pt-2">
               <Button onClick={handleSave} disabled={saving} className="flex-1">
@@ -630,6 +728,77 @@ export function ClaimTypesClient({ claimTypes }: Props) {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Category → COA Account Mapping */}
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <BookOpenIcon className="h-4 w-4 text-muted-foreground" />
+            Expense Category → Account Mapping
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Map each line-item category to a COA expense account. On approval, the journal entry
+            posts one debit line per account. Unmapped categories fall back to the claim type's
+            expense account if set.
+          </p>
+        </div>
+
+        {expenseAccounts.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+            No EXPENSE accounts in your Chart of Accounts yet.
+            Go to <strong>Ledger → Accounts</strong> and create your expense accounts first.
+          </div>
+        ) : (
+          <div className="rounded-lg border border-border overflow-hidden">
+            {["Local", "Overseas", "Entertainment"].map((group) => {
+              const rows = CATEGORY_MAPPINGS.filter((c) => c.group === group);
+              return (
+                <div key={group}>
+                  <div className="px-4 py-2 bg-muted/30 border-b border-border">
+                    <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{group}</span>
+                  </div>
+                  {rows.map((cat, i) => (
+                    <div
+                      key={cat.value}
+                      className={`grid grid-cols-[1fr_280px] items-center px-4 py-2.5 gap-4 ${
+                        i < rows.length - 1 ? "border-b border-border/50" : ""
+                      }`}
+                    >
+                      <span className="text-sm">{cat.label}</span>
+                      <div className="relative">
+                        <Select
+                          value={categoryMap[cat.value] ?? "__none__"}
+                          onValueChange={(v) => handleCategoryAccountChange(cat.value, v)}
+                          disabled={savingCategory === cat.value}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="— Not mapped" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">— Not mapped</SelectItem>
+                            {expenseAccounts.map((a) => (
+                              <SelectItem key={a.id} value={a.id}>
+                                {a.code} — {a.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {savingCategory === cat.value && (
+                          <span className="absolute right-8 top-1/2 -translate-y-1/2 w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 px-4 py-3 text-xs text-blue-700 dark:text-blue-400 space-y-1">
+          <p><strong>Also required:</strong> a <strong>Staff Claims Payable</strong> account in Ledger → Accounts with subtype set to <code className="font-mono">STAFF_CLAIMS_PAYABLE</code> — this is the credit side of every claim journal entry.</p>
+        </div>
+      </div>
 
       {/* Delete Sheet */}
       <Sheet open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>

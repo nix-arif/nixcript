@@ -7,15 +7,20 @@ import {
   claimDocument,
   claimLineItem,
   claimEntertainmentDetail,
+  claimCategoryAccount,
   notification,
   userPermission,
   user,
+  ledgerAccount,
+  ledgerEntry,
+  ledgerLine,
+  member,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, sql } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, sql, isNull } from "drizzle-orm";
 import { CLAIM_FORM, LINE_CATEGORY, type ClaimFormType, type LineCategoryType } from "@/lib/claim/constants";
 
 /* =========================
@@ -91,6 +96,22 @@ async function requireAccess(permission: string) {
   const perms = await getUserPermissions(userId, orgId);
   if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
   return { session, orgId, userId, userName };
+}
+
+async function generateJournalEntryNo(orgId: string): Promise<string> {
+  const year = new Date().getFullYear();
+  const rows = await db
+    .select({ entryNo: ledgerEntry.entryNo })
+    .from(ledgerEntry)
+    .where(and(eq(ledgerEntry.organizationId, orgId), sql`${ledgerEntry.entryNo} LIKE ${`JE-${year}-%`}`))
+    .orderBy(desc(ledgerEntry.entryNo));
+  let next = 1;
+  if (rows.length > 0) {
+    const parts = rows[0].entryNo.split("-");
+    const num = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(num)) next = num + 1;
+  }
+  return `JE-${year}-${String(next).padStart(4, "0")}`;
 }
 
 async function generateApplicationNo(orgId: string): Promise<string> {
@@ -225,6 +246,7 @@ export async function createClaimType(data: {
   mealDinnerRate?: string;
   description?: string;
   sortOrder?: number;
+  debitAccountId?: string;
 }): Promise<ClaimTypeRow> {
   const { orgId } = await requireAccess("claim:manage");
   const row = {
@@ -245,6 +267,7 @@ export async function createClaimType(data: {
     isActive: true,
     description: data.description?.trim() ?? null,
     sortOrder: data.sortOrder ?? 0,
+    debitAccountId: data.debitAccountId ?? null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -269,6 +292,7 @@ export async function updateClaimType(
     description: string;
     isActive: boolean;
     sortOrder: number;
+    debitAccountId: string | null;
   }>,
 ): Promise<void> {
   const { orgId } = await requireAccess("claim:manage");
@@ -412,6 +436,65 @@ export async function getPendingClaimApprovals(): Promise<ClaimApplicationWithDe
     lineItems: lineMap[app.id] ?? [],
     entertainmentDetail: entMap[app.id] ?? null,
   }));
+}
+
+/* =========================
+   CATEGORY → ACCOUNT MAPPING
+========================= */
+
+export type ClaimCategoryAccountRow = typeof claimCategoryAccount.$inferSelect;
+
+export async function getClaimCategoryAccounts(): Promise<ClaimCategoryAccountRow[]> {
+  const { orgId } = await requireAccess("claim:manage");
+  return db
+    .select()
+    .from(claimCategoryAccount)
+    .where(eq(claimCategoryAccount.organizationId, orgId));
+}
+
+// Upsert if ledgerAccountId provided; delete mapping if null.
+export async function setClaimCategoryAccount(
+  category: string,
+  ledgerAccountId: string | null,
+): Promise<void> {
+  const { orgId } = await requireAccess("claim:manage");
+  if (!ledgerAccountId) {
+    await db
+      .delete(claimCategoryAccount)
+      .where(
+        and(
+          eq(claimCategoryAccount.organizationId, orgId),
+          eq(claimCategoryAccount.category, category),
+        ),
+      );
+    return;
+  }
+  const existing = await db
+    .select({ id: claimCategoryAccount.id })
+    .from(claimCategoryAccount)
+    .where(
+      and(
+        eq(claimCategoryAccount.organizationId, orgId),
+        eq(claimCategoryAccount.category, category),
+      ),
+    )
+    .limit(1);
+
+  if (existing[0]) {
+    await db
+      .update(claimCategoryAccount)
+      .set({ ledgerAccountId, updatedAt: new Date() })
+      .where(eq(claimCategoryAccount.id, existing[0].id));
+  } else {
+    await db.insert(claimCategoryAccount).values({
+      id: nanoid(),
+      organizationId: orgId,
+      category,
+      ledgerAccountId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
 }
 
 /* =========================
@@ -563,6 +646,161 @@ export async function approveClaim(appId: string, comment?: string): Promise<voi
     .update(claimApplication)
     .set({ status: "APPROVED", reviewedBy: userId, reviewedAt: new Date(), reviewComment: comment?.trim() ?? null, updatedAt: new Date() })
     .where(eq(claimApplication.id, appId));
+
+  // ── Auto-post journal entry ────────────────────────────────────────────────
+  // Failure does NOT roll back the approval.
+  try {
+    // Require a Staff Claims Payable credit account
+    const [creditAcc] = await db
+      .select()
+      .from(ledgerAccount)
+      .where(and(
+        eq(ledgerAccount.organizationId, orgId),
+        eq(ledgerAccount.subtype, "STAFF_CLAIMS_PAYABLE"),
+        eq(ledgerAccount.isActive, true),
+      ))
+      .limit(1);
+
+    if (creditAcc) {
+      const [ct] = await db
+        .select({ debitAccountId: claimType.debitAccountId })
+        .from(claimType)
+        .where(eq(claimType.id, app[0].claimTypeId))
+        .limit(1);
+      const fallbackAccountId = ct?.debitAccountId ?? null;
+
+      // Fetch per-category account mappings for this org
+      const categoryMappings = await db
+        .select({ category: claimCategoryAccount.category, ledgerAccountId: claimCategoryAccount.ledgerAccountId })
+        .from(claimCategoryAccount)
+        .where(eq(claimCategoryAccount.organizationId, orgId));
+      const catMap = Object.fromEntries(categoryMappings.map((m) => [m.category, m.ledgerAccountId]));
+
+      // Fetch the claim's line items
+      const lineItems = await db
+        .select({ category: claimLineItem.category, amountMyr: claimLineItem.amountMyr })
+        .from(claimLineItem)
+        .where(eq(claimLineItem.applicationId, appId));
+
+      // Fetch entertainment detail if present
+      const [entDetail] = await db
+        .select({ amount: claimEntertainmentDetail.amount })
+        .from(claimEntertainmentDetail)
+        .where(eq(claimEntertainmentDetail.applicationId, appId))
+        .limit(1);
+
+      // Build debit lines: group amount by resolved accountId
+      // Resolution order: category mapping → fallback (claimType.debitAccountId)
+      const debitBuckets = new Map<string, number>(); // accountId → total MYR
+
+      const addToBucket = (accountId: string | null, amount: number) => {
+        if (!accountId || amount <= 0) return;
+        debitBuckets.set(accountId, (debitBuckets.get(accountId) ?? 0) + amount);
+      };
+
+      if (lineItems.length > 0) {
+        for (const li of lineItems) {
+          const accountId = catMap[li.category] ?? fallbackAccountId;
+          addToBucket(accountId, parseFloat(li.amountMyr));
+        }
+      } else if (entDetail) {
+        // ENTERTAINMENT_FORM — one line
+        const accountId = catMap["ENTERTAINMENT_FORM"] ?? fallbackAccountId;
+        addToBucket(accountId, parseFloat(entDetail.amount));
+      }
+
+      // Verify total debits = claim total (guard against rounding drift)
+      const totalDebit = [...debitBuckets.values()].reduce((s, v) => s + v, 0);
+      if (totalDebit <= 0) {
+        // No account mapped anywhere — skip journal silently
+        console.warn("[approveClaim] no debit accounts resolved for claim", appId);
+      } else {
+        // Fetch account details for all debit buckets
+        const debitAccountIds = [...debitBuckets.keys()];
+        const debitAccounts = await db
+          .select()
+          .from(ledgerAccount)
+          .where(inArray(ledgerAccount.id, debitAccountIds));
+        const debitAccMap = Object.fromEntries(debitAccounts.map((a) => [a.id, a]));
+
+        // Resolve member for stakeholder tagging
+        const [memberRow] = await db
+          .select({ id: member.id })
+          .from(member)
+          .where(and(eq(member.userId, app[0].userId), eq(member.organizationId, orgId), isNull(member.deletedAt)))
+          .limit(1);
+        const [applicantRow] = await db
+          .select({ name: user.name })
+          .from(user)
+          .where(eq(user.id, app[0].userId))
+          .limit(1);
+        const applicantName = applicantRow?.name ?? "Unknown";
+
+        const entryNo = await generateJournalEntryNo(orgId);
+        const entryId = nanoid();
+        const creditAmount = totalDebit.toFixed(2);
+
+        await db.insert(ledgerEntry).values({
+          id: entryId,
+          organizationId: orgId,
+          entryNo,
+          date: app[0].claimDate,
+          description: `Staff claim: ${app[0].claimTypeName} — ${app[0].applicationNo} (${applicantName})`,
+          transactionType: "GENERAL_EXPENSE",
+          referenceType: "CLAIM_APPLICATION",
+          referenceId: appId,
+          referenceNo: app[0].applicationNo,
+          stakeholderType: "MEMBER",
+          stakeholderId: memberRow?.id ?? app[0].userId,
+          stakeholderName: applicantName,
+          totalAmount: creditAmount,
+          status: "POSTED",
+          postedAt: new Date(),
+          createdBy: userId,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        const debitLines = [...debitBuckets.entries()].map(([accountId, amount]) => ({
+          id: nanoid(),
+          entryId,
+          accountId,
+          accountCode: debitAccMap[accountId]?.code ?? "",
+          accountName: debitAccMap[accountId]?.name ?? "",
+          debit: amount.toFixed(2),
+          credit: "0.00",
+          currency: null as string | null,
+          amountForeign: null as string | null,
+          exchangeRate: null as string | null,
+          description: `${app[0].claimTypeName} — ${app[0].applicationNo}`,
+          createdAt: new Date(),
+        }));
+
+        const creditLine = {
+          id: nanoid(),
+          entryId,
+          accountId: creditAcc.id,
+          accountCode: creditAcc.code,
+          accountName: creditAcc.name,
+          debit: "0.00",
+          credit: creditAmount,
+          currency: null as string | null,
+          amountForeign: null as string | null,
+          exchangeRate: null as string | null,
+          description: `${app[0].claimTypeName} — ${applicantName}`,
+          createdAt: new Date(),
+        };
+
+        await db.insert(ledgerLine).values([...debitLines, creditLine]);
+        await db
+          .update(claimApplication)
+          .set({ journalEntryId: entryId })
+          .where(eq(claimApplication.id, appId));
+      }
+    }
+  } catch (journalErr) {
+    console.error("[approveClaim] journal posting failed (claim still approved):", journalErr);
+  }
 
   await notifyUser(orgId, app[0].userId, {
     type: "claim:approved",

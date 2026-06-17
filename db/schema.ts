@@ -2752,6 +2752,8 @@ export const claimType = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     description: text("description"),
     sortOrder: integer("sort_order").notNull().default(0),
+    // Ledger: expense account to debit when this claim type is approved
+    debitAccountId: text("debit_account_id").references(() => ledgerAccount.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },
@@ -2790,6 +2792,8 @@ export const claimApplication = pgTable(
     cancelledBy: text("cancelled_by").references(() => user.id),
     cancelledAt: timestamp("cancelled_at"),
     cancelReason: text("cancel_reason"),
+    // Auto-posted journal entry created on approval
+    journalEntryId: text("journal_entry_id").references(() => ledgerEntry.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },
@@ -2873,9 +2877,38 @@ export const claimEntertainmentDetail = pgTable("claim_entertainment_detail", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Maps a line-item category (or "ENTERTAINMENT_FORM") → ledger expense account for the org.
+// Used by approveClaim to post per-category debit lines instead of a single catch-all.
+export const claimCategoryAccount = pgTable(
+  "claim_category_account",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // LINE_CATEGORY value (TRAVEL | TOLL | PARKING | …) OR "ENTERTAINMENT_FORM"
+    category: text("category").notNull(),
+    ledgerAccountId: text("ledger_account_id")
+      .notNull()
+      .references(() => ledgerAccount.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("claim_category_account_org_cat_uidx").on(t.organizationId, t.category),
+    index("claim_category_account_org_idx").on(t.organizationId),
+  ],
+);
+
+export const claimCategoryAccountRelations = relations(claimCategoryAccount, ({ one }) => ({
+  organization: one(organization, { fields: [claimCategoryAccount.organizationId], references: [organization.id] }),
+  ledgerAccount: one(ledgerAccount, { fields: [claimCategoryAccount.ledgerAccountId], references: [ledgerAccount.id] }),
+}));
+
 export const claimTypeRelations = relations(claimType, ({ one, many }) => ({
   organization: one(organization, { fields: [claimType.organizationId], references: [organization.id] }),
   applications: many(claimApplication),
+  debitAccount: one(ledgerAccount, { fields: [claimType.debitAccountId], references: [ledgerAccount.id] }),
 }));
 
 export const claimApplicationRelations = relations(claimApplication, ({ one, many }) => ({
@@ -2884,6 +2917,7 @@ export const claimApplicationRelations = relations(claimApplication, ({ one, man
   claimType: one(claimType, { fields: [claimApplication.claimTypeId], references: [claimType.id] }),
   reviewedByUser: one(user, { fields: [claimApplication.reviewedBy], references: [user.id], relationName: "claim_reviewedBy" }),
   cancelledByUser: one(user, { fields: [claimApplication.cancelledBy], references: [user.id], relationName: "claim_cancelledBy" }),
+  journalEntry: one(ledgerEntry, { fields: [claimApplication.journalEntryId], references: [ledgerEntry.id] }),
   documents: many(claimDocument),
   lineItems: many(claimLineItem),
   entertainmentDetail: one(claimEntertainmentDetail, {
@@ -3039,11 +3073,13 @@ export const schema = {
   claimDocument,
   claimLineItem,
   claimEntertainmentDetail,
+  claimCategoryAccount,
   claimTypeRelations,
   claimApplicationRelations,
   claimDocumentRelations,
   claimLineItemRelations,
   claimEntertainmentDetailRelations,
+  claimCategoryAccountRelations,
   // inventory
   stockLevel,
   stockMovement,
