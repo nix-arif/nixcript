@@ -92,6 +92,8 @@ const TRANSACTION_TYPES = [
   { value: "REVENUE_RECOGNITION", label: "Revenue Recognition" },
   { value: "PURCHASE", label: "Purchase" },
   { value: "PAYROLL", label: "Payroll" },
+  { value: "STATUTORY_PAYMENT", label: "Statutory Payment" },
+  { value: "TAX_PAYMENT", label: "Tax Payment" },
   { value: "GENERAL_EXPENSE", label: "General Expense" },
   { value: "JOURNAL_ADJUSTMENT", label: "Journal Adjustment" },
 ];
