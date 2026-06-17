@@ -46,6 +46,7 @@ export type LedgerEntryListRow = LedgerEntryRow & {
   createdByName: string | null;
   lineCount: number;
   docCount: number;
+  linkedInvoices: { invoiceId: string; invoiceNo: string }[];
 };
 
 export type AccountBalance = LedgerAccountRow & {
@@ -177,11 +178,24 @@ export async function getLedgerEntries(): Promise<LedgerEntryListRow[]> {
   const lineMap = Object.fromEntries(lineCounts.map((r) => [r.entryId, r.cnt]));
   const docMap = Object.fromEntries(docCounts.map((r) => [r.entryId, r.cnt]));
 
+  const junctionRows = await db
+    .select({ entryId: ledgerEntryInvoice.entryId, invoiceId: ledgerEntryInvoice.invoiceId, invoiceNo: ledgerEntryInvoice.invoiceNo })
+    .from(ledgerEntryInvoice)
+    .where(inArray(ledgerEntryInvoice.entryId, entryIds));
+
+  const junctionMap = new Map<string, { invoiceId: string; invoiceNo: string }[]>();
+  for (const r of junctionRows) {
+    const arr = junctionMap.get(r.entryId) ?? [];
+    arr.push({ invoiceId: r.invoiceId, invoiceNo: r.invoiceNo });
+    junctionMap.set(r.entryId, arr);
+  }
+
   return entries.map(({ entry, createdByName }) => ({
     ...entry,
     createdByName: createdByName ?? null,
     lineCount: lineMap[entry.id] ?? 0,
     docCount: docMap[entry.id] ?? 0,
+    linkedInvoices: junctionMap.get(entry.id) ?? [],
   }));
 }
 

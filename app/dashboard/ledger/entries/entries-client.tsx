@@ -287,7 +287,15 @@ export function LedgerEntriesClient({ entries, permissions, initialSearch }: Pro
                     {entry.stakeholderName ?? "—"}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground font-mono text-xs">
-                    {entry.referenceNo ?? "—"}
+                    {entry.linkedInvoices.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {entry.linkedInvoices.map((i) => (
+                          <Badge key={i.invoiceId} variant="secondary" className="text-[10px] font-mono">{i.invoiceNo}</Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      entry.referenceNo ?? "—"
+                    )}
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm">
                     {fmtMoney(entry.totalAmount)}
