@@ -22,6 +22,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, sql, isNull } from "drizzle-orm";
 import { CLAIM_FORM, LINE_CATEGORY, type ClaimFormType, type LineCategoryType } from "@/lib/claim/constants";
+import { deleteClaimDocFromR2 } from "@/lib/r2/claim-docs";
 
 /* =========================
    TYPES
@@ -1079,8 +1080,12 @@ export async function deleteClaim(appId: string): Promise<void> {
   if (app[0].userId !== userId) throw new Error("You can only delete your own claims");
   if (app[0].status === "APPROVED") throw new Error("Approved claims cannot be deleted");
   if (app[0].status === "DRAFT" || app[0].status === "CANCELLED") {
+    // Fetch docs first so we can clean up R2 after the cascade
+    const docs = await db.select({ fileKey: claimDocument.fileKey }).from(claimDocument).where(eq(claimDocument.applicationId, appId));
     // Hard delete — cascade removes line items, entertainment, documents
     await db.delete(claimApplication).where(eq(claimApplication.id, appId));
+    // Best-effort R2 cleanup after DB is clean
+    await Promise.allSettled(docs.map(d => deleteClaimDocFromR2(d.fileKey)));
   } else {
     // Soft delete: mark as CANCELLED
     await db.update(claimApplication).set({
@@ -1205,5 +1210,7 @@ export async function deleteClaimDocument(id: string): Promise<string> {
   const perms = await getUserPermissions(userId, orgId);
   if (doc[0].uploadedBy !== userId && !hasAccess(perms, "claim:approve")) throw new Error("You don't have permission to do this");
   await db.delete(claimDocument).where(eq(claimDocument.id, id));
+  // Best-effort R2 cleanup — DB is already clean so ignore R2 errors
+  await deleteClaimDocFromR2(doc[0].fileKey).catch(() => {});
   return doc[0].fileKey;
 }

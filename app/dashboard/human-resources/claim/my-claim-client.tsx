@@ -23,7 +23,7 @@ import type {
 } from "@/server/claim";
 import {
   deleteClaim, submitClaim, saveDraftClaim, updateDraftClaim,
-  finalizeDraftClaim, resubmitRejectedClaim, createClaimDocumentRecord,
+  finalizeDraftClaim, resubmitRejectedClaim, createClaimDocumentRecord, deleteClaimDocument,
 } from "@/server/claim";
 import { CLAIM_FORM, LINE_CATEGORY, TRAVEL_MODE, TRAVEL_MODE_LABELS } from "@/lib/claim/constants";
 import {
@@ -160,13 +160,18 @@ function pickReceiptFile(e: React.ChangeEvent<HTMLInputElement>): File | null {
   return f;
 }
 
-function TravelSubFilePicker({ file, onPick, onRemove }: { file?: File; onPick:(f:File)=>void; onRemove:()=>void }) {
+function TravelSubFilePicker({ file, onPick, onRemove, uploading }: { file?: File; onPick:(f:File)=>void; onRemove:()=>void; uploading?: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <div className="flex items-center gap-1 shrink-0">
       <input ref={ref} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" className="hidden"
         onChange={e => { const f = pickReceiptFile(e); if (f) onPick(f); }}/>
-      {file ? (
+      {uploading ? (
+        <div className="flex items-center gap-1 rounded border border-blue-300 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5">
+          <LoaderIcon className="h-3 w-3 animate-spin text-blue-500 shrink-0"/>
+          <span className="text-xs text-blue-600 dark:text-blue-400">Uploading…</span>
+        </div>
+      ) : file ? (
         <div className="flex items-center gap-1 rounded border border-green-500/40 bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 max-w-30">
           <span className="text-xs text-green-700 dark:text-green-400 truncate" title={file.name}>{file.name}</span>
           <button type="button" onClick={onRemove} className="text-green-600 hover:text-destructive shrink-0"><XIcon className="h-3 w-3"/></button>
@@ -182,10 +187,13 @@ function TravelSubFilePicker({ file, onPick, onRemove }: { file?: File; onPick:(
 }
 
 function ReceiptPicker<T extends { id: string; file?: File }>({
-  row, setter,
+  row, setter, afterPick, afterRemove, uploading,
 }: {
   row: T;
   setter: React.Dispatch<React.SetStateAction<T[]>>;
+  afterPick?: (f: File) => void;
+  afterRemove?: () => void;
+  uploading?: boolean;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
@@ -197,13 +205,18 @@ function ReceiptPicker<T extends { id: string; file?: File }>({
         className="hidden"
         onChange={e => {
           const f = pickReceiptFile(e);
-          if (f) setter(prev => prev.map(r => r.id === row.id ? { ...r, file: f } : r));
+          if (f) { setter(prev => prev.map(r => r.id === row.id ? { ...r, file: f } : r)); afterPick?.(f); }
         }}
       />
-      {row.file ? (
+      {uploading ? (
+        <div className="flex items-center gap-1 rounded border border-blue-300 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5">
+          <LoaderIcon className="h-3 w-3 animate-spin text-blue-500 shrink-0"/>
+          <span className="text-xs text-blue-600 dark:text-blue-400">Uploading…</span>
+        </div>
+      ) : row.file ? (
         <div className="flex items-center gap-1 rounded border border-green-500/40 bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 max-w-30">
           <span className="text-xs text-green-700 dark:text-green-400 truncate" title={row.file.name}>{row.file.name}</span>
-          <button type="button" onClick={() => setter(prev => prev.map(r => r.id === row.id ? { ...r, file: undefined } : r))} className="text-green-600 hover:text-destructive shrink-0">
+          <button type="button" onClick={() => { afterRemove?.(); setter(prev => prev.map(r => r.id === row.id ? { ...r, file: undefined } : r)); }} className="text-green-600 hover:text-destructive shrink-0">
             <XIcon className="h-3 w-3"/>
           </button>
         </div>
@@ -332,6 +345,10 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const [cancelling, setCancelling] = useState(false);
   const [editingApp, setEditingApp] = useState<ClaimApplicationWithDetails | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
+  // Tracks files already uploaded to R2 (key → {docId, fileKey}) so we skip re-upload on submit
+  const [uploadedFiles, setUploadedFiles] = useState<Record<string, { docId: string; fileKey: string }>>({});
+  // Tracks which field keys are currently uploading
+  const [uploadingFields, setUploadingFields] = useState<Set<string>>(new Set());
 
   // ── Sheet state ───────────────────────────────────────────────────────────
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -396,6 +413,34 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
     setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     setEntDate(""); setEntRest(""); setEntCust(""); setEntDeptOrg(""); setEntPurpose(""); setEntAmount("");
+    setUploadedFiles({});
+    setUploadingFields(new Set());
+  }
+
+  // Upload one file to R2 immediately and record it in DB + local state
+  async function uploadOneFile(file: File, appId: string, fieldKey: string, lineItemId?: string) {
+    setUploadingFields(prev => new Set(prev).add(fieldKey));
+    try {
+      const res = await fetch("/api/claim/upload-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ appId, fileName: file.name, mimeType: file.type, fileSize: file.size }) });
+      if (!res.ok) { toast.error(`Upload URL failed for ${file.name}`); return; }
+      const { uploadUrl, key } = await res.json();
+      const put = await fetch(uploadUrl, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
+      if (!put.ok) { toast.error(`Upload failed for ${file.name}`); return; }
+      const doc = await createClaimDocumentRecord({ applicationId: appId, lineItemId, fileName: file.name, fileKey: key, fileSize: file.size, mimeType: file.type });
+      setUploadedFiles(prev => ({ ...prev, [fieldKey]: { docId: doc.id, fileKey: key } }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `Upload failed for ${file.name}`);
+    } finally {
+      setUploadingFields(prev => { const s = new Set(prev); s.delete(fieldKey); return s; });
+    }
+  }
+
+  // Delete a previously-uploaded file from R2 + DB
+  async function removeOneUpload(fieldKey: string) {
+    const uploaded = uploadedFiles[fieldKey];
+    if (!uploaded) return;
+    try { await deleteClaimDocument(uploaded.docId); } catch { /* ignore */ }
+    setUploadedFiles(prev => { const n = { ...prev }; delete n[fieldKey]; return n; });
   }
 
   function loadAppIntoForm(app: ClaimApplicationWithDetails) {
@@ -443,8 +488,19 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   }
 
   const updateTravel   = updater(setTravelRows);
-  function setTravelFile(rowId: string, field: "accomFile" | "tEntFile" | "flightFile", file: File | undefined) {
+  async function setTravelFile(rowId: string, field: "accomFile" | "tEntFile" | "flightFile", file: File | undefined) {
+    const fieldKey = `${field}:${rowId}`;
+    if (file === undefined) {
+      setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, [field]: undefined } : r));
+      await removeOneUpload(fieldKey);
+      return;
+    }
     setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, [field]: file } : r));
+    if (editingApp) {
+      const row = travelRows.find(r => r.id === rowId);
+      const lineItemId = field === "accomFile" ? row?.accomId : field === "tEntFile" ? row?.tEntId : rowId;
+      await uploadOneFile(file, editingApp.id, fieldKey, lineItemId);
+    }
   }
   const updateMisc     = updater(setMiscRows);
   const updateInEnt    = updater(setInEntRows);
@@ -460,7 +516,9 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
     for (const f of Array.from(e.target.files ?? [])) {
       if (!allowed.includes(f.type)) { toast.error(`${f.name}: only JPG, PNG, WebP, PDF`); continue; }
       if (f.size > MAX) { toast.error(`${f.name}: max 5 MB`); continue; }
-      setQueuedFiles(p => [...p, { file:f, id:newId() }]);
+      const id = newId();
+      setQueuedFiles(p => [...p, { file: f, id }]);
+      if (editingApp) void uploadOneFile(f, editingApp.id, `qf:${id}`);
     }
     e.target.value = "";
   }
@@ -603,16 +661,16 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         appId = await submitClaim(claimData);
       }
 
-      // Build upload queue: line-item receipts + any global files
-      type UploadJob = { file: File; lineItemId?: string };
+      // Build upload queue — skip files already uploaded via immediate upload
+      type UploadJob = { file: File; lineItemId?: string; fieldKey: string };
       const uploadJobs: UploadJob[] = [
-        ...travelRows.filter(r => r.flightFile).map(r => ({ file: r.flightFile!, lineItemId: r.id })),
-        ...travelRows.filter(r => r.accomFile && parseFloat(r.accomAmount) > 0).map(r => ({ file: r.accomFile!, lineItemId: r.accomId })),
-        ...travelRows.filter(r => r.tEntFile && parseFloat(r.tEntAmount) > 0).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId })),
-        ...miscRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
-        ...inEntRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
-        ...otherRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
-        ...queuedFiles.map(qf => ({ file: qf.file })),
+        ...travelRows.filter(r => r.flightFile && !uploadedFiles[`flightFile:${r.id}`]).map(r => ({ file: r.flightFile!, lineItemId: r.id, fieldKey: `flightFile:${r.id}` })),
+        ...travelRows.filter(r => r.accomFile && parseFloat(r.accomAmount) > 0 && !uploadedFiles[`accomFile:${r.id}`]).map(r => ({ file: r.accomFile!, lineItemId: r.accomId, fieldKey: `accomFile:${r.id}` })),
+        ...travelRows.filter(r => r.tEntFile && parseFloat(r.tEntAmount) > 0 && !uploadedFiles[`tEntFile:${r.id}`]).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId, fieldKey: `tEntFile:${r.id}` })),
+        ...miscRows.filter(r => r.file && !uploadedFiles[`misc:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `misc:${r.id}` })),
+        ...inEntRows.filter(r => r.file && !uploadedFiles[`inent:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `inent:${r.id}` })),
+        ...otherRows.filter(r => r.file && !uploadedFiles[`other:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `other:${r.id}` })),
+        ...queuedFiles.filter(qf => !uploadedFiles[`qf:${qf.id}`]).map(qf => ({ file: qf.file, fieldKey: `qf:${qf.id}` })),
       ];
 
       for (const job of uploadJobs) {
@@ -679,14 +737,18 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         appId = await saveDraftClaim(claimData);
       }
 
-      // Upload any queued files to the draft
-      for (const qf of queuedFiles) {
-        const res = await fetch("/api/claim/upload-url", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ appId, fileName:qf.file.name, mimeType:qf.file.type, fileSize:qf.file.size }) });
-        if (!res.ok) continue;
-        const { uploadUrl, key } = await res.json();
-        const upload = await fetch(uploadUrl, { method:"PUT", headers:{"Content-Type":qf.file.type}, body:qf.file });
-        if (!upload.ok) continue;
-        await createClaimDocumentRecord({ applicationId:appId, fileName:qf.file.name, fileKey:key, fileSize:qf.file.size, mimeType:qf.file.type });
+      // Upload all attached receipts + queued files (skip already-uploaded ones)
+      const draftJobs: { file: File; lineItemId?: string; fieldKey: string }[] = [
+        ...travelRows.filter(r => r.flightFile && !uploadedFiles[`flightFile:${r.id}`]).map(r => ({ file: r.flightFile!, lineItemId: r.id, fieldKey: `flightFile:${r.id}` })),
+        ...travelRows.filter(r => r.accomFile && parseFloat(r.accomAmount) > 0 && !uploadedFiles[`accomFile:${r.id}`]).map(r => ({ file: r.accomFile!, lineItemId: r.accomId, fieldKey: `accomFile:${r.id}` })),
+        ...travelRows.filter(r => r.tEntFile && parseFloat(r.tEntAmount) > 0 && !uploadedFiles[`tEntFile:${r.id}`]).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId, fieldKey: `tEntFile:${r.id}` })),
+        ...miscRows.filter(r => r.file && !uploadedFiles[`misc:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `misc:${r.id}` })),
+        ...inEntRows.filter(r => r.file && !uploadedFiles[`inent:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `inent:${r.id}` })),
+        ...otherRows.filter(r => r.file && !uploadedFiles[`other:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `other:${r.id}` })),
+        ...queuedFiles.filter(qf => !uploadedFiles[`qf:${qf.id}`]).map(qf => ({ file: qf.file, fieldKey: `qf:${qf.id}` })),
+      ];
+      for (const job of draftJobs) {
+        await uploadOneFile(job.file, appId, job.fieldKey, job.lineItemId);
       }
 
       toast.success("Draft saved");
@@ -939,7 +1001,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                           <span className="text-xs font-semibold text-foreground">Trip {idx+1}</span>
                           <div className="flex items-center gap-2">
                             {tripTotal > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(tripTotal)}</span>}
-                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => remover(setTravelRows,1)(row.id)} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => { void removeOneUpload(`flightFile:${row.id}`); void removeOneUpload(`accomFile:${row.id}`); void removeOneUpload(`tEntFile:${row.id}`); remover(setTravelRows,1)(row.id); }} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
                           </div>
                         </div>
 
@@ -1008,8 +1070,9 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                                 <span className="text-xs text-muted-foreground">Flight receipt <span className="text-destructive">*</span></span>
                                 <TravelSubFilePicker
                                   file={row.flightFile}
-                                  onPick={f => setTravelFile(row.id,"flightFile",f)}
-                                  onRemove={() => setTravelFile(row.id,"flightFile",undefined)}
+                                  onPick={f => { void setTravelFile(row.id,"flightFile",f); }}
+                                  onRemove={() => { void setTravelFile(row.id,"flightFile",undefined); }}
+                                  uploading={uploadingFields.has(`flightFile:${row.id}`)}
                                 />
                                 {!row.flightFile && <span className="text-xs text-amber-600 dark:text-amber-400">Required for flight travel</span>}
                               </div>
@@ -1063,7 +1126,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                                 <span className="text-xs text-muted-foreground">RM</span>
                                 <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.accomAmount} onChange={e => updateTravel(row.id,"accomAmount",e.target.value)} className={inputCls+" w-28"}/>
                               </div>
-                              <TravelSubFilePicker file={row.accomFile} onPick={f => setTravelFile(row.id,"accomFile",f)} onRemove={() => setTravelFile(row.id,"accomFile",undefined)}/>
+                              <TravelSubFilePicker file={row.accomFile} onPick={f => { void setTravelFile(row.id,"accomFile",f); }} onRemove={() => { void setTravelFile(row.id,"accomFile",undefined); }} uploading={uploadingFields.has(`accomFile:${row.id}`)}/>
                               {accomAmt > 0 && !row.accomFile && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
                               {accomAmt > 0 && row.accomFile && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
                             </div>
@@ -1075,7 +1138,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                                 <span className="text-xs text-muted-foreground">RM</span>
                                 <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.tEntAmount} onChange={e => updateTravel(row.id,"tEntAmount",e.target.value)} className={inputCls+" w-28"}/>
                               </div>
-                              <TravelSubFilePicker file={row.tEntFile} onPick={f => setTravelFile(row.id,"tEntFile",f)} onRemove={() => setTravelFile(row.id,"tEntFile",undefined)}/>
+                              <TravelSubFilePicker file={row.tEntFile} onPick={f => { void setTravelFile(row.id,"tEntFile",f); }} onRemove={() => { void setTravelFile(row.id,"tEntFile",undefined); }} uploading={uploadingFields.has(`tEntFile:${row.id}`)}/>
                               {tEntAmt > 0 && !row.tEntFile && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
                               {tEntAmt > 0 && row.tEntFile && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tEntAmt)}</span>}
                             </div>
@@ -1099,7 +1162,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                           <span className="text-xs font-semibold">Item {idx+1}</span>
                           <div className="flex items-center gap-2">
                             {amt > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
-                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => setMiscRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => { void removeOneUpload(`misc:${row.id}`); setMiscRows(p => p.filter(r => r.id!==row.id)); }}><XIcon className="h-3.5 w-3.5"/></Button>
                           </div>
                         </div>
                         <div className="p-4 flex flex-col gap-3">
@@ -1136,7 +1199,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                                 {amt > 0 && !row.file && <span className="text-xs text-destructive">Receipt required *</span>}
                                 {amt > 0 && row.file && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
                               </div>
-                              <ReceiptPicker row={row} setter={setMiscRows}/>
+                              <ReceiptPicker row={row} setter={setMiscRows} uploading={uploadingFields.has(`misc:${row.id}`)} afterPick={editingApp ? f => { void uploadOneFile(f, editingApp.id, `misc:${row.id}`, row.id); } : undefined} afterRemove={editingApp ? () => { void removeOneUpload(`misc:${row.id}`); } : undefined}/>
                             </div>
                           </div>
                         </div>
@@ -1158,7 +1221,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                           <span className="text-xs font-semibold">Item {idx+1}</span>
                           <div className="flex items-center gap-2">
                             {amt > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
-                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => setInEntRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => { void removeOneUpload(`inent:${row.id}`); setInEntRows(p => p.filter(r => r.id!==row.id)); }}><XIcon className="h-3.5 w-3.5"/></Button>
                           </div>
                         </div>
                         <div className="p-4 flex flex-col gap-3">
@@ -1186,7 +1249,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                             </div>
                             <div className="flex flex-col gap-1">
                               <span className="text-xs text-muted-foreground">Receipt <span className="text-destructive">*</span></span>
-                              <ReceiptPicker row={row} setter={setInEntRows}/>
+                              <ReceiptPicker row={row} setter={setInEntRows} uploading={uploadingFields.has(`inent:${row.id}`)} afterPick={editingApp ? f => { void uploadOneFile(f, editingApp.id, `inent:${row.id}`, row.id); } : undefined} afterRemove={editingApp ? () => { void removeOneUpload(`inent:${row.id}`); } : undefined}/>
                             </div>
                           </div>
                         </div>
@@ -1208,7 +1271,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                           <span className="text-xs font-semibold">Item {idx+1}</span>
                           <div className="flex items-center gap-2">
                             {amt > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
-                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => setOtherRows(p => p.filter(r => r.id!==row.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => { void removeOneUpload(`other:${row.id}`); setOtherRows(p => p.filter(r => r.id!==row.id)); }}><XIcon className="h-3.5 w-3.5"/></Button>
                           </div>
                         </div>
                         <div className="p-4 flex flex-col gap-3">
@@ -1230,7 +1293,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                             </div>
                             <div className="flex flex-col gap-1">
                               <span className="text-xs text-muted-foreground">Receipt <span className="text-destructive">*</span></span>
-                              <ReceiptPicker row={row} setter={setOtherRows}/>
+                              <ReceiptPicker row={row} setter={setOtherRows} uploading={uploadingFields.has(`other:${row.id}`)} afterPick={editingApp ? f => { void uploadOneFile(f, editingApp.id, `other:${row.id}`, row.id); } : undefined} afterRemove={editingApp ? () => { void removeOneUpload(`other:${row.id}`); } : undefined}/>
                             </div>
                           </div>
                         </div>
@@ -1394,7 +1457,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                           <p className="text-sm font-medium truncate">{qf.file.name}</p>
                           <p className="text-xs text-muted-foreground">{(qf.file.size/1024).toFixed(0)} KB</p>
                         </div>
-                        <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0" onClick={() => setQueuedFiles(p => p.filter(f => f.id!==qf.id))}><XIcon className="h-3.5 w-3.5"/></Button>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0" onClick={() => { void removeOneUpload(`qf:${qf.id}`); setQueuedFiles(p => p.filter(f => f.id!==qf.id)); }}><XIcon className="h-3.5 w-3.5"/></Button>
                       </div>
                     ))}
                   </div>
