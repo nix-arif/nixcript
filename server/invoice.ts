@@ -97,6 +97,62 @@ export interface SoaOrganization {
   soaVerifiedCount: number;
 }
 
+// ── Live customer snapshot helper ──────────────────────────────────────────
+// Fetches the current customer name + primary company from the live tables so
+// that display views always reflect the latest data, even if the stored
+// customerSnapshot JSON is stale from a prior edit.
+
+type LiveCustomerData = {
+  title: string | null;
+  name: string;
+  email: string | null;
+  contactNo: string | null;
+  organizationName: string | null;
+  organizationAddress: string | null;
+};
+
+async function getLiveCustomerMap(customerIds: string[]): Promise<Map<string, LiveCustomerData>> {
+  if (customerIds.length === 0) return new Map();
+  const [customers, companies] = await Promise.all([
+    db.select({ id: customer.id, title: customer.title, name: customer.name, email: customer.email, contactNo: customer.contactNo })
+      .from(customer)
+      .where(inArray(customer.id, customerIds)),
+    db.select({ customerId: customerCompany.customerId, organizationName: customerCompany.organizationName, organizationAddress: customerCompany.organizationAddress })
+      .from(customerCompany)
+      .where(and(inArray(customerCompany.customerId, customerIds), eq(customerCompany.isPrimary, true))),
+  ]);
+  const companyMap = Object.fromEntries(companies.map((c) => [c.customerId, c]));
+  const result = new Map<string, LiveCustomerData>();
+  for (const c of customers) {
+    const co = companyMap[c.id];
+    result.set(c.id, {
+      title: c.title ?? null,
+      name: c.name,
+      email: c.email ?? null,
+      contactNo: c.contactNo ?? null,
+      organizationName: co?.organizationName ?? null,
+      organizationAddress: co?.organizationAddress ?? null,
+    });
+  }
+  return result;
+}
+
+function mergeSnapshot(
+  snapshot: InvoiceRow["customerSnapshot"],
+  live: LiveCustomerData | undefined,
+): InvoiceRow["customerSnapshot"] {
+  if (!live) return snapshot;
+  return {
+    ...(snapshot ?? {}),
+    title: live.title ?? undefined,
+    name: live.name,
+    email: live.email ?? snapshot?.email,
+    contactNo: live.contactNo ?? snapshot?.contactNo,
+    organizationName: live.organizationName ?? snapshot?.organizationName,
+    organizationAddress: live.organizationAddress ?? snapshot?.organizationAddress,
+  };
+}
+
 const EDITABLE_STATUSES = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
@@ -199,10 +255,18 @@ export async function getInvoices(): Promise<InvoiceListRow[]> {
   if (rows.length === 0) return [];
 
   const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
-  const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds));
+  const customerIds = [...new Set(rows.map((r) => r.customerId).filter(Boolean))] as string[];
+  const [users, liveCustomers] = await Promise.all([
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds)),
+    getLiveCustomerMap(customerIds),
+  ]);
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
 
-  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy) }));
+  return rows.map((r) => ({
+    ...r,
+    customerSnapshot: mergeSnapshot(r.customerSnapshot, r.customerId ? liveCustomers.get(r.customerId) : undefined),
+    createdByName: nameOf(r.createdBy),
+  }));
 }
 
 export async function getStatementOfAccount(): Promise<SoaOrganization[]> {
@@ -219,11 +283,15 @@ export async function getStatementOfAccount(): Promise<SoaOrganization[]> {
     )
     .orderBy(desc(invoice.invoiceDate));
 
-  // Group by organizationName from customerSnapshot
+  // Group by live organizationName (falls back to snapshot then placeholder)
+  const soaCustomerIds = [...new Set(rows.map((r) => r.customerId).filter(Boolean))] as string[];
+  const liveCustomers = await getLiveCustomerMap(soaCustomerIds);
+
   const map = new Map<string, SoaInvoice[]>();
   for (const r of rows) {
+    const live = r.customerId ? liveCustomers.get(r.customerId) : undefined;
     const snap = r.customerSnapshot as { organizationName?: string } | null;
-    const orgName = snap?.organizationName?.trim() || "— No Hospital —";
+    const orgName = live?.organizationName?.trim() || snap?.organizationName?.trim() || "— No Hospital —";
     if (!map.has(orgName)) map.set(orgName, []);
     map.get(orgName)!.push({
       id: r.id,
@@ -292,7 +360,15 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceWithDetails |
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [inv.createdBy])),
   ]);
   const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
-  return { ...inv, items, expenses, createdByName: nameOf(inv.createdBy) };
+  const liveCustomers = await getLiveCustomerMap(inv.customerId ? [inv.customerId] : []);
+  const live = inv.customerId ? liveCustomers.get(inv.customerId) : undefined;
+  return {
+    ...inv,
+    customerSnapshot: mergeSnapshot(inv.customerSnapshot, live),
+    items,
+    expenses,
+    createdByName: nameOf(inv.createdBy),
+  };
 }
 
 // ── Mutations ──────────────────────────────────────────────────────────────
