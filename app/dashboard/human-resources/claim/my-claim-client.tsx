@@ -28,6 +28,7 @@ import { CLAIM_FORM, LINE_CATEGORY, TRAVEL_MODE, TRAVEL_MODE_LABELS } from "@/li
 import {
   PlusIcon, FileDownIcon, XIcon, ReceiptIcon,
   AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon, LoaderIcon, RouteIcon,
+  EyeIcon,
 } from "lucide-react";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -259,6 +260,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
 
   // ── Cancel state ──────────────────────────────────────────────────────────
   const [cancelTarget, setCancelTarget] = useState<ClaimApplicationWithDetails | null>(null);
+  const [viewDocsApp, setViewDocsApp] = useState<ClaimApplicationWithDetails | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
   // ── Sheet state ───────────────────────────────────────────────────────────
@@ -590,9 +592,10 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           {app.documents.length > 0 && (
-                            <a href={`/api/claim/download/${app.documents[0].fileKey}`} target="_blank" rel="noopener noreferrer">
-                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Download receipt"><FileDownIcon className="h-3.5 w-3.5"/></Button>
-                            </a>
+                            <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" title="View documents" onClick={() => setViewDocsApp(app)}>
+                              <EyeIcon className="h-3.5 w-3.5"/>
+                              {app.documents.length > 1 ? `${app.documents.length} docs` : "Doc"}
+                            </Button>
                           )}
                           {app.status === "PENDING" && (
                             <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setCancelTarget(app)} title="Cancel">
@@ -626,6 +629,45 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
               <Button variant="outline" onClick={() => setCancelTarget(null)} disabled={cancelling}>Keep</Button>
             </div>
           </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* View Documents Sheet */}
+      <Sheet open={!!viewDocsApp} onOpenChange={open => !open && setViewDocsApp(null)}>
+        <SheetContent className="w-full sm:max-w-md max-w-full! overflow-y-auto px-8">
+          <SheetHeader className="mb-5">
+            <SheetTitle>Receipts & Documents</SheetTitle>
+          </SheetHeader>
+          {viewDocsApp && (
+            <div className="space-y-3">
+              <div className="text-xs text-muted-foreground">
+                {viewDocsApp.applicationNo} · {viewDocsApp.claimTypeName}
+              </div>
+              {viewDocsApp.documents.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic">No documents attached.</p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {viewDocsApp.documents.map((doc) => (
+                    <a
+                      key={doc.id}
+                      href={`/api/claim/download/${doc.fileKey}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 rounded-md border border-border px-3 py-2.5 text-xs hover:bg-muted/50 transition-colors group"
+                    >
+                      <FileDownIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0 group-hover:text-primary"/>
+                      <span className="flex-1 truncate text-foreground font-medium">{doc.fileName}</span>
+                      <span className="text-muted-foreground shrink-0">
+                        {doc.fileSize ? `${(doc.fileSize / 1024).toFixed(0)} KB` : ""}
+                      </span>
+                      <span className="text-blue-600 dark:text-blue-400 shrink-0 font-medium">Download</span>
+                    </a>
+                  ))}
+                </div>
+              )}
+              <Button variant="outline" className="w-full mt-4" onClick={() => setViewDocsApp(null)}>Close</Button>
+            </div>
+          )}
         </SheetContent>
       </Sheet>
 
@@ -885,7 +927,11 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                               </div>
                             </div>
                             <div className="flex flex-col gap-1">
-                              <span className="text-xs text-muted-foreground">Receipt <span className="text-destructive">*</span></span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">Receipt <span className="text-destructive">*</span></span>
+                                {amt > 0 && !row.file && <span className="text-xs text-destructive">Receipt required *</span>}
+                                {amt > 0 && row.file && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
+                              </div>
                               <ReceiptPicker row={row} setter={setMiscRows}/>
                             </div>
                           </div>

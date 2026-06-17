@@ -16,7 +16,7 @@ export async function GET(
   const orgId = session.session.activeOrganizationId;
   if (!orgId) return NextResponse.json({ error: "No active org" }, { status: 400 });
   const perms = await getUserPermissions(session.user.id, orgId);
-  if (!hasAccess(perms, "claim:read:own"))
+  if (!hasAccess(perms, "claim:read:own") && !hasAccess(perms, "claim:approve"))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { key: keyParts } = await params;
