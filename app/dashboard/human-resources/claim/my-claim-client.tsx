@@ -58,8 +58,6 @@ interface TravelRow {
   dailyId:string; breakfastDays:string; lunchDays:string; dinnerDays:string;
   // Accommodation
   accomId:string; accomAmount:string; accomFile?:File;
-  // Case allowance
-  caseId:string; caseAmount:string;
   // Travel entertainment
   tEntId:string; tEntAmount:string; tEntFile?:File;
 }
@@ -77,7 +75,6 @@ const emptyTravel = (): TravelRow => ({
   id:newId(), lineDate:"", fromLocation:"", toLocation:"", distanceKm:"", mode:"", purpose:"",
   dailyId:newId(), breakfastDays:"", lunchDays:"", dinnerDays:"",
   accomId:newId(), accomAmount:"", accomFile:undefined,
-  caseId:newId(), caseAmount:"",
   tEntId:newId(), tEntAmount:"", tEntFile:undefined,
 });
 const emptyMisc     = (): MiscRow       => ({ id:newId(), subType:"TOLL", lineDate:"", description:"", amountMyr:"" });
@@ -307,9 +304,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
     const mileage = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
     const daily   = (parseFloat(r.breakfastDays)||0)*mealBreakfastRate + (parseFloat(r.lunchDays)||0)*mealLunchRate + (parseFloat(r.dinnerDays)||0)*mealDinnerRate;
     const accom   = parseFloat(r.accomAmount)||0;
-    const cas     = parseFloat(r.caseAmount)||0;
     const ent     = parseFloat(r.tEntAmount)||0;
-    return s + mileage + daily + accom + cas + ent;
+    return s + mileage + daily + accom + ent;
   }, 0);
   const miscTotal    = miscRows.reduce((s,r)   => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const inEntTotal   = inEntRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
@@ -455,9 +451,6 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
             }
             if (parseFloat(r.accomAmount) > 0) {
               items.push({ id: r.accomId, category: LINE_CATEGORY.TRAVEL_ACCOMMODATION, lineDate: r.lineDate, amountMyr: r.accomAmount });
-            }
-            if (parseFloat(r.caseAmount) > 0) {
-              items.push({ id: r.caseId, category: LINE_CATEGORY.TRAVEL_CASE_ALLOWANCE, lineDate: r.lineDate, amountMyr: r.caseAmount });
             }
             if (parseFloat(r.tEntAmount) > 0) {
               items.push({ id: r.tEntId, category: LINE_CATEGORY.TRAVEL_ENTERTAINMENT, lineDate: r.lineDate, amountMyr: r.tEntAmount });
@@ -685,9 +678,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                     const dnDays = parseFloat(row.dinnerDays)||0;
                     const dailyAmt   = bfDays*mealBreakfastRate + lnDays*mealLunchRate + dnDays*mealDinnerRate;
                     const accomAmt   = parseFloat(row.accomAmount)||0;
-                    const caseAmt    = parseFloat(row.caseAmount)||0;
                     const tEntAmt    = parseFloat(row.tEntAmount)||0;
-                    const tripTotal  = mileageAmt+dailyAmt+accomAmt+caseAmt+tEntAmt;
+                    const tripTotal  = mileageAmt+dailyAmt+accomAmt+tEntAmt;
                     const showMileage = row.mode !== TRAVEL_MODE.FLIGHT && row.mode !== TRAVEL_MODE.COMPANY_CAR;
                     const labelCls = "text-xs text-muted-foreground w-32 shrink-0 pt-1.5";
                     return (
@@ -823,16 +815,6 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                               </div>
                               <TravelSubFilePicker file={row.accomFile} onPick={f => setTravelFile(row.id,"accomFile",f)} onRemove={() => setTravelFile(row.id,"accomFile",undefined)}/>
                               {accomAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
-                            </div>
-
-                            {/* Case allowance */}
-                            <div className="flex items-center gap-3 py-2 border-b border-border/40">
-                              <span className={labelCls}>Case allowance</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs text-muted-foreground">RM</span>
-                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.caseAmount} onChange={e => updateTravel(row.id,"caseAmount",e.target.value)} className={inputCls+" w-28"}/>
-                              </div>
-                              {caseAmt > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(caseAmt)}</span>}
                             </div>
 
                             {/* Travel entertainment */}
