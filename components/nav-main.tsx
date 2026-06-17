@@ -20,11 +20,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 
-// Returns true only if this url is the best match for pathname.
-// "Best match" means: no sibling url is a longer, more specific match.
-function isActiveSub(url: string, siblings: string[], pathname: string): boolean {
+// Returns true only if this url is the best match for pathname across ALL nav sub-items.
+// "Best match" means: no other registered url is a longer, more specific match.
+function isActiveSub(url: string, allUrls: string[], pathname: string): boolean {
   if (pathname !== url && !pathname.startsWith(url + "/")) return false;
-  return !siblings.some(
+  return !allUrls.some(
     (s) => s !== url && s.startsWith(url) && (pathname === s || pathname.startsWith(s + "/")),
   );
 }
@@ -56,14 +56,14 @@ export function NavMain({
     if (isMobile) setOpenMobile(false);
   };
 
+  const allSubUrls = items.flatMap((item) => item.items?.map((s) => s.url) ?? []);
+
   return (
     <SidebarGroup className="px-2 py-1">
       <SidebarMenu className="gap-0.5">
         {items.map((item) => {
-          const subUrls = item.items?.map((s) => s.url) ?? [];
-
           const isGroupActive = item.items?.some((sub) =>
-            isActiveSub(sub.url, subUrls, pathname),
+            isActiveSub(sub.url, allSubUrls, pathname),
           ) ?? false;
 
           const isOpen = isGroupActive || (manualOpen[item.title] ?? false);
@@ -98,7 +98,7 @@ export function NavMain({
                 <CollapsibleContent>
                   <SidebarMenuSub className="ml-5 border-l border-sidebar-border/60 pl-2 py-0.5 gap-0">
                     {item.items?.map((subItem) => {
-                      const isActive = isActiveSub(subItem.url, subUrls, pathname);
+                      const isActive = isActiveSub(subItem.url, allSubUrls, pathname);
                       return (
                         <SidebarMenuSubItem key={subItem.title}>
                           <SidebarMenuSubButton
