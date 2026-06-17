@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import {
-  ledgerAccount, ledgerEntry, ledgerLine, ledgerDocument,
+  ledgerAccount, ledgerEntry, ledgerLine, ledgerDocument, ledgerEntryInvoice,
   customer, customerCompany, supplier, member, invoice, purchaseOrder, user,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -205,6 +205,7 @@ export type CreateLedgerEntryInput = {
   referenceType?: string;
   referenceId?: string;
   referenceNo?: string;
+  invoiceIds?: string[];
   stakeholderType?: string;
   stakeholderId?: string;
   stakeholderName?: string;
@@ -273,6 +274,22 @@ export async function createLedgerEntry(data: CreateLedgerEntryInput): Promise<s
   }));
   await db.insert(ledgerLine).values(lineRows);
 
+  if (data.invoiceIds && data.invoiceIds.length > 0) {
+    const invoices = await db
+      .select({ id: invoice.id, invoiceNo: invoice.invoiceNo })
+      .from(invoice)
+      .where(inArray(invoice.id, data.invoiceIds));
+    const invoiceNoMap = Object.fromEntries(invoices.map((i) => [i.id, i.invoiceNo]));
+    await db.insert(ledgerEntryInvoice).values(
+      data.invoiceIds.map((invId) => ({
+        id: nanoid(),
+        entryId,
+        invoiceId: invId,
+        invoiceNo: invoiceNoMap[invId] ?? "",
+      })),
+    );
+  }
+
   return entryId;
 }
 
@@ -292,6 +309,7 @@ export type UpdateLedgerEntryMetadataInput = {
   referenceType?: string;
   referenceId?: string;
   referenceNo?: string;
+  invoiceIds?: string[];
   stakeholderType?: string;
   stakeholderId?: string;
   stakeholderName?: string;
@@ -318,6 +336,25 @@ export async function updateLedgerEntryMetadata(id: string, data: UpdateLedgerEn
     stakeholderName: data.stakeholderName || null,
     updatedAt: new Date(),
   }).where(eq(ledgerEntry.id, id));
+
+  if (data.invoiceIds !== undefined) {
+    await db.delete(ledgerEntryInvoice).where(eq(ledgerEntryInvoice.entryId, id));
+    if (data.invoiceIds.length > 0) {
+      const invoices = await db
+        .select({ id: invoice.id, invoiceNo: invoice.invoiceNo })
+        .from(invoice)
+        .where(inArray(invoice.id, data.invoiceIds));
+      const invoiceNoMap = Object.fromEntries(invoices.map((i) => [i.id, i.invoiceNo]));
+      await db.insert(ledgerEntryInvoice).values(
+        data.invoiceIds.map((invId) => ({
+          id: nanoid(),
+          entryId: id,
+          invoiceId: invId,
+          invoiceNo: invoiceNoMap[invId] ?? "",
+        })),
+      );
+    }
+  }
 }
 
 export async function voidLedgerEntry(id: string, reason: string): Promise<void> {

@@ -14,10 +14,11 @@ import {
   user,
   ledgerEntry,
   ledgerLine,
+  ledgerEntryInvoice,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, or } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -386,6 +387,14 @@ export type LinkedJournalEntry = {
 
 export async function getLinkedJournalEntries(invoiceId: string): Promise<LinkedJournalEntry[]> {
   const { orgId } = await requireAccess("invoice:read");
+
+  // Find entry IDs linked via the junction table
+  const junctionRows = await db
+    .select({ entryId: ledgerEntryInvoice.entryId })
+    .from(ledgerEntryInvoice)
+    .where(eq(ledgerEntryInvoice.invoiceId, invoiceId));
+  const junctionEntryIds = junctionRows.map((r) => r.entryId);
+
   const entries = await db
     .select({
       id: ledgerEntry.id,
@@ -399,8 +408,10 @@ export async function getLinkedJournalEntries(invoiceId: string): Promise<Linked
     .where(
       and(
         eq(ledgerEntry.organizationId, orgId),
-        eq(ledgerEntry.referenceType, "INVOICE"),
-        eq(ledgerEntry.referenceId, invoiceId),
+        or(
+          and(eq(ledgerEntry.referenceType, "INVOICE"), eq(ledgerEntry.referenceId, invoiceId)),
+          junctionEntryIds.length > 0 ? inArray(ledgerEntry.id, junctionEntryIds) : undefined,
+        ),
       ),
     )
     .orderBy(asc(ledgerEntry.date), asc(ledgerEntry.entryNo));

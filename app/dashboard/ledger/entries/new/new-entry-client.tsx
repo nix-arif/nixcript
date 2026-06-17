@@ -26,6 +26,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import {
   PlusIcon,
   TrashIcon,
@@ -140,7 +142,8 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
   const [stakeholderType, setStakeholderType] = useState("NONE");
   const [stakeholderId, setStakeholderId] = useState("");
   const [referenceType, setReferenceType] = useState("NONE");
-  const [referenceId, setReferenceId] = useState("");
+  const [referenceIds, setReferenceIds] = useState<string[]>([]);
+  const [invoiceSearch, setInvoiceSearch] = useState("");
   const [lines, setLines] = useState<LineItem[]>([newLine(), newLine()]);
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([]);
   const [saving, setSaving] = useState(false);
@@ -217,10 +220,13 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
   // Reference resolution
   const referenceNo = (() => {
     if (referenceType === "INVOICE") {
-      return refData.invoices.find((i) => i.id === referenceId)?.invoiceNo ?? "";
+      const nos = referenceIds
+        .map((id) => refData.invoices.find((i) => i.id === id)?.invoiceNo)
+        .filter(Boolean);
+      return nos[0] ?? "";
     }
     if (referenceType === "PURCHASE_ORDER") {
-      const po = refData.purchaseOrders.find((p) => p.id === referenceId);
+      const po = refData.purchaseOrders.find((p) => p.id === referenceIds[0]);
       return po ? (po.poNo ?? po.prNo ?? "") : "";
     }
     return "";
@@ -292,8 +298,9 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
         description: description.trim(),
         transactionType,
         referenceType: referenceType === "NONE" ? undefined : referenceType,
-        referenceId: referenceId || undefined,
+        referenceId: referenceType === "INVOICE" ? (referenceIds[0] || undefined) : (referenceIds[0] || undefined),
         referenceNo: referenceNo || undefined,
+        invoiceIds: referenceType === "INVOICE" && referenceIds.length > 0 ? referenceIds : undefined,
         stakeholderType: stakeholderType === "NONE" ? undefined : stakeholderType,
         stakeholderId: stakeholderId || undefined,
         stakeholderName: stakeholderName || undefined,
@@ -472,7 +479,7 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
         {/* Reference */}
         <div className="flex flex-col gap-1.5">
           <Label>Reference Type</Label>
-          <Select value={referenceType} onValueChange={(v) => { setReferenceType(v); setReferenceId(""); }}>
+          <Select value={referenceType} onValueChange={(v) => { setReferenceType(v); setReferenceIds([]); setInvoiceSearch(""); }}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -488,19 +495,58 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
           <div className="flex flex-col gap-1.5">
             <Label>Reference</Label>
             {referenceType === "INVOICE" && (
-              <Select value={referenceId} onValueChange={setReferenceId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select invoice..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {refData.invoices.map((inv) => (
-                    <SelectItem key={inv.id} value={inv.id}>{inv.invoiceNo}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="border border-border rounded-md p-2 flex flex-col gap-2">
+                <Input
+                  placeholder="Search invoices..."
+                  value={invoiceSearch}
+                  onChange={(e) => setInvoiceSearch(e.target.value)}
+                  className="h-7 text-xs"
+                />
+                {referenceIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {referenceIds.map((id) => {
+                      const inv = refData.invoices.find((i) => i.id === id);
+                      return (
+                        <Badge key={id} variant="secondary" className="text-[10px] gap-1 pr-1">
+                          {inv?.invoiceNo ?? id}
+                          <button
+                            type="button"
+                            className="hover:text-destructive"
+                            onClick={() => setReferenceIds((prev) => prev.filter((x) => x !== id))}
+                          >
+                            <XIcon className="w-2.5 h-2.5" />
+                          </button>
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="max-h-48 overflow-y-auto flex flex-col gap-0.5">
+                  {refData.invoices
+                    .filter((inv) =>
+                      !invoiceSearch || inv.invoiceNo.toLowerCase().includes(invoiceSearch.toLowerCase())
+                    )
+                    .map((inv) => (
+                      <label
+                        key={inv.id}
+                        className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted cursor-pointer text-xs"
+                      >
+                        <Checkbox
+                          checked={referenceIds.includes(inv.id)}
+                          onCheckedChange={(checked) =>
+                            setReferenceIds((prev) =>
+                              checked ? [...prev, inv.id] : prev.filter((x) => x !== inv.id)
+                            )
+                          }
+                        />
+                        {inv.invoiceNo}
+                      </label>
+                    ))}
+                </div>
+              </div>
             )}
             {referenceType === "PURCHASE_ORDER" && (
-              <Select value={referenceId} onValueChange={setReferenceId}>
+              <Select value={referenceIds[0] ?? ""} onValueChange={(v) => setReferenceIds([v])}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select PO..." />
                 </SelectTrigger>
@@ -514,8 +560,8 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
             {referenceType === "PAYROLL_PERIOD" && (
               <Input
                 placeholder="Payroll period reference..."
-                value={referenceId}
-                onChange={(e) => setReferenceId(e.target.value)}
+                value={referenceIds[0] ?? ""}
+                onChange={(e) => setReferenceIds(e.target.value ? [e.target.value] : [])}
               />
             )}
           </div>

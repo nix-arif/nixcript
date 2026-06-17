@@ -2483,6 +2483,26 @@ export const ledgerDocumentRelations = relations(ledgerDocument, ({ one }) => ({
   uploadedByUser: one(user, { fields: [ledgerDocument.uploadedBy], references: [user.id] }),
 }));
 
+export const ledgerEntryInvoice = pgTable(
+  "ledger_entry_invoice",
+  {
+    id: text("id").primaryKey(),
+    entryId: text("entry_id")
+      .notNull()
+      .references(() => ledgerEntry.id, { onDelete: "cascade" }),
+    invoiceId: text("invoice_id")
+      .notNull()
+      .references(() => invoice.id, { onDelete: "cascade" }),
+    invoiceNo: text("invoice_no").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("lei_entry_invoice_uidx").on(t.entryId, t.invoiceId),
+    index("lei_entry_idx").on(t.entryId),
+    index("lei_invoice_idx").on(t.invoiceId),
+  ],
+);
+
 /* =========================
    LEAVE MANAGEMENT
 ========================= */
@@ -2928,6 +2948,7 @@ export const schema = {
   ledgerEntry,
   ledgerLine,
   ledgerDocument,
+  ledgerEntryInvoice,
   ledgerAccountRelations,
   ledgerEntryRelations,
   ledgerLineRelations,
