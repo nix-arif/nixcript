@@ -495,8 +495,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
       type UploadJob = { file: File; lineItemId?: string };
       const uploadJobs: UploadJob[] = [
         ...travelRows.filter(r => r.flightFile).map(r => ({ file: r.flightFile!, lineItemId: r.id })),
-        ...travelRows.filter(r => r.accomFile).map(r => ({ file: r.accomFile!, lineItemId: r.accomId })),
-        ...travelRows.filter(r => r.tEntFile).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId })),
+        ...travelRows.filter(r => r.accomFile && parseFloat(r.accomAmount) > 0).map(r => ({ file: r.accomFile!, lineItemId: r.accomId })),
+        ...travelRows.filter(r => r.tEntFile && parseFloat(r.tEntAmount) > 0).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId })),
         ...miscRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
         ...inEntRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
         ...otherRows.filter(r => r.file).map(r => ({ file: r.file!, lineItemId: r.id })),
