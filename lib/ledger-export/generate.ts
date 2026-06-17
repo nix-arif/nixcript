@@ -275,14 +275,43 @@ export async function generateLedgerExportZip(
         companyName: organizationProfile.companyName,
         companyAddress: organizationProfile.companyAddress,
         taxNo: organizationProfile.taxNo,
+        brandColor: organizationProfile.brandColor,
+        phone: organizationProfile.phone,
+        email: organizationProfile.email,
+        website: organizationProfile.website,
+        oldSsmNo: organizationProfile.oldSsmNo,
+        newSsmNo: organizationProfile.newSsmNo,
+        mdaEstablishmentNo: organizationProfile.mdaEstablishmentNo,
+        mofNo: organizationProfile.mofNo,
+        headerLayout: organizationProfile.headerLayout,
+        orgNameSize: organizationProfile.orgNameSize,
+        orgNameBold: organizationProfile.orgNameBold,
+        orgNameUppercase: organizationProfile.orgNameUppercase,
       }).from(organizationProfile).where(eq(organizationProfile.organizationId, orgId)).limit(1),
     ]);
 
-    const orgProfile = orgProfiles[0] ?? { companyName: "", companyAddress: null, taxNo: null };
+    const orgProfile = orgProfiles[0] ?? {
+      companyName: null, companyAddress: null, taxNo: null,
+      brandColor: null, phone: null, email: null, website: null,
+      oldSsmNo: null, newSsmNo: null, mdaEstablishmentNo: null, mofNo: null,
+      headerLayout: null, orgNameSize: null, orgNameBold: null, orgNameUppercase: null,
+    };
     const org = {
-      companyName: orgProfile.companyName ?? "Company",
-      companyAddress: orgProfile.companyAddress,
-      taxNo: orgProfile.taxNo,
+      companyName:        orgProfile.companyName ?? "Company",
+      companyAddress:     orgProfile.companyAddress ?? null,
+      taxNo:              orgProfile.taxNo ?? null,
+      brandColor:         orgProfile.brandColor ?? null,
+      phone:              orgProfile.phone ?? null,
+      email:              orgProfile.email ?? null,
+      website:            orgProfile.website ?? null,
+      oldSsmNo:           orgProfile.oldSsmNo ?? null,
+      newSsmNo:           orgProfile.newSsmNo ?? null,
+      mdaEstablishmentNo: orgProfile.mdaEstablishmentNo ?? null,
+      mofNo:              orgProfile.mofNo ?? null,
+      headerLayout:       orgProfile.headerLayout ?? null,
+      orgNameSize:        orgProfile.orgNameSize ?? null,
+      orgNameBold:        orgProfile.orgNameBold ?? null,
+      orgNameUppercase:   orgProfile.orgNameUppercase ?? null,
     };
 
     const itemsByInvoice = new Map<string, typeof invoiceItems>();
