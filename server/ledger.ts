@@ -39,6 +39,7 @@ export type LedgerEntryWithDetails = LedgerEntryRow & {
   lines: LedgerLineRow[];
   documents: LedgerDocumentRow[];
   createdByName: string | null;
+  linkedInvoices: { invoiceId: string; invoiceNo: string }[];
 };
 
 export type LedgerEntryListRow = LedgerEntryRow & {
@@ -193,9 +194,13 @@ export async function getLedgerEntry(id: string): Promise<LedgerEntryWithDetails
     .where(and(eq(ledgerEntry.id, id), eq(ledgerEntry.organizationId, orgId)));
   if (rows.length === 0) return null;
   const { entry, createdByName } = rows[0];
-  const lines = await db.select().from(ledgerLine).where(eq(ledgerLine.entryId, id)).orderBy(asc(ledgerLine.createdAt));
-  const documents = await db.select().from(ledgerDocument).where(eq(ledgerDocument.entryId, id)).orderBy(asc(ledgerDocument.uploadedAt));
-  return { ...entry, lines, documents, createdByName: createdByName ?? null };
+  const [lines, documents, junctionRows] = await Promise.all([
+    db.select().from(ledgerLine).where(eq(ledgerLine.entryId, id)).orderBy(asc(ledgerLine.createdAt)),
+    db.select().from(ledgerDocument).where(eq(ledgerDocument.entryId, id)).orderBy(asc(ledgerDocument.uploadedAt)),
+    db.select({ invoiceId: ledgerEntryInvoice.invoiceId, invoiceNo: ledgerEntryInvoice.invoiceNo })
+      .from(ledgerEntryInvoice).where(eq(ledgerEntryInvoice.entryId, id)),
+  ]);
+  return { ...entry, lines, documents, createdByName: createdByName ?? null, linkedInvoices: junctionRows };
 }
 
 export type CreateLedgerEntryInput = {

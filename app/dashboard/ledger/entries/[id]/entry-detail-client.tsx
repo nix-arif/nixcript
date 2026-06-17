@@ -37,6 +37,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ArrowLeftIcon,
   CheckCircle2Icon,
@@ -177,7 +178,12 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
   const [editStakeholderType, setEditStakeholderType] = useState(entry.stakeholderType);
   const [editStakeholderId, setEditStakeholderId] = useState(entry.stakeholderId ?? "");
   const [editReferenceType, setEditReferenceType] = useState(entry.referenceType);
-  const [editReferenceId, setEditReferenceId] = useState(entry.referenceId ?? "");
+  const [editReferenceIds, setEditReferenceIds] = useState<string[]>(
+    entry.linkedInvoices.length > 0
+      ? entry.linkedInvoices.map((i) => i.invoiceId)
+      : entry.referenceType === "INVOICE" && entry.referenceId ? [entry.referenceId] : [],
+  );
+  const [editInvoiceSearch, setEditInvoiceSearch] = useState("");
   const [editPayrollRef, setEditPayrollRef] = useState(
     entry.referenceType === "PAYROLL_PERIOD" ? entry.referenceNo ?? "" : ""
   );
@@ -188,7 +194,12 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
     setEditStakeholderType(entry.stakeholderType);
     setEditStakeholderId(entry.stakeholderId ?? "");
     setEditReferenceType(entry.referenceType);
-    setEditReferenceId(entry.referenceId ?? "");
+    setEditReferenceIds(
+      entry.linkedInvoices.length > 0
+        ? entry.linkedInvoices.map((i) => i.invoiceId)
+        : entry.referenceType === "INVOICE" && entry.referenceId ? [entry.referenceId] : [],
+    );
+    setEditInvoiceSearch("");
     setEditPayrollRef(entry.referenceType === "PAYROLL_PERIOD" ? entry.referenceNo ?? "" : "");
     setEditDialogOpen(true);
   }
@@ -209,10 +220,10 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
 
   const editReferenceNo = (() => {
     if (editReferenceType === "INVOICE") {
-      return refData.invoices.find((i) => i.id === editReferenceId)?.invoiceNo ?? "";
+      return refData.invoices.find((i) => i.id === editReferenceIds[0])?.invoiceNo ?? "";
     }
     if (editReferenceType === "PURCHASE_ORDER") {
-      const po = refData.purchaseOrders.find((p) => p.id === editReferenceId);
+      const po = refData.purchaseOrders.find((p) => p.id === editReferenceIds[0]);
       return po ? (po.poNo ?? po.prNo ?? "") : "";
     }
     if (editReferenceType === "PAYROLL_PERIOD") return editPayrollRef;
@@ -232,8 +243,9 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
         stakeholderId: editStakeholderId || undefined,
         stakeholderName: editStakeholderName || undefined,
         referenceType: editReferenceType === "NONE" ? undefined : editReferenceType,
-        referenceId: editReferenceType === "PAYROLL_PERIOD" ? undefined : editReferenceId || undefined,
+        referenceId: editReferenceType === "PAYROLL_PERIOD" ? undefined : (editReferenceIds[0] || undefined),
         referenceNo: editReferenceNo || undefined,
+        invoiceIds: editReferenceType === "INVOICE" ? editReferenceIds : undefined,
       });
       toast.success("Entry details updated");
       setEditDialogOpen(false);
@@ -428,11 +440,20 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-xs text-muted-foreground uppercase tracking-wide">Reference</span>
-          <span>
-            {entry.referenceNo
-              ? `${entry.referenceNo} (${entry.referenceType})`
-              : "—"}
-          </span>
+          {entry.referenceType === "INVOICE" && (entry.linkedInvoices.length > 0 || entry.referenceNo) ? (
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {(entry.linkedInvoices.length > 0
+                ? entry.linkedInvoices.map((i) => i.invoiceNo)
+                : [entry.referenceNo!]
+              ).map((no) => (
+                <Badge key={no} variant="secondary" className="text-[10px]">{no}</Badge>
+              ))}
+            </div>
+          ) : (
+            <span>
+              {entry.referenceNo ? `${entry.referenceNo} (${entry.referenceType})` : "—"}
+            </span>
+          )}
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-xs text-muted-foreground uppercase tracking-wide">Created By</span>
@@ -720,7 +741,7 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
                 <Label>Reference Type</Label>
                 <Select
                   value={editReferenceType}
-                  onValueChange={(v) => { setEditReferenceType(v); setEditReferenceId(""); setEditPayrollRef(""); }}
+                  onValueChange={(v) => { setEditReferenceType(v); setEditReferenceIds([]); setEditInvoiceSearch(""); setEditPayrollRef(""); }}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -735,17 +756,58 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
                 <div className="flex flex-col gap-1.5">
                   <Label>Reference</Label>
                   {editReferenceType === "INVOICE" && (
-                    <Select value={editReferenceId} onValueChange={setEditReferenceId}>
-                      <SelectTrigger><SelectValue placeholder="Select invoice..." /></SelectTrigger>
-                      <SelectContent>
-                        {refData.invoices.map((inv) => (
-                          <SelectItem key={inv.id} value={inv.id}>{inv.invoiceNo}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="border border-border rounded-md p-2 flex flex-col gap-2">
+                      <Input
+                        placeholder="Search invoices..."
+                        value={editInvoiceSearch}
+                        onChange={(e) => setEditInvoiceSearch(e.target.value)}
+                        className="h-7 text-xs"
+                      />
+                      {editReferenceIds.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {editReferenceIds.map((id) => {
+                            const inv = refData.invoices.find((i) => i.id === id);
+                            return (
+                              <Badge key={id} variant="secondary" className="text-[10px] gap-1 pr-1">
+                                {inv?.invoiceNo ?? id}
+                                <button
+                                  type="button"
+                                  className="hover:text-destructive"
+                                  onClick={() => setEditReferenceIds((prev) => prev.filter((x) => x !== id))}
+                                >
+                                  <XIcon className="w-2.5 h-2.5" />
+                                </button>
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="max-h-40 overflow-y-auto flex flex-col gap-0.5">
+                        {refData.invoices
+                          .filter((inv) =>
+                            !editInvoiceSearch || inv.invoiceNo.toLowerCase().includes(editInvoiceSearch.toLowerCase())
+                          )
+                          .map((inv) => (
+                            <label
+                              key={inv.id}
+                              className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted cursor-pointer text-xs"
+                            >
+                              <Checkbox
+                                checked={editReferenceIds.includes(inv.id)}
+                                onCheckedChange={(checked) =>
+                                  setEditReferenceIds((prev) =>
+                                    checked ? [...prev, inv.id] : prev.filter((x) => x !== inv.id)
+                                  )
+                                }
+                              />
+                              {inv.invoiceNo}
+                            </label>
+                          ))}
+                      </div>
+                    </div>
                   )}
                   {editReferenceType === "PURCHASE_ORDER" && (
-                    <Select value={editReferenceId} onValueChange={setEditReferenceId}>
+                    <Select value={editReferenceIds[0] ?? ""} onValueChange={(v) => setEditReferenceIds([v])}>
                       <SelectTrigger><SelectValue placeholder="Select PO..." /></SelectTrigger>
                       <SelectContent>
                         {refData.purchaseOrders.map((po) => (
