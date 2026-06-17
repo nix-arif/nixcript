@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -276,20 +276,25 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const refreshCustomers = useCallback(async (q?: string) => {
     const rows = await getCustomers(q);
     setCustomers(rows);
   }, []);
 
-  const handleSearch = async (q: string) => {
+  const handleSearch = (q: string) => {
     setSearch(q);
     setPage(1);
-    setSearching(true);
-    try {
-      await refreshCustomers(q);
-    } finally {
-      setSearching(false);
-    }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        await refreshCustomers(q);
+      } finally {
+        setSearching(false);
+      }
+    }, 350);
   };
 
   const openCreate = () => {
@@ -470,7 +475,13 @@ export function CustomerClient({ initialCustomers, canEdit }: Props) {
           />
           {search && (
             <button
-              onClick={() => handleSearch("")}
+              onClick={() => {
+                if (searchTimer.current) clearTimeout(searchTimer.current);
+                setSearch("");
+                setPage(1);
+                setSearching(true);
+                refreshCustomers("").finally(() => setSearching(false));
+              }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               <XIcon className="w-3.5 h-3.5" />
