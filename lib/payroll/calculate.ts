@@ -1136,6 +1136,8 @@ export function calculatePayslip(input: {
   basicSalary: number;
   bonus?: number;
   overtimePay?: number;
+  caseAllowancePay?: number;
+  petrolAllowancePay?: number;
   allowances?: number;
   otherDeductions?: number;
   manualLhdn?: number;
@@ -1157,6 +1159,8 @@ export function calculatePayslip(input: {
     basicSalary,
     bonus = 0,
     overtimePay = 0,
+    caseAllowancePay = 0,
+    petrolAllowancePay = 0,
     allowances = 0,
     otherDeductions = 0,
     manualLhdn,
@@ -1174,8 +1178,14 @@ export function calculatePayslip(input: {
     zakatMonthly = 0,
   } = input;
 
-  const gross = basicSalary + bonus + overtimePay + allowances;
-  const grossWithoutAllowances = basicSalary + bonus + overtimePay;
+  // Petrol allowance: exempt up to RM500/month (RM6,000/year) per Schedule 6 para 25B
+  const petrolTaxable = Math.max(0, petrolAllowancePay - 500);
+
+  const gross = basicSalary + bonus + overtimePay + caseAllowancePay + petrolAllowancePay + allowances;
+  // EPF/SOCSO/EIS base — travelling allowance (petrol) excluded by law
+  const grossWithoutAllowances = basicSalary + bonus + overtimePay + caseAllowancePay;
+  // PCB base — includes taxable petrol portion (excess over RM500/month)
+  const pcbBase = grossWithoutAllowances + petrolTaxable;
 
   const epf = calculateEpf(grossWithoutAllowances, epfCategory);
   const socso = calculateSocso(
@@ -1191,7 +1201,7 @@ export function calculatePayslip(input: {
     manualLhdn !== undefined
       ? manualLhdn
       : calculatePcb({
-          annualIncome: grossWithoutAllowances * 12,
+          annualIncome: pcbBase * 12,
           currentMonth,
           selfRelief,
           spouseRelief,

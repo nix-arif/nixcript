@@ -85,6 +85,9 @@ interface PayslipFormState {
   basicSalary: string;
   bonus: string;
   overtimePay: string;
+  caseCount: string;
+  caseRate: string;
+  petrolAllowancePay: string;
   allowances: Allowance[];
   otherDeductions: Allowance[];
   manualLhdn: string;
@@ -96,6 +99,9 @@ const EMPTY_FORM: PayslipFormState = {
   basicSalary: "",
   bonus: "0",
   overtimePay: "0",
+  caseCount: "0",
+  caseRate: "100",
+  petrolAllowancePay: "0",
   allowances: [],
   otherDeductions: [],
   manualLhdn: "",
@@ -143,6 +149,8 @@ function PayslipSheet({
       }
       const bonus = Number(f.bonus) || 0;
       const overtime = Number(f.overtimePay) || 0;
+      const caseAllowancePay = (Number(f.caseCount) || 0) * (Number(f.caseRate) || 0);
+      const petrolAllowancePay = Number(f.petrolAllowancePay) || 0;
       const allowTotal = f.allowances.reduce(
         (s, a) => s + (Number(a.amount) || 0),
         0,
@@ -157,10 +165,12 @@ function PayslipSheet({
           basicSalary: basic,
           bonus,
           overtimePay: overtime,
+          caseAllowancePay,
+          petrolAllowancePay,
           allowances: allowTotal,
           otherDeductions: dedTotal,
           manualLhdn,
-          currentMonth: periodMonth, // ← add this
+          currentMonth: periodMonth,
         }),
       );
     },
@@ -182,6 +192,9 @@ function PayslipSheet({
         basicSalary: editPayslip.basicSalary,
         bonus: editPayslip.bonus ?? "0",
         overtimePay: "0",
+        caseCount: "0",
+        caseRate: "100",
+        petrolAllowancePay: "0",
         allowances: [],
         otherDeductions: [],
         manualLhdn: "",
@@ -210,11 +223,15 @@ function PayslipSheet({
       const manualLhdn = form.overrideLhdn
         ? Number(form.manualLhdn) || 0
         : undefined;
+      const caseAllowancePay = (Number(form.caseCount) || 0) * (Number(form.caseRate) || 0);
+      const petrolAllowancePay = Number(form.petrolAllowancePay) || 0;
       if (isEdit) {
         await updatePayslip(editPayslip!.id, {
           basicSalary: Number(form.basicSalary),
           bonus: Number(form.bonus) || 0,
           overtimePay: Number(form.overtimePay) || 0,
+          caseAllowancePay,
+          petrolAllowancePay,
           allowances: form.allowances,
           otherDeductions: form.otherDeductions,
           manualLhdn,
@@ -227,6 +244,8 @@ function PayslipSheet({
           basicSalary: Number(form.basicSalary),
           bonus: Number(form.bonus) || 0,
           overtimePay: Number(form.overtimePay) || 0,
+          caseAllowancePay,
+          petrolAllowancePay,
           allowances: form.allowances,
           otherDeductions: form.otherDeductions,
           manualLhdn,
@@ -245,13 +264,17 @@ function PayslipSheet({
   useEffect(() => {
     if (!open) return;
     if (editPayslip) {
+      const savedCasePay = Number(editPayslip.caseAllowancePay ?? 0);
       const initialForm: PayslipFormState = {
         userId: editPayslip.userId,
         basicSalary: editPayslip.basicSalary,
         bonus: editPayslip.bonus ?? "0",
-        overtimePay: editPayslip.overtimePay ?? "0", // ← load from DB
-        allowances: (editPayslip.allowances as any[]) ?? [], // ← load from DB
-        otherDeductions: (editPayslip.otherDeductions as any[]) ?? [], // ← load from DB
+        overtimePay: editPayslip.overtimePay ?? "0",
+        caseCount: savedCasePay > 0 ? String(savedCasePay / 100) : "0",
+        caseRate: "100",
+        petrolAllowancePay: editPayslip.petrolAllowancePay ?? "0",
+        allowances: (editPayslip.allowances as any[]) ?? [],
+        otherDeductions: (editPayslip.otherDeductions as any[]) ?? [],
         manualLhdn: "",
         overrideLhdn: false,
       };
@@ -363,6 +386,100 @@ function PayslipSheet({
                     disabled={isReadOnly}
                   />
                 </div>
+              </div>
+
+              {/* Case Allowance */}
+              <div className="border border-dashed border-border rounded-md p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-foreground">
+                    Case allowance
+                  </label>
+                  <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded px-1.5 py-0.5">
+                    Taxable income (PCB applies)
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1.5">
+                      No. of cases
+                    </label>
+                    <Input
+                      value={form.caseCount}
+                      onChange={(e) => set("caseCount", e.target.value)}
+                      onBlur={runCalc}
+                      placeholder="0"
+                      type="number"
+                      min="0"
+                      className="h-9 text-sm"
+                      disabled={isReadOnly}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1.5">
+                      Rate per case (RM)
+                    </label>
+                    <Input
+                      value={form.caseRate}
+                      onChange={(e) => set("caseRate", e.target.value)}
+                      onBlur={runCalc}
+                      placeholder="100"
+                      type="number"
+                      min="0"
+                      className="h-9 text-sm"
+                      disabled={isReadOnly}
+                    />
+                  </div>
+                </div>
+                {Number(form.caseCount) > 0 && (
+                  <div className="flex justify-between text-xs pt-0.5">
+                    <span className="text-muted-foreground">
+                      {form.caseCount} cases × RM {form.caseRate}
+                    </span>
+                    <span className="font-mono font-medium">
+                      RM {((Number(form.caseCount) || 0) * (Number(form.caseRate) || 0)).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Petrol Allowance */}
+              <div className="border border-dashed border-border rounded-md p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-foreground">
+                    Petrol allowance
+                  </label>
+                  <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5">
+                    EPF/SOCSO exempt
+                  </span>
+                </div>
+                <Input
+                  value={form.petrolAllowancePay}
+                  onChange={(e) => set("petrolAllowancePay", e.target.value)}
+                  onBlur={runCalc}
+                  placeholder="0.00"
+                  type="number"
+                  min="0"
+                  className="h-9 text-sm"
+                  disabled={isReadOnly}
+                />
+                {Number(form.petrolAllowancePay) > 0 && (
+                  <div className="space-y-0.5 text-xs pt-0.5">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Exempt (Schedule 6, ≤RM500/mth)</span>
+                      <span className="font-mono text-green-600 dark:text-green-400">
+                        RM {Math.min(Number(form.petrolAllowancePay) || 0, 500).toFixed(2)}
+                      </span>
+                    </div>
+                    {(Number(form.petrolAllowancePay) || 0) > 500 && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Taxable (PCB applies)</span>
+                        <span className="font-mono text-amber-600 dark:text-amber-400">
+                          RM {Math.max(0, (Number(form.petrolAllowancePay) || 0) - 500).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Allowances — inlined */}

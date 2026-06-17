@@ -1235,6 +1235,8 @@ export const payslip = pgTable(
     basicSalary: text("basic_salary").notNull(),
     bonus: text("bonus").default("0"),
     overtimePay: text("overtime_pay").default("0"),
+    caseAllowancePay: text("case_allowance_pay").default("0"),
+    petrolAllowancePay: text("petrol_allowance_pay").default("0"),
     allowances: json("allowances")
       .$type<{ label: string; amount: string }[]>()
       .default([]),

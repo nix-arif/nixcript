@@ -232,8 +232,10 @@ export async function getPeriodDetail(periodId: string) {
       department: payslip.department,
       basicSalary: payslip.basicSalary,
       bonus: payslip.bonus,
-      overtimePay: payslip.overtimePay, // ← add
-      allowances: payslip.allowances, // ← add
+      overtimePay: payslip.overtimePay,
+      caseAllowancePay: payslip.caseAllowancePay,
+      petrolAllowancePay: payslip.petrolAllowancePay,
+      allowances: payslip.allowances,
       otherDeductions: payslip.otherDeductions, // ← add
       epfEmployee: payslip.epfEmployee, // ← add
       socsoEmployee: payslip.socsoEmployee, // ← add
@@ -294,6 +296,8 @@ export async function createPayslip(data: {
   basicSalary: number;
   bonus?: number;
   overtimePay?: number;
+  caseAllowancePay?: number;
+  petrolAllowancePay?: number;
   allowances?: { label: string; amount: string }[];
   otherDeductions?: { label: string; amount: string }[];
   manualLhdn?: number;
@@ -354,6 +358,8 @@ export async function createPayslip(data: {
     basicSalary: data.basicSalary,
     bonus: data.bonus ?? 0,
     overtimePay: data.overtimePay ?? 0,
+    caseAllowancePay: data.caseAllowancePay ?? 0,
+    petrolAllowancePay: data.petrolAllowancePay ?? 0,
     currentMonth: period.month,
     allowances: data.allowances?.reduce((s, a) => s + Number(a.amount), 0),
     otherDeductions: data.otherDeductions?.reduce(
@@ -379,6 +385,8 @@ export async function createPayslip(data: {
     basicSalary: String(data.basicSalary),
     bonus: String(data.bonus ?? 0),
     overtimePay: String(data.overtimePay ?? 0),
+    caseAllowancePay: String(data.caseAllowancePay ?? 0),
+    petrolAllowancePay: String(data.petrolAllowancePay ?? 0),
     allowances: data.allowances ?? [],
     epfEmployee: String(calc.epf.employee),
     epfEmployer: String(calc.epf.employer),
@@ -401,6 +409,8 @@ export async function updatePayslip(
     basicSalary: number;
     bonus?: number;
     overtimePay?: number;
+    caseAllowancePay?: number;
+    petrolAllowancePay?: number;
     allowances?: { label: string; amount: string }[];
     otherDeductions?: { label: string; amount: string }[];
     manualLhdn?: number;
@@ -436,6 +446,8 @@ export async function updatePayslip(
     basicSalary: data.basicSalary,
     bonus: data.bonus ?? 0,
     overtimePay: data.overtimePay ?? 0,
+    caseAllowancePay: data.caseAllowancePay ?? 0,
+    petrolAllowancePay: data.petrolAllowancePay ?? 0,
     currentMonth: period.month,
     allowances: data.allowances?.reduce((s, a) => s + Number(a.amount), 0),
     otherDeductions: data.otherDeductions?.reduce(
@@ -451,6 +463,8 @@ export async function updatePayslip(
       basicSalary: String(data.basicSalary),
       bonus: String(data.bonus ?? 0),
       overtimePay: String(data.overtimePay ?? 0),
+      caseAllowancePay: String(data.caseAllowancePay ?? 0),
+      petrolAllowancePay: String(data.petrolAllowancePay ?? 0),
       allowances: data.allowances ?? [],
       epfEmployee: String(calc.epf.employee),
       epfEmployer: String(calc.epf.employer),
