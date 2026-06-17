@@ -68,6 +68,7 @@ interface FormState {
   unitType: string;
   ratePerUnit: string;
   requiresReceipt: boolean;
+  isActive: boolean;
   maxAmountPerClaim: string;
   maxAmountPerYear: string;
   hotelCapPerNight: string;
@@ -86,6 +87,7 @@ const emptyForm = (): FormState => ({
   unitType: "AMOUNT",
   ratePerUnit: "",
   requiresReceipt: true,
+  isActive: true,
   maxAmountPerClaim: "",
   maxAmountPerYear: "",
   hotelCapPerNight: "",
@@ -105,6 +107,7 @@ function formFromRow(row: ClaimTypeRow): FormState {
     unitType: row.unitType,
     ratePerUnit: row.ratePerUnit ?? "",
     requiresReceipt: row.requiresReceipt,
+    isActive: row.isActive,
     maxAmountPerClaim: row.maxAmountPerClaim ?? "",
     maxAmountPerYear: row.maxAmountPerYear ?? "",
     hotelCapPerNight: row.hotelCapPerNight ?? "",
@@ -124,7 +127,6 @@ const CATEGORY_MAPPINGS: { value: string; label: string; group: string }[] = [
   { value: "TRAVEL",                label: "Travel — Mileage / Petrol",    group: "Local" },
   { value: "TRAVEL_DAILY_ALLOWANCE",label: "Travel — Daily Allowance",     group: "Local" },
   { value: "TRAVEL_ACCOMMODATION",  label: "Travel — Accommodation",       group: "Local" },
-  { value: "TRAVEL_CASE_ALLOWANCE", label: "Travel — Case Allowance",      group: "Local" },
   { value: "TRAVEL_ENTERTAINMENT",  label: "Travel — Entertainment",       group: "Local" },
   { value: "TOLL",                  label: "Toll",                         group: "Local" },
   { value: "PARKING",               label: "Parking",                      group: "Local" },
@@ -194,6 +196,7 @@ export function ClaimTypesClient({ claimTypes, expenseAccounts, initialCategoryM
         unitType: form.unitType,
         ratePerUnit: form.ratePerUnit || undefined,
         requiresReceipt: form.requiresReceipt,
+        isActive: form.isActive,
         maxAmountPerClaim: form.maxAmountPerClaim || undefined,
         maxAmountPerYear: form.maxAmountPerYear || undefined,
         hotelCapPerNight: form.hotelCapPerNight || undefined,
@@ -641,12 +644,8 @@ export function ClaimTypesClient({ claimTypes, expenseAccounts, initialCategoryM
                     </p>
                   </div>
                   <Switch
-                    checked={form.unitType === form.unitType && (editTarget?.isActive ?? true)}
-                    onCheckedChange={(v) =>
-                      updateClaimType(editTarget.id, { isActive: v }).then(() =>
-                        startTransition(() => router.refresh()),
-                      )
-                    }
+                    checked={form.isActive}
+                    onCheckedChange={(v) => set("isActive", v)}
                   />
                 </div>
               )}
