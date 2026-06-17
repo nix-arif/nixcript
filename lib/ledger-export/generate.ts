@@ -1,9 +1,13 @@
 import { db } from "@/db";
-import { ledgerAccount, ledgerEntry, ledgerLine, ledgerDocument } from "@/db/schema";
-import { eq, and, asc, inArray, sql } from "drizzle-orm";
+import {
+  ledgerAccount, ledgerEntry, ledgerLine, ledgerDocument, ledgerEntryInvoice,
+  invoice, invoiceItem, invoiceExpense, organizationProfile,
+} from "@/db/schema";
+import { eq, and, asc, inArray, sql, or } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { zipSync } from "fflate";
 import { getLedgerDocBytes } from "@/lib/r2/ledger-docs";
+import { generateInvoicePdf } from "./invoice-pdf";
 
 export type LedgerExportOptions = {
   from: string; // YYYY-MM-DD
@@ -241,6 +245,90 @@ export async function generateLedgerExportZip(
       }),
     );
     for (const r of results) {
+      if (r.status === "fulfilled") zipFiles[r.value.path] = r.value.bytes;
+    }
+  }
+
+  // ── Linked invoices ────────────────────────────────────────────────────────
+
+  // Collect all invoice IDs referenced in this export's entries
+  const junctionRows = entryIds.length
+    ? await db
+        .select({ invoiceId: ledgerEntryInvoice.invoiceId })
+        .from(ledgerEntryInvoice)
+        .where(inArray(ledgerEntryInvoice.entryId, entryIds))
+    : [];
+
+  const invoiceIdsFromJunction = junctionRows.map((r) => r.invoiceId);
+  const invoiceIdsFromRef = entries
+    .filter((e) => e.referenceType === "INVOICE" && e.referenceId)
+    .map((e) => e.referenceId as string);
+
+  const allInvoiceIds = [...new Set([...invoiceIdsFromJunction, ...invoiceIdsFromRef])];
+
+  if (allInvoiceIds.length > 0) {
+    const [invoiceHeaders, invoiceItems, invoiceExpenses, orgProfiles] = await Promise.all([
+      db.select().from(invoice).where(inArray(invoice.id, allInvoiceIds)),
+      db.select().from(invoiceItem).where(inArray(invoiceItem.invoiceId, allInvoiceIds)).orderBy(asc(invoiceItem.rowNo)),
+      db.select().from(invoiceExpense).where(inArray(invoiceExpense.invoiceId, allInvoiceIds)).orderBy(asc(invoiceExpense.createdAt)),
+      db.select({
+        companyName: organizationProfile.companyName,
+        companyAddress: organizationProfile.companyAddress,
+        taxNo: organizationProfile.taxNo,
+      }).from(organizationProfile).where(eq(organizationProfile.organizationId, orgId)).limit(1),
+    ]);
+
+    const orgProfile = orgProfiles[0] ?? { companyName: "", companyAddress: null, taxNo: null };
+    const org = {
+      companyName: orgProfile.companyName ?? "Company",
+      companyAddress: orgProfile.companyAddress,
+      taxNo: orgProfile.taxNo,
+    };
+
+    const itemsByInvoice = new Map<string, typeof invoiceItems>();
+    for (const item of invoiceItems) {
+      const arr = itemsByInvoice.get(item.invoiceId) ?? [];
+      arr.push(item);
+      itemsByInvoice.set(item.invoiceId, arr);
+    }
+
+    const expensesByInvoice = new Map<string, typeof invoiceExpenses>();
+    for (const exp of invoiceExpenses) {
+      const arr = expensesByInvoice.get(exp.invoiceId) ?? [];
+      arr.push(exp);
+      expensesByInvoice.set(exp.invoiceId, arr);
+    }
+
+    const pdfResults = await Promise.allSettled(
+      invoiceHeaders.map(async (inv) => {
+        const snap = inv.customerSnapshot as {
+          title?: string; name?: string; organizationName?: string;
+          organizationAddress?: string; email?: string; contactNo?: string;
+        } | null;
+        const pdfBytes = await generateInvoicePdf(
+          {
+            invoiceNo: inv.invoiceNo,
+            invoiceDate: inv.invoiceDate,
+            dueDate: inv.dueDate,
+            status: inv.status,
+            notes: inv.notes,
+            subtotal: inv.subtotal,
+            overallDiscountAmt: inv.overallDiscountAmt,
+            sstPct: inv.sstPct,
+            sst: inv.sst,
+            grandTotal: inv.grandTotal,
+            customerSnapshot: snap,
+            items: itemsByInvoice.get(inv.id) ?? [],
+            expenses: expensesByInvoice.get(inv.id) ?? [],
+          },
+          org,
+        );
+        const safeName = inv.invoiceNo.replace(/[^a-zA-Z0-9._\-]/g, "_");
+        return { path: `invoices/${safeName}.pdf`, bytes: pdfBytes };
+      }),
+    );
+
+    for (const r of pdfResults) {
       if (r.status === "fulfilled") zipFiles[r.value.path] = r.value.bytes;
     }
   }
