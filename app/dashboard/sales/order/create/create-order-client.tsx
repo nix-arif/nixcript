@@ -232,7 +232,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
+  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>();
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Header
@@ -310,8 +310,8 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
         .then((cust) => {
           if (!cust) return;
           setSelectedCustomer(cust as unknown as Customer);
-          const primary = cust.companies.find((c) => c.isPrimary) ?? cust.companies[0];
-          if (primary) setCustCompanyId(primary.id);
+          const primary = cust.memberships.find((c) => c.isPrimary) ?? cust.memberships[0];
+          if (primary) setCustOrgMemberId(primary.id);
         })
         .catch(() => {
           const snap = cpo.customerSnapshot;
@@ -328,7 +328,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               ? [{ id: "__snap__", customerId: cpo.customerId!, organizationName: snap.organizationName, organizationAddress: snap.organizationAddress ?? null, isPrimary: true, createdAt: new Date() }]
               : [],
           } as unknown as Customer);
-          if (snap.organizationName) setCustCompanyId("__snap__");
+          if (snap.organizationName) setCustOrgMemberId("__snap__");
         });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -430,8 +430,8 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
           .then((cust) => {
             if (!cust) return;
             setSelectedCustomer(cust as unknown as Customer);
-            const primary = cust.companies.find((c) => c.isPrimary) ?? cust.companies[0];
-            if (primary) setCustCompanyId(primary.id);
+            const primary = cust.memberships.find((c) => c.isPrimary) ?? cust.memberships[0];
+            if (primary) setCustOrgMemberId(primary.id);
           })
           .catch(() => {
             const snap = data.customerSnapshot;
@@ -448,7 +448,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                 ? [{ id: "__snap__", customerId: data.customerId!, organizationName: snap.organizationName, organizationAddress: snap.organizationAddress ?? null, isPrimary: true, createdAt: new Date() }]
                 : [],
             } as unknown as Customer);
-            if (snap.organizationName) setCustCompanyId("__snap__");
+            if (snap.organizationName) setCustOrgMemberId("__snap__");
           });
       }
       setCpoSearch("");
@@ -465,7 +465,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
       const next = prev.filter((c) => c.id !== id);
       if (next.length === 0) {
         setSelectedCustomer(null);
-        setCustCompanyId(undefined);
+        setCustOrgMemberId(undefined);
       }
       return next;
     });
@@ -577,9 +577,9 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
         const cust = await getCustomer(qt.customerId);
         if (cust) {
           setSelectedCustomer(cust as unknown as Customer);
-          const primary = cust.companies.find((c) => c.isPrimary);
-          if (primary) setCustCompanyId(primary.id);
-          else if (cust.companies.length === 1) setCustCompanyId(cust.companies[0].id);
+          const primary = cust.memberships.find((c) => c.isPrimary);
+          if (primary) setCustOrgMemberId(primary.id);
+          else if (cust.memberships.length === 1) setCustOrgMemberId(cust.memberships[0].id);
         } else if (qt.customerSnapshot) {
           // Customer belongs to a sibling org (dummy quotation) or was deleted — use snapshot
           const snap = qt.customerSnapshot;
@@ -595,7 +595,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               ? [{ id: "__snap__", customerId: qt.customerId, organizationName: snap.organizationName, organizationAddress: snap.organizationAddress ?? null, isPrimary: true, createdAt: new Date() }]
               : [],
           } as unknown as Customer);
-          if (snap.organizationName) setCustCompanyId("__snap__");
+          if (snap.organizationName) setCustOrgMemberId("__snap__");
         }
       }
     } catch {
@@ -625,7 +625,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
     setSelectedCustomer(c);
     setCustSearch("");
     setCustResults([]);
-    setCustCompanyId(undefined);
+    setCustOrgMemberId(undefined);
   }
 
   // ── Items ───────────────────────────────────────────────────────────────────
@@ -719,7 +719,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
       originalSoId: soType === "proforma" && selectedOriginalSo ? selectedOriginalSo.id : undefined,
       originalSoNo: soType === "proforma" && selectedOriginalSo ? selectedOriginalSo.soNo : undefined,
       customerId: primaryCustomerId,
-      customerCompanyId: selectedCustomer ? custCompanyId : undefined,
+      customerOrgMemberId: selectedCustomer ? custOrgMemberId : undefined,
       customerPoLinks: linkedCpos.length > 0
         ? linkedCpos.map((c) => ({ customerPoId: c.id, customerPoNo: c.customerPoNo }))
         : undefined,
@@ -1208,7 +1208,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                     {[selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")}
                   </span>
                   <button
-                    onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); }}
+                    onClick={() => { setSelectedCustomer(null); setCustOrgMemberId(undefined); }}
                     className="text-muted-foreground hover:text-foreground"
                   >
                     <XIcon className="w-3.5 h-3.5" />
@@ -1225,8 +1225,8 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                         <Label className="text-[11px] text-muted-foreground">Select company</Label>
                         <select
                           className="w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm"
-                          value={custCompanyId ?? ""}
-                          onChange={(e) => setCustCompanyId(e.target.value || undefined)}
+                          value={custOrgMemberId ?? ""}
+                          onChange={(e) => setCustOrgMemberId(e.target.value || undefined)}
                         >
                           <option value="">Primary / default</option>
                           {allCompanies.map((c) => (
@@ -1253,7 +1253,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               {custResults.length > 0 && (
                 <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
                   {custResults.map((c) => {
-                    const co = c.companies[0];
+                    const co = c.memberships[0];
                     return (
                       <button
                         key={c.id}
@@ -1263,9 +1263,9 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                         <div className="text-sm font-medium">
                           <Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} />
                         </div>
-                        {co?.organizationName && (
+                        {co?.orgName && (
                           <div className="text-[11px] text-muted-foreground">
-                            <Highlight text={co.organizationName} query={custSearch} />
+                            <Highlight text={co.orgName} query={custSearch} />
                           </div>
                         )}
                       </button>

@@ -1,10 +1,17 @@
 "use server";
 
 import { db } from "@/db";
-import { customer, customerCompany, user, member } from "@/db/schema";
+import {
+  customer,
+  customerCompany,
+  customerOrganization,
+  customerOrganizationMember,
+  user,
+  member,
+} from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, ilike, or, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, ilike, or, desc, asc, inArray, sql } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
@@ -23,6 +30,7 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
+// ── Public types ──────────────────────────────────────────────────────────────
 
 export type CustomerCompany = {
   id: string;
@@ -32,6 +40,48 @@ export type CustomerCompany = {
   department: string | null;
   isPrimary: boolean;
 };
+
+export type CustomerOrgMembership = {
+  id: string;
+  customerOrganizationId: string;
+  orgName: string;
+  orgAddress: string | null;
+  position: string | null;
+  department: string | null;
+  isPrimary: boolean;
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+async function getMembershipsForCustomers(
+  customerIds: string[],
+): Promise<CustomerOrgMembership[]> {
+  if (customerIds.length === 0) return [];
+
+  const rows = await db
+    .select({
+      id: customerOrganizationMember.id,
+      customerId: customerOrganizationMember.customerId,
+      customerOrganizationId: customerOrganizationMember.customerOrganizationId,
+      orgName: customerOrganization.name,
+      orgAddress: customerOrganization.address,
+      position: customerOrganizationMember.position,
+      department: customerOrganizationMember.department,
+      isPrimary: customerOrganizationMember.isPrimary,
+      createdAt: customerOrganizationMember.createdAt,
+    })
+    .from(customerOrganizationMember)
+    .innerJoin(
+      customerOrganization,
+      eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+    )
+    .where(inArray(customerOrganizationMember.customerId, customerIds))
+    .orderBy(asc(customerOrganizationMember.createdAt));
+
+  return rows as (CustomerOrgMembership & { customerId: string })[];
+}
+
+// ── Queries ───────────────────────────────────────────────────────────────────
 
 export async function getCustomers(search?: string) {
   const { orgId } = await requireAccess("customer:read");
@@ -58,12 +108,16 @@ export async function getCustomers(search?: string) {
   if (search && search.trim().length > 0) {
     const q = `%${search.trim()}%`;
 
-    // Find customers that have a matching company affiliation
-    const matchingCompanies = await db
-      .select({ customerId: customerCompany.customerId })
-      .from(customerCompany)
-      .where(ilike(customerCompany.organizationName, q));
-    const matchingIds = [...new Set(matchingCompanies.map((c) => c.customerId))];
+    // Find customers that have a matching org membership
+    const matchingMemberships = await db
+      .select({ customerId: customerOrganizationMember.customerId })
+      .from(customerOrganizationMember)
+      .innerJoin(
+        customerOrganization,
+        eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+      )
+      .where(ilike(customerOrganization.name, q));
+    const matchingIds = [...new Set(matchingMemberships.map((c) => c.customerId))];
 
     const orClauses: ReturnType<typeof ilike>[] = [
       ilike(customer.name, q),
@@ -93,20 +147,22 @@ export async function getCustomers(search?: string) {
 
   if (rows.length === 0) return [];
 
-  const companies = await db
-    .select()
-    .from(customerCompany)
-    .where(
-      inArray(
-        customerCompany.customerId,
-        rows.map((r) => r.id),
-      ),
-    )
-    .orderBy(asc(customerCompany.createdAt));
+  const allMemberships = await getMembershipsForCustomers(rows.map((r) => r.id)) as (CustomerOrgMembership & { customerId: string })[];
 
   return rows.map((r) => ({
     ...r,
-    companies: companies.filter((c) => c.customerId === r.id) as CustomerCompany[],
+    memberships: allMemberships.filter((m) => m.customerId === r.id) as CustomerOrgMembership[],
+    // legacy compat — keep companies pointing at memberships reshaped
+    companies: allMemberships
+      .filter((m) => m.customerId === r.id)
+      .map((m) => ({
+        id: m.id,
+        organizationName: m.orgName,
+        organizationAddress: m.orgAddress,
+        position: m.position,
+        department: m.department,
+        isPrimary: m.isPrimary,
+      })) as CustomerCompany[],
   }));
 }
 
@@ -121,13 +177,20 @@ export async function getCustomer(id: string) {
 
   if (!row) return null;
 
-  const companies = await db
-    .select()
-    .from(customerCompany)
-    .where(eq(customerCompany.customerId, id))
-    .orderBy(asc(customerCompany.createdAt));
+  const memberships = await getMembershipsForCustomers([id]) as (CustomerOrgMembership & { customerId: string })[];
 
-  return { ...row, companies: companies as CustomerCompany[] };
+  return {
+    ...row,
+    memberships: memberships as CustomerOrgMembership[],
+    companies: memberships.map((m) => ({
+      id: m.id,
+      organizationName: m.orgName,
+      organizationAddress: m.orgAddress,
+      position: m.position,
+      department: m.department,
+      isPrimary: m.isPrimary,
+    })) as CustomerCompany[],
+  };
 }
 
 export async function createCustomer(data: {
@@ -136,7 +199,8 @@ export async function createCustomer(data: {
   contactNo?: string;
   email?: string;
   companies?: {
-    organizationName?: string;
+    orgName?: string;
+    organizationName?: string; // legacy alias
     organizationAddress?: string;
     position?: string;
     department?: string;
@@ -161,19 +225,49 @@ export async function createCustomer(data: {
     .returning();
 
   if (data.companies && data.companies.length > 0) {
-    // If none marked as primary, mark the first one
     const hasExplicitPrimary = data.companies.some((c) => c.isPrimary);
-    await db.insert(customerCompany).values(
-      data.companies.map((c, i) => ({
+    for (let i = 0; i < data.companies.length; i++) {
+      const c = data.companies[i];
+      const name = (c.orgName ?? c.organizationName ?? "").trim();
+      if (!name) continue;
+
+      // Upsert: find by name+orgId or insert
+      const [existing] = await db
+        .select({ id: customerOrganization.id })
+        .from(customerOrganization)
+        .where(
+          and(
+            eq(customerOrganization.organizationId, orgId),
+            sql`LOWER(TRIM(${customerOrganization.name})) = LOWER(TRIM(${name}))`,
+          ),
+        )
+        .limit(1);
+
+      let customerOrgId: string;
+      if (existing) {
+        customerOrgId = existing.id;
+      } else {
+        const [newOrg] = await db
+          .insert(customerOrganization)
+          .values({
+            id: nanoid(),
+            organizationId: orgId,
+            name,
+            address: c.organizationAddress ?? null,
+          })
+          .returning({ id: customerOrganization.id });
+        customerOrgId = newOrg.id;
+      }
+
+      await db.insert(customerOrganizationMember).values({
         id: nanoid(),
         customerId,
-        organizationName: c.organizationName ?? null,
-        organizationAddress: c.organizationAddress ?? null,
+        customerOrganizationId: customerOrgId,
         position: c.position ?? null,
         department: c.department ?? null,
         isPrimary: hasExplicitPrimary ? (c.isPrimary ?? false) : i === 0,
-      })),
-    );
+      });
+    }
   }
 
   return row;
@@ -204,7 +298,275 @@ export async function deleteCustomer(id: string) {
     .where(and(eq(customer.id, id), eq(customer.organizationId, orgId)));
 }
 
-// ── Company affiliation management ────────────────────────────────────────
+// ── Org entity management ─────────────────────────────────────────────────────
+
+export async function getCustomerOrganizations() {
+  const { orgId } = await requireAccess("customer:read");
+
+  const orgs = await db
+    .select({
+      id: customerOrganization.id,
+      name: customerOrganization.name,
+      address: customerOrganization.address,
+      phone: customerOrganization.phone,
+      email: customerOrganization.email,
+      createdAt: customerOrganization.createdAt,
+    })
+    .from(customerOrganization)
+    .where(eq(customerOrganization.organizationId, orgId))
+    .orderBy(asc(customerOrganization.name));
+
+  if (orgs.length === 0) return [];
+
+  const counts = await db
+    .select({
+      customerOrganizationId: customerOrganizationMember.customerOrganizationId,
+      memberCount: sql<number>`cast(count(*) as int)`,
+    })
+    .from(customerOrganizationMember)
+    .where(inArray(customerOrganizationMember.customerOrganizationId, orgs.map((o) => o.id)))
+    .groupBy(customerOrganizationMember.customerOrganizationId);
+
+  const countMap = Object.fromEntries(counts.map((c) => [c.customerOrganizationId, c.memberCount]));
+  return orgs.map((o) => ({ ...o, memberCount: countMap[o.id] ?? 0 }));
+}
+
+export async function getCustomerOrganizationWithMembers(id: string) {
+  const { orgId } = await requireAccess("customer:read");
+
+  const [org] = await db
+    .select()
+    .from(customerOrganization)
+    .where(and(eq(customerOrganization.id, id), eq(customerOrganization.organizationId, orgId)))
+    .limit(1);
+  if (!org) return null;
+
+  const members = await db
+    .select({
+      membershipId: customerOrganizationMember.id,
+      customerId: customerOrganizationMember.customerId,
+      position: customerOrganizationMember.position,
+      department: customerOrganizationMember.department,
+      isPrimary: customerOrganizationMember.isPrimary,
+      customerTitle: customer.title,
+      customerName: customer.name,
+      customerEmail: customer.email,
+      customerContactNo: customer.contactNo,
+    })
+    .from(customerOrganizationMember)
+    .innerJoin(customer, eq(customer.id, customerOrganizationMember.customerId))
+    .where(eq(customerOrganizationMember.customerOrganizationId, id))
+    .orderBy(asc(customer.name));
+
+  return { ...org, members };
+}
+
+export async function searchCustomerOrganizations(
+  query: string,
+): Promise<{ id: string; name: string; address: string | null }[]> {
+  const { orgId } = await requireAccess("customer:read");
+  if (!query.trim()) {
+    // Return recent orgs when no query
+    return db
+      .select({ id: customerOrganization.id, name: customerOrganization.name, address: customerOrganization.address })
+      .from(customerOrganization)
+      .where(eq(customerOrganization.organizationId, orgId))
+      .orderBy(desc(customerOrganization.createdAt))
+      .limit(20);
+  }
+  return db
+    .select({ id: customerOrganization.id, name: customerOrganization.name, address: customerOrganization.address })
+    .from(customerOrganization)
+    .where(
+      and(
+        eq(customerOrganization.organizationId, orgId),
+        ilike(customerOrganization.name, `%${query.trim()}%`),
+      ),
+    )
+    .orderBy(asc(customerOrganization.name))
+    .limit(20);
+}
+
+export async function createCustomerOrganization(data: {
+  name: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+}): Promise<{ row: typeof customerOrganization.$inferSelect; existed: boolean }> {
+  const { orgId } = await requireAccess("customer:update");
+
+  const trimmedName = data.name.trim();
+
+  // Case-insensitive duplicate check — return existing rather than erroring
+  const [existing] = await db
+    .select()
+    .from(customerOrganization)
+    .where(
+      and(
+        eq(customerOrganization.organizationId, orgId),
+        ilike(customerOrganization.name, trimmedName),
+      ),
+    )
+    .limit(1);
+
+  if (existing) return { row: existing, existed: true };
+
+  const [row] = await db
+    .insert(customerOrganization)
+    .values({
+      id: nanoid(),
+      organizationId: orgId,
+      name: trimmedName,
+      address: data.address ?? null,
+      phone: data.phone ?? null,
+      email: data.email ?? null,
+    })
+    .returning();
+
+  return { row, existed: false };
+}
+
+export async function updateCustomerOrganization(
+  id: string,
+  data: { name?: string; address?: string; phone?: string; email?: string },
+) {
+  const { orgId } = await requireAccess("customer:update");
+
+  const [existing] = await db
+    .select({ id: customerOrganization.id })
+    .from(customerOrganization)
+    .where(and(eq(customerOrganization.id, id), eq(customerOrganization.organizationId, orgId)))
+    .limit(1);
+  if (!existing) throw new Error("Organization not found");
+
+  await db
+    .update(customerOrganization)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(customerOrganization.id, id));
+}
+
+export async function deleteCustomerOrganization(id: string) {
+  const { orgId } = await requireAccess("customer:update");
+
+  const [existing] = await db
+    .select({ id: customerOrganization.id })
+    .from(customerOrganization)
+    .where(and(eq(customerOrganization.id, id), eq(customerOrganization.organizationId, orgId)))
+    .limit(1);
+  if (!existing) throw new Error("Organization not found");
+
+  await db.delete(customerOrganization).where(eq(customerOrganization.id, id));
+}
+
+// ── Membership management ─────────────────────────────────────────────────────
+
+export async function addCustomerOrgMembership(
+  customerId: string,
+  customerOrganizationId: string,
+  data: { position?: string; department?: string; isPrimary?: boolean },
+) {
+  const { orgId } = await requireAccess("customer:update");
+
+  // Verify customer belongs to org
+  const [exists] = await db
+    .select({ id: customer.id })
+    .from(customer)
+    .where(and(eq(customer.id, customerId), eq(customer.organizationId, orgId)))
+    .limit(1);
+  if (!exists) throw new Error("Customer not found");
+
+  // Verify org belongs to same tenant
+  const [orgExists] = await db
+    .select({ id: customerOrganization.id })
+    .from(customerOrganization)
+    .where(
+      and(
+        eq(customerOrganization.id, customerOrganizationId),
+        eq(customerOrganization.organizationId, orgId),
+      ),
+    )
+    .limit(1);
+  if (!orgExists) throw new Error("Organization not found");
+
+  if (data.isPrimary) {
+    await db
+      .update(customerOrganizationMember)
+      .set({ isPrimary: false })
+      .where(eq(customerOrganizationMember.customerId, customerId));
+  }
+
+  const [row] = await db
+    .insert(customerOrganizationMember)
+    .values({
+      id: nanoid(),
+      customerId,
+      customerOrganizationId,
+      position: data.position ?? null,
+      department: data.department ?? null,
+      isPrimary: data.isPrimary ?? false,
+    })
+    .returning();
+
+  return row;
+}
+
+export async function updateCustomerOrgMembership(
+  membershipId: string,
+  data: { position?: string; department?: string; isPrimary?: boolean },
+) {
+  const { orgId } = await requireAccess("customer:update");
+
+  // Verify ownership
+  const [mem] = await db
+    .select({ customerId: customerOrganizationMember.customerId })
+    .from(customerOrganizationMember)
+    .where(eq(customerOrganizationMember.id, membershipId))
+    .limit(1);
+  if (!mem) throw new Error("Membership not found");
+
+  const [owns] = await db
+    .select({ id: customer.id })
+    .from(customer)
+    .where(and(eq(customer.id, mem.customerId), eq(customer.organizationId, orgId)))
+    .limit(1);
+  if (!owns) throw new Error("You don't have permission to do this");
+
+  if (data.isPrimary) {
+    await db
+      .update(customerOrganizationMember)
+      .set({ isPrimary: false })
+      .where(eq(customerOrganizationMember.customerId, mem.customerId));
+  }
+
+  await db
+    .update(customerOrganizationMember)
+    .set(data)
+    .where(eq(customerOrganizationMember.id, membershipId));
+}
+
+export async function deleteCustomerOrgMembership(membershipId: string) {
+  const { orgId } = await requireAccess("customer:update");
+
+  const [mem] = await db
+    .select({ customerId: customerOrganizationMember.customerId })
+    .from(customerOrganizationMember)
+    .where(eq(customerOrganizationMember.id, membershipId))
+    .limit(1);
+  if (!mem) throw new Error("Membership not found");
+
+  const [owns] = await db
+    .select({ id: customer.id })
+    .from(customer)
+    .where(and(eq(customer.id, mem.customerId), eq(customer.organizationId, orgId)))
+    .limit(1);
+  if (!owns) throw new Error("You don't have permission to do this");
+
+  await db
+    .delete(customerOrganizationMember)
+    .where(eq(customerOrganizationMember.id, membershipId));
+}
+
+// ── Legacy company management (backward-compat — kept for migration) ──────────
 
 export async function addCustomerCompany(
   customerId: string,
@@ -218,7 +580,6 @@ export async function addCustomerCompany(
 ) {
   const { orgId } = await requireAccess("customer:update");
 
-  // Verify this customer belongs to the org
   const [exists] = await db
     .select({ id: customer.id })
     .from(customer)
@@ -227,7 +588,6 @@ export async function addCustomerCompany(
   if (!exists) throw new Error("Customer not found");
 
   if (data.isPrimary) {
-    // Clear any existing primary
     await db
       .update(customerCompany)
       .set({ isPrimary: false })
@@ -262,7 +622,6 @@ export async function updateCustomerCompany(
 ) {
   const { orgId } = await requireAccess("customer:update");
 
-  // Verify ownership via the parent customer
   const [comp] = await db
     .select({ customerId: customerCompany.customerId })
     .from(customerCompany)
@@ -310,30 +669,20 @@ export async function deleteCustomerCompany(companyId: string) {
   await db.delete(customerCompany).where(eq(customerCompany.id, companyId));
 }
 
+// ── Lookup helpers ────────────────────────────────────────────────────────────
+
 export async function lookupCustomersByName(names: string[]) {
   const { orgId } = await requireAccess("customer:read");
   if (!names.length) return [];
 
   const rows = await db
-    .select({
-      id: customer.id,
-      name: customer.name,
-    })
+    .select({ id: customer.id, name: customer.name })
     .from(customer)
     .where(eq(customer.organizationId, orgId));
 
   if (rows.length === 0) return names.map((name) => ({ name, found: false, customer: null }));
 
-  const companies = await db
-    .select()
-    .from(customerCompany)
-    .where(
-      inArray(
-        customerCompany.customerId,
-        rows.map((r) => r.id),
-      ),
-    )
-    .orderBy(asc(customerCompany.createdAt));
+  const memberships = await getMembershipsForCustomers(rows.map((r) => r.id)) as (CustomerOrgMembership & { customerId: string })[];
 
   return names.map((name) => {
     const cust = rows.find(
@@ -341,8 +690,8 @@ export async function lookupCustomersByName(names: string[]) {
     );
     if (!cust) return { name, found: false, customer: null };
 
-    const custCompanies = companies.filter((c) => c.customerId === cust.id);
-    const primary = custCompanies.find((c) => c.isPrimary) ?? custCompanies[0] ?? null;
+    const custMemberships = memberships.filter((m) => m.customerId === cust.id);
+    const primary = custMemberships.find((m) => m.isPrimary) ?? custMemberships[0] ?? null;
 
     return {
       name,
@@ -351,11 +700,95 @@ export async function lookupCustomersByName(names: string[]) {
         id: cust.id,
         name: cust.name,
         department: primary?.department ?? null,
-        organizationName: primary?.organizationName ?? null,
-        organizationAddress: primary?.organizationAddress ?? null,
+        organizationName: primary?.orgName ?? null,
+        organizationAddress: primary?.orgAddress ?? null,
         contactNo: null as string | null,
         email: null as string | null,
       },
     };
   });
+}
+
+// ── Snapshot builder ──────────────────────────────────────────────────────────
+// Called by all document server functions to produce a consistent customerSnapshot.
+// customerOrgMemberId: if provided, use that specific membership's org;
+//   otherwise fall back to the customer's primary / first membership.
+
+export type CustomerSnapshot = {
+  title?: string;
+  name: string;
+  email?: string;
+  contactNo?: string;
+  organizationName?: string;
+  organizationAddress?: string;
+  position?: string;
+  department?: string;
+};
+
+export async function buildCustomerSnapshot(
+  customerId: string,
+  customerOrgMemberId?: string | null,
+): Promise<CustomerSnapshot | null> {
+  const [cust] = await db
+    .select()
+    .from(customer)
+    .where(eq(customer.id, customerId))
+    .limit(1);
+  if (!cust) return null;
+
+  let membership: { orgName: string; orgAddress: string | null; position: string | null; department: string | null } | null = null;
+
+  if (customerOrgMemberId) {
+    const [row] = await db
+      .select({
+        orgName: customerOrganization.name,
+        orgAddress: customerOrganization.address,
+        position: customerOrganizationMember.position,
+        department: customerOrganizationMember.department,
+      })
+      .from(customerOrganizationMember)
+      .innerJoin(
+        customerOrganization,
+        eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+      )
+      .where(
+        and(
+          eq(customerOrganizationMember.id, customerOrgMemberId),
+          eq(customerOrganizationMember.customerId, customerId),
+        ),
+      )
+      .limit(1);
+    membership = row ?? null;
+  }
+
+  if (!membership) {
+    // Fall back to primary membership, then first
+    const [row] = await db
+      .select({
+        orgName: customerOrganization.name,
+        orgAddress: customerOrganization.address,
+        position: customerOrganizationMember.position,
+        department: customerOrganizationMember.department,
+      })
+      .from(customerOrganizationMember)
+      .innerJoin(
+        customerOrganization,
+        eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+      )
+      .where(eq(customerOrganizationMember.customerId, customerId))
+      .orderBy(desc(customerOrganizationMember.isPrimary), asc(customerOrganizationMember.createdAt))
+      .limit(1);
+    membership = row ?? null;
+  }
+
+  return {
+    title: cust.title ?? undefined,
+    name: cust.name,
+    email: cust.email ?? undefined,
+    contactNo: cust.contactNo ?? undefined,
+    organizationName: membership?.orgName ?? undefined,
+    organizationAddress: membership?.orgAddress ?? undefined,
+    position: membership?.position ?? undefined,
+    department: membership?.department ?? undefined,
+  };
 }

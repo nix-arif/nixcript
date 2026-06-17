@@ -6,12 +6,12 @@ import {
   deliveryOrderItem,
   deliveryOrderCounter,
   customer,
-  customerCompany,
   user,
   salesOrder,
   salesOrderItem,
   customerPurchaseOrder,
 } from "@/db/schema";
+import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, isNotNull } from "drizzle-orm";
@@ -77,7 +77,7 @@ export interface DeliveryOrderItemInput {
 
 export interface CreateDeliveryOrderInput {
   customerId?: string;
-  customerCompanyId?: string;
+  customerOrgMemberId?: string;
   salesOrderId?: string;
   salesOrderNo?: string;
   customerPoId?: string;
@@ -147,34 +147,9 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
 export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Promise<DeliveryOrderRow> {
   const { orgId, userId } = await requireAccess("delivery-order:create");
 
-  let customerSnapshot: DeliveryOrderRow["customerSnapshot"] = null;
-  if (input.customerId) {
-    const [cust] = await db.select().from(customer).where(eq(customer.id, input.customerId));
-    if (cust) {
-      let company: typeof customerCompany.$inferSelect | undefined;
-      if (input.customerCompanyId) {
-        const [c] = await db.select().from(customerCompany).where(eq(customerCompany.id, input.customerCompanyId));
-        company = c;
-      }
-      if (!company) {
-        const companies = await db
-          .select()
-          .from(customerCompany)
-          .where(eq(customerCompany.customerId, cust.id))
-          .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
-          .limit(1);
-        company = companies[0];
-      }
-      customerSnapshot = {
-        title: cust.title ?? undefined,
-        name: cust.name,
-        email: cust.email ?? undefined,
-        contactNo: cust.contactNo ?? undefined,
-        organizationName: company?.organizationName ?? undefined,
-        organizationAddress: company?.organizationAddress ?? undefined,
-      };
-    }
-  }
+  const customerSnapshot: DeliveryOrderRow["customerSnapshot"] = input.customerId
+    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    : null;
 
   const doNo = await generateDoNo(orgId);
   const [row] = await db

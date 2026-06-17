@@ -160,7 +160,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(initialCustomer);
-  const [custCompanyId, setCustCompanyId] = useState<string | undefined>(undefined);
+  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>(undefined);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Header ──────────────────────────────────────────────────────────────────
@@ -274,7 +274,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
     setSelectedCustomer(c);
     setCustSearch("");
     setCustResults([]);
-    setCustCompanyId(undefined);
+    setCustOrgMemberId(undefined);
   }
 
   // ── Items ───────────────────────────────────────────────────────────────────
@@ -384,7 +384,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
       await updateSalesOrder({
         id: order.id,
         customerId: primaryCustomerId,
-        customerCompanyId: selectedCustomer ? custCompanyId : undefined,
+        customerOrgMemberId: selectedCustomer ? custOrgMemberId : undefined,
         customerPoLinks: linkedCpos.length > 0
           ? linkedCpos.map((c) => ({ customerPoId: c.id, customerPoNo: c.customerPoNo }))
           : undefined,
@@ -572,7 +572,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
                     {[selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")}
                   </span>
                   <button
-                    onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); }}
+                    onClick={() => { setSelectedCustomer(null); setCustOrgMemberId(undefined); }}
                     className="text-muted-foreground hover:text-foreground"
                   >
                     <XIcon className="w-3.5 h-3.5" />
@@ -589,8 +589,8 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
                         <Label className="text-[11px] text-muted-foreground">Select company</Label>
                         <select
                           className="w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm"
-                          value={custCompanyId ?? ""}
-                          onChange={(e) => setCustCompanyId(e.target.value || undefined)}
+                          value={custOrgMemberId ?? ""}
+                          onChange={(e) => setCustOrgMemberId(e.target.value || undefined)}
                         >
                           <option value="">Primary / default</option>
                           {allCompanies.map((c) => (
@@ -617,7 +617,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
               {custResults.length > 0 && (
                 <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
                   {custResults.map((c) => {
-                    const co = c.companies[0];
+                    const co = c.memberships[0];
                     return (
                       <button
                         key={c.id}
@@ -627,9 +627,9 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
                         <div className="text-sm font-medium">
                           <Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} />
                         </div>
-                        {co?.organizationName && (
+                        {co?.orgName && (
                           <div className="text-[11px] text-muted-foreground">
-                            <Highlight text={co.organizationName} query={custSearch} />
+                            <Highlight text={co.orgName} query={custSearch} />
                           </div>
                         )}
                       </button>

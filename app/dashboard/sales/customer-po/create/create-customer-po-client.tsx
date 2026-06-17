@@ -25,7 +25,7 @@ type LinkedQuotation = {
   customerId?: string | null;
   customerName?: string | null;
   customerOrg?: string | null;
-  customerCompanyId?: string | null;
+  customerOrgMemberId?: string | null;
 };
 
 type EditableItem = CpoItemInput & {
@@ -123,16 +123,16 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
 
       let customerName: string | null = null;
       let customerOrg:  string | null = null;
-      let customerCompanyId: string | null = null;
+      let customerOrgMemberId: string | null = null;
 
       if (qt.customerId) {
         try {
           const cust = await getCustomer(qt.customerId);
           if (cust) {
             customerName = [cust.title, cust.name].filter(Boolean).join(" ");
-            const primary = cust.companies.find((c) => c.isPrimary) ?? cust.companies[0];
-            customerOrg  = primary?.organizationName ?? null;
-            customerCompanyId = primary?.id ?? null;
+            const primary = cust.memberships.find((c) => c.isPrimary) ?? cust.memberships[0];
+            customerOrg  = primary?.orgName ?? null;
+            customerOrgMemberId = primary?.id ?? null;
           }
         } catch {
           const snap = qt.customerSnapshot as any;
@@ -160,7 +160,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
         customerId: qt.customerId,
         customerName,
         customerOrg,
-        customerCompanyId,
+        customerOrgMemberId,
       };
 
       setLinkedQuotations((prev) => [...prev, linked]);
@@ -264,7 +264,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
       await createCustomerPo({
         customerPoNo:    customerPoNo.trim(),
         customerId:      primary.customerId ?? undefined,
-        customerCompanyId: primary.customerCompanyId ?? undefined,
+        customerOrgMemberId: primary.customerOrgMemberId ?? undefined,
         quotationLinks:  linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo })),
         items:           items.length > 0
           ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, ...rest }) => rest)

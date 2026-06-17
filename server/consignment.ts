@@ -8,12 +8,12 @@ import {
   consignmentUsage,
   salesOrder,
   customer,
-  customerCompany,
   stockMovement,
   product,
   stockLevel,
   user,
 } from "@/db/schema";
+import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -247,26 +247,9 @@ export async function createConsignment(input: CreateConsignmentInput): Promise<
   const { orgId, userId } = await requireAccess("sales-order:update");
 
   // Build customer snapshot
-  let customerSnapshot: ConsignmentRow["customerSnapshot"] = null;
-  if (input.customerId) {
-    const [cust] = await db.select().from(customer).where(eq(customer.id, input.customerId));
-    if (cust) {
-      const [co] = await db
-        .select()
-        .from(customerCompany)
-        .where(eq(customerCompany.customerId, cust.id))
-        .orderBy(desc(customerCompany.isPrimary))
-        .limit(1);
-      customerSnapshot = {
-        title: cust.title ?? undefined,
-        name: cust.name,
-        email: cust.email ?? undefined,
-        contactNo: cust.contactNo ?? undefined,
-        organizationName: co?.organizationName ?? undefined,
-        organizationAddress: co?.organizationAddress ?? undefined,
-      };
-    }
-  }
+  const customerSnapshot: ConsignmentRow["customerSnapshot"] = input.customerId
+    ? await buildCustomerSnapshot(input.customerId)
+    : null;
 
   const consignmentNo = await generateConsignmentNo(orgId);
 

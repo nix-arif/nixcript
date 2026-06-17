@@ -7,7 +7,8 @@ import {
   invoiceExpense,
   invoiceCounter,
   customer,
-  customerCompany,
+  customerOrganization,
+  customerOrganizationMember,
   customerPurchaseOrder,
   purchaseOrder,
   supplier,
@@ -16,6 +17,7 @@ import {
   ledgerLine,
   ledgerEntryInvoice,
 } from "@/db/schema";
+import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, or } from "drizzle-orm";
@@ -116,25 +118,30 @@ type LiveCustomerData = {
 
 async function getLiveCustomerMap(customerIds: string[]): Promise<Map<string, LiveCustomerData>> {
   if (customerIds.length === 0) return new Map();
-  const [customers, companies] = await Promise.all([
+  const [customers, memberships] = await Promise.all([
     db.select({ id: customer.id, title: customer.title, name: customer.name, email: customer.email, contactNo: customer.contactNo })
       .from(customer)
       .where(inArray(customer.id, customerIds)),
-    db.select({ customerId: customerCompany.customerId, organizationName: customerCompany.organizationName, organizationAddress: customerCompany.organizationAddress })
-      .from(customerCompany)
-      .where(and(inArray(customerCompany.customerId, customerIds), eq(customerCompany.isPrimary, true))),
+    db.select({
+        customerId: customerOrganizationMember.customerId,
+        organizationName: customerOrganization.name,
+        organizationAddress: customerOrganization.address,
+      })
+      .from(customerOrganizationMember)
+      .innerJoin(customerOrganization, eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId))
+      .where(and(inArray(customerOrganizationMember.customerId, customerIds), eq(customerOrganizationMember.isPrimary, true))),
   ]);
-  const companyMap = Object.fromEntries(companies.map((c) => [c.customerId, c]));
+  const membershipMap = Object.fromEntries(memberships.map((m) => [m.customerId, m]));
   const result = new Map<string, LiveCustomerData>();
   for (const c of customers) {
-    const co = companyMap[c.id];
+    const mem = membershipMap[c.id];
     result.set(c.id, {
       title: c.title ?? null,
       name: c.name,
       email: c.email ?? null,
       contactNo: c.contactNo ?? null,
-      organizationName: co?.organizationName ?? null,
-      organizationAddress: co?.organizationAddress ?? null,
+      organizationName: mem?.organizationName ?? null,
+      organizationAddress: mem?.organizationAddress ?? null,
     });
   }
   return result;
@@ -185,7 +192,7 @@ export interface CreateInvoiceInput {
 
   // Customer
   customerId?: string;
-  customerCompanyId?: string;
+  customerOrgMemberId?: string;
   customerPoId?: string;
   customerPoNo?: string;
 
@@ -448,34 +455,9 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
   const { orgId, userId } = await requireAccess("invoice:create");
 
   // Customer snapshot
-  let customerSnapshot: InvoiceRow["customerSnapshot"] = null;
-  if (input.customerId) {
-    const [cust] = await db.select().from(customer).where(eq(customer.id, input.customerId));
-    if (cust) {
-      let company: typeof customerCompany.$inferSelect | undefined;
-      if (input.customerCompanyId) {
-        const [c] = await db.select().from(customerCompany).where(eq(customerCompany.id, input.customerCompanyId));
-        company = c;
-      }
-      if (!company) {
-        const companies = await db
-          .select()
-          .from(customerCompany)
-          .where(eq(customerCompany.customerId, cust.id))
-          .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
-          .limit(1);
-        company = companies[0];
-      }
-      customerSnapshot = {
-        title: cust.title ?? undefined,
-        name: cust.name,
-        email: cust.email ?? undefined,
-        contactNo: cust.contactNo ?? undefined,
-        organizationName: company?.organizationName ?? undefined,
-        organizationAddress: company?.organizationAddress ?? undefined,
-      };
-    }
-  }
+  const customerSnapshot: InvoiceRow["customerSnapshot"] = input.customerId
+    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    : null;
 
   // Supplier snapshot
   let supplierSnapshot: InvoiceRow["supplierSnapshot"] = null;

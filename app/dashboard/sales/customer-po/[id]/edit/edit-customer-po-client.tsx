@@ -42,7 +42,7 @@ export function EditCustomerPoClient({ cpo, members }: { cpo: CustomerPo; member
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
+  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>();
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleCustSearch = useCallback((val: string) => {
@@ -98,7 +98,7 @@ export function EditCustomerPoClient({ cpo, members }: { cpo: CustomerPo; member
         id: cpo.id,
         customerPoNo: customerPoNo.trim(),
         customerId: selectedCustomer?.id ?? cpo.customerId ?? undefined,
-        customerCompanyId: custCompanyId,
+        customerOrgMemberId: custOrgMemberId,
         quotationNo: quotationNo || undefined,
         salesOrderNo: salesOrderNo || undefined,
         amount: amount || "0",
@@ -231,8 +231,8 @@ export function EditCustomerPoClient({ cpo, members }: { cpo: CustomerPo; member
                 {allCompanies.length > 1 && (
                   <select
                     className="mt-2 w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm"
-                    value={custCompanyId ?? ""}
-                    onChange={(e) => setCustCompanyId(e.target.value || undefined)}
+                    value={custOrgMemberId ?? ""}
+                    onChange={(e) => setCustOrgMemberId(e.target.value || undefined)}
                   >
                     <option value="">Primary / default</option>
                     {allCompanies.map((c) => (
@@ -246,7 +246,7 @@ export function EditCustomerPoClient({ cpo, members }: { cpo: CustomerPo; member
                   </p>
                 )}
               </div>
-              <button onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); }} className="text-muted-foreground hover:text-foreground">
+              <button onClick={() => { setSelectedCustomer(null); setCustOrgMemberId(undefined); }} className="text-muted-foreground hover:text-foreground">
                 <XIcon className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -269,8 +269,8 @@ export function EditCustomerPoClient({ cpo, members }: { cpo: CustomerPo; member
                       onClick={() => { setSelectedCustomer(c); setCustSearch(""); setCustResults([]); }}
                     >
                       <div className="text-sm font-medium"><Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} /></div>
-                      {c.companies[0]?.organizationName && (
-                        <div className="text-[11px] text-muted-foreground"><Highlight text={c.companies[0].organizationName} query={custSearch} /></div>
+                      {c.memberships[0]?.orgName && (
+                        <div className="text-[11px] text-muted-foreground"><Highlight text={c.memberships[0].orgName} query={custSearch} /></div>
                       )}
                     </button>
                   ))}

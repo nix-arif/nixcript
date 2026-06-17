@@ -120,17 +120,17 @@ export function EditQuotationClient({ data, customers, members }: Props) {
   const [title, setTitle] = useState(q.title ?? "Loose Items");
   const [customerId, setCustomerId] = useState(q.customerId ?? "");
   // Restore the previously selected company by matching the snapshot's organizationName
-  const [customerCompanyId, setCustomerCompanyId] = useState(() => {
+  const [customerOrgMemberId, setCustomerOrgMemberId] = useState(() => {
     if (!q.customerId) return "";
     const cust = customers.find((c) => c.id === q.customerId);
     if (!cust) return "";
     const snapshotOrg = (q.customerSnapshot as { organizationName?: string } | null)
       ?.organizationName;
     if (snapshotOrg) {
-      const match = cust.companies.find((co) => co.organizationName === snapshotOrg);
+      const match = cust.memberships.find((co) => co.orgName === snapshotOrg);
       if (match) return match.id;
     }
-    return cust.companies.find((co) => co.isPrimary)?.id ?? cust.companies[0]?.id ?? "";
+    return cust.memberships.find((co) => co.isPrimary)?.id ?? cust.memberships[0]?.id ?? "";
   });
   const [salesPersonId, setSalesPersonId] = useState(q.salesPersonId ?? "");
   const [salesPersonName, setSalesPersonName] = useState(q.salesPersonName ?? "");
@@ -286,7 +286,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
         title,
         sets,
         customerId: customerId || null,
-        customerCompanyId: customerCompanyId || null,
+        customerOrgMemberId: customerOrgMemberId || null,
         salesPersonId: salesPersonId || null,
         salesPersonName: salesPersonName || null,
         validDays: Number(validDays) || 30,
@@ -598,11 +598,11 @@ export function EditQuotationClient({ data, customers, members }: Props) {
                     if (id) {
                       const cust = customers.find((c) => c.id === id);
                       const primary =
-                        cust?.companies.find((co) => co.isPrimary) ??
-                        cust?.companies[0];
-                      setCustomerCompanyId(primary?.id ?? "");
+                        cust?.memberships.find((co) => co.isPrimary) ??
+                        cust?.memberships[0];
+                      setCustomerOrgMemberId(primary?.id ?? "");
                     } else {
-                      setCustomerCompanyId("");
+                      setCustomerOrgMemberId("");
                     }
                   }}
                 >
@@ -623,24 +623,24 @@ export function EditQuotationClient({ data, customers, members }: Props) {
               {/* Hospital / organization selector */}
               {(() => {
                 const selectedCustomer = customers.find((c) => c.id === customerId);
-                if (!selectedCustomer || selectedCustomer.companies.length === 0) return null;
+                if (!selectedCustomer || selectedCustomer.memberships.length === 0) return null;
                 const selectedCompany =
-                  selectedCustomer.companies.find((co) => co.id === customerCompanyId) ??
-                  selectedCustomer.companies.find((co) => co.isPrimary) ??
-                  selectedCustomer.companies[0];
+                  selectedCustomer.memberships.find((co) => co.id === customerOrgMemberId) ??
+                  selectedCustomer.memberships.find((co) => co.isPrimary) ??
+                  selectedCustomer.memberships[0];
                 return (
                   <Field label="Hospital / organization">
                     <Select
-                      onValueChange={setCustomerCompanyId}
-                      value={customerCompanyId || (selectedCompany?.id ?? "")}
+                      onValueChange={setCustomerOrgMemberId}
+                      value={customerOrgMemberId || (selectedCompany?.id ?? "")}
                     >
                       <SelectTrigger className="h-9 text-sm">
                         <SelectValue placeholder="Select hospital" />
                       </SelectTrigger>
                       <SelectContent>
-                        {selectedCustomer.companies.map((co) => (
+                        {selectedCustomer.memberships.map((co) => (
                           <SelectItem key={co.id} value={co.id}>
-                            {co.organizationName ?? "—"}
+                            {co.orgName ?? "—"}
                             {co.isPrimary ? " ★" : ""}
                           </SelectItem>
                         ))}

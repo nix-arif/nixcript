@@ -8,7 +8,6 @@ import {
   purchaseOrder,
   deliveryOrder,
   customer,
-  customerCompany,
   customerPurchaseOrder,
   quotation,
   organization,
@@ -17,6 +16,7 @@ import {
   invoice,
   consignment,
 } from "@/db/schema";
+import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
@@ -173,7 +173,7 @@ export interface SalesOrderItemInput {
 
 export interface CreateSalesOrderInput {
   customerId?: string;
-  customerCompanyId?: string;
+  customerOrgMemberId?: string;
   customerPoId?: string;
   customerPoNo?: string;
   customerPoLinks?: { customerPoId: string; customerPoNo: string; deliveryDate?: string }[];
@@ -440,46 +440,9 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
   const { orgId, userId, session } = await requireAccess("sales-order:create");
 
   // Build customer snapshot
-  let customerSnapshot: SalesOrderRow["customerSnapshot"] = null;
-  if (input.customerId) {
-    const [cust] = await db
-      .select()
-      .from(customer)
-      .where(eq(customer.id, input.customerId));
-
-    if (cust) {
-      let company: typeof customerCompany.$inferSelect | undefined;
-
-      if (input.customerCompanyId) {
-        const [c] = await db
-          .select()
-          .from(customerCompany)
-          .where(eq(customerCompany.id, input.customerCompanyId));
-        company = c;
-      }
-
-      if (!company) {
-        const companies = await db
-          .select()
-          .from(customerCompany)
-          .where(eq(customerCompany.customerId, cust.id))
-          .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
-          .limit(1);
-        company = companies[0];
-      }
-
-      customerSnapshot = {
-        title: cust.title ?? undefined,
-        name: cust.name,
-        email: cust.email ?? undefined,
-        contactNo: cust.contactNo ?? undefined,
-        organizationName: company?.organizationName ?? undefined,
-        organizationAddress: company?.organizationAddress ?? undefined,
-        position: company?.position ?? undefined,
-        department: company?.department ?? undefined,
-      };
-    }
-  }
+  const customerSnapshot: SalesOrderRow["customerSnapshot"] = input.customerId
+    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    : null;
 
   const soNo = await generateSoNo(orgId);
 
@@ -589,37 +552,9 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
   // Rebuild customer snapshot if customer changed
   let customerSnapshot: SalesOrderRow["customerSnapshot"] = existing.customerSnapshot;
   if (input.customerId !== undefined) {
-    if (!input.customerId) {
-      customerSnapshot = null;
-    } else {
-      const [cust] = await db.select().from(customer).where(eq(customer.id, input.customerId));
-      if (cust) {
-        let company: typeof customerCompany.$inferSelect | undefined;
-        if (input.customerCompanyId) {
-          const [c] = await db.select().from(customerCompany).where(eq(customerCompany.id, input.customerCompanyId));
-          company = c;
-        }
-        if (!company) {
-          const companies = await db
-            .select()
-            .from(customerCompany)
-            .where(eq(customerCompany.customerId, cust.id))
-            .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
-            .limit(1);
-          company = companies[0];
-        }
-        customerSnapshot = {
-          title: cust.title ?? undefined,
-          name: cust.name,
-          email: cust.email ?? undefined,
-          contactNo: cust.contactNo ?? undefined,
-          organizationName: company?.organizationName ?? undefined,
-          organizationAddress: company?.organizationAddress ?? undefined,
-          position: company?.position ?? undefined,
-          department: company?.department ?? undefined,
-        };
-      }
-    }
+    customerSnapshot = input.customerId
+      ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+      : null;
   }
 
   const [row] = await db

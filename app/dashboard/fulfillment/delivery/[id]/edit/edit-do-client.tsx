@@ -60,7 +60,7 @@ export function EditDeliveryOrderClient({ order }: { order: DeliveryOrderWithIte
   );
 
   const [newCustomer, setNewCustomer] = useState<Customer | null>(null);
-  const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
+  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
 
   const handleCustSearch = useCallback((val: string) => {
@@ -135,7 +135,7 @@ export function EditDeliveryOrderClient({ order }: { order: DeliveryOrderWithIte
       await updateDeliveryOrder({
         id: order.id,
         customerId: newCustomer?.id ?? (clearCustomer ? undefined : order.customerId ?? undefined),
-        customerCompanyId: newCustomer ? custCompanyId : undefined,
+        customerOrgMemberId: newCustomer ? custOrgMemberId : undefined,
         salesOrderNo: salesOrderNo || undefined,
         deliveredTo: deliveredTo || undefined,
         deliveryAddress: deliveryAddress || undefined,
@@ -183,14 +183,14 @@ export function EditDeliveryOrderClient({ order }: { order: DeliveryOrderWithIte
               <div className="flex-1">
                 <div className="text-sm font-medium">{[newCustomer.title, newCustomer.name].filter(Boolean).join(" ")}</div>
                 {allCompanies.length > 1 && (
-                  <select className="mt-2 w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm" value={custCompanyId ?? ""} onChange={(e) => setCustCompanyId(e.target.value || undefined)}>
+                  <select className="mt-2 w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm" value={custOrgMemberId ?? ""} onChange={(e) => setCustOrgMemberId(e.target.value || undefined)}>
                     <option value="">Primary / default</option>
                     {allCompanies.map((c) => <option key={c.id} value={c.id}>{c.organizationName}{c.isPrimary ? " (primary)" : ""}</option>)}
                   </select>
                 )}
                 {allCompanies.length === 1 && <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><BuildingIcon className="w-3 h-3" />{allCompanies[0].organizationName}</p>}
               </div>
-              <button onClick={() => { setNewCustomer(null); setCustCompanyId(undefined); }} className="text-muted-foreground hover:text-foreground">
+              <button onClick={() => { setNewCustomer(null); setCustOrgMemberId(undefined); }} className="text-muted-foreground hover:text-foreground">
                 <XIcon className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -204,7 +204,7 @@ export function EditDeliveryOrderClient({ order }: { order: DeliveryOrderWithIte
                     <button key={c.id} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0"
                       onClick={() => { setNewCustomer(c); setClearCustomer(false); setCustSearch(""); setCustResults([]); }}>
                       <div className="text-sm font-medium"><Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} /></div>
-                      {c.companies[0]?.organizationName && <div className="text-[11px] text-muted-foreground"><Highlight text={c.companies[0].organizationName} query={custSearch} /></div>}
+                      {c.memberships[0]?.orgName && <div className="text-[11px] text-muted-foreground"><Highlight text={c.memberships[0].orgName} query={custSearch} /></div>}
                     </button>
                   ))}
                 </div>

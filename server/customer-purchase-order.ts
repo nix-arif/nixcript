@@ -4,7 +4,6 @@ import { db } from "@/db";
 import {
   customerPurchaseOrder,
   customer,
-  customerCompany,
   salesOrder,
   deliveryOrder,
   invoice,
@@ -12,6 +11,7 @@ import {
   purchaseOrderCustomerPo,
   user,
 } from "@/db/schema";
+import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, ilike, inArray, or, isNull, notInArray } from "drizzle-orm";
@@ -88,7 +88,7 @@ export type CpoItemInput = {
 export interface CreateCustomerPoInput {
   customerPoNo: string;
   customerId?: string;
-  customerCompanyId?: string;
+  customerOrgMemberId?: string;
   quotationId?: string;
   quotationNo?: string;
   quotationLinks?: { quotationId: string; quotationNo: string }[];
@@ -245,34 +245,9 @@ export async function getCustomerPosByCustomer(customerId: string): Promise<Cust
 export async function createCustomerPo(input: CreateCustomerPoInput): Promise<CustomerPo> {
   const { orgId, userId } = await requireAccess("customer-po:create");
 
-  let customerSnapshot: CustomerPo["customerSnapshot"] = null;
-  if (input.customerId) {
-    const [cust] = await db.select().from(customer).where(eq(customer.id, input.customerId));
-    if (cust) {
-      let company: typeof customerCompany.$inferSelect | undefined;
-      if (input.customerCompanyId) {
-        const [c] = await db.select().from(customerCompany).where(eq(customerCompany.id, input.customerCompanyId));
-        company = c;
-      }
-      if (!company) {
-        const companies = await db
-          .select()
-          .from(customerCompany)
-          .where(eq(customerCompany.customerId, cust.id))
-          .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
-          .limit(1);
-        company = companies[0];
-      }
-      customerSnapshot = {
-        title: cust.title ?? undefined,
-        name: cust.name,
-        email: cust.email ?? undefined,
-        contactNo: cust.contactNo ?? undefined,
-        organizationName: company?.organizationName ?? undefined,
-        organizationAddress: company?.organizationAddress ?? undefined,
-      };
-    }
-  }
+  const customerSnapshot: CustomerPo["customerSnapshot"] = input.customerId
+    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    : null;
 
   const [row] = await db
     .insert(customerPurchaseOrder)

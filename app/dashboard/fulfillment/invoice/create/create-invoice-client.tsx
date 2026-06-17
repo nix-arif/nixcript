@@ -65,7 +65,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
+  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>();
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Customer PO
@@ -125,7 +125,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
 
   function clearCustomer() {
     setSelectedCustomer(null);
-    setCustCompanyId(undefined);
+    setCustOrgMemberId(undefined);
     setSelectedCustomerPo(null);
     setCustomerPos(allCustomerPos);
   }
@@ -195,7 +195,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
       await createInvoice({
         invoiceDate: invoiceDate ? new Date(invoiceDate) : undefined,
         customerId: selectedCustomer?.id,
-        customerCompanyId: custCompanyId,
+        customerOrgMemberId: custOrgMemberId,
         customerPoId: selectedCustomerPo?.id,
         customerPoNo: selectedCustomerPo?.customerPoNo ?? (manualCustomerPoNo || undefined),
         quotationNo: quotationNo || undefined,
@@ -248,7 +248,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
               <div className="flex-1">
                 <div className="text-sm font-medium">{[selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")}</div>
                 {allCompanies.length > 1 && (
-                  <select className="mt-2 w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm" value={custCompanyId ?? ""} onChange={(e) => setCustCompanyId(e.target.value || undefined)}>
+                  <select className="mt-2 w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm" value={custOrgMemberId ?? ""} onChange={(e) => setCustOrgMemberId(e.target.value || undefined)}>
                     <option value="">Primary / default</option>
                     {allCompanies.map((c) => <option key={c.id} value={c.id}>{c.organizationName}{c.isPrimary ? " (primary)" : ""}</option>)}
                   </select>
@@ -266,7 +266,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
                   {custResults.map((c) => (
                     <button key={c.id} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0" onClick={() => selectCustomer(c)}>
                       <div className="text-sm font-medium"><Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} /></div>
-                      {c.companies[0]?.organizationName && <div className="text-[11px] text-muted-foreground"><Highlight text={c.companies[0].organizationName} query={custSearch} /></div>}
+                      {c.memberships[0]?.orgName && <div className="text-[11px] text-muted-foreground"><Highlight text={c.memberships[0].orgName} query={custSearch} /></div>}
                     </button>
                   ))}
                 </div>

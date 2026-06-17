@@ -144,7 +144,7 @@ export function NewQuotationClient({
   const [title, setTitle] = useState("Loose Items");
   const [sets, setSets] = useState(1);
   const [customerId, setCustomerId] = useState("");
-  const [customerCompanyId, setCustomerCompanyId] = useState("");
+  const [customerOrgMemberId, setCustomerCompanyId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerOpen, setCustomerOpen] = useState(false);
   const customerBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -445,7 +445,7 @@ export function NewQuotationClient({
         title: sets > 1 ? `${title || "Loose Items"} X ${sets} SETS` : (title || "Loose Items"),
         sets,
         customerId: customerId || undefined,
-        customerCompanyId: customerCompanyId || undefined,
+        customerOrgMemberId: customerOrgMemberId || undefined,
         salesPersonId: salesPersonId || undefined,
         salesPersonName,
         validDays: Number(validDays),
@@ -484,9 +484,9 @@ export function NewQuotationClient({
 
   const selectedCustomer = customers.find((c) => c.id === customerId);
   const selectedCompany =
-    selectedCustomer?.companies.find((co) => co.id === customerCompanyId) ??
-    selectedCustomer?.companies.find((co) => co.isPrimary) ??
-    selectedCustomer?.companies[0] ??
+    selectedCustomer?.memberships.find((co) => co.id === customerOrgMemberId) ??
+    selectedCustomer?.memberships.find((co) => co.isPrimary) ??
+    selectedCustomer?.memberships[0] ??
     null;
   const okCount = reviewItems.filter((i) => i.status === "ok").length;
   const noPriceCount = reviewItems.filter(
@@ -718,7 +718,7 @@ export function NewQuotationClient({
                                   setCustomerId(c.id);
                                   setCustomerSearch(label);
                                   setCustomerOpen(false);
-                                  const primary = c.companies.find((co) => co.isPrimary) ?? c.companies[0];
+                                  const primary = c.memberships.find((co) => co.isPrimary) ?? c.memberships[0];
                                   setCustomerCompanyId(primary?.id ?? "");
                                 }}
                               >
@@ -735,19 +735,19 @@ export function NewQuotationClient({
               </Field>
 
               {/* Hospital / organization selector — always shown when a customer is selected */}
-              {selectedCustomer && selectedCustomer.companies.length >= 1 && (
+              {selectedCustomer && selectedCustomer.memberships.length >= 1 && (
                 <Field label="Hospital / organization">
                   <Select
                     onValueChange={setCustomerCompanyId}
-                    value={customerCompanyId || (selectedCompany?.id ?? "")}
+                    value={customerOrgMemberId || (selectedCompany?.id ?? "")}
                   >
                     <SelectTrigger className="h-9 text-sm">
                       <SelectValue placeholder="Select hospital" />
                     </SelectTrigger>
                     <SelectContent>
-                      {selectedCustomer.companies.map((co) => (
+                      {selectedCustomer.memberships.map((co) => (
                         <SelectItem key={co.id} value={co.id}>
-                          {co.organizationName ?? "—"}
+                          {co.orgName ?? "—"}
                           {co.isPrimary ? " ★" : ""}
                         </SelectItem>
                       ))}
@@ -764,7 +764,7 @@ export function NewQuotationClient({
                       ? ` · ${selectedCompany.department}`
                       : ""}
                   </div>
-                  <div>{selectedCompany.organizationAddress}</div>
+                  <div>{selectedCompany.orgAddress}</div>
                   <div>
                     {selectedCustomer.email}
                     {selectedCustomer.contactNo

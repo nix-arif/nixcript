@@ -7,13 +7,15 @@ import {
   quotationCounter,
   customerPurchaseOrder,
   customer,
-  customerCompany,
+  customerOrganization,
+  customerOrganizationMember,
   user,
   member,
   product,
   organization,
   organizationProfile,
 } from "@/db/schema";
+import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, asc, desc, inArray, sql, ilike, count } from "drizzle-orm";
@@ -410,7 +412,7 @@ export type CreateQuotationInput = {
   title?: string;
   sets?: number;
   customerId?: string;
-  customerCompanyId?: string;
+  customerOrgMemberId?: string;
   salesPersonId?: string;
   salesPersonName?: string;
   validDays?: number;
@@ -497,53 +499,10 @@ export async function createQuotation(input: CreateQuotationInput) {
     .where(eq(user.id, userId))
     .limit(1);
 
-  // Get customer snapshot — personal info from customer, company info from customerCompany
-  let customerSnapshot = null;
-  if (input.customerId) {
-    const [cust] = await db
-      .select()
-      .from(customer)
-      .where(eq(customer.id, input.customerId))
-      .limit(1);
-    if (cust) {
-      // Resolve which company to use for the snapshot
-      let company: typeof customerCompany.$inferSelect | null = null;
-      if (input.customerCompanyId) {
-        const [c] = await db
-          .select()
-          .from(customerCompany)
-          .where(
-            and(
-              eq(customerCompany.id, input.customerCompanyId),
-              eq(customerCompany.customerId, input.customerId),
-            ),
-          )
-          .limit(1);
-        company = c ?? null;
-      }
-      if (!company) {
-        // Fall back to primary, then first company
-        const [c] = await db
-          .select()
-          .from(customerCompany)
-          .where(eq(customerCompany.customerId, input.customerId))
-          .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
-          .limit(1);
-        company = c ?? null;
-      }
-
-      customerSnapshot = {
-        title: cust.title ?? undefined,
-        name: cust.name,
-        email: cust.email ?? undefined,
-        contactNo: cust.contactNo ?? undefined,
-        position: company?.position ?? undefined,
-        department: company?.department ?? undefined,
-        organizationName: company?.organizationName ?? undefined,
-        organizationAddress: company?.organizationAddress ?? undefined,
-      };
-    }
-  }
+  // Get customer snapshot using the shared helper
+  const customerSnapshot = input.customerId
+    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    : null;
 
   // Calculate shared pricing — set items use setQty multiplier; global sets multiplies the rest
   const setsCount = Math.max(1, input.sets ?? 1);
@@ -1023,20 +982,29 @@ export async function getQuotationDetail(id: string) {
       .where(eq(customer.id, q.customerId))
       .limit(1);
     if (cust) {
-      // Prefer company data from the snapshot's org (matched by name) or primary company
-      const [comp] = await db
-        .select()
-        .from(customerCompany)
-        .where(eq(customerCompany.customerId, q.customerId))
-        .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
+      // Prefer membership data from the new M2M tables (primary or first)
+      const [mem] = await db
+        .select({
+          orgName: customerOrganization.name,
+          orgAddress: customerOrganization.address,
+          position: customerOrganizationMember.position,
+          department: customerOrganizationMember.department,
+        })
+        .from(customerOrganizationMember)
+        .innerJoin(
+          customerOrganization,
+          eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+        )
+        .where(eq(customerOrganizationMember.customerId, q.customerId))
+        .orderBy(desc(customerOrganizationMember.isPrimary), asc(customerOrganizationMember.createdAt))
         .limit(1);
 
       customerData = {
         ...cust,
-        position: comp?.position ?? null,
-        department: comp?.department ?? null,
-        organizationName: comp?.organizationName ?? null,
-        organizationAddress: comp?.organizationAddress ?? null,
+        position: mem?.position ?? null,
+        department: mem?.department ?? null,
+        organizationName: mem?.orgName ?? null,
+        organizationAddress: mem?.orgAddress ?? null,
       };
     }
   }
@@ -1697,7 +1665,7 @@ export type UpdateQuotationInput = {
   title?: string;
   sets?: number;
   customerId?: string | null;
-  customerCompanyId?: string | null;
+  customerOrgMemberId?: string | null;
   salesPersonId?: string | null;
   salesPersonName?: string | null;
   validDays?: number;
@@ -1766,50 +1734,10 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
   if (!q) throw new Error("Quotation not found");
   if (q.status !== "draft") throw new Error("Cannot edit a finalized quotation");
 
-  // Snapshot customer — same company-aware logic as createQuotation
-  let customerSnapshot = null;
-  if (input.customerId) {
-    const [cust] = await db
-      .select()
-      .from(customer)
-      .where(eq(customer.id, input.customerId))
-      .limit(1);
-    if (cust) {
-      let company: typeof customerCompany.$inferSelect | null = null;
-      if (input.customerCompanyId) {
-        const [c] = await db
-          .select()
-          .from(customerCompany)
-          .where(
-            and(
-              eq(customerCompany.id, input.customerCompanyId),
-              eq(customerCompany.customerId, input.customerId),
-            ),
-          )
-          .limit(1);
-        company = c ?? null;
-      }
-      if (!company) {
-        const [c] = await db
-          .select()
-          .from(customerCompany)
-          .where(eq(customerCompany.customerId, input.customerId))
-          .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
-          .limit(1);
-        company = c ?? null;
-      }
-      customerSnapshot = {
-        title: cust.title ?? undefined,
-        name: cust.name,
-        email: cust.email ?? undefined,
-        contactNo: cust.contactNo ?? undefined,
-        position: company?.position ?? undefined,
-        department: company?.department ?? undefined,
-        organizationName: company?.organizationName ?? undefined,
-        organizationAddress: company?.organizationAddress ?? undefined,
-      };
-    }
-  }
+  // Snapshot customer using the shared helper
+  const customerSnapshot = input.customerId
+    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    : null;
 
   // Recalculate totals — set items use setQty multiplier; global sets multiplies all
   const setsCount = Math.max(1, input.sets ?? Number(q.sets ?? 1));
