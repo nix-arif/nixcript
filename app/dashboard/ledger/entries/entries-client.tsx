@@ -40,6 +40,7 @@ import {
   CheckCircle2Icon,
   XCircleIcon,
   EyeIcon,
+  DownloadIcon,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -59,6 +60,8 @@ const TRANSACTION_TYPE_LABELS: Record<string, string> = {
   REVENUE_RECOGNITION: "Revenue Recognition",
   PURCHASE: "Purchase",
   PAYROLL: "Payroll",
+  STATUTORY_PAYMENT: "Statutory Payment",
+  TAX_PAYMENT: "Tax Payment",
   GENERAL_EXPENSE: "General Expense",
   JOURNAL_ADJUSTMENT: "Journal Adjustment",
 };
@@ -183,12 +186,18 @@ export function LedgerEntriesClient({ entries, permissions, initialSearch }: Pro
             View and manage all general ledger journal entries.
           </p>
         </div>
-        {canCreate && (
-          <Button size="sm" onClick={() => router.push("/dashboard/ledger/entries/new")}>
-            <PlusIcon className="h-4 w-4 mr-1" />
-            New Entry
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => router.push("/dashboard/ledger/export")}>
+            <DownloadIcon className="h-4 w-4 mr-1" />
+            Export
           </Button>
-        )}
+          {canCreate && (
+            <Button size="sm" onClick={() => router.push("/dashboard/ledger/entries/new")}>
+              <PlusIcon className="h-4 w-4 mr-1" />
+              New Entry
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Filters */}

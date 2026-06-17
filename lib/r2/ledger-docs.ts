@@ -45,3 +45,18 @@ export async function getPresignedDownloadUrl(key: string, filename: string): Pr
 export async function deleteLedgerDocFromR2(key: string): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }
+
+export async function getLedgerDocBytes(key: string): Promise<Uint8Array> {
+  const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: key });
+  const res = await s3.send(cmd);
+  if (!res.Body) throw new Error(`No body for R2 key: ${key}`);
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+  }
+  const total = chunks.reduce((s, c) => s + c.length, 0);
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.length; }
+  return merged;
+}
