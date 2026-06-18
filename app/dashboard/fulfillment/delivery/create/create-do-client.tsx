@@ -465,6 +465,7 @@ function DoForm({ prefill }: { prefill: PrefillData }) {
         items: items.map(({ _key, ...rest }) => rest),
       });
       toast.success("Delivery order created");
+      router.refresh();
       router.push("/dashboard/fulfillment/delivery");
     } catch (e: any) {
       toast.error(e.message);

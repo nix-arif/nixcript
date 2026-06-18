@@ -16,7 +16,7 @@ import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, isNotNull, isNull, notExists } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -264,6 +264,9 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
   }
   revalidatePath("/dashboard/fulfillment/delivery");
   revalidatePath("/dashboard");
+  if (input.salesOrderId) {
+    revalidatePath(`/dashboard/sales/order/${input.salesOrderId}`);
+  }
   return row;
 }
 
@@ -433,8 +436,8 @@ export type PendingSoForDoRow = {
 export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
   const { orgId } = await requireAccess("delivery-order:read");
 
-  // Single query: confirmed+reserved SOs with no DO linked yet.
-  // LEFT JOIN delivery_order on salesOrderId — isNull(do.id) means no DO exists.
+  // Confirmed+reserved SOs that have no DO linked yet.
+  // Uses NOT EXISTS to avoid nullable-column LEFT JOIN issues in Drizzle ORM.
   const rows = await db
     .select({
       id: salesOrder.id,
@@ -446,18 +449,17 @@ export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
       createdAt: salesOrder.createdAt,
     })
     .from(salesOrder)
-    .leftJoin(
-      deliveryOrder,
-      and(
-        eq(deliveryOrder.salesOrderId, salesOrder.id),
-        eq(deliveryOrder.organizationId, orgId),
-      ),
-    )
     .where(and(
       eq(salesOrder.organizationId, orgId),
       eq(salesOrder.status, "confirmed"),
       eq(salesOrder.stockReservationStatus, "reserved"),
-      isNull(deliveryOrder.id),  // no DO exists for this SO
+      notExists(
+        db.select({ _: deliveryOrder.id }).from(deliveryOrder)
+          .where(and(
+            eq(deliveryOrder.salesOrderId, salesOrder.id),
+            eq(deliveryOrder.organizationId, orgId),
+          )),
+      ),
     ))
     .orderBy(desc(salesOrder.createdAt));
 
@@ -528,7 +530,7 @@ export type PendingDoForInvoiceRow = {
 export async function getPendingDosForInvoice(): Promise<PendingDoForInvoiceRow[]> {
   const { orgId } = await requireAccess("invoice:read");
 
-  // Delivered DOs that have no invoice linked
+  // Delivered DOs with no invoice linked (NOT EXISTS avoids nullable-column issues).
   const rows = await db
     .select({
       id: deliveryOrder.id,
@@ -542,38 +544,28 @@ export async function getPendingDosForInvoice(): Promise<PendingDoForInvoiceRow[
     .where(and(
       eq(deliveryOrder.organizationId, orgId),
       eq(deliveryOrder.status, "delivered"),
+      notExists(
+        db.select({ _: invoice.id }).from(invoice)
+          .where(and(
+            eq(invoice.organizationId, orgId),
+            eq(invoice.deliveryOrderId, deliveryOrder.id),
+          )),
+      ),
     ))
     .orderBy(desc(deliveryOrder.createdAt));
 
-  if (rows.length === 0) return [];
-
-  // Exclude DOs that already have an invoice
-  const doIds = rows.map((r) => r.id);
-  const invoicedDoIds = await db
-    .selectDistinct({ deliveryOrderId: invoice.deliveryOrderId })
-    .from(invoice)
-    .where(and(
-      eq(invoice.organizationId, orgId),
-      isNotNull(invoice.deliveryOrderId),
-      inArray(invoice.deliveryOrderId as any, doIds),
-    ));
-
-  const invoicedSet = new Set(invoicedDoIds.map((r) => r.deliveryOrderId!));
-
-  return rows
-    .filter((r) => !invoicedSet.has(r.id))
-    .map((r) => {
-      const snap = r.customerSnapshot as any;
-      const name = snap ? [snap.title, snap.name].filter(Boolean).join(" ") || null : null;
-      const org = snap?.organizationName ?? null;
-      return {
-        id: r.id,
-        doNo: r.doNo,
-        salesOrderNo: r.salesOrderNo,
-        customerPoNo: r.customerPoNo,
-        customerName: name,
-        customerOrg: org,
-        createdAt: r.createdAt,
-      };
-    });
+  return rows.map((r) => {
+    const snap = r.customerSnapshot as any;
+    const name = snap ? [snap.title, snap.name].filter(Boolean).join(" ") || null : null;
+    const org = snap?.organizationName ?? null;
+    return {
+      id: r.id,
+      doNo: r.doNo,
+      salesOrderNo: r.salesOrderNo,
+      customerPoNo: r.customerPoNo,
+      customerName: name,
+      customerOrg: org,
+      createdAt: r.createdAt,
+    };
+  });
 }

@@ -158,7 +158,7 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
         customerPoId: selectedCustomerPoId || undefined,
         customerPoNo: selectedPo?.customerPoNo ?? (manualPoNo || undefined),
         supplierId: selectedSupplierId || undefined,
-        categoryId: categoryId || undefined,
+        categoryIds: categoryId ? [categoryId] : [],
         status,
         paymentTerms: paymentTerms || undefined,
         notes: notes || undefined,
