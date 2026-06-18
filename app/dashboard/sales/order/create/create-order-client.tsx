@@ -37,6 +37,7 @@ import {
   BuildingIcon,
   FileTextIcon,
   LinkIcon,
+  PencilIcon,
   ChevronDownIcon,
 } from "lucide-react";
 import type { CustomerPoForSoCreate } from "@/server/customer-purchase-order";
@@ -1347,8 +1348,8 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                 <Label className="text-xs">Due delivery date</Label>
                 {deliveryDateInherited && (
                   deliveryDate === deliveryDateInherited
-                    ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">from CPO</span>
-                    : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">modified</span>
+                    ? <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3 shrink-0" />from CPO</span>
+                    : <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-3 h-3 shrink-0" />modified</span>
                 )}
               </div>
               <input
@@ -1363,8 +1364,8 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                 <Label className="text-xs">Delivery address</Label>
                 {deliveryAddressInherited && (
                   deliveryAddress === deliveryAddressInherited
-                    ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">from CPO</span>
-                    : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">modified</span>
+                    ? <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3 shrink-0" />from CPO</span>
+                    : <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-3 h-3 shrink-0" />modified</span>
                 )}
               </div>
               <Input
