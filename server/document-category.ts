@@ -6,7 +6,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 async function requireOrgAccess() {
@@ -35,7 +35,7 @@ export async function getDocumentCategories(): Promise<DocumentCategoryRow[]> {
     .select()
     .from(documentCategory)
     .where(eq(documentCategory.organizationId, orgId))
-    .orderBy(asc(documentCategory.createdAt));
+    .orderBy(asc(documentCategory.position), asc(documentCategory.createdAt));
 }
 
 export async function createDocumentCategory(input: {
@@ -45,6 +45,12 @@ export async function createDocumentCategory(input: {
 }): Promise<DocumentCategoryRow> {
   const { orgId } = await requireWriteAccess();
 
+  // Place new category at the end
+  const [{ maxPos }] = await db
+    .select({ maxPos: sql<number>`coalesce(max(${documentCategory.position}), -1)` })
+    .from(documentCategory)
+    .where(eq(documentCategory.organizationId, orgId));
+
   const [row] = await db
     .insert(documentCategory)
     .values({
@@ -53,6 +59,7 @@ export async function createDocumentCategory(input: {
       name: input.name.trim(),
       color: input.color ?? "#6366f1",
       isDefault: input.isDefault ?? false,
+      position: (maxPos ?? -1) + 1,
     })
     .returning();
 
@@ -96,6 +103,18 @@ export async function deleteDocumentCategory(id: string): Promise<void> {
     .where(and(eq(documentCategory.id, id), eq(documentCategory.organizationId, orgId)));
   if (!existing) throw new Error("Category not found");
   await db.delete(documentCategory).where(eq(documentCategory.id, id));
+  revalidatePath("/dashboard/organization/categories");
+}
+
+// Bulk-update positions after a drag-and-drop reorder
+export async function reorderDocumentCategories(orderedIds: string[]): Promise<void> {
+  const { orgId } = await requireWriteAccess();
+  for (let i = 0; i < orderedIds.length; i++) {
+    await db
+      .update(documentCategory)
+      .set({ position: i })
+      .where(and(eq(documentCategory.id, orderedIds[i]), eq(documentCategory.organizationId, orgId)));
+  }
   revalidatePath("/dashboard/organization/categories");
 }
 

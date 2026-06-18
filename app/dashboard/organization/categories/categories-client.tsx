@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -13,12 +13,14 @@ import {
   StarIcon,
   CheckIcon,
   XIcon,
+  GripVerticalIcon,
 } from "lucide-react";
 import {
   createDocumentCategory,
   updateDocumentCategory,
   deleteDocumentCategory,
   toggleDefaultDocumentCategory,
+  reorderDocumentCategories,
   type DocumentCategoryRow,
 } from "@/server/document-category";
 import { cn } from "@/lib/utils";
@@ -224,7 +226,11 @@ export function CategoriesClient({ initialCategories }: Props) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
-  // Sync local state when server re-renders with fresh data after router.refresh()
+  // Drag-and-drop state
+  const dragIndexRef = useRef<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [reordering, setReordering] = useState(false);
+
   useEffect(() => {
     setCategories(initialCategories);
   }, [initialCategories]);
@@ -241,9 +247,7 @@ export function CategoriesClient({ initialCategories }: Props) {
   }
 
   function handleUpdated(updatedCat: DocumentCategoryRow) {
-    setCategories((prev) =>
-      prev.map((c) => (c.id === updatedCat.id ? updatedCat : c)),
-    );
+    setCategories((prev) => prev.map((c) => (c.id === updatedCat.id ? updatedCat : c)));
     closeForm();
     router.refresh();
   }
@@ -268,15 +272,52 @@ export function CategoriesClient({ initialCategories }: Props) {
     try {
       const updated = await toggleDefaultDocumentCategory(cat.id);
       toast.success(updated.isDefault ? `"${cat.name}" marked as default` : `"${cat.name}" unmarked as default`);
-      setCategories((prev) =>
-        prev.map((c) => (c.id === cat.id ? updated : c)),
-      );
+      setCategories((prev) => prev.map((c) => (c.id === cat.id ? updated : c)));
       router.refresh();
     } catch (err: any) {
       toast.error(err.message);
     } finally {
       setSettingDefaultId(null);
     }
+  }
+
+  // ── Drag handlers ──────────────────────────────────────────────────────────
+
+  function handleDragStart(index: number) {
+    dragIndexRef.current = index;
+  }
+
+  function handleDragOver(e: React.DragEvent, index: number) {
+    e.preventDefault();
+    setDragOverIndex(index);
+  }
+
+  async function handleDrop(e: React.DragEvent, dropIndex: number) {
+    e.preventDefault();
+    const fromIndex = dragIndexRef.current;
+    dragIndexRef.current = null;
+    setDragOverIndex(null);
+    if (fromIndex === null || fromIndex === dropIndex) return;
+
+    const reordered = [...categories];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(dropIndex, 0, moved);
+
+    setCategories(reordered); // optimistic
+    setReordering(true);
+    try {
+      await reorderDocumentCategories(reordered.map((c) => c.id));
+    } catch (err: any) {
+      toast.error("Failed to save order");
+      setCategories(categories); // rollback
+    } finally {
+      setReordering(false);
+    }
+  }
+
+  function handleDragEnd() {
+    dragIndexRef.current = null;
+    setDragOverIndex(null);
   }
 
   return (
@@ -298,17 +339,17 @@ export function CategoriesClient({ initialCategories }: Props) {
       />
 
       {showNewForm && (
-        <NewCategoryForm
-          onSaved={handleCreated}
-          onCancel={closeForm}
-        />
+        <NewCategoryForm onSaved={handleCreated} onCancel={closeForm} />
       )}
 
       <section className="bg-background border border-border/50 rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border bg-muted/30">
+        <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             Categories ({categories.length})
           </h2>
+          {reordering && (
+            <span className="text-[10px] text-muted-foreground">Saving order…</span>
+          )}
         </div>
 
         {categories.length === 0 ? (
@@ -317,8 +358,21 @@ export function CategoriesClient({ initialCategories }: Props) {
           </div>
         ) : (
           <div className="divide-y divide-border/50">
-            {categories.map((cat) => (
-              <div key={cat.id} className="px-4 py-3">
+            {categories.map((cat, index) => (
+              <div
+                key={cat.id}
+                draggable={editingId !== cat.id}
+                onDragStart={() => handleDragStart(index)}
+                onDragOver={(e) => handleDragOver(e, index)}
+                onDrop={(e) => handleDrop(e, index)}
+                onDragEnd={handleDragEnd}
+                className={cn(
+                  "px-4 py-3 transition-colors",
+                  dragOverIndex === index && dragIndexRef.current !== index
+                    ? "bg-muted/60 border-t-2 border-primary"
+                    : "",
+                )}
+              >
                 {editingId === cat.id ? (
                   <EditRowForm
                     category={cat}
@@ -327,6 +381,10 @@ export function CategoriesClient({ initialCategories }: Props) {
                   />
                 ) : (
                   <div className="flex items-center gap-3">
+                    {/* Drag handle */}
+                    <span className="text-muted-foreground/40 hover:text-muted-foreground cursor-grab active:cursor-grabbing shrink-0">
+                      <GripVerticalIcon className="w-4 h-4" />
+                    </span>
                     {/* Color dot */}
                     <span
                       className="w-3 h-3 rounded-full shrink-0"

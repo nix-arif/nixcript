@@ -680,19 +680,55 @@ export function SalesOrderDetailClient({
                       </div>
                     </div>
                   ) : (
-                    /* Single customer: simple Create DO button */
+                    /* Single customer: show existing DO or create button */
                     <>
-                      <p className="text-xs text-muted-foreground">
-                        Stock has been reserved. You can now create a delivery order.
-                      </p>
-                      <Button
-                        size="sm"
-                        className="w-full gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                        onClick={() => router.push(`/dashboard/fulfillment/delivery/create?soId=${order.id}&soNo=${encodeURIComponent(order.soNo)}`)}
-                      >
-                        <TruckIcon className="w-3.5 h-3.5" />
-                        Create Delivery Order
-                      </Button>
+                      {linkedDos.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {linkedDos.map((d) => {
+                            const isDelivered = d.status === "delivered";
+                            return (
+                              <div key={d.id} className="flex items-center gap-2">
+                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${isDelivered ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400" : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"}`}>
+                                  {isDelivered ? "Delivered" : "DO created"}
+                                </span>
+                                <button
+                                  onClick={() => router.push(`/dashboard/fulfillment/delivery/${d.id}`)}
+                                  className="text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline"
+                                >
+                                  {d.doNo}
+                                </button>
+                              </div>
+                            );
+                          })}
+                          {can("delivery-order:create") && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="w-full gap-1.5 h-8 text-xs mt-1"
+                              onClick={() => router.push(`/dashboard/fulfillment/delivery/create?soId=${order.id}&soNo=${encodeURIComponent(order.soNo)}`)}
+                            >
+                              <TruckIcon className="w-3.5 h-3.5" />
+                              Create Another DO
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-xs text-muted-foreground">
+                            Stock has been reserved. You can now create a delivery order.
+                          </p>
+                          {can("delivery-order:create") && (
+                            <Button
+                              size="sm"
+                              className="w-full gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
+                              onClick={() => router.push(`/dashboard/fulfillment/delivery/create?soId=${order.id}&soNo=${encodeURIComponent(order.soNo)}`)}
+                            >
+                              <TruckIcon className="w-3.5 h-3.5" />
+                              Create Delivery Order
+                            </Button>
+                          )}
+                        </>
+                      )}
                     </>
                   )}
                 </div>

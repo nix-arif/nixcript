@@ -8,6 +8,7 @@ import {
   createLedgerAccount,
   updateLedgerAccount,
   deleteLedgerAccount,
+  seedDefaultLedgerAccounts,
 } from "@/server/ledger";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,7 @@ import {
   ToggleLeftIcon,
   ToggleRightIcon,
   LayoutListIcon,
+  SparklesIcon,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -104,6 +106,9 @@ export function AccountsClient({ accounts, permissions }: Props) {
 
   // Toggle loading
   const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  // Seed default COA
+  const [seedLoading, setSeedLoading] = useState(false);
 
   const grouped = useMemo(() => {
     const map: Record<string, LedgerAccountRow[]> = {};
@@ -181,6 +186,23 @@ export function AccountsClient({ accounts, permissions }: Props) {
     }
   }
 
+  async function handleSeedDefaults() {
+    setSeedLoading(true);
+    try {
+      const { inserted, skipped } = await seedDefaultLedgerAccounts();
+      if (inserted === 0) {
+        toast.success(`All default accounts already exist (${skipped} skipped)`);
+      } else {
+        toast.success(`Seeded ${inserted} default account${inserted !== 1 ? "s" : ""}${skipped > 0 ? ` (${skipped} already existed)` : ""}`);
+      }
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to seed accounts");
+    } finally {
+      setSeedLoading(false);
+    }
+  }
+
   async function handleDelete() {
     if (!deleteId) return;
     setDeleteLoading(true);
@@ -210,10 +232,21 @@ export function AccountsClient({ accounts, permissions }: Props) {
           </p>
         </div>
         {canCreate && (
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <PlusIcon className="h-4 w-4 mr-1" />
-            New Account
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleSeedDefaults}
+              disabled={seedLoading}
+            >
+              <SparklesIcon className="h-4 w-4 mr-1" />
+              {seedLoading ? "Seeding..." : "Seed Default COA"}
+            </Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <PlusIcon className="h-4 w-4 mr-1" />
+              New Account
+            </Button>
+          </div>
         )}
       </div>
 

@@ -2965,6 +2965,7 @@ export const documentCategory = pgTable(
     name: text("name").notNull(),
     color: text("color").default("#6366f1"),
     isDefault: boolean("is_default").default(false).notNull(),
+    position: integer("position").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

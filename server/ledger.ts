@@ -80,6 +80,122 @@ async function generateEntryNo(orgId: string): Promise<string> {
   return `JE-${year}-${String(next).padStart(4, "0")}`;
 }
 
+// ── Default COA seed list (Malaysian SME — service / trading) ─────────────
+
+type DefaultAccount = {
+  code: string;
+  name: string;
+  type: string;
+  subtype: string | null;
+  normalBalance: "DEBIT" | "CREDIT";
+};
+
+const DEFAULT_ACCOUNTS: DefaultAccount[] = [
+  // ASSETS ────────────────────────────────────────────────────────────────
+  { code: "1000", name: "Cash on Hand",                                          type: "ASSET",     subtype: "CASH",                    normalBalance: "DEBIT"  },
+  { code: "1001", name: "Petty Cash",                                            type: "ASSET",     subtype: "CASH",                    normalBalance: "DEBIT"  },
+  { code: "1100", name: "Bank CIMB",                                             type: "ASSET",     subtype: "BANK",                    normalBalance: "DEBIT"  },
+  { code: "1200", name: "Accounts Receivable",                                   type: "ASSET",     subtype: "ACCOUNTS_RECEIVABLE",     normalBalance: "DEBIT"  },
+  { code: "1300", name: "Due From Member",                                       type: "ASSET",     subtype: "RECEIVABLE",              normalBalance: "DEBIT"  },
+  { code: "1400", name: "Prepayments & Deposits",                                type: "ASSET",     subtype: "PREPAYMENT",              normalBalance: "DEBIT"  },
+  { code: "1410", name: "Motor Vehicles",                                        type: "ASSET",     subtype: "FIXED_ASSET",             normalBalance: "DEBIT"  },
+  { code: "1411", name: "Accumulated Depreciation — Motor Vehicles",             type: "ASSET",     subtype: "ACCUMULATED_DEPRECIATION",normalBalance: "DEBIT"  },
+  { code: "1420", name: "Office Equipment",                                      type: "ASSET",     subtype: "FIXED_ASSET",             normalBalance: "DEBIT"  },
+  { code: "1421", name: "Accumulated Depreciation — Office Equipment",           type: "ASSET",     subtype: "ACCUMULATED_DEPRECIATION",normalBalance: "DEBIT"  },
+  { code: "1430", name: "Furniture & Fittings",                                  type: "ASSET",     subtype: "FIXED_ASSET",             normalBalance: "DEBIT"  },
+  { code: "1431", name: "Accumulated Depreciation — Furniture & Fittings",      type: "ASSET",     subtype: "ACCUMULATED_DEPRECIATION",normalBalance: "DEBIT"  },
+  { code: "1440", name: "Computer & IT Equipment",                               type: "ASSET",     subtype: "FIXED_ASSET",             normalBalance: "DEBIT"  },
+  { code: "1441", name: "Accumulated Depreciation — Computer & IT Equipment",   type: "ASSET",     subtype: "ACCUMULATED_DEPRECIATION",normalBalance: "DEBIT"  },
+  { code: "1500", name: "Inventories / Stock",                                   type: "ASSET",     subtype: "INVENTORY",               normalBalance: "DEBIT"  },
+  // LIABILITIES ───────────────────────────────────────────────────────────
+  { code: "2100", name: "Accounts Payable",                                      type: "LIABILITY", subtype: "ACCOUNTS_PAYABLE",        normalBalance: "CREDIT" },
+  { code: "2200", name: "EPF Payable",                                           type: "LIABILITY", subtype: "EPF_PAYABLE",             normalBalance: "CREDIT" },
+  { code: "2210", name: "SOCSO Payable",                                         type: "LIABILITY", subtype: "SOCSO_PAYABLE",           normalBalance: "CREDIT" },
+  { code: "2220", name: "PCB Payable",                                           type: "LIABILITY", subtype: "PCB_PAYABLE",             normalBalance: "CREDIT" },
+  { code: "2230", name: "Income Tax Payable",                                    type: "LIABILITY", subtype: "INCOME_TAX_PAYABLE",      normalBalance: "CREDIT" },
+  { code: "2240", name: "Staff Claims Payable",                                  type: "LIABILITY", subtype: "STAFF_CLAIMS_PAYABLE",    normalBalance: "CREDIT" },
+  { code: "2250", name: "Salary Payable",                                        type: "LIABILITY", subtype: "SALARY_PAYABLE",          normalBalance: "CREDIT" },
+  { code: "2260", name: "Accrued Expenses",                                      type: "LIABILITY", subtype: "ACCRUALS",                normalBalance: "CREDIT" },
+  { code: "2300", name: "SST Payable",                                           type: "LIABILITY", subtype: "SST_PAYABLE",             normalBalance: "CREDIT" },
+  { code: "2310", name: "Hire Purchase Payable — Motor Vehicles (Current)",      type: "LIABILITY", subtype: "HIRE_PURCHASE_PAYABLE",   normalBalance: "CREDIT" },
+  { code: "2410", name: "Hire Purchase Payable — Motor Vehicles (Non-Current)",  type: "LIABILITY", subtype: "HIRE_PURCHASE_PAYABLE",   normalBalance: "CREDIT" },
+  // EQUITY ────────────────────────────────────────────────────────────────
+  { code: "3100", name: "Share Capital",                                         type: "EQUITY",    subtype: "SHARE_CAPITAL",           normalBalance: "CREDIT" },
+  { code: "3200", name: "Retained Earnings",                                     type: "EQUITY",    subtype: "RETAINED_EARNINGS",       normalBalance: "CREDIT" },
+  { code: "3900", name: "Opening Balance Equity",                                type: "EQUITY",    subtype: null,                      normalBalance: "CREDIT" },
+  // REVENUE ───────────────────────────────────────────────────────────────
+  { code: "4000", name: "Sales Revenue",                                         type: "REVENUE",   subtype: "SALES_REVENUE",           normalBalance: "CREDIT" },
+  { code: "4100", name: "Service Revenue",                                       type: "REVENUE",   subtype: "SERVICE_REVENUE",         normalBalance: "CREDIT" },
+  { code: "4200", name: "Other Income",                                          type: "REVENUE",   subtype: "OTHER_INCOME",            normalBalance: "CREDIT" },
+  { code: "4900", name: "Foreign Exchange Gain",                                 type: "REVENUE",   subtype: "FOREX_GAIN",              normalBalance: "CREDIT" },
+  // EXPENSES ──────────────────────────────────────────────────────────────
+  { code: "5000", name: "Cost of Goods Sold",                                    type: "EXPENSE",   subtype: "COGS",                    normalBalance: "DEBIT"  },
+  { code: "5100", name: "Travel & Mileage",                                      type: "EXPENSE",   subtype: "TRAVEL_EXPENSE",          normalBalance: "DEBIT"  },
+  { code: "5101", name: "Toll & Parking",                                        type: "EXPENSE",   subtype: "TRAVEL_EXPENSE",          normalBalance: "DEBIT"  },
+  { code: "5102", name: "Accommodation",                                         type: "EXPENSE",   subtype: "ACCOMMODATION",           normalBalance: "DEBIT"  },
+  { code: "5103", name: "Daily Allowance",                                       type: "EXPENSE",   subtype: null,                      normalBalance: "DEBIT"  },
+  { code: "5104", name: "Case Allowance",                                        type: "EXPENSE",   subtype: null,                      normalBalance: "DEBIT"  },
+  { code: "5110", name: "Telephone & Communication",                             type: "EXPENSE",   subtype: null,                      normalBalance: "DEBIT"  },
+  { code: "5120", name: "Entertainment",                                         type: "EXPENSE",   subtype: "ENTERTAINMENT",           normalBalance: "DEBIT"  },
+  { code: "5199", name: "Other Staff Claims",                                    type: "EXPENSE",   subtype: null,                      normalBalance: "DEBIT"  },
+  { code: "5200", name: "Overseas Expenses",                                     type: "EXPENSE",   subtype: null,                      normalBalance: "DEBIT"  },
+  { code: "5300", name: "Salaries & Wages",                                      type: "EXPENSE",   subtype: "SALARY_EXPENSE",          normalBalance: "DEBIT"  },
+  { code: "5301", name: "Director's Remuneration",                               type: "EXPENSE",   subtype: "SALARY_EXPENSE",          normalBalance: "DEBIT"  },
+  { code: "5302", name: "EPF Contribution — Employer",                           type: "EXPENSE",   subtype: "EPF_EXPENSE",             normalBalance: "DEBIT"  },
+  { code: "5303", name: "SOCSO Contribution — Employer",                         type: "EXPENSE",   subtype: "SOCSO_EXPENSE",           normalBalance: "DEBIT"  },
+  { code: "5304", name: "HRD Levy",                                              type: "EXPENSE",   subtype: "HRD_LEVY",                normalBalance: "DEBIT"  },
+  { code: "5310", name: "Depreciation — Motor Vehicles",                         type: "EXPENSE",   subtype: "DEPRECIATION",            normalBalance: "DEBIT"  },
+  { code: "5320", name: "Vehicle Fuel",                                          type: "EXPENSE",   subtype: "VEHICLE_EXPENSE",         normalBalance: "DEBIT"  },
+  { code: "5330", name: "Vehicle Maintenance & Repairs",                         type: "EXPENSE",   subtype: "VEHICLE_EXPENSE",         normalBalance: "DEBIT"  },
+  { code: "5340", name: "Vehicle Insurance",                                     type: "EXPENSE",   subtype: "VEHICLE_EXPENSE",         normalBalance: "DEBIT"  },
+  { code: "5350", name: "Road Tax & Licensing",                                  type: "EXPENSE",   subtype: "VEHICLE_EXPENSE",         normalBalance: "DEBIT"  },
+  { code: "5360", name: "Hire Purchase Interest — Motor Vehicles",               type: "EXPENSE",   subtype: "FINANCE_CHARGE",          normalBalance: "DEBIT"  },
+  { code: "5375", name: "Vehicle Rental Expense",                                type: "EXPENSE",   subtype: "OPERATING_LEASE",         normalBalance: "DEBIT"  },
+  { code: "5380", name: "Depreciation — Office Equipment",                       type: "EXPENSE",   subtype: "DEPRECIATION",            normalBalance: "DEBIT"  },
+  { code: "5390", name: "Depreciation — Furniture & Fittings",                   type: "EXPENSE",   subtype: "DEPRECIATION",            normalBalance: "DEBIT"  },
+  { code: "5395", name: "Depreciation — Computer & IT Equipment",                type: "EXPENSE",   subtype: "DEPRECIATION",            normalBalance: "DEBIT"  },
+  { code: "5400", name: "Rental — Office Premises",                              type: "EXPENSE",   subtype: "RENTAL_EXPENSE",          normalBalance: "DEBIT"  },
+  { code: "5410", name: "Electricity & Water",                                   type: "EXPENSE",   subtype: "UTILITIES",               normalBalance: "DEBIT"  },
+  { code: "5420", name: "Internet & Broadband",                                  type: "EXPENSE",   subtype: "UTILITIES",               normalBalance: "DEBIT"  },
+  { code: "5430", name: "Office Supplies & Stationery",                          type: "EXPENSE",   subtype: "OFFICE_EXPENSE",          normalBalance: "DEBIT"  },
+  { code: "5440", name: "Printing & Reproduction",                               type: "EXPENSE",   subtype: "OFFICE_EXPENSE",          normalBalance: "DEBIT"  },
+  { code: "5450", name: "Postage & Courier",                                     type: "EXPENSE",   subtype: "OFFICE_EXPENSE",          normalBalance: "DEBIT"  },
+  { code: "5460", name: "Professional Fees",                                     type: "EXPENSE",   subtype: "PROFESSIONAL_FEES",       normalBalance: "DEBIT"  },
+  { code: "5470", name: "IT & Software Subscription",                            type: "EXPENSE",   subtype: "IT_EXPENSE",              normalBalance: "DEBIT"  },
+  { code: "5480", name: "Group Insurance & Medical",                             type: "EXPENSE",   subtype: "INSURANCE",               normalBalance: "DEBIT"  },
+  { code: "5490", name: "Advertising & Promotion",                               type: "EXPENSE",   subtype: "MARKETING",               normalBalance: "DEBIT"  },
+  { code: "5500", name: "Staff Training & Development",                          type: "EXPENSE",   subtype: "TRAINING",                normalBalance: "DEBIT"  },
+  { code: "5900", name: "Foreign Exchange Loss",                                 type: "EXPENSE",   subtype: "FOREX_LOSS",              normalBalance: "DEBIT"  },
+  { code: "5910", name: "Bank Charges — TT/Remittance Fees",                     type: "EXPENSE",   subtype: "BANK_CHARGES",            normalBalance: "DEBIT"  },
+  { code: "5920", name: "Bank Charges — Other Fees",                             type: "EXPENSE",   subtype: "BANK_CHARGES",            normalBalance: "DEBIT"  },
+  { code: "5960", name: "Income Tax Expense",                                    type: "EXPENSE",   subtype: "INCOME_TAX_EXPENSE",      normalBalance: "DEBIT"  },
+  { code: "5990", name: "Miscellaneous Expenses",                                type: "EXPENSE",   subtype: null,                      normalBalance: "DEBIT"  },
+];
+
+export async function seedDefaultLedgerAccounts(): Promise<{ inserted: number; skipped: number }> {
+  const { orgId } = await requireAccess("account:create");
+  const now = new Date();
+  const rows = DEFAULT_ACCOUNTS.map((a) => ({
+    id: nanoid(),
+    organizationId: orgId,
+    code: a.code,
+    name: a.name,
+    type: a.type,
+    subtype: a.subtype,
+    normalBalance: a.normalBalance,
+    description: null,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  const result = await db
+    .insert(ledgerAccount)
+    .values(rows)
+    .onConflictDoNothing();
+  const inserted = result.rowCount ?? 0;
+  return { inserted, skipped: rows.length - inserted };
+}
+
 // ── Chart of Accounts ──────────────────────────────────────────────────────
 
 export async function getLedgerAccounts(): Promise<LedgerAccountRow[]> {
