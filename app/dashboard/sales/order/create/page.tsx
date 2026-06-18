@@ -10,7 +10,8 @@ export default async function CreateSalesOrderPage({
 }: {
   searchParams: Promise<{ cpoId?: string }>;
 }) {
-  await requirePermission("sales-order:create");
+  const session = await requirePermission("sales-order:create");
+  const currentUserName = session.user.name ?? "";
 
   const { cpoId } = await searchParams;
 
@@ -28,5 +29,5 @@ export default async function CreateSalesOrderPage({
     getOpenCustomerPos().catch(() => []),
   ]);
 
-  return <CreateSalesOrderClient members={members} cpo={cpo} openCpos={openCpos} />;
+  return <CreateSalesOrderClient members={members} cpo={cpo} openCpos={openCpos} currentUserName={currentUserName} />;
 }

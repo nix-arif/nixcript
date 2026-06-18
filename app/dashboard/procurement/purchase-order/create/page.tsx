@@ -10,7 +10,8 @@ import { redirect } from "next/navigation";
 import { CreatePurchaseOrderClient } from "./create-po-client";
 
 export default async function CreatePurchaseOrderPage({ searchParams }: { searchParams: Promise<{ soId?: string; prId?: string; from?: string }> }) {
-  await requirePermission("purchase-order:create");
+  const session = await requirePermission("purchase-order:create");
+  const currentUserName = session.user.name ?? "";
   const { soId, prId, from } = await searchParams;
   const backHref = from ? decodeURIComponent(from) : undefined;
 
@@ -22,7 +23,7 @@ export default async function CreatePurchaseOrderPage({ searchParams }: { search
       getDefaultDeliveryAddress().catch(() => ""),
     ]);
     if (!prData) redirect("/dashboard/procurement/requisition");
-    return <CreatePurchaseOrderClient suppliers={suppliers} prData={prData} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} />;
+    return <CreatePurchaseOrderClient suppliers={suppliers} prData={prData} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} currentUserName={currentUserName} />;
   }
 
   // Direct creation path
@@ -32,5 +33,5 @@ export default async function CreatePurchaseOrderPage({ searchParams }: { search
     getActiveCustomerPos(),
     getDefaultDeliveryAddress().catch(() => ""),
   ]);
-  return <CreatePurchaseOrderClient suppliers={suppliers} approvedSos={approvedSos} customerPos={customerPos} initialSoId={soId} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} />;
+  return <CreatePurchaseOrderClient suppliers={suppliers} approvedSos={approvedSos} customerPos={customerPos} initialSoId={soId} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} currentUserName={currentUserName} />;
 }
