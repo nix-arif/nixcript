@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createCustomerPo, type CpoItemInput } from "@/server/customer-purchase-order";
+import { createCustomerPo, getNextCashSaleNo, type CpoItemInput } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
 import { searchQuotationsByNo, getQuotationForSO } from "@/server/quotation";
@@ -75,6 +75,8 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
   const [salesPersonName, setSalesPersonName] = useState("");
   const [status,         setStatus]         = useState("received");
   const [notes,          setNotes]          = useState("");
+
+  const [cashSaleLoading, setCashSaleLoading] = useState(false);
 
   // ── PDF ────────────────────────────────────────────────────────────────────
   const [pdfFile,      setPdfFile]      = useState<File | null>(null);
@@ -249,6 +251,19 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
       setPdfFile(null);
     } finally {
       setPdfUploading(false);
+    }
+  }
+
+  async function handleCashSale() {
+    if (cashSaleLoading) return;
+    setCashSaleLoading(true);
+    try {
+      const no = await getNextCashSaleNo();
+      setCustomerPoNo(no);
+    } catch {
+      toast.error("Failed to generate cash sale number");
+    } finally {
+      setCashSaleLoading(false);
     }
   }
 
@@ -521,7 +536,20 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
         <div className="border border-border rounded-xl p-4 space-y-4">
           <h2 className="text-sm font-semibold">PO details</h2>
           <div className="space-y-1.5">
-            <Label>Customer PO number <span className="text-destructive">*</span></Label>
+            <div className="flex items-center justify-between">
+              <Label>Customer PO number <span className="text-destructive">*</span></Label>
+              <button
+                type="button"
+                disabled={cashSaleLoading}
+                onClick={handleCashSale}
+                className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 border border-dashed border-emerald-400 dark:border-emerald-600 rounded px-2 py-0.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {cashSaleLoading
+                  ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                  : <PlusIcon className="w-3 h-3" />}
+                Cash Sale
+              </button>
+            </div>
             <Input
               value={customerPoNo}
               onChange={(e) => setCustomerPoNo(e.target.value)}

@@ -125,23 +125,6 @@ async function generateSoNo(orgId: string): Promise<string> {
 // Scans existing SO customerPoNo fields; safe to call concurrently since the
 // number is only a preview — the SO is created separately and race conditions
 // are highly unlikely in a small-team ERP.
-export async function getNextCashSaleNo(): Promise<string> {
-  const { orgId } = await requireAccess("sales-order:create");
-  const rows = await db
-    .select({ customerPoNo: salesOrder.customerPoNo })
-    .from(salesOrder)
-    .where(and(
-      eq(salesOrder.organizationId, orgId),
-      ilike(salesOrder.customerPoNo, "CASH-SALE-%"),
-    ));
-  let max = 0;
-  for (const { customerPoNo } of rows) {
-    const n = customerPoNo?.match(/^CASH-SALE-(\d+)$/i)?.[1];
-    if (n) max = Math.max(max, parseInt(n, 10));
-  }
-  return `CASH-SALE-${String(max + 1).padStart(2, "0")}`;
-}
-
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type SalesOrderRow = typeof salesOrder.$inferSelect;

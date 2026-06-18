@@ -109,6 +109,23 @@ export interface UpdateCustomerPoInput extends CreateCustomerPoInput {
   id: string;
 }
 
+export async function getNextCashSaleNo(): Promise<string> {
+  const { orgId } = await requireAccess("customer-po:create");
+  const rows = await db
+    .select({ customerPoNo: customerPurchaseOrder.customerPoNo })
+    .from(customerPurchaseOrder)
+    .where(and(
+      eq(customerPurchaseOrder.organizationId, orgId),
+      ilike(customerPurchaseOrder.customerPoNo, "CASH-SALE-%"),
+    ));
+  let max = 0;
+  for (const { customerPoNo } of rows) {
+    const n = customerPoNo?.match(/^CASH-SALE-(\d+)$/i)?.[1];
+    if (n) max = Math.max(max, parseInt(n, 10));
+  }
+  return `CASH-SALE-${String(max + 1).padStart(2, "0")}`;
+}
+
 export async function getCustomerPos(): Promise<CustomerPo[]> {
   const { orgId } = await requireAccess("customer-po:read");
   return db
