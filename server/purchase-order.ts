@@ -211,6 +211,8 @@ export type PrForPoConversion = {
   prNo: string;
   salesOrderId: string | null;
   salesOrderNo: string | null;
+  soDeliveryDate: Date | null;
+  soDeliveryAddress: string | null;
   notes: string | null;
   cpoNos: string[]; // all unique CPO numbers across items
   items: Array<{
@@ -245,7 +247,7 @@ export async function getPrForPoConversion(prId: string): Promise<PrForPoConvers
   if (!pr) return null;
   if (pr.status !== "approved" && pr.status !== "partially_ordered") return null;
 
-  const [items, cpos] = await Promise.all([
+  const [items, cpos, soRow] = await Promise.all([
     db.select().from(purchaseRequisitionItem)
       .where(eq(purchaseRequisitionItem.purchaseRequisitionId, prId))
       .orderBy(asc(purchaseRequisitionItem.rowNo)),
@@ -254,6 +256,13 @@ export async function getPrForPoConversion(prId: string): Promise<PrForPoConvers
       ? db.select({ id: customerPurchaseOrder.id, customerPoNo: customerPurchaseOrder.customerPoNo })
           .from(customerPurchaseOrder)
           .where(and(eq(customerPurchaseOrder.salesOrderId, pr.salesOrderId), eq(customerPurchaseOrder.organizationId, orgId)))
+      : Promise.resolve([]),
+    // Load SO delivery fields
+    pr.salesOrderId
+      ? db.select({ deliveryDate: salesOrder.deliveryDate, deliveryAddress: salesOrder.deliveryAddress })
+          .from(salesOrder)
+          .where(and(eq(salesOrder.id, pr.salesOrderId), eq(salesOrder.organizationId, orgId)))
+          .limit(1)
       : Promise.resolve([]),
   ]);
 
@@ -300,6 +309,8 @@ export async function getPrForPoConversion(prId: string): Promise<PrForPoConvers
     prNo: pr.prNo,
     salesOrderId: pr.salesOrderId,
     salesOrderNo: pr.salesOrderNo,
+    soDeliveryDate: soRow[0]?.deliveryDate ?? null,
+    soDeliveryAddress: soRow[0]?.deliveryAddress ?? null,
     notes: pr.notes,
     cpoNos,
     items: enrichedItems,

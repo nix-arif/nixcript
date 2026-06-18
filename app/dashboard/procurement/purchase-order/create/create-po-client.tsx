@@ -257,8 +257,17 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   const [cpoSearch, setCpoSearch] = useState("");
 
   // Header fields
-  const [deliveryDate, setDeliveryDate] = useState("");
-  const [deliveryAddress, setDeliveryAddress] = useState(defaultDeliveryAddress);
+  const [deliveryDate, setDeliveryDate] = useState(() => {
+    if (prData?.soDeliveryDate) return new Date(prData.soDeliveryDate).toISOString().split("T")[0];
+    return "";
+  });
+  const [deliveryAddress, setDeliveryAddress] = useState(
+    prData?.soDeliveryAddress ?? defaultDeliveryAddress,
+  );
+  const deliveryDateInherited = prData?.soDeliveryDate
+    ? new Date(prData.soDeliveryDate).toISOString().split("T")[0]
+    : "";
+  const deliveryAddressInherited = prData?.soDeliveryAddress ?? "";
   const [notes, setNotes] = useState(prData?.notes ?? "");
   const [sstPct, setSstPct] = useState("0");
   const [currency, setCurrency] = useState(() => {
@@ -799,7 +808,14 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-xs">Expected delivery date</Label>
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs">Expected delivery date</Label>
+                {deliveryDateInherited && (
+                  deliveryDate === deliveryDateInherited
+                    ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">from SO</span>
+                    : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">modified</span>
+                )}
+              </div>
               <input
                 type="date"
                 value={deliveryDate}
@@ -808,7 +824,14 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Delivery address</Label>
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs">Delivery address</Label>
+                {deliveryAddressInherited && (
+                  deliveryAddress === deliveryAddressInherited
+                    ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">from SO</span>
+                    : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">modified</span>
+                )}
+              </div>
               <Input
                 value={deliveryAddress}
                 onChange={(e) => setDeliveryAddress(e.target.value)}
