@@ -240,6 +240,8 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
   const [associateSalesPersons, setAssociateSalesPersons] = useState<{ id: string; name: string }[]>([]);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryDateInherited, setDeliveryDateInherited] = useState("");
+  const [deliveryAddressInherited, setDeliveryAddressInherited] = useState("");
   const [notes, setNotes] = useState("");
 
   // Order type
@@ -424,6 +426,20 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
           });
       }
 
+      // Inherit delivery fields from first CPO only
+      if (linkedCpos.length === 0) {
+        if (!deliveryDate && data.deliveryDate) {
+          const d = new Date(data.deliveryDate).toISOString().split("T")[0];
+          setDeliveryDate(d);
+          setDeliveryDateInherited(d);
+        }
+        const addr = data.customerSnapshot?.organizationAddress;
+        if (!deliveryAddress && addr) {
+          setDeliveryAddress(addr);
+          setDeliveryAddressInherited(addr);
+        }
+      }
+
       // Auto-fill customer from first CPO
       if (linkedCpos.length === 0 && data.customerId && !selectedCustomer) {
         getCustomer(data.customerId)
@@ -466,6 +482,8 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
       if (next.length === 0) {
         setSelectedCustomer(null);
         setCustOrgMemberId(undefined);
+        setDeliveryDateInherited("");
+        setDeliveryAddressInherited("");
       }
       return next;
     });
@@ -1325,7 +1343,14 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Due delivery date</Label>
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs">Due delivery date</Label>
+                {deliveryDateInherited && (
+                  deliveryDate === deliveryDateInherited
+                    ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">from CPO</span>
+                    : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">modified</span>
+                )}
+              </div>
               <input
                 type="date"
                 value={deliveryDate}
@@ -1334,7 +1359,14 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Delivery address</Label>
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs">Delivery address</Label>
+                {deliveryAddressInherited && (
+                  deliveryAddress === deliveryAddressInherited
+                    ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">from CPO</span>
+                    : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">modified</span>
+                )}
+              </div>
               <Input
                 value={deliveryAddress}
                 onChange={(e) => setDeliveryAddress(e.target.value)}
