@@ -169,9 +169,9 @@ async function runSmartCompress(
       let predictor = 1;
 
       if (isFlate) {
-        const dp = dict.get(PDFName.of("DecodeParms"));
+        const dpRaw = lu(dict.get(PDFName.of("DecodeParms")));
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const dpDict: any = dp instanceof PDFArray ? (dp as any).get(0) : dp;
+        const dpDict: any = dpRaw instanceof PDFArray ? lu((dpRaw as any).get(0)) : dpRaw;
         if (dpDict instanceof PDFDict) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           predictor = (dpDict.get(PDFName.of("Predictor")) as any)?.value ?? 1;
@@ -330,9 +330,15 @@ async function runSmartCompress(
   onProgress("Rebuilding PDF…", 93);
 
   const outBytes = await pdfDoc.save({ useObjectStreams: true });
-  const bytes = outBytes.length < originalBuf.byteLength
+  // When images were actually replaced, always return the result — the slider
+  // must affect output size.  Only fall back to the original when nothing was
+  // compressed, where pdf-lib's structural overhead would make the file larger
+  // for no benefit.
+  const bytes = compressedCount > 0
     ? outBytes
-    : new Uint8Array(originalBuf);
+    : outBytes.length < originalBuf.byteLength
+      ? outBytes
+      : new Uint8Array(originalBuf);
   return { bytes, imagesCompressed: compressedCount, imagesFound: images.length };
 }
 

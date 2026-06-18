@@ -1068,11 +1068,14 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
                           </div>
                         </div>
                         <Field label="Organisation name">
-                          <Input
-                            value={m.orgName}
-                            onChange={(e) => setLocalMemberships(localMemberships.map((x, j) => j === i ? { ...x, orgName: e.target.value } : x))}
-                            placeholder="e.g. Hospital Kuala Lumpur"
-                            className="h-9 text-sm"
+                          <OrgPicker
+                            value={m.orgName ? { id: m.orgId ?? "__new__", name: m.orgName } : null}
+                            onSelect={(org) => setLocalMemberships(localMemberships.map((x, j) =>
+                              j === i ? { ...x, orgId: org.id === "__new__" ? null : org.id, orgName: org.name, orgAddress: org.address ?? undefined } : x
+                            ))}
+                            onClear={() => setLocalMemberships(localMemberships.map((x, j) =>
+                              j === i ? { ...x, orgId: null, orgName: "" } : x
+                            ))}
                           />
                         </Field>
                         <div className="grid grid-cols-2 gap-2">
