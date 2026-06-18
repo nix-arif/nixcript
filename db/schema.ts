@@ -2069,6 +2069,7 @@ export const deliveryOrderItem = pgTable(
     deliveryOrderId: text("delivery_order_id")
       .notNull()
       .references(() => deliveryOrder.id, { onDelete: "cascade" }),
+    soItemId: text("so_item_id").references(() => salesOrderItem.id, { onDelete: "set null" }),
     rowNo: integer("row_no").notNull(),
     productId: text("product_id").references(() => product.id),
     productCode: text("product_code"),

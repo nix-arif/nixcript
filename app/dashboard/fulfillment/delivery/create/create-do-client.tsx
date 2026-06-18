@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createDeliveryOrder, type DeliveryOrderItemInput } from "@/server/delivery-order";
+import { createDeliveryOrder, getSoRemainingItems, type DeliveryOrderItemInput, type SoItemRemaining } from "@/server/delivery-order";
 import { searchConfirmedSalesOrders, getSalesOrderDetail, type CpoCustomer } from "@/server/sales-order";
 import { searchProducts } from "@/server/inventory";
 import { getCustomers, getCustomer } from "@/server/customer";
@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 
 type Customer = Awaited<ReturnType<typeof getCustomer>>;
-interface LineItem extends DeliveryOrderItemInput { _key: string; }
+interface LineItem extends DeliveryOrderItemInput { _key: string; originalQty?: string; }
 
 const TOTAL_COLS = 4; // code, description, qty, uom
 
@@ -38,7 +38,7 @@ export interface PrefillData {
   customer: Customer | null;
   deliveryAddress: string;
   deliveryDate: string;
-  items: Omit<LineItem, "_key">[];
+  items: Omit<LineItem, "_key">[];  // includes soItemId?, originalQty?
 }
 
 // Defined outside component to avoid re-creation on every render
@@ -130,7 +130,10 @@ function SoPicker({ onSelect }: SoPickerProps) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // CPO picker state — set after SO is selected when >1 CPO
-  const [pendingSo, setPendingSo] = useState<Awaited<ReturnType<typeof getSalesOrderDetail>> | null>(null);
+  const [pendingSo, setPendingSo] = useState<{
+    detail: NonNullable<Awaited<ReturnType<typeof getSalesOrderDetail>>>;
+    remaining: SoItemRemaining[];
+  } | null>(null);
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -148,13 +151,14 @@ function SoPicker({ onSelect }: SoPickerProps) {
   function buildPrefill(
     detail: NonNullable<Awaited<ReturnType<typeof getSalesOrderDetail>>>,
     cpo?: CpoCustomer,
+    remaining?: SoItemRemaining[],
   ): PrefillData {
-    // Filter items to CPO if one is selected, otherwise all items
     const filteredItems = cpo
       ? detail.items.filter((i) => i.sourceCustomerPoId === cpo.customerPoId)
       : detail.items;
 
-    // Customer: prefer CPO snapshot when available, else SO snapshot
+    const remainingMap = new Map(remaining?.map((r) => [r.soItemId, r]) ?? []);
+
     const rawSnap = (cpo?.customerSnapshot ?? detail.customerSnapshot) as any;
     const customerId = cpo?.customerId ?? detail.customerId ?? "";
     const customer = rawSnap
@@ -175,32 +179,38 @@ function SoPicker({ onSelect }: SoPickerProps) {
         : "",
       items: filteredItems
         .filter((i) => i.description || i.productCode)
-        .map((i, idx) => ({
-          rowNo: idx + 1,
-          productId: i.productId ?? undefined,
-          productCode: i.productCode ?? "",
-          description: i.description ?? "",
-          qty: i.qty ?? "1",
-          uom: i.uom ?? "",
-        })),
+        .map((i, idx) => {
+          const rem = remainingMap.get(i.id);
+          return {
+            rowNo: idx + 1,
+            soItemId: i.id,
+            originalQty: rem?.originalQty ?? i.qty ?? "1",
+            productId: i.productId ?? undefined,
+            productCode: i.productCode ?? "",
+            description: i.description ?? "",
+            qty: rem ? rem.remainingQty : (i.qty ?? "1"),
+            uom: i.uom ?? "",
+          };
+        })
+        .filter((item) => parseFloat(item.qty || "0") > 0),
     };
   }
 
   async function pickSo(so: SoSearchResult) {
     setLoadingId(so.id);
     try {
-      const detail = await getSalesOrderDetail(so.id);
+      const [detail, remaining] = await Promise.all([
+        getSalesOrderDetail(so.id),
+        getSoRemainingItems(so.id).catch(() => [] as SoItemRemaining[]),
+      ]);
       if (!detail) { toast.error("Sales order not found"); return; }
 
       if (detail.cpoCustomers.length > 1) {
-        // Multiple customers — show CPO picker
-        setPendingSo(detail);
+        setPendingSo({ detail, remaining });
       } else if (detail.cpoCustomers.length === 1) {
-        // Single CPO — auto-select it
-        onSelect(buildPrefill(detail, detail.cpoCustomers[0]));
+        onSelect(buildPrefill(detail, detail.cpoCustomers[0], remaining));
       } else {
-        // No CPOs — proceed with all items
-        onSelect(buildPrefill(detail));
+        onSelect(buildPrefill(detail, undefined, remaining));
       }
     } catch (e: any) {
       toast.error(e.message);
@@ -211,7 +221,7 @@ function SoPicker({ onSelect }: SoPickerProps) {
 
   // ── CPO picker step ──
   if (pendingSo) {
-    const so = pendingSo;
+    const { detail: so, remaining } = pendingSo;
     return (
       <div className="p-6 space-y-5">
         <PageHeader
@@ -238,7 +248,7 @@ function SoPicker({ onSelect }: SoPickerProps) {
                 <button
                   key={cpo.customerPoId}
                   className="w-full text-left px-3 py-3 hover:bg-muted/50 transition-colors flex items-center justify-between gap-3"
-                  onClick={() => onSelect(buildPrefill(so, cpo))}
+                  onClick={() => onSelect(buildPrefill(so, cpo, remaining))}
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -462,7 +472,7 @@ function DoForm({ prefill }: { prefill: PrefillData }) {
         deliveryAddress: deliveryAddress || undefined,
         deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
         notes: notes || undefined,
-        items: items.map(({ _key, ...rest }) => rest),
+        items: items.map(({ _key, originalQty: _oq, ...rest }) => rest),
       });
       toast.success("Delivery order created");
       router.refresh();
@@ -694,6 +704,11 @@ function DoForm({ prefill }: { prefill: PrefillData }) {
                       onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)}
                       className="h-7 text-xs text-right"
                     />
+                    {item.originalQty && item.originalQty !== item.qty && (
+                      <p className="text-[9px] text-muted-foreground mt-0.5 text-right">
+                        of {item.originalQty}
+                      </p>
+                    )}
                   </td>
                   <td className="py-1.5 pr-2">
                     <Input

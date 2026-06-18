@@ -19,7 +19,7 @@ import {
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, sql, or, ilike, notExists } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -247,14 +247,6 @@ export async function searchConfirmedSalesOrders(
         eq(salesOrder.organizationId, orgId),
         inArray(salesOrder.status, statuses),
         eq(salesOrder.stockReservationStatus, "reserved"),
-        // Exclude SOs that already have a delivery order (fully covered)
-        notExists(
-          db.select({ _: deliveryOrder.id }).from(deliveryOrder)
-            .where(and(
-              eq(deliveryOrder.salesOrderId, salesOrder.id),
-              eq(deliveryOrder.organizationId, orgId),
-            )),
-        ),
         query.trim().length >= 1
           ? ilike(salesOrder.soNo, q)
           : undefined,

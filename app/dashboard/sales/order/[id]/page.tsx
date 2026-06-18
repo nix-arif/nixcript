@@ -1,7 +1,7 @@
 import { requirePermission } from "@/lib/auth/require-permission";
 import { getSalesOrderDetail } from "@/server/sales-order";
 import { getQuotationBasic } from "@/server/quotation";
-import { getDeliveryOrdersBySoId } from "@/server/delivery-order";
+import { getDeliveryOrdersBySoId, getSoItemDeliveredQtys } from "@/server/delivery-order";
 import { getPrsBySoId } from "@/server/purchase-requisition";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { notFound } from "next/navigation";
@@ -19,11 +19,12 @@ export default async function SalesOrderDetailPage({ params, searchParams }: { p
 
   if (!order) notFound();
 
-  const [linkedQuotation, linkedDos, linkedPrs] = await Promise.all([
+  const [linkedQuotation, linkedDos, linkedPrs, itemDeliveredQtys] = await Promise.all([
     order.quotationId ? getQuotationBasic(order.quotationId).catch(() => null) : Promise.resolve(null),
     getDeliveryOrdersBySoId(id).catch(() => []),
     getPrsBySoId(id).catch(() => []),
+    getSoItemDeliveredQtys(id).catch(() => ({} as Record<string, number>)),
   ]);
 
-  return <SalesOrderDetailClient order={order} linkedQuotation={linkedQuotation} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} />;
+  return <SalesOrderDetailClient order={order} linkedQuotation={linkedQuotation} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} itemDeliveredQtys={itemDeliveredQtys} />;
 }

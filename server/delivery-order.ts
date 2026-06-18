@@ -16,7 +16,7 @@ import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, isNotNull, isNull, notExists } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, isNotNull, isNull, notExists, ne, sql } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -82,8 +82,139 @@ export type DoForInvoice = {
 const EDITABLE_STATUSES = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft"]);
 
+// ── Fulfillment helpers ────────────────────────────────────────────────────
+
+export type SoItemRemaining = {
+  soItemId: string;
+  rowNo: number;
+  productId: string | null;
+  productCode: string | null;
+  description: string | null;
+  uom: string | null;
+  sourceCustomerPoId: string | null;
+  originalQty: string;
+  deliveredQty: string;
+  remainingQty: string;
+};
+
+// Called after creating a DO — if every SO item is fully covered, closes the SO.
+async function checkAndFulfillSo(soId: string, orgId: string): Promise<void> {
+  const soItems = await db
+    .select({ id: salesOrderItem.id, qty: salesOrderItem.qty })
+    .from(salesOrderItem)
+    .where(eq(salesOrderItem.salesOrderId, soId));
+
+  if (soItems.length === 0) return;
+
+  const itemIds = soItems.map((i) => i.id);
+
+  const deliveredRows = await db
+    .select({
+      soItemId: deliveryOrderItem.soItemId,
+      total: sql<string>`coalesce(sum(${deliveryOrderItem.qty}::numeric), 0)::text`,
+    })
+    .from(deliveryOrderItem)
+    .innerJoin(deliveryOrder, eq(deliveryOrderItem.deliveryOrderId, deliveryOrder.id))
+    .where(and(
+      eq(deliveryOrder.salesOrderId, soId),
+      eq(deliveryOrder.organizationId, orgId),
+      ne(deliveryOrder.status, "cancelled"),
+      inArray(deliveryOrderItem.soItemId as any, itemIds),
+    ))
+    .groupBy(deliveryOrderItem.soItemId);
+
+  const deliveredMap = new Map(deliveredRows.map((r) => [r.soItemId as string, parseFloat(r.total)]));
+
+  const allFulfilled = soItems.every((item) => {
+    const delivered = deliveredMap.get(item.id) ?? 0;
+    return delivered >= parseFloat(item.qty ?? "0");
+  });
+
+  if (allFulfilled) {
+    await db
+      .update(salesOrder)
+      .set({ status: "fulfilled", updatedAt: new Date() })
+      .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
+  }
+}
+
+// Returns per-item remaining quantities for the create-DO form.
+export async function getSoRemainingItems(soId: string): Promise<SoItemRemaining[]> {
+  const session = await getCachedSession();
+  if (!session?.session?.activeOrganizationId) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+
+  const items = await db
+    .select()
+    .from(salesOrderItem)
+    .where(eq(salesOrderItem.salesOrderId, soId))
+    .orderBy(asc(salesOrderItem.rowNo));
+
+  if (items.length === 0) return [];
+
+  const itemIds = items.map((i) => i.id);
+
+  const deliveredRows = await db
+    .select({
+      soItemId: deliveryOrderItem.soItemId,
+      total: sql<string>`coalesce(sum(${deliveryOrderItem.qty}::numeric), 0)::text`,
+    })
+    .from(deliveryOrderItem)
+    .innerJoin(deliveryOrder, eq(deliveryOrderItem.deliveryOrderId, deliveryOrder.id))
+    .where(and(
+      eq(deliveryOrder.salesOrderId, soId),
+      eq(deliveryOrder.organizationId, orgId),
+      ne(deliveryOrder.status, "cancelled"),
+      inArray(deliveryOrderItem.soItemId as any, itemIds),
+    ))
+    .groupBy(deliveryOrderItem.soItemId);
+
+  const deliveredMap = new Map(deliveredRows.map((r) => [r.soItemId as string, parseFloat(r.total)]));
+
+  return items.map((item) => {
+    const originalQty = parseFloat(item.qty ?? "0");
+    const deliveredQty = deliveredMap.get(item.id) ?? 0;
+    const remainingQty = Math.max(0, originalQty - deliveredQty);
+    return {
+      soItemId: item.id,
+      rowNo: item.rowNo,
+      productId: item.productId,
+      productCode: item.productCode,
+      description: item.description,
+      uom: item.uom,
+      sourceCustomerPoId: item.sourceCustomerPoId,
+      originalQty: originalQty.toFixed(item.qty?.includes(".") ? 2 : 0),
+      deliveredQty: deliveredQty.toFixed(item.qty?.includes(".") ? 2 : 0),
+      remainingQty: remainingQty.toFixed(item.qty?.includes(".") ? 2 : 0),
+    };
+  });
+}
+
+// Returns a map of soItemId → delivered qty, used in the SO detail page.
+export async function getSoItemDeliveredQtys(soId: string): Promise<Record<string, number>> {
+  const { orgId } = await requireAccess("delivery-order:read");
+
+  const rows = await db
+    .select({
+      soItemId: deliveryOrderItem.soItemId,
+      total: sql<string>`coalesce(sum(${deliveryOrderItem.qty}::numeric), 0)::text`,
+    })
+    .from(deliveryOrderItem)
+    .innerJoin(deliveryOrder, eq(deliveryOrderItem.deliveryOrderId, deliveryOrder.id))
+    .where(and(
+      eq(deliveryOrder.salesOrderId, soId),
+      eq(deliveryOrder.organizationId, orgId),
+      ne(deliveryOrder.status, "cancelled"),
+      isNotNull(deliveryOrderItem.soItemId),
+    ))
+    .groupBy(deliveryOrderItem.soItemId);
+
+  return Object.fromEntries(rows.map((r) => [r.soItemId as string, parseFloat(r.total)]));
+}
+
 export interface DeliveryOrderItemInput {
   rowNo: number;
+  soItemId?: string;
   productId?: string;
   productCode?: string;
   description?: string;
@@ -253,6 +384,7 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       input.items.map((i) => ({
         id: nanoid(),
         deliveryOrderId: row.id,
+        soItemId: i.soItemId ?? null,
         rowNo: i.rowNo,
         productId: i.productId ?? null,
         productCode: i.productCode ?? null,
@@ -262,10 +394,14 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       })),
     );
   }
+  if (input.salesOrderId) {
+    await checkAndFulfillSo(input.salesOrderId, orgId);
+  }
   revalidatePath("/dashboard/fulfillment/delivery");
   revalidatePath("/dashboard");
   if (input.salesOrderId) {
     revalidatePath(`/dashboard/sales/order/${input.salesOrderId}`);
+    revalidatePath("/dashboard/sales/order");
   }
   return row;
 }
@@ -436,8 +572,9 @@ export type PendingSoForDoRow = {
 export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
   const { orgId } = await requireAccess("delivery-order:read");
 
-  // Confirmed+reserved SOs that have no DO linked yet.
-  // Uses NOT EXISTS to avoid nullable-column LEFT JOIN issues in Drizzle ORM.
+  // Confirmed+reserved SOs that are not yet fulfilled.
+  // 'fulfilled' status is set automatically when all item quantities are delivered.
+  // Partially-delivered SOs remain 'confirmed' and continue to show here.
   const rows = await db
     .select({
       id: salesOrder.id,
@@ -453,13 +590,6 @@ export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
       eq(salesOrder.organizationId, orgId),
       eq(salesOrder.status, "confirmed"),
       eq(salesOrder.stockReservationStatus, "reserved"),
-      notExists(
-        db.select({ _: deliveryOrder.id }).from(deliveryOrder)
-          .where(and(
-            eq(deliveryOrder.salesOrderId, salesOrder.id),
-            eq(deliveryOrder.organizationId, orgId),
-          )),
-      ),
     ))
     .orderBy(desc(salesOrder.createdAt));
 
