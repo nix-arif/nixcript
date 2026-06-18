@@ -437,7 +437,7 @@ export type CreateQuotationInput = {
   inclMdaEstablishment: boolean;
   inclLampiran12: boolean;
   inclLampiran13: boolean;
-  categoryId?: string;
+  categoryIds?: string[];
 };
 
 function calcItemTotal(item: Pick<ReviewItem, "qty" | "unitPrice" | "discountPct" | "lineType" | "rentalDuration" | "setGroupId" | "setQty">): number {
@@ -555,7 +555,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     inclLampiran12: input.inclLampiran12 ? 1 : 0,
     inclLampiran13: input.inclLampiran13 ? 1 : 0,
     status: "draft" as const,
-    categoryId: input.categoryId ?? null,
+    categoryIds: input.categoryIds ?? [],
     createdBy: userId,
   };
 

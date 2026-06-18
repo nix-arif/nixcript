@@ -10,6 +10,7 @@ import { getCustomerPosByCustomer } from "@/server/customer-purchase-order";
 import { type Supplier } from "@/server/supplier";
 import { type CustomerPo } from "@/server/customer-purchase-order";
 import { type DoForInvoice } from "@/server/delivery-order";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -104,10 +105,9 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
   const [paymentTerms, setPaymentTerms] = useState("");
   const [status, setStatus] = useState("draft");
   const [notes, setNotes] = useState("");
-  const [categoryId, setCategoryId] = useState<string>(() => {
-    const def = categories.find((c) => c.isDefault);
-    return def?.id ?? (categories[0]?.id ?? "");
-  });
+  const [categoryIds, setCategoryIds] = useState<string[]>(() =>
+    categories.filter((c) => c.isDefault).map((c) => c.id),
+  );
 
   // Pricing
   const [overallDiscountPct, setOverallDiscountPct] = useState("0");
@@ -253,7 +253,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
         paymentTerms: paymentTerms || undefined,
         dueDate: dueDate ? new Date(dueDate) : undefined,
         notes: notes || undefined,
-        categoryId: categoryId || undefined,
+        categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
         items: items.map(({ _key, ...rest }) => rest),
         expenses: expenses.map(({ _key, ...rest }) => rest),
       });
@@ -392,27 +392,47 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
           </div>
           <div className="mt-3 space-y-1.5">
             <Label className="text-xs">
-              Category <span className="text-destructive">*</span>
+              Categories <span className="text-destructive">*</span>
             </Label>
             {categories.length === 0 ? (
               <p className="text-xs text-muted-foreground italic py-1">
                 No categories yet — create one in Organization → Categories
               </p>
             ) : (
-              <div className="relative">
-                <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
-                  className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none"
-                >
-                  <option value="">— Select category —</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}{c.isDefault ? " (default)" : ""}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <div className="flex flex-wrap gap-2 pt-0.5">
+                {categories.map((c) => {
+                  const selected = categoryIds.includes(c.id);
+                  const hex = c.color ?? "#6366f1";
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() =>
+                        setCategoryIds((prev) =>
+                          selected ? prev.filter((id) => id !== c.id) : [...prev, c.id],
+                        )
+                      }
+                      className={cn(
+                        "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-all select-none",
+                        selected
+                          ? "text-white shadow-sm"
+                          : "bg-background text-foreground/70 hover:text-foreground",
+                      )}
+                      style={
+                        selected
+                          ? { backgroundColor: hex, borderColor: hex }
+                          : { borderColor: hex + "55" }
+                      }
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }}
+                      />
+                      {c.name}
+                      {selected && <span className="ml-0.5 opacity-80">✓</span>}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -45,14 +45,6 @@ export async function createDocumentCategory(input: {
 }): Promise<DocumentCategoryRow> {
   const { orgId } = await requireWriteAccess();
 
-  // If setting as default, clear existing defaults
-  if (input.isDefault) {
-    await db
-      .update(documentCategory)
-      .set({ isDefault: false })
-      .where(eq(documentCategory.organizationId, orgId));
-  }
-
   const [row] = await db
     .insert(documentCategory)
     .values({
@@ -82,14 +74,6 @@ export async function updateDocumentCategory(input: {
     .where(and(eq(documentCategory.id, input.id), eq(documentCategory.organizationId, orgId)));
   if (!existing) throw new Error("Category not found");
 
-  // If setting as default, clear others first
-  if (input.isDefault) {
-    await db
-      .update(documentCategory)
-      .set({ isDefault: false })
-      .where(eq(documentCategory.organizationId, orgId));
-  }
-
   const [row] = await db
     .update(documentCategory)
     .set({
@@ -115,15 +99,21 @@ export async function deleteDocumentCategory(id: string): Promise<void> {
   revalidatePath("/dashboard/organization/categories");
 }
 
-export async function setDefaultDocumentCategory(id: string): Promise<void> {
+// Toggles the isDefault flag on a single category (multiple defaults allowed)
+export async function toggleDefaultDocumentCategory(id: string): Promise<DocumentCategoryRow> {
   const { orgId } = await requireWriteAccess();
-  await db
-    .update(documentCategory)
-    .set({ isDefault: false })
-    .where(eq(documentCategory.organizationId, orgId));
-  await db
-    .update(documentCategory)
-    .set({ isDefault: true })
+  const [existing] = await db
+    .select()
+    .from(documentCategory)
     .where(and(eq(documentCategory.id, id), eq(documentCategory.organizationId, orgId)));
+  if (!existing) throw new Error("Category not found");
+
+  const [row] = await db
+    .update(documentCategory)
+    .set({ isDefault: !existing.isDefault })
+    .where(eq(documentCategory.id, id))
+    .returning();
+
   revalidatePath("/dashboard/organization/categories");
+  return row;
 }

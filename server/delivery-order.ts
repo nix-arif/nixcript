@@ -16,7 +16,7 @@ import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, isNotNull } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, isNotNull, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -360,10 +360,10 @@ export async function deliverDeliveryOrder(id: string, warehouseLabel = "Default
     ),
   );
 
-  // Release SO reservation if this DO is linked to a sales order
+  // Release SO reservation and close the SO
   if (existing.salesOrderId) {
-    await Promise.all(
-      itemsWithProduct.map((i) =>
+    await Promise.all([
+      ...itemsWithProduct.map((i) =>
         adjustReservation({
           orgId,
           productId: i.productId!,
@@ -371,7 +371,13 @@ export async function deliverDeliveryOrder(id: string, warehouseLabel = "Default
           delta: -parseFloat(i.qty ?? "1"),
         }),
       ),
-    );
+      db
+        .update(salesOrder)
+        .set({ status: "fulfilled" })
+        .where(and(eq(salesOrder.id, existing.salesOrderId), eq(salesOrder.organizationId, orgId))),
+    ]);
+    revalidatePath(`/dashboard/sales/order/${existing.salesOrderId}`);
+    revalidatePath("/dashboard/sales/order");
   }
   revalidatePath("/dashboard/fulfillment/delivery");
   revalidatePath("/dashboard/fulfillment/invoice");
@@ -427,7 +433,8 @@ export type PendingSoForDoRow = {
 export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
   const { orgId } = await requireAccess("delivery-order:read");
 
-  // Confirmed SOs with stock fully reserved
+  // Single query: confirmed+reserved SOs with no DO linked yet.
+  // LEFT JOIN delivery_order on salesOrderId — isNull(do.id) means no DO exists.
   const rows = await db
     .select({
       id: salesOrder.id,
@@ -439,29 +446,22 @@ export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
       createdAt: salesOrder.createdAt,
     })
     .from(salesOrder)
+    .leftJoin(
+      deliveryOrder,
+      and(
+        eq(deliveryOrder.salesOrderId, salesOrder.id),
+        eq(deliveryOrder.organizationId, orgId),
+      ),
+    )
     .where(and(
       eq(salesOrder.organizationId, orgId),
       eq(salesOrder.status, "confirmed"),
       eq(salesOrder.stockReservationStatus, "reserved"),
+      isNull(deliveryOrder.id),  // no DO exists for this SO
     ))
     .orderBy(desc(salesOrder.createdAt));
 
-  if (rows.length === 0) return [];
-
-  // Exclude SOs that already have at least one DO (any status)
-  const soIds = rows.map((r) => r.id);
-  const existingDoSoIds = await db
-    .selectDistinct({ salesOrderId: deliveryOrder.salesOrderId })
-    .from(deliveryOrder)
-    .where(and(
-      eq(deliveryOrder.organizationId, orgId),
-      isNotNull(deliveryOrder.salesOrderId),
-      inArray(deliveryOrder.salesOrderId as any, soIds),
-    ));
-
-  const soIdsWithDo = new Set(existingDoSoIds.map((r) => r.salesOrderId!));
-  const pendingRows = rows.filter((r) => !soIdsWithDo.has(r.id));
-
+  const pendingRows = rows;
   if (pendingRows.length === 0) return [];
 
   // Fetch CPO customer snapshots for display

@@ -1060,7 +1060,7 @@ export const quotation = pgTable(
     // Status
     status: text("status").notNull().default("draft"), // draft | final
 
-    categoryId: text("category_id").references(() => documentCategory.id),
+    categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
 
     createdBy: text("created_by")
       .notNull()
@@ -2198,7 +2198,7 @@ export const invoice = pgTable(
 
     notes: text("notes"),
 
-    categoryId: text("category_id").references(() => documentCategory.id),
+    categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
 
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),

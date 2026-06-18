@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -18,7 +18,7 @@ import {
   createDocumentCategory,
   updateDocumentCategory,
   deleteDocumentCategory,
-  setDefaultDocumentCategory,
+  toggleDefaultDocumentCategory,
   type DocumentCategoryRow,
 } from "@/server/document-category";
 import { cn } from "@/lib/utils";
@@ -58,7 +58,7 @@ function ColorSwatch({
 }
 
 interface NewCategoryFormProps {
-  onSaved: () => void;
+  onSaved: (cat: DocumentCategoryRow) => void;
   onCancel: () => void;
 }
 
@@ -73,9 +73,9 @@ function NewCategoryForm({ onSaved, onCancel }: NewCategoryFormProps) {
     if (!name.trim()) { toast.error("Name is required"); return; }
     setSaving(true);
     try {
-      await createDocumentCategory({ name, color, isDefault });
+      const cat = await createDocumentCategory({ name, color, isDefault });
       toast.success(`Category "${name}" created`);
-      onSaved();
+      onSaved(cat);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -139,7 +139,7 @@ function NewCategoryForm({ onSaved, onCancel }: NewCategoryFormProps) {
 
 interface EditRowFormProps {
   category: DocumentCategoryRow;
-  onSaved: () => void;
+  onSaved: (cat: DocumentCategoryRow) => void;
   onCancel: () => void;
 }
 
@@ -154,9 +154,9 @@ function EditRowForm({ category, onSaved, onCancel }: EditRowFormProps) {
     if (!name.trim()) { toast.error("Name is required"); return; }
     setSaving(true);
     try {
-      await updateDocumentCategory({ id: category.id, name, color, isDefault });
+      const cat = await updateDocumentCategory({ id: category.id, name, color, isDefault });
       toast.success("Category updated");
-      onSaved();
+      onSaved(cat);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -224,18 +224,37 @@ export function CategoriesClient({ initialCategories }: Props) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
-  function refresh() {
-    router.refresh();
+  // Sync local state when server re-renders with fresh data after router.refresh()
+  useEffect(() => {
+    setCategories(initialCategories);
+  }, [initialCategories]);
+
+  function closeForm() {
     setShowNewForm(false);
     setEditingId(null);
   }
 
+  function handleCreated(newCat: DocumentCategoryRow) {
+    setCategories((prev) => [...prev, newCat]);
+    closeForm();
+    router.refresh();
+  }
+
+  function handleUpdated(updatedCat: DocumentCategoryRow) {
+    setCategories((prev) =>
+      prev.map((c) => (c.id === updatedCat.id ? updatedCat : c)),
+    );
+    closeForm();
+    router.refresh();
+  }
+
   async function handleDelete(cat: DocumentCategoryRow) {
-    if (!confirm(`Delete category "${cat.name}"? Existing documents using this category will lose their category assignment.`)) return;
+    if (!confirm(`Delete category "${cat.name}"? Documents using this category will lose this tag.`)) return;
     setDeletingId(cat.id);
     try {
       await deleteDocumentCategory(cat.id);
       toast.success(`Category "${cat.name}" deleted`);
+      setCategories((prev) => prev.filter((c) => c.id !== cat.id));
       router.refresh();
     } catch (err: any) {
       toast.error(err.message);
@@ -244,12 +263,14 @@ export function CategoriesClient({ initialCategories }: Props) {
     }
   }
 
-  async function handleSetDefault(cat: DocumentCategoryRow) {
-    if (cat.isDefault) return;
+  async function handleToggleDefault(cat: DocumentCategoryRow) {
     setSettingDefaultId(cat.id);
     try {
-      await setDefaultDocumentCategory(cat.id);
-      toast.success(`"${cat.name}" set as default`);
+      const updated = await toggleDefaultDocumentCategory(cat.id);
+      toast.success(updated.isDefault ? `"${cat.name}" marked as default` : `"${cat.name}" unmarked as default`);
+      setCategories((prev) =>
+        prev.map((c) => (c.id === cat.id ? updated : c)),
+      );
       router.refresh();
     } catch (err: any) {
       toast.error(err.message);
@@ -278,8 +299,8 @@ export function CategoriesClient({ initialCategories }: Props) {
 
       {showNewForm && (
         <NewCategoryForm
-          onSaved={refresh}
-          onCancel={() => setShowNewForm(false)}
+          onSaved={handleCreated}
+          onCancel={closeForm}
         />
       )}
 
@@ -301,7 +322,7 @@ export function CategoriesClient({ initialCategories }: Props) {
                 {editingId === cat.id ? (
                   <EditRowForm
                     category={cat}
-                    onSaved={refresh}
+                    onSaved={handleUpdated}
                     onCancel={() => setEditingId(null)}
                   />
                 ) : (
@@ -323,13 +344,13 @@ export function CategoriesClient({ initialCategories }: Props) {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        title={cat.isDefault ? "Already default" : "Set as default"}
-                        disabled={cat.isDefault || settingDefaultId === cat.id}
-                        onClick={() => handleSetDefault(cat)}
+                        title={cat.isDefault ? "Unmark as default" : "Mark as default"}
+                        disabled={settingDefaultId === cat.id}
+                        onClick={() => handleToggleDefault(cat)}
                         className={cn(
                           "p-1.5 rounded-md transition-colors",
                           cat.isDefault
-                            ? "text-amber-500 cursor-default"
+                            ? "text-amber-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20"
                             : "text-muted-foreground hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20",
                         )}
                       >

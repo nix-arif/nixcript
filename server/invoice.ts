@@ -231,7 +231,7 @@ export interface CreateInvoiceInput {
   dueDate?: Date;
 
   notes?: string;
-  categoryId?: string;
+  categoryIds?: string[];
   items: InvoiceItemInput[];
   expenses: InvoiceExpenseInput[];
 }
@@ -527,7 +527,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
       paymentTerms: input.paymentTerms ?? null,
       dueDate: input.dueDate ?? null,
       notes: input.notes ?? null,
-      categoryId: input.categoryId ?? null,
+      categoryIds: input.categoryIds ?? [],
       createdBy: userId,
     })
     .returning();
@@ -613,7 +613,7 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
       paidAt: input.paidAt ?? null,
       paidAmount: input.paidAmount ?? null,
       notes: input.notes ?? null,
-      categoryId: input.categoryId ?? null,
+      categoryIds: input.categoryIds ?? [],
     })
     .where(eq(invoice.id, input.id))
     .returning();
@@ -800,7 +800,7 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
       paymentTerms: input.paymentTerms ?? null,
       dueDate: input.dueDate ?? null,
       notes: input.notes ?? null,
-      categoryId: input.categoryId ?? null,
+      categoryIds: input.categoryIds ?? [],
       createdBy: userId,
     })
     .returning();
