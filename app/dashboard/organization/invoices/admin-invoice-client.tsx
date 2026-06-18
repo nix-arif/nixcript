@@ -7,6 +7,7 @@ import {
   createInvoiceManual,
   type InvoiceListRow,
   type InvoiceItemInput,
+  type InvoiceExpenseInput,
   type OrgMemberForInvoice,
 } from "@/server/invoice";
 import { type DocumentCategoryRow } from "@/server/document-category";
@@ -27,6 +28,7 @@ import { cn } from "@/lib/utils";
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 type SalesPerson = { id?: string | null; name: string };
 interface LineItem extends InvoiceItemInput { _key: string; }
+interface ExpenseRow extends InvoiceExpenseInput { _key: string; }
 
 const newLine = (rowNo: number): LineItem => ({
   _key: crypto.randomUUID(), rowNo,
@@ -34,6 +36,8 @@ const newLine = (rowNo: number): LineItem => ({
   unitPrice: "0", discountPct: "0", discountAmt: "0", totalPrice: "0",
   costUnitPrice: "0", costTotal: "0",
 });
+const newExpense = (): ExpenseRow => ({ _key: crypto.randomUUID(), description: "", category: "other", amount: "0" });
+const EXPENSE_CATEGORIES = ["transport", "handling", "customs", "other"] as const;
 
 function calcLineTotal(unitPrice: string, qty: string, discountPct: string) {
   const up = parseFloat(unitPrice) || 0;
@@ -42,6 +46,10 @@ function calcLineTotal(unitPrice: string, qty: string, discountPct: string) {
   const gross = up * q;
   const disc = gross * dp / 100;
   return { discountAmt: disc.toFixed(2), totalPrice: (gross - disc).toFixed(2) };
+}
+
+function calcCostTotal(costUnitPrice: string, qty: string) {
+  return ((parseFloat(costUnitPrice) || 0) * (parseFloat(qty) || 0)).toFixed(2);
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -141,10 +149,10 @@ interface CreateDrawerProps {
 function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose, onCreated }: CreateDrawerProps) {
   const [manualInvoiceNo, setManualInvoiceNo] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [categoryId, setCategoryId] = useState<string>(() => {
-    const def = categories.find((c) => c.isDefault);
-    return def?.id ?? (categories[0]?.id ?? "");
-  });
+  const [dueDate, setDueDate] = useState("");
+  const [categoryIds, setCategoryIds] = useState<string[]>(() =>
+    categories.filter((c) => c.isDefault).map((c) => c.id),
+  );
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState("draft");
   const [paymentTerms, setPaymentTerms] = useState("");
@@ -174,8 +182,11 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
   const [salesOrderNo, setSalesOrderNo] = useState("");
   const [deliveryOrderNo, setDeliveryOrderNo] = useState("");
 
-  // Items
+  // Items + expenses + pricing
   const [items, setItems] = useState<LineItem[]>([newLine(1)]);
+  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
+  const [overallDiscountPct, setOverallDiscountPct] = useState("0");
+  const [sstPct, setSstPct] = useState("0");
   const [saving, setSaving] = useState(false);
 
   const handleCustSearch = useCallback((val: string) => {
@@ -211,19 +222,41 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
           merged.discountAmt = discountAmt;
           merged.totalPrice = totalPrice;
         }
+        if ("costUnitPrice" in patch || "qty" in patch) {
+          merged.costTotal = calcCostTotal(merged.costUnitPrice ?? "0", merged.qty ?? "1");
+        }
         return merged;
       }),
     );
   }
 
-  const grandTotal = useMemo(() =>
-    items.reduce((s, i) => s + (parseFloat(i.totalPrice ?? "0") || 0), 0).toFixed(2),
-  [items]);
+  function updateExpense(key: string, patch: Partial<ExpenseRow>) {
+    setExpenses((prev) => prev.map((e) => e._key === key ? { ...e, ...patch } : e));
+  }
+
+  const totals = useMemo(() => {
+    const itemsSubtotal = items.reduce((s, i) => s + (parseFloat(i.totalPrice ?? "0") || 0), 0);
+    const overallDisc = itemsSubtotal * (parseFloat(overallDiscountPct) || 0) / 100;
+    const afterDisc = itemsSubtotal - overallDisc;
+    const sstAmt = afterDisc * (parseFloat(sstPct) || 0) / 100;
+    const grandTotal = afterDisc + sstAmt;
+    const costTotal = items.reduce((s, i) => s + (parseFloat(i.costTotal ?? "0") || 0), 0);
+    const expensesTotal = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+    return {
+      itemsSubtotal: itemsSubtotal.toFixed(2),
+      overallDisc: overallDisc.toFixed(2),
+      sstAmt: sstAmt.toFixed(2),
+      grandTotal: grandTotal.toFixed(2),
+      costTotal: costTotal.toFixed(2),
+      expensesTotal: expensesTotal.toFixed(2),
+      profit: (grandTotal - costTotal - expensesTotal).toFixed(2),
+    };
+  }, [items, expenses, overallDiscountPct, sstPct]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!manualInvoiceNo.trim()) { toast.error("Invoice number is required"); return; }
-    if (!categoryId) { toast.error("Category is required"); return; }
+    if (categoryIds.length === 0) { toast.error("Category is required"); return; }
     if (!billingAddress.trim()) { toast.error("Billing address is required"); return; }
     setSaving(true);
     try {
@@ -232,6 +265,7 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
       await createInvoiceManual({
         manualInvoiceNo: manualInvoiceNo.trim(),
         invoiceDate: invoiceDate ? new Date(invoiceDate) : undefined,
+        dueDate: dueDate ? new Date(dueDate) : undefined,
         customerId: selectedCustomer?.id,
         customerOrgMemberId: custOrgMemberId,
         customerPoId: selectedCustomerPoId || undefined,
@@ -243,14 +277,21 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
         salesPersonName: primarySp?.name ?? undefined,
         associateSalesPersons: salesPersons,
         billingAddress: billingAddress.trim(),
-        categoryIds: categoryId ? [categoryId] : [],
+        categoryIds,
         status,
         paymentTerms: paymentTerms || undefined,
         notes: notes || undefined,
-        grandTotal,
-        subtotal: grandTotal,
+        subtotal: totals.itemsSubtotal,
+        overallDiscountPct,
+        overallDiscountAmt: totals.overallDisc,
+        sstPct,
+        sst: totals.sstAmt,
+        grandTotal: totals.grandTotal,
+        costTotal: totals.costTotal,
+        expensesTotal: totals.expensesTotal,
+        profit: totals.profit,
         items: items.map(({ _key, ...rest }) => rest),
-        expenses: [],
+        expenses: expenses.map(({ _key, ...rest }) => rest),
       });
       toast.success(`Invoice ${manualInvoiceNo} created`);
       onCreated();
@@ -262,12 +303,13 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
   }
 
   const allCompanies = selectedCustomer?.companies ?? [];
+  const profitVal = parseFloat(totals.profit);
 
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="flex-1 bg-black/40" onClick={onClose} />
-      <div className="w-full max-w-xl bg-background border-l border-border flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+      <div className="w-full max-w-2xl bg-background border-l border-border flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
           <div>
             <h2 className="text-sm font-semibold">Create Missing Invoice</h2>
             <p className="text-xs text-muted-foreground mt-0.5">Backfill gaps in the invoice sequence with a manual invoice number</p>
@@ -278,36 +320,53 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Invoice number */}
+
+          {/* ── Invoice number ─────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label className="text-xs">Invoice Number <span className="text-destructive">*</span></Label>
             <Input value={manualInvoiceNo} onChange={(e) => setManualInvoiceNo(e.target.value)} placeholder="e.g. BMS-INV-2024-0031" className="h-9 text-sm font-mono" autoFocus />
-            <p className="text-[11px] text-muted-foreground">Must be unique. Use this to backfill missing invoice numbers in the sequence.</p>
+            <p className="text-[11px] text-muted-foreground">Must be unique. Use to backfill missing numbers in the sequence.</p>
           </div>
 
-          {/* Invoice date */}
-          <div className="space-y-1.5">
-            <Label className="text-xs">Invoice Date <span className="text-destructive">*</span></Label>
-            <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
+          {/* ── Dates ─────────────────────────────────────────────── */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Invoice Date <span className="text-destructive">*</span></Label>
+              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Due Date</Label>
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
+            </div>
           </div>
 
-          {/* Category */}
+          {/* ── Categories ─────────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label className="text-xs">Category <span className="text-destructive">*</span></Label>
             {categories.length === 0 ? (
               <p className="text-xs text-muted-foreground italic">No categories yet — create one in Organization → Categories</p>
             ) : (
-              <div className="relative">
-                <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none">
-                  <option value="">— Select category —</option>
-                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}{c.isDefault ? " (default)" : ""}</option>)}
-                </select>
-                <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <div className="flex flex-wrap gap-2 pt-0.5">
+                {categories.map((c) => {
+                  const selected = categoryIds.includes(c.id);
+                  const hex = c.color ?? "#6366f1";
+                  return (
+                    <button key={c.id} type="button"
+                      onClick={() => setCategoryIds((prev) => selected ? prev.filter((id) => id !== c.id) : [...prev, c.id])}
+                      className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border-2 transition-all select-none", selected ? "text-white shadow-sm" : "bg-background text-foreground/70 hover:text-foreground")}
+                      style={selected ? { backgroundColor: hex, borderColor: hex } : { borderColor: hex + "55" }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }} />
+                      {c.name}
+                      {selected && <span className="ml-0.5 opacity-80">✓</span>}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
 
-          {/* Customer */}
+          {/* ── Customer ───────────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label className="text-xs">Customer</Label>
             {selectedCustomer ? (
@@ -322,7 +381,7 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
                   )}
                   {allCompanies.length === 1 && <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><BuildingIcon className="w-3 h-3" />{allCompanies[0].organizationName}</p>}
                 </div>
-                <button type="button" onClick={() => { setSelectedCustomer(null); setCustomerPos(allCustomerPos); }} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => { setSelectedCustomer(null); setCustomerPos(allCustomerPos); setBillingAddress(""); }} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
               </div>
             ) : (
               <div className="relative">
@@ -342,13 +401,14 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
             )}
           </div>
 
-          {/* Billing address */}
+          {/* ── Billing address ────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label className="text-xs">Billing Address <span className="text-destructive">*</span></Label>
-            <Textarea value={billingAddress} onChange={(e) => setBillingAddress(e.target.value)} placeholder="Customer's official billing address" rows={3} className={cn("text-xs", !billingAddress.trim() && "border-destructive/50")} />
+            <Textarea value={billingAddress} onChange={(e) => setBillingAddress(e.target.value)} placeholder="Customer's official billing address (appears on invoice)" rows={3} className={cn("text-xs", !billingAddress.trim() && "border-destructive/50")} />
+            {!billingAddress.trim() && <p className="text-xs text-destructive">Required on tax invoices</p>}
           </div>
 
-          {/* Customer PO */}
+          {/* ── Customer PO ────────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label className="text-xs">Customer PO</Label>
             {customerPos.length > 0 ? (
@@ -369,7 +429,7 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
             )}
           </div>
 
-          {/* Document links */}
+          {/* ── Document links ─────────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Sales Order No.</Label>
@@ -381,15 +441,15 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
             </div>
           </div>
 
-          {/* Sales persons */}
+          {/* ── Sales persons ──────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label className="text-xs">Sales Person(s)</Label>
             <SalesPersonPicker members={members} value={salesPersons} onChange={setSalesPersons} />
           </div>
 
-          {/* Supplier */}
+          {/* ── Supplier ───────────────────────────────────────────── */}
           <div className="space-y-1.5">
-            <Label className="text-xs">Supplier</Label>
+            <Label className="text-xs">Supplier <span className="text-[10px] font-normal text-muted-foreground">(cost reference)</span></Label>
             <div className="relative">
               <select value={selectedSupplierId} onChange={(e) => setSelectedSupplierId(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none">
                 <option value="">— No supplier —</option>
@@ -399,7 +459,7 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
             </div>
           </div>
 
-          {/* Status & Payment terms */}
+          {/* ── Status & Payment terms ─────────────────────────────── */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Status</Label>
@@ -417,37 +477,137 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose,
             </div>
           </div>
 
-          {/* Notes */}
+          {/* ── Notes ─────────────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label className="text-xs">Notes</Label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="text-sm" />
           </div>
 
-          {/* Line items */}
+          {/* ── Line items ─────────────────────────────────────────── */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label className="text-xs">Line Items</Label>
-              <Button type="button" variant="ghost" size="sm" onClick={() => setItems((prev) => [...prev, newLine(prev.length + 1)])} className="h-6 text-xs gap-1">
+              <Button type="button" variant="outline" size="sm" onClick={() => setItems((prev) => [...prev, newLine(prev.length + 1)])} className="h-6 text-xs gap-1">
                 <PlusIcon className="w-3 h-3" /> Add row
               </Button>
             </div>
-            <div className="rounded-md border border-border overflow-hidden">
-              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-0 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 py-1.5 bg-muted/30 border-b border-border">
-                <span>Description</span><span>Qty</span><span>Unit Price</span><span>Total</span><span />
-              </div>
-              {items.map((item) => (
-                <div key={item._key} className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-1.5 items-center px-2 py-1.5 border-b border-border/40 last:border-0">
-                  <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} placeholder="Item description" className="h-7 text-xs border-0 bg-transparent p-0 focus-visible:ring-0 shadow-none" />
-                  <Input type="number" value={item.qty ?? "1"} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs" min="0" />
-                  <Input type="number" value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs" min="0" />
-                  <span className="text-xs font-mono text-right pr-1">{parseFloat(item.totalPrice ?? "0").toFixed(2)}</span>
-                  <button type="button" onClick={() => setItems((prev) => prev.filter((i) => i._key !== item._key).map((i, idx) => ({ ...i, rowNo: idx + 1 })))} className="p-1 text-muted-foreground hover:text-red-600" disabled={items.length === 1}>
-                    <TrashIcon className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full text-xs min-w-170">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30 text-muted-foreground">
+                    <th className="text-left px-2 py-1.5 w-5">#</th>
+                    <th className="text-left px-2 py-1.5 w-16">Code</th>
+                    <th className="text-left px-2 py-1.5">Description</th>
+                    <th className="text-right px-2 py-1.5 w-10">Qty</th>
+                    <th className="text-left px-2 py-1.5 w-10">UOM</th>
+                    <th className="text-right px-2 py-1.5 w-18">Unit Price</th>
+                    <th className="text-right px-2 py-1.5 w-12">Disc%</th>
+                    <th className="text-right px-2 py-1.5 w-18">Total</th>
+                    <th className="text-right px-2 py-1.5 w-18 text-amber-700 dark:text-amber-400">Cost/unit</th>
+                    <th className="text-right px-2 py-1.5 w-18 text-amber-700 dark:text-amber-400">Cost total</th>
+                    <th className="w-5" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={item._key} className="border-b border-border/40 last:border-0">
+                      <td className="px-2 py-1.5 text-muted-foreground">{item.rowNo}</td>
+                      <td className="px-2 py-1.5"><Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} className="h-7 text-xs w-full" /></td>
+                      <td className="px-2 py-1.5"><Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} placeholder="Item description" className="h-7 text-xs w-full" /></td>
+                      <td className="px-2 py-1.5"><Input value={item.qty ?? "1"} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" /></td>
+                      <td className="px-2 py-1.5"><Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} placeholder="pcs" className="h-7 text-xs" /></td>
+                      <td className="px-2 py-1.5"><Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs text-right" /></td>
+                      <td className="px-2 py-1.5"><Input value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} className="h-7 text-xs text-right" /></td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground whitespace-nowrap">{fmtNum(item.totalPrice ?? "0")}</td>
+                      <td className="px-2 py-1.5"><Input value={item.costUnitPrice ?? "0"} onChange={(e) => updateItem(item._key, { costUnitPrice: e.target.value })} className="h-7 text-xs text-right border-amber-300 dark:border-amber-700 focus-visible:ring-amber-400" /></td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums text-amber-700 dark:text-amber-400 whitespace-nowrap">{fmtNum(item.costTotal ?? "0")}</td>
+                      <td className="px-2 py-1.5">
+                        <button type="button" onClick={() => setItems((prev) => prev.filter((i) => i._key !== item._key).map((i, idx) => ({ ...i, rowNo: idx + 1 })))} disabled={items.length === 1} className="text-muted-foreground hover:text-destructive disabled:opacity-30">
+                          <TrashIcon className="w-3 h-3" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="text-right text-xs font-semibold pr-1">Grand Total: MYR {fmtNum(grandTotal)}</div>
+          </div>
+
+          {/* ── Other expenses ─────────────────────────────────────── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Other Expenses</Label>
+              <Button type="button" variant="outline" size="sm" onClick={() => setExpenses((prev) => [...prev, newExpense()])} className="h-6 text-xs gap-1">
+                <PlusIcon className="w-3 h-3" /> Add expense
+              </Button>
+            </div>
+            {expenses.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No additional expenses.</p>
+            ) : (
+              <div className="rounded-md border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-muted-foreground">
+                      <th className="text-left px-2 py-1.5">Description</th>
+                      <th className="text-left px-2 py-1.5 w-24">Category</th>
+                      <th className="text-right px-2 py-1.5 w-24">Amount (MYR)</th>
+                      <th className="w-5" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {expenses.map((exp) => (
+                      <tr key={exp._key} className="border-b border-border/40 last:border-0">
+                        <td className="px-2 py-1.5"><Input value={exp.description} onChange={(e) => updateExpense(exp._key, { description: e.target.value })} placeholder="e.g. Freight" className="h-7 text-xs" /></td>
+                        <td className="px-2 py-1.5">
+                          <select value={exp.category ?? "other"} onChange={(e) => updateExpense(exp._key, { category: e.target.value })} className="w-full h-7 rounded-md border border-border bg-background px-1.5 text-xs">
+                            {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-2 py-1.5"><Input value={exp.amount} onChange={(e) => updateExpense(exp._key, { amount: e.target.value })} className="h-7 text-xs text-right" /></td>
+                        <td className="px-2 py-1.5">
+                          <button type="button" onClick={() => setExpenses((prev) => prev.filter((e) => e._key !== exp._key))} className="text-muted-foreground hover:text-destructive">
+                            <TrashIcon className="w-3 h-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* ── Pricing summary ────────────────────────────────────── */}
+          <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/20">
+            <p className="text-xs font-semibold mb-1">Pricing Summary</p>
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Items subtotal</span><span className="font-mono">MYR {fmtNum(totals.itemsSubtotal)}</span></div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground flex-1">Overall discount</span>
+              <div className="flex items-center gap-1">
+                <Input value={overallDiscountPct} onChange={(e) => setOverallDiscountPct(e.target.value)} className="h-6 w-12 text-xs text-right" />
+                <span className="text-xs text-muted-foreground">%</span>
+              </div>
+              <span className="text-xs font-mono w-20 text-right text-red-600">- MYR {fmtNum(totals.overallDisc)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground flex-1">SST</span>
+              <div className="flex items-center gap-1">
+                <Input value={sstPct} onChange={(e) => setSstPct(e.target.value)} className="h-6 w-12 text-xs text-right" />
+                <span className="text-xs text-muted-foreground">%</span>
+              </div>
+              <span className="text-xs font-mono w-20 text-right">+ MYR {fmtNum(totals.sstAmt)}</span>
+            </div>
+            <div className="flex justify-between text-sm font-semibold border-t border-border pt-2">
+              <span>Grand total</span>
+              <span className="font-mono">MYR {fmtNum(totals.grandTotal)}</span>
+            </div>
+            <div className="border-t border-border/50 pt-2 space-y-1">
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Cost of goods</span><span className="font-mono text-amber-700 dark:text-amber-400">MYR {fmtNum(totals.costTotal)}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Other expenses</span><span className="font-mono text-amber-700 dark:text-amber-400">MYR {fmtNum(totals.expensesTotal)}</span></div>
+              <div className={cn("flex justify-between text-xs font-semibold", profitVal < 0 ? "text-red-600" : "text-green-700 dark:text-green-400")}>
+                <span>Profit</span><span className="font-mono">MYR {fmtNum(totals.profit)}</span>
+              </div>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 pt-2 border-t border-border">
