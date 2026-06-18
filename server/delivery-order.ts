@@ -10,6 +10,7 @@ import {
   salesOrder,
   salesOrderItem,
   customerPurchaseOrder,
+  invoice,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -60,8 +61,22 @@ async function generateDoNo(orgId: string): Promise<string> {
 
 export type DeliveryOrderRow = typeof deliveryOrder.$inferSelect;
 export type DeliveryOrderItem = typeof deliveryOrderItem.$inferSelect;
-export type DeliveryOrderWithItems = DeliveryOrderRow & { items: DeliveryOrderItem[]; createdByName: string | null };
-export type DeliveryOrderListRow = DeliveryOrderRow & { createdByName: string | null };
+export type DeliveryOrderWithItems = DeliveryOrderRow & { items: DeliveryOrderItem[]; createdByName: string | null; invoiceId: string | null; invoiceNo: string | null };
+export type DeliveryOrderListRow = DeliveryOrderRow & { createdByName: string | null; invoiceId: string | null; invoiceNo: string | null };
+
+export type DoForInvoice = {
+  id: string;
+  doNo: string;
+  salesOrderId: string | null;
+  salesOrderNo: string | null;
+  customerPoId: string | null;
+  customerPoNo: string | null;
+  customerId: string | null;
+  customerSnapshot: { title?: string; name: string; organizationName?: string; organizationAddress?: string; email?: string; contactNo?: string } | null;
+  deliveryDate: Date | null;
+  deliveryAddress: string | null;
+  items: Array<{ rowNo: number; productId: string | null; productCode: string | null; description: string | null; qty: string | null; uom: string | null }>;
+};
 
 const EDITABLE_STATUSES = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft"]);
@@ -122,11 +137,24 @@ export async function getDeliveryOrders(): Promise<DeliveryOrderListRow[]> {
 
   if (rows.length === 0) return [];
 
-  const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
-  const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds));
+  const deliveredIds = rows.filter((r) => r.status === "delivered").map((r) => r.id);
+  const [users, invoiceRows] = await Promise.all([
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [...new Set(rows.map((r) => r.createdBy))])),
+    deliveredIds.length > 0
+      ? db.select({ deliveryOrderId: invoice.deliveryOrderId, id: invoice.id, invoiceNo: invoice.invoiceNo })
+          .from(invoice)
+          .where(and(inArray(invoice.deliveryOrderId as any, deliveredIds), eq(invoice.organizationId, orgId)))
+      : Promise.resolve([]),
+  ]);
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+  const invByDo = new Map(invoiceRows.map((i) => [i.deliveryOrderId, { id: i.id, no: i.invoiceNo }]));
 
-  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy) }));
+  return rows.map((r) => ({
+    ...r,
+    createdByName: nameOf(r.createdBy),
+    invoiceId: invByDo.get(r.id)?.id ?? null,
+    invoiceNo: invByDo.get(r.id)?.no ?? null,
+  }));
 }
 
 export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderWithItems | null> {
@@ -136,12 +164,58 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!do_) return null;
-  const [items, users] = await Promise.all([
+  const [items, users, invoiceRows] = await Promise.all([
     db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderItem.rowNo)),
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [do_.createdBy])),
+    do_.status === "delivered"
+      ? db.select({ id: invoice.id, invoiceNo: invoice.invoiceNo })
+          .from(invoice)
+          .where(and(eq(invoice.deliveryOrderId, id), eq(invoice.organizationId, orgId)))
+          .limit(1)
+      : Promise.resolve([]),
   ]);
   const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
-  return { ...do_, items, createdByName: nameOf(do_.createdBy) };
+  return {
+    ...do_,
+    items,
+    createdByName: nameOf(do_.createdBy),
+    invoiceId: invoiceRows[0]?.id ?? null,
+    invoiceNo: invoiceRows[0]?.invoiceNo ?? null,
+  };
+}
+
+export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> {
+  const { orgId } = await requireAccess("invoice:create");
+  const [do_] = await db
+    .select()
+    .from(deliveryOrder)
+    .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
+  if (!do_ || do_.status !== "delivered") return null;
+  const items = await db
+    .select()
+    .from(deliveryOrderItem)
+    .where(eq(deliveryOrderItem.deliveryOrderId, id))
+    .orderBy(asc(deliveryOrderItem.rowNo));
+  return {
+    id: do_.id,
+    doNo: do_.doNo,
+    salesOrderId: do_.salesOrderId,
+    salesOrderNo: do_.salesOrderNo,
+    customerPoId: do_.customerPoId,
+    customerPoNo: do_.customerPoNo,
+    customerId: do_.customerId,
+    customerSnapshot: do_.customerSnapshot as DoForInvoice["customerSnapshot"],
+    deliveryDate: do_.deliveryDate,
+    deliveryAddress: do_.deliveryAddress,
+    items: items.map((i) => ({
+      rowNo: i.rowNo,
+      productId: i.productId ?? null,
+      productCode: i.productCode ?? null,
+      description: i.description ?? null,
+      qty: i.qty ?? null,
+      uom: i.uom ?? null,
+    })),
+  };
 }
 
 export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Promise<DeliveryOrderRow> {

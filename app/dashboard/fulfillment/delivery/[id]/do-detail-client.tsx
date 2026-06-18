@@ -100,10 +100,19 @@ export function DeliveryOrderDetailClient({
             <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/delivery")} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
-            {isDelivered && can("invoice:create") && (
+            {isDelivered && order.invoiceId && can("invoice:read") && (
               <Button
                 size="sm"
                 variant="outline"
+                className="gap-1.5"
+                onClick={() => router.push(`/dashboard/fulfillment/invoice/${order.invoiceId}`)}
+              >
+                <ReceiptIcon className="w-3.5 h-3.5" /> View Invoice
+              </Button>
+            )}
+            {isDelivered && !order.invoiceId && can("invoice:create") && (
+              <Button
+                size="sm"
                 className="gap-1.5"
                 onClick={() => {
                   const params = new URLSearchParams({ doId: order.id });
@@ -129,6 +138,28 @@ export function DeliveryOrderDetailClient({
           </div>
         }
       />
+
+      {isDelivered && !order.invoiceId && can("invoice:create") && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3">
+          <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+            <ReceiptIcon className="w-4 h-4 shrink-0" />
+            <span className="text-sm font-medium">Invoice pending</span>
+            <span className="text-sm text-amber-600 dark:text-amber-500">— this delivery has not been invoiced yet.</span>
+          </div>
+          <Button
+            size="sm"
+            className="gap-1.5 shrink-0"
+            onClick={() => {
+              const params = new URLSearchParams({ doId: order.id });
+              if (order.salesOrderId) params.set("soId", order.salesOrderId);
+              if (order.salesOrderNo) params.set("soNo", order.salesOrderNo);
+              router.push(`/dashboard/fulfillment/invoice/create?${params}`);
+            }}
+          >
+            <ReceiptIcon className="w-3.5 h-3.5" /> Create Invoice
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left column — customer + items + notes */}

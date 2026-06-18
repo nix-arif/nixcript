@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
   PlusIcon, SearchIcon, XIcon, TruckIcon,
-  PencilIcon, TrashIcon, UserIcon, BuildingIcon, CalendarIcon, ArrowRightIcon,
+  PencilIcon, TrashIcon, UserIcon, BuildingIcon, CalendarIcon, ArrowRightIcon, ReceiptIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -231,6 +231,16 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
                           <Highlight text={o.doNo} query={search} />
                         </span>
                         <StatusBadge status={o.status} />
+                        {o.status === "delivered" && !o.invoiceId && can("invoice:read") && (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700">
+                            <ReceiptIcon className="w-3 h-3 shrink-0" />invoice pending
+                          </span>
+                        )}
+                        {o.invoiceId && can("invoice:read") && (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 font-mono">
+                            <ReceiptIcon className="w-3 h-3 shrink-0" />{o.invoiceNo}
+                          </span>
+                        )}
                         {o.salesOrderNo && (
                           <span className="text-[10px] text-muted-foreground bg-muted/60 rounded px-1.5 py-0.5 font-mono hidden sm:inline">
                             SO: {o.salesOrderNo}

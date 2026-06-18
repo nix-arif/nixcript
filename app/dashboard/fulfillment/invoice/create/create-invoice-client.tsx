@@ -8,6 +8,7 @@ import { getCustomers } from "@/server/customer";
 import { getCustomerPosByCustomer } from "@/server/customer-purchase-order";
 import { type Supplier } from "@/server/supplier";
 import { type CustomerPo } from "@/server/customer-purchase-order";
+import { type DoForInvoice } from "@/server/delivery-order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,10 +17,10 @@ import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
   ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon,
-  BuildingIcon, ChevronDownIcon,
+  BuildingIcon, ChevronDownIcon, LinkIcon,
 } from "lucide-react";
 
-type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
+export type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
 interface LineItem extends InvoiceItemInput { _key: string; }
 interface ExpenseRow extends InvoiceExpenseInput { _key: string; }
@@ -56,27 +57,38 @@ function fmtNum(v: string | number) {
 interface Props {
   suppliers: Supplier[];
   allCustomerPos: CustomerPo[];
+  doData?: DoForInvoice | null;
+  initialCustomer?: Customer | null;
 }
 
-export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
+export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initialCustomer }: Props) {
   const router = useRouter();
 
   // Customer
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Customer[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>();
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(initialCustomer ?? null);
+  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>(() => {
+    if (!initialCustomer) return undefined;
+    const primary = (initialCustomer as any).memberships?.find((m: any) => m.isPrimary) ?? (initialCustomer as any).memberships?.[0];
+    return primary?.id;
+  });
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Customer PO
   const [customerPos, setCustomerPos] = useState<CustomerPo[]>(allCustomerPos);
-  const [selectedCustomerPo, setSelectedCustomerPo] = useState<CustomerPo | null>(null);
-  const [manualCustomerPoNo, setManualCustomerPoNo] = useState("");
+  const [selectedCustomerPo, setSelectedCustomerPo] = useState<CustomerPo | null>(() =>
+    doData?.customerPoId ? (allCustomerPos.find((p) => p.id === doData.customerPoId) ?? null) : null,
+  );
+  const [manualCustomerPoNo, setManualCustomerPoNo] = useState(
+    doData?.customerPoId ? "" : (doData?.customerPoNo ?? ""),
+  );
 
   // Document links
   const [quotationNo, setQuotationNo] = useState("");
-  const [salesOrderNo, setSalesOrderNo] = useState("");
-  const [deliveryOrderNo, setDeliveryOrderNo] = useState("");
+  const [salesOrderNo, setSalesOrderNo] = useState(doData?.salesOrderNo ?? "");
+  const [deliveryOrderId] = useState(doData?.id ?? "");
+  const [deliveryOrderNo, setDeliveryOrderNo] = useState(doData?.doNo ?? "");
 
   // Supplier
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>("");
@@ -95,8 +107,26 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
   const [overallDiscountPct, setOverallDiscountPct] = useState("0");
   const [sstPct, setSstPct] = useState("0");
 
-  // Items
-  const [items, setItems] = useState<LineItem[]>([newLine(1)]);
+  // Items — pre-populate from DO if present
+  const [items, setItems] = useState<LineItem[]>(() => {
+    if (doData?.items && doData.items.length > 0) {
+      return doData.items.map((i, idx) => ({
+        _key: crypto.randomUUID(),
+        rowNo: idx + 1,
+        productCode: i.productCode ?? "",
+        description: i.description ?? "",
+        qty: i.qty ?? "1",
+        uom: i.uom ?? "",
+        unitPrice: "0",
+        discountPct: "0",
+        discountAmt: "0",
+        totalPrice: "0",
+        costUnitPrice: "0",
+        costTotal: "0",
+      }));
+    }
+    return [newLine(1)];
+  });
 
   // Expenses
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
@@ -200,6 +230,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
         customerPoNo: selectedCustomerPo?.customerPoNo ?? (manualCustomerPoNo || undefined),
         quotationNo: quotationNo || undefined,
         salesOrderNo: salesOrderNo || undefined,
+        deliveryOrderId: deliveryOrderId || undefined,
         deliveryOrderNo: deliveryOrderNo || undefined,
         supplierId: selectedSupplierId || undefined,
         salesPersonName: salesPersonName || undefined,
@@ -240,6 +271,14 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
       />
 
       <div className="space-y-6">
+        {/* ── From DO banner ───────────────────────────────────────────── */}
+        {doData && (
+          <div className="flex items-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-4 py-3 text-sm text-blue-700 dark:text-blue-400">
+            <LinkIcon className="w-4 h-4 shrink-0" />
+            <span>Pre-filled from delivery order <span className="font-mono font-semibold">{doData.doNo}</span>. Review and complete pricing before saving.</span>
+          </div>
+        )}
+
         {/* ── Customer ─────────────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Customer</h2>
@@ -351,8 +390,24 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos }: Props) {
           <h2 className="text-sm font-semibold mb-3">Links to other documents</h2>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label className="text-xs">Quotation no.</Label><Input value={quotationNo} onChange={(e) => setQuotationNo(e.target.value)} placeholder="BMS-QT-2025-XXXX" className="h-9 text-sm" /></div>
-            <div className="space-y-1.5"><Label className="text-xs">Sales order no.</Label><Input value={salesOrderNo} onChange={(e) => setSalesOrderNo(e.target.value)} placeholder="BMS-SO-2025-XXXX" className="h-9 text-sm" /></div>
-            <div className="space-y-1.5"><Label className="text-xs">Delivery order no.</Label><Input value={deliveryOrderNo} onChange={(e) => setDeliveryOrderNo(e.target.value)} placeholder="BMS-DO-2025-XXXX" className="h-9 text-sm" /></div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs">Sales order no.</Label>
+                {doData?.salesOrderNo && salesOrderNo === doData.salesOrderNo && (
+                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3 shrink-0" />from DO</span>
+                )}
+              </div>
+              <Input value={salesOrderNo} onChange={(e) => setSalesOrderNo(e.target.value)} placeholder="BMS-SO-2025-XXXX" className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs">Delivery order no.</Label>
+                {doData && (
+                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3 shrink-0" />from DO</span>
+                )}
+              </div>
+              <Input value={deliveryOrderNo} onChange={(e) => setDeliveryOrderNo(e.target.value)} placeholder="BMS-DO-2025-XXXX" className="h-9 text-sm" readOnly={!!doData} />
+            </div>
           </div>
         </section>
 
