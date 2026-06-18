@@ -48,6 +48,7 @@ import {
   XIcon,
   TrashIcon,
   PencilIcon,
+  LoaderIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -359,11 +360,17 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
   async function handleDeleteDoc(docId: string) {
     setDeletingDocId(docId);
     try {
-      await deleteLedgerDocument(docId);
-      toast.success("Document removed");
+      await toast.promise(
+        deleteLedgerDocument(docId),
+        {
+          loading: "Deleting document…",
+          success: "Document deleted",
+          error: (err: unknown) => err instanceof Error ? err.message : "Failed to delete document",
+        }
+      );
       router.refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to delete document");
+    } catch {
+      // toast.promise already displayed the error
     } finally {
       setDeletingDocId(null);
     }
@@ -579,7 +586,10 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
                             disabled={deletingDocId === doc.id}
                             onClick={() => handleDeleteDoc(doc.id)}
                           >
-                            <TrashIcon className="h-3.5 w-3.5" />
+                            {deletingDocId === doc.id
+                              ? <LoaderIcon className="h-3.5 w-3.5 animate-spin" />
+                              : <TrashIcon className="h-3.5 w-3.5" />
+                            }
                           </Button>
                         )}
                       </div>

@@ -171,6 +171,7 @@ export const navConfig: NavGroup[] = [
     items: [
       { title: "Certificate Matcher", url: "/dashboard/tools/certificate-matcher", permission: "permission:read" },
       { title: "Seed Products",       url: "/dashboard/tools/seed-products",       permission: "product:seed"   },
+      { title: "PDF Compressor",      url: "/dashboard/tools/pdf-compress",        permission: "permission:read" },
     ],
   },
 ];

@@ -10,6 +10,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, sql, isNull } from "drizzle-orm";
+import { deleteLedgerDocFromR2 } from "@/lib/r2/ledger-docs";
 
 // ── Session helper ─────────────────────────────────────────────────────────
 
@@ -597,5 +598,6 @@ export async function deleteLedgerDocument(id: string): Promise<string> {
     .limit(1);
   if (!doc[0]) throw new Error("Document not found");
   await db.delete(ledgerDocument).where(eq(ledgerDocument.id, id));
-  return doc[0].fileKey; // caller handles R2 deletion
+  await deleteLedgerDocFromR2(doc[0].fileKey).catch(() => {});
+  return doc[0].fileKey;
 }
