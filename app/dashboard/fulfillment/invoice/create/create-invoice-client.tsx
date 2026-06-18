@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createInvoice, type InvoiceItemInput, type InvoiceExpenseInput } from "@/server/invoice";
+import { type DocumentCategoryRow } from "@/server/document-category";
 import { getCustomers } from "@/server/customer";
 import { getCustomerPosByCustomer } from "@/server/customer-purchase-order";
 import { type Supplier } from "@/server/supplier";
@@ -59,9 +60,10 @@ interface Props {
   allCustomerPos: CustomerPo[];
   doData?: DoForInvoice | null;
   initialCustomer?: Customer | null;
+  categories?: DocumentCategoryRow[];
 }
 
-export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initialCustomer }: Props) {
+export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initialCustomer, categories = [] }: Props) {
   const router = useRouter();
 
   // Customer
@@ -102,6 +104,10 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
   const [paymentTerms, setPaymentTerms] = useState("");
   const [status, setStatus] = useState("draft");
   const [notes, setNotes] = useState("");
+  const [categoryId, setCategoryId] = useState<string>(() => {
+    const def = categories.find((c) => c.isDefault);
+    return def?.id ?? (categories[0]?.id ?? "");
+  });
 
   // Pricing
   const [overallDiscountPct, setOverallDiscountPct] = useState("0");
@@ -247,6 +253,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
         paymentTerms: paymentTerms || undefined,
         dueDate: dueDate ? new Date(dueDate) : undefined,
         notes: notes || undefined,
+        categoryId: categoryId || undefined,
         items: items.map(({ _key, ...rest }) => rest),
         expenses: expenses.map(({ _key, ...rest }) => rest),
       });
@@ -382,6 +389,32 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
           <div className="mt-3 space-y-1.5">
             <Label className="text-xs">Notes</Label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="text-sm" />
+          </div>
+          <div className="mt-3 space-y-1.5">
+            <Label className="text-xs">
+              Category <span className="text-destructive">*</span>
+            </Label>
+            {categories.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic py-1">
+                No categories yet — create one in Organization → Categories
+              </p>
+            ) : (
+              <div className="relative">
+                <select
+                  value={categoryId}
+                  onChange={(e) => setCategoryId(e.target.value)}
+                  className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none"
+                >
+                  <option value="">— Select category —</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.isDefault ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+            )}
           </div>
         </section>
 

@@ -14,6 +14,8 @@ import {
   ArrowRightIcon,
   BuildingIcon,
   UserIcon,
+  TruckIcon,
+  ReceiptIcon,
 } from "lucide-react";
 
 const fmtDate = (d: Date | string) =>
@@ -292,7 +294,7 @@ export function DashboardClient({ summary, userName }: Props) {
   const router = useRouter();
   const { kpi, can, openCpos, pendingSoApprovals, pendingQtApprovals, recentCpos, recentSos } = summary;
 
-  const totalOpenTasks = openCpos.length + pendingSoApprovals.length;
+  const totalOpenTasks = openCpos.length + pendingSoApprovals.length + kpi.pendingDoCount + kpi.pendingInvoiceDoCount;
   const firstName = userName?.split(" ")[0] ?? null;
 
   return (
@@ -367,6 +369,26 @@ export function DashboardClient({ summary, userName }: Props) {
             href="/dashboard/sales/consignment"
             stripe="bg-indigo-400"
             accent="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400"
+          />
+        )}
+        {can.do && (
+          <KpiCard
+            label="Pending Delivery"
+            value={kpi.pendingDoCount}
+            icon={TruckIcon}
+            href="/dashboard/fulfillment/delivery"
+            stripe={kpi.pendingDoCount > 0 ? "bg-teal-400" : "bg-border"}
+            accent={kpi.pendingDoCount > 0 ? "bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400" : undefined}
+          />
+        )}
+        {can.invoice && (
+          <KpiCard
+            label="Pending Invoice"
+            value={kpi.pendingInvoiceDoCount}
+            icon={ReceiptIcon}
+            href="/dashboard/fulfillment/invoice"
+            stripe={kpi.pendingInvoiceDoCount > 0 ? "bg-amber-400" : "bg-border"}
+            accent={kpi.pendingInvoiceDoCount > 0 ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400" : undefined}
           />
         )}
       </div>

@@ -1060,6 +1060,8 @@ export const quotation = pgTable(
     // Status
     status: text("status").notNull().default("draft"), // draft | final
 
+    categoryId: text("category_id").references(() => documentCategory.id),
+
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
@@ -2196,6 +2198,8 @@ export const invoice = pgTable(
 
     notes: text("notes"),
 
+    categoryId: text("category_id").references(() => documentCategory.id),
+
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
@@ -2948,6 +2952,31 @@ export const claimEntertainmentDetailRelations = relations(claimEntertainmentDet
 }));
 
 /* =========================
+   DOCUMENT CATEGORY
+========================= */
+
+export const documentCategory = pgTable(
+  "document_category",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color").default("#6366f1"),
+    isDefault: boolean("is_default").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("document_category_org_idx").on(t.organizationId),
+  ],
+);
+
+export const documentCategoryRelations = relations(documentCategory, ({ one }) => ({
+  organization: one(organization, { fields: [documentCategory.organizationId], references: [organization.id] }),
+}));
+
+/* =========================
    SCHEMA EXPORT
 ========================= */
 
@@ -3104,4 +3133,7 @@ export const schema = {
   consignmentRelations,
   consignmentItemRelations,
   consignmentUsageRelations,
+  // document categories
+  documentCategory,
+  documentCategoryRelations,
 };

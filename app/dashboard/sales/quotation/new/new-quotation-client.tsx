@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
+import { type DocumentCategoryRow } from "@/server/document-category";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 type Member = Awaited<ReturnType<typeof getOrgMembersForQuotation>>[number];
@@ -125,6 +126,7 @@ interface Props {
   currentUserName: string;
   ownerOrgs: { id: string; name: string; slug: string }[];
   activeOrgId: string;
+  categories?: DocumentCategoryRow[];
 }
 
 export function NewQuotationClient({
@@ -135,6 +137,7 @@ export function NewQuotationClient({
   currentUserName,
   ownerOrgs,
   activeOrgId,
+  categories = [],
 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
@@ -156,6 +159,10 @@ export function NewQuotationClient({
   const [paymentTerm, setPaymentTerm] = useState("30 days");
   const [returnPolicy, setReturnPolicy] = useState("GOODS ONCE SOLD WILL NOT TAKEN BACK");
   const [warranty, setWarranty] = useState("5 years against material and manufacturing defects");
+  const [categoryId, setCategoryId] = useState<string>(() => {
+    const def = categories.find((c) => c.isDefault);
+    return def?.id ?? (categories[0]?.id ?? "");
+  });
 
   // Step 2 state
   const [fileName, setFileName] = useState("");
@@ -470,6 +477,7 @@ export function NewQuotationClient({
         inclMdaEstablishment,
         inclLampiran12,
         inclLampiran13,
+        categoryId: categoryId || undefined,
       });
 
       if (!q) throw new Error("Failed to create quotation");
@@ -817,6 +825,31 @@ export function NewQuotationClient({
                 </Field>
               </div>
 
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-muted-foreground">
+                  Category <span className="text-destructive">*</span>
+                </label>
+                {categories.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic py-1">
+                    No categories yet — create one in Organization → Categories
+                  </p>
+                ) : (
+                  <div className="relative">
+                    <select
+                      value={categoryId}
+                      onChange={(e) => setCategoryId(e.target.value)}
+                      className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none"
+                    >
+                      <option value="">— Select category —</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.isDefault ? " (default)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
               <Field label="Notes / remarks">
                 <Textarea
                   value={notes}

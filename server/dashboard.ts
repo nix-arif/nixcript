@@ -7,11 +7,12 @@ import {
   quotation,
   consignment,
   invoice,
+  deliveryOrder,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { eq, and, desc, isNull, inArray, sql, gte } from "drizzle-orm";
+import { eq, and, desc, isNull, isNotNull, inArray, sql, gte } from "drizzle-orm";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -64,6 +65,8 @@ export interface DashboardSummary {
     activeConsignmentCount: number;
     openQtCount: number;               // draft quotations in progress
     pendingInvoiceCount: number;
+    pendingDoCount: number;            // confirmed SOs awaiting DO
+    pendingInvoiceDoCount: number;     // delivered DOs awaiting invoice
   };
 
   // Recent activity
@@ -77,6 +80,7 @@ export interface DashboardSummary {
     quotation: boolean;
     consignment: boolean;
     invoice: boolean;
+    do: boolean;
   };
 }
 
@@ -98,9 +102,10 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     quotation:   hasAccess(perms, "quotation:read"),
     consignment: hasAccess(perms, "sales-order:read"),
     invoice:     hasAccess(perms, "invoice:read"),
+    do:          hasAccess(perms, "delivery-order:read"),
   };
 
-  const [cpoRows, soRows, qtRows, consignmentRows, invoiceRows] = await Promise.all([
+  const [cpoRows, soRows, qtRows, consignmentRows, invoiceRows, doRows] = await Promise.all([
     can.cpo
       ? db
           .select()
@@ -141,6 +146,17 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
           .from(invoice)
           .where(eq(invoice.organizationId, orgId))
       : Promise.resolve([] as { id: string; status: string }[]),
+
+    can.do
+      ? db
+          .select({ id: deliveryOrder.id, status: deliveryOrder.status, salesOrderId: deliveryOrder.salesOrderId, invoiceId: invoice.id })
+          .from(deliveryOrder)
+          .leftJoin(invoice, and(
+            eq(invoice.deliveryOrderId, deliveryOrder.id),
+            eq(invoice.organizationId, orgId),
+          ))
+          .where(eq(deliveryOrder.organizationId, orgId))
+      : Promise.resolve([] as { id: string; status: string; salesOrderId: string | null; invoiceId: string | null }[]),
   ]);
 
   // Map CPO rows
@@ -201,6 +217,16 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   const recentCpos = cpoRows.slice(0, 8).map(mapCpo);
   const recentSos = soRows.slice(0, 8).map(mapSo);
 
+  // Count SOs with existing DOs to compute pendingDoCount
+  const soIdsWithDo = new Set(
+    doRows.filter((r) => r.salesOrderId).map((r) => r.salesOrderId!),
+  );
+  const confirmedReservedSoIds = new Set(
+    soRows.filter((r) => r.status === "confirmed" && r.stockReservationStatus === "reserved").map((r) => r.id),
+  );
+  const pendingDoCount = [...confirmedReservedSoIds].filter((id) => !soIdsWithDo.has(id)).length;
+  const pendingInvoiceDoCount = doRows.filter((r) => r.status === "delivered" && !r.invoiceId).length;
+
   const kpi = {
     openCpoCount: openCpos.length,
     activeSoCount: soRows.filter((r) => r.status === "confirmed").length,
@@ -208,6 +234,8 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     activeConsignmentCount: consignmentRows.filter((r) => r.status === "active").length,
     openQtCount: qtRows.filter((r) => r.status === "draft").length,
     pendingInvoiceCount: invoiceRows.filter((r) => r.status === "issued").length,
+    pendingDoCount,
+    pendingInvoiceDoCount,
   };
 
   return {

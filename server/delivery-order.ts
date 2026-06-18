@@ -14,6 +14,7 @@ import {
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
+import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, isNotNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -261,6 +262,8 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       })),
     );
   }
+  revalidatePath("/dashboard/fulfillment/delivery");
+  revalidatePath("/dashboard");
   return row;
 }
 
@@ -312,6 +315,8 @@ export async function deleteDeliveryOrder(id: string): Promise<void> {
   if (!existing) throw new Error("Delivery order not found");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft delivery orders can be deleted");
   await db.delete(deliveryOrder).where(eq(deliveryOrder.id, id));
+  revalidatePath("/dashboard/fulfillment/delivery");
+  revalidatePath("/dashboard");
 }
 
 export async function updateDeliveryOrderStatus(id: string, status: string): Promise<void> {
@@ -368,6 +373,9 @@ export async function deliverDeliveryOrder(id: string, warehouseLabel = "Default
       ),
     );
   }
+  revalidatePath("/dashboard/fulfillment/delivery");
+  revalidatePath("/dashboard/fulfillment/invoice");
+  revalidatePath("/dashboard");
 }
 
 export async function returnDeliveryOrder(id: string, warehouseLabel = "Default"): Promise<void> {
@@ -383,6 +391,9 @@ export async function returnDeliveryOrder(id: string, warehouseLabel = "Default"
     .select()
     .from(deliveryOrderItem)
     .where(eq(deliveryOrderItem.deliveryOrderId, id));
+
+  revalidatePath("/dashboard/fulfillment/delivery");
+  revalidatePath("/dashboard");
 
   await Promise.all(
     items
@@ -445,7 +456,7 @@ export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
     .where(and(
       eq(deliveryOrder.organizationId, orgId),
       isNotNull(deliveryOrder.salesOrderId),
-      inArray(deliveryOrder.salesOrderId, soIds),
+      inArray(deliveryOrder.salesOrderId as any, soIds),
     ));
 
   const soIdsWithDo = new Set(existingDoSoIds.map((r) => r.salesOrderId!));
@@ -502,4 +513,67 @@ export async function getPendingSosForDo(): Promise<PendingSoForDoRow[]> {
 
     return { id: r.id, soNo: r.soNo, customers, customerPoNos, grandTotal: r.grandTotal, createdAt: r.createdAt };
   });
+}
+
+export type PendingDoForInvoiceRow = {
+  id: string;
+  doNo: string;
+  salesOrderNo: string | null;
+  customerPoNo: string | null;
+  customerName: string | null;
+  customerOrg: string | null;
+  createdAt: Date;
+};
+
+export async function getPendingDosForInvoice(): Promise<PendingDoForInvoiceRow[]> {
+  const { orgId } = await requireAccess("invoice:read");
+
+  // Delivered DOs that have no invoice linked
+  const rows = await db
+    .select({
+      id: deliveryOrder.id,
+      doNo: deliveryOrder.doNo,
+      salesOrderNo: deliveryOrder.salesOrderNo,
+      customerPoNo: deliveryOrder.customerPoNo,
+      customerSnapshot: deliveryOrder.customerSnapshot,
+      createdAt: deliveryOrder.createdAt,
+    })
+    .from(deliveryOrder)
+    .where(and(
+      eq(deliveryOrder.organizationId, orgId),
+      eq(deliveryOrder.status, "delivered"),
+    ))
+    .orderBy(desc(deliveryOrder.createdAt));
+
+  if (rows.length === 0) return [];
+
+  // Exclude DOs that already have an invoice
+  const doIds = rows.map((r) => r.id);
+  const invoicedDoIds = await db
+    .selectDistinct({ deliveryOrderId: invoice.deliveryOrderId })
+    .from(invoice)
+    .where(and(
+      eq(invoice.organizationId, orgId),
+      isNotNull(invoice.deliveryOrderId),
+      inArray(invoice.deliveryOrderId as any, doIds),
+    ));
+
+  const invoicedSet = new Set(invoicedDoIds.map((r) => r.deliveryOrderId!));
+
+  return rows
+    .filter((r) => !invoicedSet.has(r.id))
+    .map((r) => {
+      const snap = r.customerSnapshot as any;
+      const name = snap ? [snap.title, snap.name].filter(Boolean).join(" ") || null : null;
+      const org = snap?.organizationName ?? null;
+      return {
+        id: r.id,
+        doNo: r.doNo,
+        salesOrderNo: r.salesOrderNo,
+        customerPoNo: r.customerPoNo,
+        customerName: name,
+        customerOrg: org,
+        createdAt: r.createdAt,
+      };
+    });
 }

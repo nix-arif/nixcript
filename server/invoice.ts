@@ -231,6 +231,7 @@ export interface CreateInvoiceInput {
   dueDate?: Date;
 
   notes?: string;
+  categoryId?: string;
   items: InvoiceItemInput[];
   expenses: InvoiceExpenseInput[];
 }
@@ -526,6 +527,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
       paymentTerms: input.paymentTerms ?? null,
       dueDate: input.dueDate ?? null,
       notes: input.notes ?? null,
+      categoryId: input.categoryId ?? null,
       createdBy: userId,
     })
     .returning();
@@ -611,6 +613,7 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
       paidAt: input.paidAt ?? null,
       paidAmount: input.paidAmount ?? null,
       notes: input.notes ?? null,
+      categoryId: input.categoryId ?? null,
     })
     .where(eq(invoice.id, input.id))
     .returning();
@@ -702,4 +705,138 @@ export async function cancelInvoice(id: string): Promise<void> {
   if (!existing) throw new Error("Invoice not found");
   if (["paid", "cancelled"].includes(existing.status)) throw new Error("Cannot cancel a paid or already cancelled invoice");
   await db.update(invoice).set({ status: "cancelled" }).where(eq(invoice.id, id));
+}
+
+export interface CreateInvoiceManualInput extends CreateInvoiceInput {
+  manualInvoiceNo?: string;
+}
+
+export async function createInvoiceManual(input: CreateInvoiceManualInput): Promise<InvoiceRow> {
+  const { orgId, userId } = await requireAccess("organization-profile:update");
+
+  // Customer snapshot
+  const customerSnapshot: InvoiceRow["customerSnapshot"] = input.customerId
+    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    : null;
+
+  // Supplier snapshot
+  let supplierSnapshot: InvoiceRow["supplierSnapshot"] = null;
+  const resolvedSupplierId = input.supplierId ?? (
+    input.purchaseOrderId
+      ? await db.select({ supplierId: purchaseOrder.supplierId }).from(purchaseOrder).where(eq(purchaseOrder.id, input.purchaseOrderId!)).then(([r]) => r?.supplierId ?? null)
+      : null
+  );
+  if (resolvedSupplierId) {
+    const [sup] = await db.select().from(supplier).where(eq(supplier.id, resolvedSupplierId));
+    if (sup) {
+      supplierSnapshot = {
+        name: sup.name,
+        registrationNo: sup.registrationNo ?? undefined,
+        contactPerson: sup.contactPerson ?? undefined,
+        contactNo: sup.contactNo ?? undefined,
+        email: sup.email ?? undefined,
+      };
+    }
+  }
+
+  // Customer PO no. lookup
+  let resolvedCustomerPoNo = input.customerPoNo ?? null;
+  if (input.customerPoId && !resolvedCustomerPoNo) {
+    const [cpo] = await db.select({ customerPoNo: customerPurchaseOrder.customerPoNo }).from(customerPurchaseOrder).where(eq(customerPurchaseOrder.id, input.customerPoId));
+    resolvedCustomerPoNo = cpo?.customerPoNo ?? null;
+  }
+
+  const grandTotal = input.grandTotal ?? "0";
+  const costTotal = input.costTotal ?? "0";
+  const expensesTotal = input.expensesTotal ?? "0";
+
+  // Resolve invoice number
+  let invoiceNo: string;
+  if (input.manualInvoiceNo?.trim()) {
+    const manualNo = input.manualInvoiceNo.trim();
+    // Check uniqueness
+    const [dup] = await db
+      .select({ id: invoice.id })
+      .from(invoice)
+      .where(and(eq(invoice.organizationId, orgId), eq(invoice.invoiceNo, manualNo)));
+    if (dup) throw new Error(`Invoice number "${manualNo}" already exists`);
+    invoiceNo = manualNo;
+  } else {
+    invoiceNo = await generateInvoiceNo(orgId);
+  }
+
+  const [row] = await db
+    .insert(invoice)
+    .values({
+      id: nanoid(),
+      organizationId: orgId,
+      invoiceNo,
+      invoiceDate: input.invoiceDate ?? new Date(),
+      customerId: input.customerId ?? null,
+      customerSnapshot,
+      customerPoId: input.customerPoId ?? null,
+      customerPoNo: resolvedCustomerPoNo,
+      quotationId: input.quotationId ?? null,
+      quotationNo: input.quotationNo ?? null,
+      salesOrderId: input.salesOrderId ?? null,
+      salesOrderNo: input.salesOrderNo ?? null,
+      deliveryOrderId: input.deliveryOrderId ?? null,
+      deliveryOrderNo: input.deliveryOrderNo ?? null,
+      purchaseOrderId: input.purchaseOrderId ?? null,
+      supplierId: resolvedSupplierId ?? null,
+      supplierSnapshot,
+      salesPersonId: input.salesPersonId ?? null,
+      salesPersonName: input.salesPersonName ?? null,
+      subtotal: input.subtotal ?? "0",
+      overallDiscountPct: input.overallDiscountPct ?? "0",
+      overallDiscountAmt: input.overallDiscountAmt ?? "0",
+      sstPct: input.sstPct ?? "0",
+      sst: input.sst ?? "0",
+      grandTotal,
+      costTotal,
+      expensesTotal,
+      profit: calcProfit(grandTotal, costTotal, expensesTotal),
+      status: input.status ?? "draft",
+      paymentTerms: input.paymentTerms ?? null,
+      dueDate: input.dueDate ?? null,
+      notes: input.notes ?? null,
+      categoryId: input.categoryId ?? null,
+      createdBy: userId,
+    })
+    .returning();
+
+  if (input.items.length > 0) {
+    await db.insert(invoiceItem).values(
+      input.items.map((i) => ({
+        id: nanoid(),
+        invoiceId: row.id,
+        rowNo: i.rowNo,
+        productId: i.productId ?? null,
+        productCode: i.productCode ?? null,
+        description: i.description ?? null,
+        qty: i.qty ?? "1",
+        uom: i.uom ?? null,
+        unitPrice: i.unitPrice ?? "0",
+        discountPct: i.discountPct ?? "0",
+        discountAmt: i.discountAmt ?? "0",
+        totalPrice: i.totalPrice ?? "0",
+        costUnitPrice: i.costUnitPrice ?? "0",
+        costTotal: i.costTotal ?? "0",
+      })),
+    );
+  }
+
+  if (input.expenses.length > 0) {
+    await db.insert(invoiceExpense).values(
+      input.expenses.map((e) => ({
+        id: nanoid(),
+        invoiceId: row.id,
+        description: e.description,
+        category: e.category ?? "other",
+        amount: e.amount,
+      })),
+    );
+  }
+
+  return row;
 }
