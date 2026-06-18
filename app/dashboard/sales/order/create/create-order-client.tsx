@@ -981,23 +981,9 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
         {soType !== "proforma" && <section className={`border rounded-xl p-4 ${linkedQuotations.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold">Customer POs</h2>
-            <div className="flex items-center gap-2">
-              {linkedQuotations.length > 0 ? (
-                <span className="text-[11px] text-muted-foreground">Remove quotation first</span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={cashSaleLoading || linkedQuotations.length > 0}
-                  onClick={handleCashSale}
-                  className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-2 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {cashSaleLoading
-                    ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
-                    : <PlusIcon className="w-3 h-3" />}
-                  Cash Sale
-                </button>
-              )}
-            </div>
+            {linkedQuotations.length > 0 && (
+              <span className="text-[11px] text-muted-foreground">Remove quotation first</span>
+            )}
           </div>
 
           <div className="relative" ref={cpoDropdownRef}>
@@ -1101,6 +1087,21 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
                       );
                     });
                   })()}
+                </div>
+                {/* Cash Sale — always visible at the bottom of the dropdown */}
+                <div className="border-t border-border/60">
+                  <button
+                    type="button"
+                    disabled={cashSaleLoading}
+                    onClick={handleCashSale}
+                    className="w-full text-left px-3 py-2.5 flex items-center gap-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-50"
+                  >
+                    {cashSaleLoading
+                      ? <span className="w-3.5 h-3.5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                      : <PlusIcon className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />}
+                    <span className="text-sm text-emerald-700 dark:text-emerald-300 font-medium">Cash Sale</span>
+                    <span className="text-[11px] text-muted-foreground ml-1">— generates CASH-SALE-XX reference</span>
+                  </button>
                 </div>
               </div>
             )}
