@@ -3,13 +3,13 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createInvoice, type InvoiceItemInput, type InvoiceExpenseInput } from "@/server/invoice";
+import { createInvoice, type InvoiceItemInput, type InvoiceExpenseInput, type OrgMemberForInvoice } from "@/server/invoice";
 import { type DocumentCategoryRow } from "@/server/document-category";
 import { getCustomers } from "@/server/customer";
 import { getCustomerPosByCustomer } from "@/server/customer-purchase-order";
 import { type Supplier } from "@/server/supplier";
 import { type CustomerPo } from "@/server/customer-purchase-order";
-import { type DoForInvoice } from "@/server/delivery-order";
+import { type DoForInvoice, type PendingDoForInvoiceRow } from "@/server/delivery-order";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,11 +19,12 @@ import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
   ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon,
-  BuildingIcon, ChevronDownIcon, LinkIcon,
+  BuildingIcon, ChevronDownIcon, LinkIcon, TruckIcon, UserIcon,
 } from "lucide-react";
 
 export type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
+type SalesPerson = { id?: string | null; name: string };
 interface LineItem extends InvoiceItemInput { _key: string; }
 interface ExpenseRow extends InvoiceExpenseInput { _key: string; }
 
@@ -56,16 +57,197 @@ function fmtNum(v: string | number) {
   return parseFloat(String(v) || "0").toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// ── Sales person multi-picker ──────────────────────────────────────────────
+
+function SalesPersonPicker({ members, value, onChange }: {
+  members: OrgMemberForInvoice[];
+  value: SalesPerson[];
+  onChange: (v: SalesPerson[]) => void;
+}) {
+  const [externalName, setExternalName] = useState("");
+  const available = members.filter((m) => !value.some((p) => p.id === m.userId));
+
+  function addMember(userId: string) {
+    const m = members.find((m) => m.userId === userId);
+    if (!m || value.some((p) => p.id === userId)) return;
+    onChange([...value, { id: userId, name: m.name }]);
+  }
+
+  function addExternal() {
+    const name = externalName.trim();
+    if (!name) return;
+    onChange([...value, { id: null, name }]);
+    setExternalName("");
+  }
+
+  function remove(idx: number) {
+    onChange(value.filter((_, i) => i !== idx));
+  }
+
+  return (
+    <div className="space-y-2">
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((p, i) => (
+            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+              <UserIcon className="w-2.5 h-2.5 shrink-0" />
+              {p.name}
+              {!p.id && <span className="text-[9px] opacity-60 ml-0.5">ext</span>}
+              <button type="button" onClick={() => remove(i)} className="ml-0.5 hover:text-red-500 transition-colors">
+                <XIcon className="w-2.5 h-2.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {available.length > 0 && (
+        <div className="relative">
+          <select
+            value=""
+            onChange={(e) => { if (e.target.value) { addMember(e.target.value); e.target.value = ""; } }}
+            className="w-full h-8 rounded-md border border-border bg-background px-2 pr-8 text-xs appearance-none"
+          >
+            <option value="">+ Add member as sales person…</option>
+            {available.map((m) => (
+              <option key={m.userId} value={m.userId}>{m.name}{m.email ? ` (${m.email})` : ""}</option>
+            ))}
+          </select>
+          <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <Input
+          value={externalName}
+          onChange={(e) => setExternalName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addExternal(); } }}
+          placeholder="Add external person (name + Enter or Add)"
+          className="h-8 text-xs flex-1"
+        />
+        <Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0" onClick={addExternal} disabled={!externalName.trim()}>
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── DO picker step ─────────────────────────────────────────────────────────
+
+function DoPicker({ pendingDos, onSkip }: {
+  pendingDos: PendingDoForInvoiceRow[];
+  onSkip: () => void;
+}) {
+  const router = useRouter();
+  const fmtDate = (d: Date) => new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+
+  return (
+    <div className="p-6 space-y-5">
+      <PageHeader
+        title="New Invoice"
+        description="Select a delivered order to invoice, or create a standalone invoice"
+        action={
+          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/invoice")} className="gap-1.5">
+            <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+          </Button>
+        }
+      />
+
+      <section className="border border-border rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-1">Select Delivery Order</h2>
+        <p className="text-xs text-muted-foreground mb-3">
+          These DOs have been delivered but not yet invoiced. Selecting one pre-fills customer, items, and pricing.
+        </p>
+        <div className="divide-y divide-border/40 rounded-lg border border-border overflow-hidden">
+          {pendingDos.map((d) => (
+            <button
+              key={d.id}
+              className="w-full text-left px-3 py-2.5 hover:bg-muted/50 transition-colors flex items-center justify-between gap-3"
+              onClick={() => router.push(`/dashboard/fulfillment/invoice/create?doId=${d.id}`)}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-mono font-semibold">{d.doNo}</span>
+                  {d.salesOrderNo && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-mono">{d.salesOrderNo}</span>
+                  )}
+                  {d.customerPoNo && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">{d.customerPoNo}</span>
+                  )}
+                </div>
+                {(d.customerOrg ?? d.customerName) && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{d.customerOrg ?? d.customerName}</p>
+                )}
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-xs text-muted-foreground">{fmtDate(d.createdAt)}</p>
+                <span className="text-xs text-muted-foreground">Select →</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <div className="flex items-center gap-3">
+        <div className="flex-1 border-t border-border" />
+        <span className="text-xs text-muted-foreground">or</span>
+        <div className="flex-1 border-t border-border" />
+      </div>
+
+      <Button variant="outline" className="w-full gap-2" onClick={onSkip}>
+        <PlusIcon className="w-3.5 h-3.5" />
+        Create invoice without a Delivery Order
+      </Button>
+    </div>
+  );
+}
+
+// ── Props ──────────────────────────────────────────────────────────────────
+
 interface Props {
   suppliers: Supplier[];
   allCustomerPos: CustomerPo[];
   doData?: DoForInvoice | null;
   initialCustomer?: Customer | null;
   categories?: DocumentCategoryRow[];
+  members?: OrgMemberForInvoice[];
+  pendingDos?: PendingDoForInvoiceRow[];
 }
 
-export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initialCustomer, categories = [] }: Props) {
+export function CreateInvoiceClient({
+  suppliers,
+  allCustomerPos,
+  doData,
+  initialCustomer,
+  categories = [],
+  members = [],
+  pendingDos = [],
+}: Props) {
   const router = useRouter();
+  const [skipDoPicker, setSkipDoPicker] = useState(false);
+
+  // Show DO picker when no doData AND there are pending DOs AND user hasn't skipped
+  if (!doData && pendingDos.length > 0 && !skipDoPicker) {
+    return <DoPicker pendingDos={pendingDos} onSkip={() => setSkipDoPicker(true)} />;
+  }
+
+  return <InvoiceForm
+    suppliers={suppliers}
+    allCustomerPos={allCustomerPos}
+    doData={doData}
+    initialCustomer={initialCustomer}
+    categories={categories}
+    members={members}
+  />;
+}
+
+// ── Main invoice form ──────────────────────────────────────────────────────
+
+function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categories = [], members = [] }: Omit<Props, "pendingDos">) {
+  const router = useRouter();
+  const fromSo = !!doData?.salesOrderId;
+  const isProforma = false; // future: could be derived from SO type
 
   // Customer
   const [custSearch, setCustSearch] = useState("");
@@ -78,13 +260,18 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
   });
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Customer PO
+  // Customer PO — pre-select from DO
   const [customerPos, setCustomerPos] = useState<CustomerPo[]>(allCustomerPos);
   const [selectedCustomerPo, setSelectedCustomerPo] = useState<CustomerPo | null>(() =>
     doData?.customerPoId ? (allCustomerPos.find((p) => p.id === doData.customerPoId) ?? null) : null,
   );
   const [manualCustomerPoNo, setManualCustomerPoNo] = useState(
     doData?.customerPoId ? "" : (doData?.customerPoNo ?? ""),
+  );
+
+  // Billing address (required) — pre-fill from customerSnapshot.organizationAddress
+  const [billingAddress, setBillingAddress] = useState(
+    doData?.customerSnapshot?.organizationAddress ?? "",
   );
 
   // Document links
@@ -96,8 +283,16 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
   // Supplier
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>("");
 
-  // Sales person
-  const [salesPersonName, setSalesPersonName] = useState("");
+  // Sales persons — pre-fill from DO's SO
+  const [salesPersons, setSalesPersons] = useState<SalesPerson[]>(() => {
+    if (doData?.salesPersonId && doData?.salesPersonName) {
+      return [{ id: doData.salesPersonId, name: doData.salesPersonName }];
+    }
+    if (doData?.salesPersonName) {
+      return [{ id: null, name: doData.salesPersonName }];
+    }
+    return [];
+  });
 
   // Invoice header
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -113,30 +308,31 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
   const [overallDiscountPct, setOverallDiscountPct] = useState("0");
   const [sstPct, setSstPct] = useState("0");
 
-  // Items — pre-populate from DO if present
+  // Items — pre-populate from DO; inherit unit price from SO items
   const [items, setItems] = useState<LineItem[]>(() => {
     if (doData?.items && doData.items.length > 0) {
-      return doData.items.map((i, idx) => ({
-        _key: crypto.randomUUID(),
-        rowNo: idx + 1,
-        productCode: i.productCode ?? "",
-        description: i.description ?? "",
-        qty: i.qty ?? "1",
-        uom: i.uom ?? "",
-        unitPrice: "0",
-        discountPct: "0",
-        discountAmt: "0",
-        totalPrice: "0",
-        costUnitPrice: "0",
-        costTotal: "0",
-      }));
+      return doData.items.map((i, idx) => {
+        const { discountAmt, totalPrice } = calcLineTotal(i.unitPrice ?? "0", i.qty ?? "1", i.discountPct ?? "0");
+        return {
+          _key: crypto.randomUUID(),
+          rowNo: idx + 1,
+          productCode: i.productCode ?? "",
+          description: i.description ?? "",
+          qty: i.qty ?? "1",
+          uom: i.uom ?? "",
+          unitPrice: i.unitPrice ?? "0",
+          discountPct: i.discountPct ?? "0",
+          discountAmt,
+          totalPrice,
+          costUnitPrice: "0",
+          costTotal: "0",
+        };
+      });
     }
     return [newLine(1)];
   });
 
-  // Expenses
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
-
   const [saving, setSaving] = useState(false);
 
   // ── Customer search ──────────────────────────────────────────────────────
@@ -157,6 +353,11 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
     setSelectedCustomerPo(null);
     const pos = await getCustomerPosByCustomer(c.id);
     setCustomerPos(pos);
+    // Auto-fill billing address from primary org
+    const primaryOrg = (c as any).companies?.find((co: any) => co.isPrimary) ?? (c as any).companies?.[0];
+    if (primaryOrg?.organizationAddress && !billingAddress) {
+      setBillingAddress(primaryOrg.organizationAddress);
+    }
   }
 
   function clearCustomer() {
@@ -204,11 +405,9 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
     const afterDisc = itemsSubtotal - overallDisc;
     const sstAmt = afterDisc * (parseFloat(sstPct) || 0) / 100;
     const grandTotal = afterDisc + sstAmt;
-
     const costTotal = items.reduce((s, i) => s + (parseFloat(i.costTotal ?? "0") || 0), 0);
     const expensesTotal = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
     const profit = grandTotal - costTotal - expensesTotal;
-
     return {
       itemsSubtotal: itemsSubtotal.toFixed(2),
       overallDisc: overallDisc.toFixed(2),
@@ -226,8 +425,13 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
     if (!items.some((i) => i.description || i.productCode)) {
       toast.error("Add at least one item"); return;
     }
+    if (!billingAddress.trim()) {
+      toast.error("Billing address is required"); return;
+    }
     setSaving(true);
     try {
+      // Derive primary salesperson from first selected person
+      const primarySp = salesPersons[0];
       await createInvoice({
         invoiceDate: invoiceDate ? new Date(invoiceDate) : undefined,
         customerId: selectedCustomer?.id,
@@ -235,13 +439,17 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
         customerPoId: selectedCustomerPo?.id,
         customerPoNo: selectedCustomerPo?.customerPoNo ?? (manualCustomerPoNo || undefined),
         quotationNo: quotationNo || undefined,
+        salesOrderId: doData?.salesOrderId || undefined,
         salesOrderNo: salesOrderNo || undefined,
         deliveryOrderId: deliveryOrderId || undefined,
         deliveryOrderNo: deliveryOrderNo || undefined,
         supplierId: selectedSupplierId || undefined,
-        salesPersonName: salesPersonName || undefined,
+        salesPersonId: primarySp?.id ?? undefined,
+        salesPersonName: primarySp?.name ?? undefined,
+        associateSalesPersons: salesPersons,
+        billingAddress: billingAddress.trim(),
         subtotal: totals.itemsSubtotal,
-        overallDiscountPct: overallDiscountPct,
+        overallDiscountPct,
         overallDiscountAmt: totals.overallDisc,
         sstPct,
         sst: totals.sstAmt,
@@ -280,13 +488,22 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
       <div className="space-y-6">
         {/* ── From DO banner ───────────────────────────────────────────── */}
         {doData && (
-          <div className="flex items-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-4 py-3 text-sm text-blue-700 dark:text-blue-400">
-            <LinkIcon className="w-4 h-4 shrink-0" />
-            <span>Pre-filled from delivery order <span className="font-mono font-semibold">{doData.doNo}</span>. Review and complete pricing before saving.</span>
+          <div className="flex items-center gap-2.5 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-4 py-3">
+            <TruckIcon className="w-4 h-4 shrink-0 text-blue-600 dark:text-blue-400" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                Linked to Delivery Order <span className="font-mono">{doData.doNo}</span>
+                {doData.salesOrderNo && <span className="ml-2 text-[11px] font-mono opacity-70">← {doData.salesOrderNo}</span>}
+              </p>
+              <p className="text-xs text-blue-600/80 dark:text-blue-400/80 mt-0.5">
+                Customer, items, and pricing pre-filled from delivered order. Adjust as needed before saving.
+              </p>
+            </div>
+            <LinkIcon className="w-4 h-4 shrink-0 text-blue-500" />
           </div>
         )}
 
-        {/* ── Customer ─────────────────────────────────────────────────── */}
+        {/* ── 1. Customer ──────────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Customer</h2>
           {selectedCustomer ? (
@@ -301,7 +518,9 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
                 )}
                 {allCompanies.length === 1 && <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><BuildingIcon className="w-3 h-3" />{allCompanies[0].organizationName}</p>}
               </div>
-              <button onClick={clearCustomer} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
+              {!fromSo && (
+                <button onClick={clearCustomer} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
+              )}
             </div>
           ) : (
             <div className="relative">
@@ -321,7 +540,24 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
           )}
         </section>
 
-        {/* ── Customer PO ───────────────────────────────────────────────── */}
+        {/* ── 2. Billing address (required) ────────────────────────────── */}
+        <section className="border border-border rounded-xl p-4">
+          <h2 className="text-sm font-semibold mb-3">
+            Billing Address <span className="text-destructive">*</span>
+          </h2>
+          <Textarea
+            value={billingAddress}
+            onChange={(e) => setBillingAddress(e.target.value)}
+            placeholder="Customer's official billing address (appears on the invoice)"
+            rows={3}
+            className={cn("text-sm", !billingAddress.trim() && "border-destructive/50")}
+          />
+          {!billingAddress.trim() && (
+            <p className="text-xs text-destructive mt-1">Billing address is required on tax invoices</p>
+          )}
+        </section>
+
+        {/* ── 3. Customer PO ───────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Customer Purchase Order</h2>
           {customerPos.length > 0 ? (
@@ -355,7 +591,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
           )}
         </section>
 
-        {/* ── Invoice header ────────────────────────────────────────────── */}
+        {/* ── 4. Invoice details ────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Invoice details</h2>
           <div className="grid grid-cols-2 gap-3">
@@ -381,53 +617,35 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
                 <option value="cancelled">Cancelled</option>
               </select>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Sales person</Label>
-              <Input value={salesPersonName} onChange={(e) => setSalesPersonName(e.target.value)} placeholder="Name" className="h-9 text-sm" />
-            </div>
           </div>
+
+          {/* Sales persons */}
+          <div className="mt-3 space-y-1.5">
+            <Label className="text-xs">Sales person(s)</Label>
+            <SalesPersonPicker members={members} value={salesPersons} onChange={setSalesPersons} />
+          </div>
+
           <div className="mt-3 space-y-1.5">
             <Label className="text-xs">Notes</Label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="text-sm" />
           </div>
+
           <div className="mt-3 space-y-1.5">
-            <Label className="text-xs">
-              Categories <span className="text-destructive">*</span>
-            </Label>
+            <Label className="text-xs">Categories <span className="text-destructive">*</span></Label>
             {categories.length === 0 ? (
-              <p className="text-xs text-muted-foreground italic py-1">
-                No categories yet — create one in Organization → Categories
-              </p>
+              <p className="text-xs text-muted-foreground italic py-1">No categories yet — create one in Organization → Categories</p>
             ) : (
               <div className="flex flex-wrap gap-2 pt-0.5">
                 {categories.map((c) => {
                   const selected = categoryIds.includes(c.id);
                   const hex = c.color ?? "#6366f1";
                   return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() =>
-                        setCategoryIds((prev) =>
-                          selected ? prev.filter((id) => id !== c.id) : [...prev, c.id],
-                        )
-                      }
-                      className={cn(
-                        "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-all select-none",
-                        selected
-                          ? "text-white shadow-sm"
-                          : "bg-background text-foreground/70 hover:text-foreground",
-                      )}
-                      style={
-                        selected
-                          ? { backgroundColor: hex, borderColor: hex }
-                          : { borderColor: hex + "55" }
-                      }
+                    <button key={c.id} type="button"
+                      onClick={() => setCategoryIds((prev) => selected ? prev.filter((id) => id !== c.id) : [...prev, c.id])}
+                      className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-all select-none", selected ? "text-white shadow-sm" : "bg-background text-foreground/70 hover:text-foreground")}
+                      style={selected ? { backgroundColor: hex, borderColor: hex } : { borderColor: hex + "55" }}
                     >
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }}
-                      />
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }} />
                       {c.name}
                       {selected && <span className="ml-0.5 opacity-80">✓</span>}
                     </button>
@@ -438,7 +656,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
           </div>
         </section>
 
-        {/* ── Document links ────────────────────────────────────────────── */}
+        {/* ── 5. Document links ─────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Links to other documents</h2>
           <div className="grid grid-cols-2 gap-3">
@@ -446,33 +664,25 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <Label className="text-xs">Sales order no.</Label>
-                {doData?.salesOrderNo && salesOrderNo === doData.salesOrderNo && (
-                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3 shrink-0" />from DO</span>
-                )}
+                {doData?.salesOrderNo && <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3" />from DO</span>}
               </div>
-              <Input value={salesOrderNo} onChange={(e) => setSalesOrderNo(e.target.value)} placeholder="BMS-SO-2025-XXXX" className="h-9 text-sm" />
+              <Input value={salesOrderNo} onChange={(e) => setSalesOrderNo(e.target.value)} placeholder="BMS-SO-2025-XXXX" className="h-9 text-sm" readOnly={!!doData?.salesOrderNo} />
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <Label className="text-xs">Delivery order no.</Label>
-                {doData && (
-                  <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3 shrink-0" />from DO</span>
-                )}
+                {doData && <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3" />locked</span>}
               </div>
-              <Input value={deliveryOrderNo} onChange={(e) => setDeliveryOrderNo(e.target.value)} placeholder="BMS-DO-2025-XXXX" className="h-9 text-sm" readOnly={!!doData} />
+              <Input value={deliveryOrderNo} onChange={(e) => setDeliveryOrderNo(e.target.value)} placeholder="BMS-DO-2025-XXXX" readOnly={!!doData} className="h-9 text-sm" />
             </div>
           </div>
         </section>
 
-        {/* ── Supplier (cost side) ──────────────────────────────────────── */}
+        {/* ── 6. Supplier ───────────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Supplier <span className="text-[11px] font-normal text-muted-foreground">(cost reference)</span></h2>
           <div className="relative">
-            <select
-              className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none"
-              value={selectedSupplierId}
-              onChange={(e) => setSelectedSupplierId(e.target.value)}
-            >
+            <select className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none" value={selectedSupplierId} onChange={(e) => setSelectedSupplierId(e.target.value)}>
               <option value="">— No supplier —</option>
               {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}{s.registrationNo ? ` (${s.registrationNo})` : ""}</option>)}
             </select>
@@ -480,10 +690,13 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
           </div>
         </section>
 
-        {/* ── Line items ────────────────────────────────────────────────── */}
+        {/* ── 7. Line items ─────────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">Items</h2>
+            <div>
+              <h2 className="text-sm font-semibold">Items</h2>
+              {doData && <p className="text-[11px] text-muted-foreground mt-0.5">Pre-filled from DO — prices inherited from SO. Adjust as needed.</p>}
+            </div>
             <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={addLine}><PlusIcon className="w-3 h-3" /> Add row</Button>
           </div>
           <div className="overflow-x-auto">
@@ -524,7 +737,7 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
           </div>
         </section>
 
-        {/* ── Expenses ──────────────────────────────────────────────────── */}
+        {/* ── 8. Expenses ───────────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold">Other expenses</h2>
@@ -560,24 +773,20 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
           )}
         </section>
 
-        {/* ── Pricing summary ───────────────────────────────────────────── */}
+        {/* ── 9. Pricing summary ────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-4">Pricing summary</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Selling side */}
             <div className="space-y-2">
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Invoice value</div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span className="font-mono tabular-nums">MYR {fmtNum(totals.itemsSubtotal)}</span>
-              </div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Subtotal</span><span className="font-mono tabular-nums">MYR {fmtNum(totals.itemsSubtotal)}</span></div>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-muted-foreground flex-1">Overall discount</span>
                 <div className="flex items-center gap-1">
                   <Input value={overallDiscountPct} onChange={(e) => setOverallDiscountPct(e.target.value)} className="h-7 w-14 text-xs text-right" />
                   <span className="text-xs text-muted-foreground">%</span>
                 </div>
-                <span className="font-mono tabular-nums text-sm w-28 text-right">−MYR {fmtNum(totals.overallDisc)}</span>
+                <span className="text-sm font-mono tabular-nums w-24 text-right text-red-600">- MYR {fmtNum(totals.overallDisc)}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-muted-foreground flex-1">SST</span>
@@ -585,45 +794,32 @@ export function CreateInvoiceClient({ suppliers, allCustomerPos, doData, initial
                   <Input value={sstPct} onChange={(e) => setSstPct(e.target.value)} className="h-7 w-14 text-xs text-right" />
                   <span className="text-xs text-muted-foreground">%</span>
                 </div>
-                <span className="font-mono tabular-nums text-sm w-28 text-right">+MYR {fmtNum(totals.sstAmt)}</span>
+                <span className="text-sm font-mono tabular-nums w-24 text-right">+ MYR {fmtNum(totals.sstAmt)}</span>
               </div>
-              <div className="flex justify-between text-sm font-semibold border-t border-border pt-2 mt-2">
+              <div className="flex justify-between text-base font-semibold border-t border-border pt-2 mt-2">
                 <span>Grand total</span>
                 <span className="font-mono tabular-nums">MYR {fmtNum(totals.grandTotal)}</span>
               </div>
             </div>
-
-            {/* Cost side */}
             <div className="space-y-2">
               <div className="text-xs font-medium text-amber-700 dark:text-amber-400 uppercase tracking-wide mb-2">Cost & profit</div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Cost of goods</span>
-                <span className="font-mono tabular-nums text-amber-700 dark:text-amber-400">MYR {fmtNum(totals.costTotal)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Other expenses</span>
-                <span className="font-mono tabular-nums text-amber-700 dark:text-amber-400">MYR {fmtNum(totals.expensesTotal)}</span>
-              </div>
-              <div className="flex justify-between text-sm border-t border-border pt-2 mt-2 font-semibold">
-                <span>Total cost</span>
-                <span className="font-mono tabular-nums text-amber-700 dark:text-amber-400">MYR {fmtNum((parseFloat(totals.costTotal) + parseFloat(totals.expensesTotal)).toFixed(2))}</span>
-              </div>
-              <div className={`flex justify-between text-sm font-bold border-t border-border pt-2 mt-2 ${profitVal >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Cost of goods</span><span className="font-mono tabular-nums text-amber-700 dark:text-amber-400">MYR {fmtNum(totals.costTotal)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Other expenses</span><span className="font-mono tabular-nums text-amber-700 dark:text-amber-400">MYR {fmtNum(totals.expensesTotal)}</span></div>
+              <div className={cn("flex justify-between text-base font-semibold border-t border-border pt-2 mt-2", profitVal < 0 ? "text-red-600" : "text-green-700 dark:text-green-400")}>
                 <span>Profit</span>
-                <span className="font-mono tabular-nums">{profitVal >= 0 ? "+" : ""}MYR {fmtNum(totals.profit)}</span>
+                <span className="font-mono tabular-nums">MYR {fmtNum(totals.profit)}</span>
               </div>
-              {parseFloat(totals.grandTotal) > 0 && (
-                <div className={`text-xs text-right tabular-nums ${profitVal >= 0 ? "text-green-600 dark:text-green-500" : "text-red-500"}`}>
-                  {((profitVal / parseFloat(totals.grandTotal)) * 100).toFixed(1)}% margin
-                </div>
-              )}
             </div>
           </div>
         </section>
 
         <div className="flex gap-3 pb-8">
-          <Button onClick={handleSave} disabled={saving}>{saving ? "Creating…" : "Create invoice"}</Button>
-          <Button variant="outline" onClick={() => router.push("/dashboard/fulfillment/invoice")}>Cancel</Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Creating…" : "Create invoice"}
+          </Button>
+          <Button variant="outline" onClick={() => router.push("/dashboard/fulfillment/invoice")}>
+            Cancel
+          </Button>
         </div>
       </div>
     </div>

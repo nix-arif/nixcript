@@ -74,9 +74,12 @@ export type DoForInvoice = {
   customerPoNo: string | null;
   customerId: string | null;
   customerSnapshot: { title?: string; name: string; organizationName?: string; organizationAddress?: string; email?: string; contactNo?: string } | null;
+  // From linked SO (when available)
+  salesPersonId: string | null;
+  salesPersonName: string | null;
   deliveryDate: Date | null;
   deliveryAddress: string | null;
-  items: Array<{ rowNo: number; productId: string | null; productCode: string | null; description: string | null; qty: string | null; uom: string | null }>;
+  items: Array<{ rowNo: number; productId: string | null; productCode: string | null; description: string | null; qty: string | null; uom: string | null; unitPrice: string | null; discountPct: string | null }>;
 };
 
 const EDITABLE_STATUSES = new Set(["draft"]);
@@ -323,11 +326,37 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!do_ || do_.status !== "delivered") return null;
+
   const items = await db
     .select()
     .from(deliveryOrderItem)
     .where(eq(deliveryOrderItem.deliveryOrderId, id))
     .orderBy(asc(deliveryOrderItem.rowNo));
+
+  // Fetch SO for salesperson + pricing hints
+  let salesPersonId: string | null = null;
+  let salesPersonName: string | null = null;
+  const soItemPriceMap = new Map<string, { unitPrice: string; discountPct: string }>();
+
+  if (do_.salesOrderId) {
+    const [so] = await db
+      .select({ salesPersonId: salesOrder.salesPersonId, salesPersonName: salesOrder.salesPersonName })
+      .from(salesOrder)
+      .where(and(eq(salesOrder.id, do_.salesOrderId), eq(salesOrder.organizationId, orgId)));
+    if (so) {
+      salesPersonId = so.salesPersonId;
+      salesPersonName = so.salesPersonName;
+    }
+    // Fetch SO item pricing so the invoice form can pre-fill unit prices
+    const soItems = await db
+      .select({ id: salesOrderItem.id, unitPrice: salesOrderItem.unitPrice, discountPct: salesOrderItem.discountPct })
+      .from(salesOrderItem)
+      .where(eq(salesOrderItem.salesOrderId, do_.salesOrderId));
+    for (const si of soItems) {
+      soItemPriceMap.set(si.id, { unitPrice: si.unitPrice ?? "0", discountPct: si.discountPct ?? "0" });
+    }
+  }
+
   return {
     id: do_.id,
     doNo: do_.doNo,
@@ -337,16 +366,23 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     customerPoNo: do_.customerPoNo,
     customerId: do_.customerId,
     customerSnapshot: do_.customerSnapshot as DoForInvoice["customerSnapshot"],
+    salesPersonId,
+    salesPersonName,
     deliveryDate: do_.deliveryDate,
     deliveryAddress: do_.deliveryAddress,
-    items: items.map((i) => ({
-      rowNo: i.rowNo,
-      productId: i.productId ?? null,
-      productCode: i.productCode ?? null,
-      description: i.description ?? null,
-      qty: i.qty ?? null,
-      uom: i.uom ?? null,
-    })),
+    items: items.map((i) => {
+      const pricing = i.soItemId ? soItemPriceMap.get(i.soItemId) : undefined;
+      return {
+        rowNo: i.rowNo,
+        productId: i.productId ?? null,
+        productCode: i.productCode ?? null,
+        description: i.description ?? null,
+        qty: i.qty ?? null,
+        uom: i.uom ?? null,
+        unitPrice: pricing?.unitPrice ?? null,
+        discountPct: pricing?.discountPct ?? null,
+      };
+    }),
   };
 }
 

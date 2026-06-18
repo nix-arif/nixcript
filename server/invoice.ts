@@ -13,6 +13,7 @@ import {
   purchaseOrder,
   supplier,
   user,
+  member,
   ledgerEntry,
   ledgerLine,
   ledgerEntryInvoice,
@@ -208,9 +209,13 @@ export interface CreateInvoiceInput {
   purchaseOrderId?: string;
   supplierId?: string;
 
-  // Sales
+  // Sales persons (primary + additional, supports cross-org/external)
   salesPersonId?: string;
   salesPersonName?: string;
+  associateSalesPersons?: { id?: string | null; name: string }[];
+
+  // Billing address
+  billingAddress?: string;
 
   // Pricing
   subtotal?: string;
@@ -452,6 +457,21 @@ export async function getLinkedJournalEntries(invoiceId: string): Promise<Linked
 
 // ── Mutations ──────────────────────────────────────────────────────────────
 
+export async function getOrgMembersForInvoice() {
+  const session = await getCachedSession();
+  if (!session?.session?.activeOrganizationId) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  const rows = await db
+    .select({ userId: member.userId, name: user.name, email: user.email })
+    .from(member)
+    .innerJoin(user, eq(user.id, member.userId))
+    .where(eq(member.organizationId, orgId))
+    .orderBy(user.name);
+  return rows;
+}
+
+export type OrgMemberForInvoice = Awaited<ReturnType<typeof getOrgMembersForInvoice>>[number];
+
 export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceRow> {
   const { orgId, userId } = await requireAccess("invoice:create");
 
@@ -514,6 +534,8 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
       supplierSnapshot,
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
+      associateSalesPersons: input.associateSalesPersons ?? [],
+      billingAddress: input.billingAddress ?? null,
       subtotal: input.subtotal ?? "0",
       overallDiscountPct: input.overallDiscountPct ?? "0",
       overallDiscountAmt: input.overallDiscountAmt ?? "0",
@@ -598,6 +620,8 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
       supplierId: input.supplierId ?? null,
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
+      associateSalesPersons: input.associateSalesPersons ?? existing.associateSalesPersons ?? [],
+      billingAddress: input.billingAddress ?? null,
       subtotal: input.subtotal ?? existing.subtotal,
       overallDiscountPct: input.overallDiscountPct ?? existing.overallDiscountPct,
       overallDiscountAmt: input.overallDiscountAmt ?? existing.overallDiscountAmt,
@@ -787,6 +811,8 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
       supplierSnapshot,
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
+      associateSalesPersons: input.associateSalesPersons ?? [],
+      billingAddress: input.billingAddress ?? null,
       subtotal: input.subtotal ?? "0",
       overallDiscountPct: input.overallDiscountPct ?? "0",
       overallDiscountAmt: input.overallDiscountAmt ?? "0",

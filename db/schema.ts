@@ -2159,13 +2159,20 @@ export const invoice = pgTable(
       email?: string;
     }>(),
 
-    // Sales person
+    // Sales persons — primary + additional (cross-org support)
     salesPersonId: text("sales_person_id").references(() => user.id),
     salesPersonName: text("sales_person_name"),
+    associateSalesPersons: json("associate_sales_persons")
+      .$type<{ id?: string | null; name: string }[]>()
+      .default([])
+      .notNull(),
 
     // Application specialist (field support / case attendance)
     applicationSpecialistId: text("application_specialist_id").references(() => user.id),
     applicationSpecialistName: text("application_specialist_name"),
+
+    // Billing address
+    billingAddress: text("billing_address"),
 
     // Selling side — what we bill the customer
     subtotal: text("subtotal").notNull().default("0"),

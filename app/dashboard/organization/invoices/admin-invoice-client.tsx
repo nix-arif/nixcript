@@ -7,7 +7,7 @@ import {
   createInvoiceManual,
   type InvoiceListRow,
   type InvoiceItemInput,
-  type InvoiceExpenseInput,
+  type OrgMemberForInvoice,
 } from "@/server/invoice";
 import { type DocumentCategoryRow } from "@/server/document-category";
 import { type CustomerPo } from "@/server/customer-purchase-order";
@@ -20,17 +20,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  PlusIcon,
-  XIcon,
-  SearchIcon,
-  BuildingIcon,
-  ChevronDownIcon,
-  TrashIcon,
+  PlusIcon, XIcon, SearchIcon, BuildingIcon, ChevronDownIcon, TrashIcon, UserIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
-
+type SalesPerson = { id?: string | null; name: string };
 interface LineItem extends InvoiceItemInput { _key: string; }
 
 const newLine = (rowNo: number): LineItem => ({
@@ -66,15 +61,84 @@ function fmtNum(v: string | null | undefined) {
   return parseFloat(v ?? "0").toLocaleString("en-MY", { minimumFractionDigits: 2 });
 }
 
+// ── Sales person picker (shared with create invoice) ──────────────────────
+
+function SalesPersonPicker({ members, value, onChange }: {
+  members: OrgMemberForInvoice[];
+  value: SalesPerson[];
+  onChange: (v: SalesPerson[]) => void;
+}) {
+  const [externalName, setExternalName] = useState("");
+  const available = members.filter((m) => !value.some((p) => p.id === m.userId));
+
+  function addMember(userId: string) {
+    const m = members.find((m) => m.userId === userId);
+    if (!m || value.some((p) => p.id === userId)) return;
+    onChange([...value, { id: userId, name: m.name }]);
+  }
+
+  function addExternal() {
+    const name = externalName.trim();
+    if (!name) return;
+    onChange([...value, { id: null, name }]);
+    setExternalName("");
+  }
+
+  return (
+    <div className="space-y-2">
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((p, i) => (
+            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+              <UserIcon className="w-2.5 h-2.5 shrink-0" />
+              {p.name}
+              {!p.id && <span className="text-[9px] opacity-60 ml-0.5">ext</span>}
+              <button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} className="ml-0.5 hover:text-red-500 transition-colors">
+                <XIcon className="w-2.5 h-2.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {available.length > 0 && (
+        <div className="relative">
+          <select
+            value=""
+            onChange={(e) => { if (e.target.value) { addMember(e.target.value); e.target.value = ""; } }}
+            className="w-full h-8 rounded-md border border-border bg-background px-2 pr-8 text-xs appearance-none"
+          >
+            <option value="">+ Add member as sales person…</option>
+            {available.map((m) => <option key={m.userId} value={m.userId}>{m.name}{m.email ? ` (${m.email})` : ""}</option>)}
+          </select>
+          <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Input
+          value={externalName}
+          onChange={(e) => setExternalName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addExternal(); } }}
+          placeholder="Add external person (name + Enter)"
+          className="h-8 text-xs flex-1"
+        />
+        <Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0" onClick={addExternal} disabled={!externalName.trim()}>Add</Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Create drawer ─────────────────────────────────────────────────────────
+
 interface CreateDrawerProps {
   categories: DocumentCategoryRow[];
   suppliers: Supplier[];
   allCustomerPos: CustomerPo[];
+  members: OrgMemberForInvoice[];
   onClose: () => void;
   onCreated: () => void;
 }
 
-function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreated }: CreateDrawerProps) {
+function CreateDrawer({ categories, suppliers, allCustomerPos, members, onClose, onCreated }: CreateDrawerProps) {
   const [manualInvoiceNo, setManualInvoiceNo] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [categoryId, setCategoryId] = useState<string>(() => {
@@ -97,12 +161,21 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
   const [selectedCustomerPoId, setSelectedCustomerPoId] = useState("");
   const [manualPoNo, setManualPoNo] = useState("");
 
+  // Billing address
+  const [billingAddress, setBillingAddress] = useState("");
+
   // Supplier
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
 
+  // Sales persons
+  const [salesPersons, setSalesPersons] = useState<SalesPerson[]>([]);
+
+  // Doc links
+  const [salesOrderNo, setSalesOrderNo] = useState("");
+  const [deliveryOrderNo, setDeliveryOrderNo] = useState("");
+
   // Items
   const [items, setItems] = useState<LineItem[]>([newLine(1)]);
-
   const [saving, setSaving] = useState(false);
 
   const handleCustSearch = useCallback((val: string) => {
@@ -122,6 +195,10 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
     setSelectedCustomerPoId("");
     const pos = await getCustomerPosByCustomer(c.id);
     setCustomerPos(pos);
+    const primaryOrg = (c as any).companies?.find((co: any) => co.isPrimary) ?? (c as any).companies?.[0];
+    if (primaryOrg?.organizationAddress && !billingAddress) {
+      setBillingAddress(primaryOrg.organizationAddress);
+    }
   }
 
   function updateItem(key: string, patch: Partial<LineItem>) {
@@ -139,17 +216,19 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
     );
   }
 
-  const grandTotal = useMemo(() => {
-    return items.reduce((s, i) => s + (parseFloat(i.totalPrice ?? "0") || 0), 0).toFixed(2);
-  }, [items]);
+  const grandTotal = useMemo(() =>
+    items.reduce((s, i) => s + (parseFloat(i.totalPrice ?? "0") || 0), 0).toFixed(2),
+  [items]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!manualInvoiceNo.trim()) { toast.error("Invoice number is required"); return; }
     if (!categoryId) { toast.error("Category is required"); return; }
+    if (!billingAddress.trim()) { toast.error("Billing address is required"); return; }
     setSaving(true);
     try {
       const selectedPo = customerPos.find((p) => p.id === selectedCustomerPoId);
+      const primarySp = salesPersons[0];
       await createInvoiceManual({
         manualInvoiceNo: manualInvoiceNo.trim(),
         invoiceDate: invoiceDate ? new Date(invoiceDate) : undefined,
@@ -158,6 +237,12 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
         customerPoId: selectedCustomerPoId || undefined,
         customerPoNo: selectedPo?.customerPoNo ?? (manualPoNo || undefined),
         supplierId: selectedSupplierId || undefined,
+        salesOrderNo: salesOrderNo || undefined,
+        deliveryOrderNo: deliveryOrderNo || undefined,
+        salesPersonId: primarySp?.id ?? undefined,
+        salesPersonName: primarySp?.name ?? undefined,
+        associateSalesPersons: salesPersons,
+        billingAddress: billingAddress.trim(),
         categoryIds: categoryId ? [categoryId] : [],
         status,
         paymentTerms: paymentTerms || undefined,
@@ -180,14 +265,12 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      {/* Backdrop */}
       <div className="flex-1 bg-black/40" onClick={onClose} />
-      {/* Drawer */}
       <div className="w-full max-w-xl bg-background border-l border-border flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
             <h2 className="text-sm font-semibold">Create Missing Invoice</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Fill in gaps in the invoice sequence with a manual invoice number</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Backfill gaps in the invoice sequence with a manual invoice number</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground">
             <XIcon className="w-4 h-4" />
@@ -195,54 +278,29 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Manual invoice number */}
+          {/* Invoice number */}
           <div className="space-y-1.5">
-            <Label className="text-xs">
-              Invoice Number <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              value={manualInvoiceNo}
-              onChange={(e) => setManualInvoiceNo(e.target.value)}
-              placeholder="e.g. BMS-INV-2024-0031"
-              className="h-9 text-sm font-mono"
-              autoFocus
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Must be unique. Use this to backfill missing invoice numbers in the sequence.
-            </p>
+            <Label className="text-xs">Invoice Number <span className="text-destructive">*</span></Label>
+            <Input value={manualInvoiceNo} onChange={(e) => setManualInvoiceNo(e.target.value)} placeholder="e.g. BMS-INV-2024-0031" className="h-9 text-sm font-mono" autoFocus />
+            <p className="text-[11px] text-muted-foreground">Must be unique. Use this to backfill missing invoice numbers in the sequence.</p>
           </div>
 
           {/* Invoice date */}
           <div className="space-y-1.5">
             <Label className="text-xs">Invoice Date <span className="text-destructive">*</span></Label>
-            <input
-              type="date"
-              value={invoiceDate}
-              onChange={(e) => setInvoiceDate(e.target.value)}
-              className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
-            />
+            <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
           </div>
 
           {/* Category */}
           <div className="space-y-1.5">
             <Label className="text-xs">Category <span className="text-destructive">*</span></Label>
             {categories.length === 0 ? (
-              <p className="text-xs text-muted-foreground italic">
-                No categories yet — create one in Organization → Categories
-              </p>
+              <p className="text-xs text-muted-foreground italic">No categories yet — create one in Organization → Categories</p>
             ) : (
               <div className="relative">
-                <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
-                  className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none"
-                >
+                <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none">
                   <option value="">— Select category —</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}{c.isDefault ? " (default)" : ""}
-                    </option>
-                  ))}
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}{c.isDefault ? " (default)" : ""}</option>)}
                 </select>
                 <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               </div>
@@ -257,45 +315,23 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
                 <div className="flex-1">
                   <p className="text-sm font-medium">{[selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")}</p>
                   {allCompanies.length > 1 && (
-                    <select
-                      className="mt-1 w-full h-7 rounded border border-border bg-background px-2 text-xs"
-                      value={custOrgMemberId ?? ""}
-                      onChange={(e) => setCustOrgMemberId(e.target.value || undefined)}
-                    >
+                    <select className="mt-1 w-full h-7 rounded border border-border bg-background px-2 text-xs" value={custOrgMemberId ?? ""} onChange={(e) => setCustOrgMemberId(e.target.value || undefined)}>
                       <option value="">Primary / default</option>
-                      {allCompanies.map((c) => (
-                        <option key={c.id} value={c.id}>{c.organizationName}{c.isPrimary ? " (primary)" : ""}</option>
-                      ))}
+                      {allCompanies.map((c) => <option key={c.id} value={c.id}>{c.organizationName}{c.isPrimary ? " (primary)" : ""}</option>)}
                     </select>
                   )}
-                  {allCompanies.length === 1 && (
-                    <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                      <BuildingIcon className="w-3 h-3" />{allCompanies[0].organizationName}
-                    </p>
-                  )}
+                  {allCompanies.length === 1 && <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><BuildingIcon className="w-3 h-3" />{allCompanies[0].organizationName}</p>}
                 </div>
-                <button type="button" onClick={() => { setSelectedCustomer(null); setCustomerPos(allCustomerPos); }} className="text-muted-foreground hover:text-foreground">
-                  <XIcon className="w-3.5 h-3.5" />
-                </button>
+                <button type="button" onClick={() => { setSelectedCustomer(null); setCustomerPos(allCustomerPos); }} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
               </div>
             ) : (
               <div className="relative">
                 <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <Input
-                  value={custSearch}
-                  onChange={(e) => handleCustSearch(e.target.value)}
-                  placeholder="Search customer..."
-                  className="pl-9 h-9 text-sm"
-                />
+                <Input value={custSearch} onChange={(e) => handleCustSearch(e.target.value)} placeholder="Search customer..." className="pl-9 h-9 text-sm" />
                 {custResults.length > 0 && (
                   <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
                     {custResults.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className="w-full text-left px-3 py-2 hover:bg-muted/50 border-b border-border/30 last:border-0"
-                        onClick={() => selectCustomer(c)}
-                      >
+                      <button key={c.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted/50 border-b border-border/30 last:border-0" onClick={() => selectCustomer(c)}>
                         <div className="text-sm font-medium">{[c.title, c.name].filter(Boolean).join(" ")}</div>
                         {c.memberships[0]?.orgName && <div className="text-[11px] text-muted-foreground">{c.memberships[0].orgName}</div>}
                       </button>
@@ -306,21 +342,21 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
             )}
           </div>
 
+          {/* Billing address */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Billing Address <span className="text-destructive">*</span></Label>
+            <Textarea value={billingAddress} onChange={(e) => setBillingAddress(e.target.value)} placeholder="Customer's official billing address" rows={3} className={cn("text-xs", !billingAddress.trim() && "border-destructive/50")} />
+          </div>
+
           {/* Customer PO */}
           <div className="space-y-1.5">
             <Label className="text-xs">Customer PO</Label>
             {customerPos.length > 0 ? (
               <div className="space-y-1.5">
                 <div className="relative">
-                  <select
-                    value={selectedCustomerPoId}
-                    onChange={(e) => { setSelectedCustomerPoId(e.target.value); if (e.target.value) setManualPoNo(""); }}
-                    className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none"
-                  >
+                  <select value={selectedCustomerPoId} onChange={(e) => { setSelectedCustomerPoId(e.target.value); if (e.target.value) setManualPoNo(""); }} className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none">
                     <option value="">— Select PO (optional) —</option>
-                    {customerPos.map((p) => (
-                      <option key={p.id} value={p.id}>{p.customerPoNo}</option>
-                    ))}
+                    {customerPos.map((p) => <option key={p.id} value={p.id}>{p.customerPoNo}</option>)}
                   </select>
                   <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 </div>
@@ -333,19 +369,31 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
             )}
           </div>
 
+          {/* Document links */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Sales Order No.</Label>
+              <Input value={salesOrderNo} onChange={(e) => setSalesOrderNo(e.target.value)} placeholder="BMS-SO-XXXX" className="h-8 text-xs" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Delivery Order No.</Label>
+              <Input value={deliveryOrderNo} onChange={(e) => setDeliveryOrderNo(e.target.value)} placeholder="BMS-DO-XXXX" className="h-8 text-xs" />
+            </div>
+          </div>
+
+          {/* Sales persons */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Sales Person(s)</Label>
+            <SalesPersonPicker members={members} value={salesPersons} onChange={setSalesPersons} />
+          </div>
+
           {/* Supplier */}
           <div className="space-y-1.5">
             <Label className="text-xs">Supplier</Label>
             <div className="relative">
-              <select
-                value={selectedSupplierId}
-                onChange={(e) => setSelectedSupplierId(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none"
-              >
+              <select value={selectedSupplierId} onChange={(e) => setSelectedSupplierId(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none">
                 <option value="">— No supplier —</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             </div>
@@ -355,11 +403,7 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Status</Label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
-              >
+              <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
                 <option value="draft">Draft</option>
                 <option value="sent">Sent</option>
                 <option value="paid">Paid</option>
@@ -383,72 +427,32 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label className="text-xs">Line Items</Label>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setItems((prev) => [...prev, newLine(prev.length + 1)])}
-                className="h-6 text-xs gap-1"
-              >
+              <Button type="button" variant="ghost" size="sm" onClick={() => setItems((prev) => [...prev, newLine(prev.length + 1)])} className="h-6 text-xs gap-1">
                 <PlusIcon className="w-3 h-3" /> Add row
               </Button>
             </div>
             <div className="rounded-md border border-border overflow-hidden">
               <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-0 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 py-1.5 bg-muted/30 border-b border-border">
-                <span>Description</span>
-                <span>Qty</span>
-                <span>Unit Price</span>
-                <span>Total</span>
-                <span />
+                <span>Description</span><span>Qty</span><span>Unit Price</span><span>Total</span><span />
               </div>
               {items.map((item) => (
                 <div key={item._key} className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-1.5 items-center px-2 py-1.5 border-b border-border/40 last:border-0">
-                  <Input
-                    value={item.description ?? ""}
-                    onChange={(e) => updateItem(item._key, { description: e.target.value })}
-                    placeholder="Item description"
-                    className="h-7 text-xs border-0 bg-transparent p-0 focus-visible:ring-0 shadow-none"
-                  />
-                  <Input
-                    type="number"
-                    value={item.qty ?? "1"}
-                    onChange={(e) => updateItem(item._key, { qty: e.target.value })}
-                    className="h-7 text-xs"
-                    min="0"
-                  />
-                  <Input
-                    type="number"
-                    value={item.unitPrice ?? "0"}
-                    onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })}
-                    className="h-7 text-xs"
-                    min="0"
-                  />
-                  <span className="text-xs font-mono text-right pr-1">
-                    {parseFloat(item.totalPrice ?? "0").toFixed(2)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setItems((prev) => prev.filter((i) => i._key !== item._key).map((i, idx) => ({ ...i, rowNo: idx + 1 })))}
-                    className="p-1 text-muted-foreground hover:text-red-600"
-                    disabled={items.length === 1}
-                  >
+                  <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} placeholder="Item description" className="h-7 text-xs border-0 bg-transparent p-0 focus-visible:ring-0 shadow-none" />
+                  <Input type="number" value={item.qty ?? "1"} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs" min="0" />
+                  <Input type="number" value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs" min="0" />
+                  <span className="text-xs font-mono text-right pr-1">{parseFloat(item.totalPrice ?? "0").toFixed(2)}</span>
+                  <button type="button" onClick={() => setItems((prev) => prev.filter((i) => i._key !== item._key).map((i, idx) => ({ ...i, rowNo: idx + 1 })))} className="p-1 text-muted-foreground hover:text-red-600" disabled={items.length === 1}>
                     <TrashIcon className="w-3 h-3" />
                   </button>
                 </div>
               ))}
             </div>
-            <div className="text-right text-xs font-semibold pr-1">
-              Grand Total: MYR {fmtNum(grandTotal)}
-            </div>
+            <div className="text-right text-xs font-semibold pr-1">Grand Total: MYR {fmtNum(grandTotal)}</div>
           </div>
 
           <div className="flex items-center gap-2 pt-2 border-t border-border">
-            <Button type="submit" disabled={saving} className="gap-1.5 text-xs">
-              {saving ? "Creating…" : "Create Invoice"}
-            </Button>
-            <Button type="button" variant="ghost" onClick={onClose} className="text-xs">
-              Cancel
-            </Button>
+            <Button type="submit" disabled={saving} className="gap-1.5 text-xs">{saving ? "Creating…" : "Create Invoice"}</Button>
+            <Button type="button" variant="ghost" onClick={onClose} className="text-xs">Cancel</Button>
           </div>
         </form>
       </div>
@@ -456,14 +460,17 @@ function CreateDrawer({ categories, suppliers, allCustomerPos, onClose, onCreate
   );
 }
 
+// ── Main component ────────────────────────────────────────────────────────
+
 interface Props {
   invoices: InvoiceListRow[];
   categories: DocumentCategoryRow[];
   customerPos: CustomerPo[];
   suppliers: Supplier[];
+  members: OrgMemberForInvoice[];
 }
 
-export function AdminInvoiceClient({ invoices, categories, customerPos, suppliers }: Props) {
+export function AdminInvoiceClient({ invoices, categories, customerPos, suppliers, members }: Props) {
   const router = useRouter();
   const [showDrawer, setShowDrawer] = useState(false);
 
@@ -473,17 +480,13 @@ export function AdminInvoiceClient({ invoices, categories, customerPos, supplier
   }
 
   return (
-    <div
-      className="p-6 space-y-6"
-      style={{ background: "var(--color-background-secondary)", minHeight: "100vh" }}
-    >
+    <div className="p-6 space-y-6" style={{ background: "var(--color-background-secondary)", minHeight: "100vh" }}>
       <PageHeader
         title="Admin Invoices"
         description="View all invoices and create missing ones to fill sequence gaps"
         action={
           <Button size="sm" onClick={() => setShowDrawer(true)} className="gap-1.5 text-xs h-8">
-            <PlusIcon className="w-3.5 h-3.5" />
-            Create Missing Invoice
+            <PlusIcon className="w-3.5 h-3.5" /> Create Missing Invoice
           </Button>
         }
       />
@@ -505,32 +508,35 @@ export function AdminInvoiceClient({ invoices, categories, customerPos, supplier
                   <th className="px-4 py-2.5 text-left">Invoice No.</th>
                   <th className="px-4 py-2.5 text-left">Date</th>
                   <th className="px-4 py-2.5 text-left">Customer</th>
+                  <th className="px-4 py-2.5 text-left">CPO No.</th>
+                  <th className="px-4 py-2.5 text-left">SO No.</th>
+                  <th className="px-4 py-2.5 text-left">DO No.</th>
+                  <th className="px-4 py-2.5 text-left">Sales Person</th>
                   <th className="px-4 py-2.5 text-right">Amount</th>
                   <th className="px-4 py-2.5 text-left">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
                 {invoices.map((inv) => {
-                  const custName = (inv.customerSnapshot as any)?.name ?? "—";
+                  const snap = inv.customerSnapshot as any;
+                  const custName = snap?.organizationName ?? snap?.name ?? "—";
+                  const spName = inv.salesPersonName ?? "—";
                   return (
-                    <tr key={inv.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="px-4 py-2.5 font-mono text-xs font-semibold text-primary">
-                        {inv.invoiceNo}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                        {fmtDate(inv.invoiceDate)}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs max-w-[180px] truncate">{custName}</td>
-                      <td className="px-4 py-2.5 text-xs font-mono text-right whitespace-nowrap">
-                        MYR {fmtNum(inv.grandTotal)}
-                      </td>
+                    <tr
+                      key={inv.id}
+                      className="hover:bg-muted/20 transition-colors cursor-pointer"
+                      onClick={() => router.push(`/dashboard/fulfillment/invoice/${inv.id}`)}
+                    >
+                      <td className="px-4 py-2.5 font-mono text-xs font-semibold text-primary whitespace-nowrap">{inv.invoiceNo}</td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(inv.invoiceDate)}</td>
+                      <td className="px-4 py-2.5 text-xs max-w-40 truncate">{custName}</td>
+                      <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground whitespace-nowrap">{inv.customerPoNo ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground whitespace-nowrap">{inv.salesOrderNo ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground whitespace-nowrap">{inv.deliveryOrderNo ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground max-w-30 truncate">{spName}</td>
+                      <td className="px-4 py-2.5 text-xs font-mono text-right whitespace-nowrap">MYR {fmtNum(inv.grandTotal)}</td>
                       <td className="px-4 py-2.5">
-                        <span
-                          className={cn(
-                            "px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize",
-                            STATUS_BADGE[inv.status] ?? STATUS_BADGE.draft,
-                          )}
-                        >
+                        <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize", STATUS_BADGE[inv.status] ?? STATUS_BADGE.draft)}>
                           {inv.status}
                         </span>
                       </td>
@@ -548,6 +554,7 @@ export function AdminInvoiceClient({ invoices, categories, customerPos, supplier
           categories={categories}
           suppliers={suppliers}
           allCustomerPos={customerPos}
+          members={members}
           onClose={() => setShowDrawer(false)}
           onCreated={handleCreated}
         />
