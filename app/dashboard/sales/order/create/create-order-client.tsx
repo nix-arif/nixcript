@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createSalesOrder,
+  getNextCashSaleNo,
   submitSalesOrder,
   searchConfirmedSalesOrders,
   type SalesOrderItemInput,
@@ -215,6 +216,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
   const [cpoHighlight, setCpoHighlight] = useState(-1);
   const [cpoLoading, setCpoLoading] = useState(false);
   const [cpoDropdownOpen, setCpoDropdownOpen] = useState(false);
+  const [cashSaleLoading, setCashSaleLoading] = useState(false);
   const cpoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cpoDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -477,6 +479,23 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
     });
   }
 
+  async function handleCashSale() {
+    if (cashSaleLoading) return;
+    setCashSaleLoading(true);
+    try {
+      const no = await getNextCashSaleNo();
+      setLinkedCpos((prev) => [
+        ...prev,
+        { id: `__cash_sale__${no}`, customerPoNo: no, customerId: null, customerSnapshot: null },
+      ]);
+      setCpoDropdownOpen(false);
+    } catch {
+      toast.error("Failed to generate cash sale number");
+    } finally {
+      setCashSaleLoading(false);
+    }
+  }
+
   // ── Quotation search ────────────────────────────────────────────────────────
 
   const handleQtSearch = useCallback((val: string, withDummy = includeDummy) => {
@@ -721,7 +740,12 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
       customerId: primaryCustomerId,
       customerOrgMemberId: selectedCustomer ? custOrgMemberId : undefined,
       customerPoLinks: linkedCpos.length > 0
-        ? linkedCpos.map((c) => ({ customerPoId: c.id, customerPoNo: c.customerPoNo }))
+        ? linkedCpos.map((c) => ({
+            // Cash-sale virtual CPOs have no real CPO record; send empty string
+            // so the server stores the reference number without a FK lookup.
+            customerPoId: c.id.startsWith("__cash_sale__") ? "" : c.id,
+            customerPoNo: c.customerPoNo,
+          }))
         : undefined,
       linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
       salesPersonName: salesPerson || undefined,
@@ -957,9 +981,23 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
         {soType !== "proforma" && <section className={`border rounded-xl p-4 ${linkedQuotations.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold">Customer POs</h2>
-            {linkedQuotations.length > 0 && (
-              <span className="text-[11px] text-muted-foreground">Remove quotation first</span>
-            )}
+            <div className="flex items-center gap-2">
+              {linkedQuotations.length > 0 ? (
+                <span className="text-[11px] text-muted-foreground">Remove quotation first</span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={cashSaleLoading || linkedQuotations.length > 0}
+                  onClick={handleCashSale}
+                  className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-2 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {cashSaleLoading
+                    ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                    : <PlusIcon className="w-3 h-3" />}
+                  Cash Sale
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="relative" ref={cpoDropdownRef}>
@@ -974,8 +1012,16 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [] }: Props) {
               {linkedCpos.map((c) => {
                 const snap = c.customerSnapshot;
                 const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                const isCashSale = c.id.startsWith("__cash_sale__");
                 return (
-                  <span key={c.id} className="flex items-center gap-1.5 bg-muted border border-border/60 rounded-md px-2 py-0.5 text-xs font-mono leading-5">
+                  <span
+                    key={c.id}
+                    className={`flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-mono leading-5 ${
+                      isCashSale
+                        ? "bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300"
+                        : "bg-muted border border-border/60"
+                    }`}
+                  >
                     {c.customerPoNo}
                     {custName && <span className="text-[10px] text-muted-foreground font-sans hidden sm:inline">{custName}</span>}
                     <button
