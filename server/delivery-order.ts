@@ -88,7 +88,22 @@ export type DoForInvoice = {
   supplierId: string | null;
   deliveryDate: Date | null;
   deliveryAddress: string | null;
-  items: Array<{ rowNo: number; productId: string | null; productCode: string | null; description: string | null; qty: string | null; uom: string | null; unitPrice: string | null; discountPct: string | null }>;
+  items: Array<{
+    rowNo: number;
+    productId: string | null;
+    productCode: string | null;
+    description: string | null;
+    qty: string | null;
+    uom: string | null;
+    unitPrice: string | null;
+    discountPct: string | null;
+    lineType: string | null;
+    rentalDuration: string | null;
+    rentalUnit: string | null;
+    setGroupId: string | null;
+    setGroupLabel: string | null;
+    setQty: string | null;
+  }>;
 };
 
 const EDITABLE_STATUSES = new Set(["draft"]);
@@ -353,7 +368,7 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
   // Effective CPO: DO may not store it, fall back to SO's CPO
   let effectiveCpoId: string | null = do_.customerPoId ?? null;
   let effectiveCpoNo: string | null = do_.customerPoNo ?? null;
-  const soItemPriceMap = new Map<string, { unitPrice: string; discountPct: string }>();
+  const soItemPriceMap = new Map<string, { unitPrice: string; discountPct: string; lineType: string; rentalDuration: string | null; rentalUnit: string | null; setGroupId: string | null; setGroupLabel: string | null; setQty: string | null }>();
 
   if (do_.salesOrderId) {
     const [so] = await db
@@ -420,13 +435,38 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
       .limit(1);
     if (po) supplierId = po.supplierId;
 
-    // Fetch SO item pricing so the invoice form can pre-fill unit prices
+    // Fetch SO items — pricing + tags; build multiple lookup maps for fallback matching
     const soItems = await db
-      .select({ id: salesOrderItem.id, unitPrice: salesOrderItem.unitPrice, discountPct: salesOrderItem.discountPct })
+      .select({
+        id: salesOrderItem.id,
+        rowNo: salesOrderItem.rowNo,
+        productCode: salesOrderItem.productCode,
+        unitPrice: salesOrderItem.unitPrice,
+        discountPct: salesOrderItem.discountPct,
+        lineType: salesOrderItem.lineType,
+        rentalDuration: salesOrderItem.rentalDuration,
+        rentalUnit: salesOrderItem.rentalUnit,
+        setGroupId: salesOrderItem.setGroupId,
+        setGroupLabel: salesOrderItem.setGroupLabel,
+        setQty: salesOrderItem.setQty,
+      })
       .from(salesOrderItem)
-      .where(eq(salesOrderItem.salesOrderId, do_.salesOrderId));
+      .where(eq(salesOrderItem.salesOrderId, do_.salesOrderId))
+      .orderBy(asc(salesOrderItem.rowNo));
     for (const si of soItems) {
-      soItemPriceMap.set(si.id, { unitPrice: si.unitPrice ?? "0", discountPct: si.discountPct ?? "0" });
+      const data = {
+        unitPrice: si.unitPrice ?? "0",
+        discountPct: si.discountPct ?? "0",
+        lineType: si.lineType ?? "sell",
+        rentalDuration: si.rentalDuration ?? null,
+        rentalUnit: si.rentalUnit ?? null,
+        setGroupId: si.setGroupId ?? null,
+        setGroupLabel: si.setGroupLabel ?? null,
+        setQty: si.setQty ?? null,
+      };
+      soItemPriceMap.set(si.id, data);
+      if (si.productCode) soItemPriceMap.set(`pc:${si.productCode}`, data);
+      soItemPriceMap.set(`row:${si.rowNo}`, data);
     }
   }
 
@@ -449,7 +489,11 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     deliveryDate: do_.deliveryDate,
     deliveryAddress: do_.deliveryAddress,
     items: items.map((i) => {
-      const pricing = i.soItemId ? soItemPriceMap.get(i.soItemId) : undefined;
+      // Look up SO item data: by soItemId first, then productCode, then rowNo
+      const soData =
+        (i.soItemId ? soItemPriceMap.get(i.soItemId) : undefined) ??
+        (i.productCode ? soItemPriceMap.get(`pc:${i.productCode}`) : undefined) ??
+        soItemPriceMap.get(`row:${i.rowNo}`);
       return {
         rowNo: i.rowNo,
         productId: i.productId ?? null,
@@ -457,8 +501,14 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
         description: i.description ?? null,
         qty: i.qty ?? null,
         uom: i.uom ?? null,
-        unitPrice: pricing?.unitPrice ?? null,
-        discountPct: pricing?.discountPct ?? null,
+        unitPrice: soData?.unitPrice ?? null,
+        discountPct: soData?.discountPct ?? null,
+        lineType: soData?.lineType ?? null,
+        rentalDuration: soData?.rentalDuration ?? null,
+        rentalUnit: soData?.rentalUnit ?? null,
+        setGroupId: soData?.setGroupId ?? null,
+        setGroupLabel: soData?.setGroupLabel ?? null,
+        setQty: soData?.setQty ?? null,
       };
     }),
   };

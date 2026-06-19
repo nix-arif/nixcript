@@ -347,6 +347,12 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
           totalPrice,
           costUnitPrice: "0",
           costTotal: "0",
+          lineType: i.lineType ?? "sell",
+          rentalDuration: i.rentalDuration ?? undefined,
+          rentalUnit: i.rentalUnit ?? undefined,
+          setGroupId: i.setGroupId ?? undefined,
+          setGroupLabel: i.setGroupLabel ?? undefined,
+          setQty: i.setQty ?? undefined,
         };
       });
     }
@@ -743,7 +749,19 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
                   <tr key={item._key} className="border-b border-border/50 last:border-0">
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
                     <td className="py-1.5 pr-2"><Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} className="h-7 text-xs" /></td>
-                    <td className="py-1.5 pr-2"><Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="py-1.5 pr-2">
+                      <div className="flex flex-col gap-0.5">
+                        <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} className="h-7 text-xs" />
+                        {item.lineType === "rent" && (
+                          <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium">
+                            RENTAL{item.rentalDuration ? ` · ${item.rentalDuration} ${(item.rentalUnit ?? "case").toUpperCase()}` : ""}
+                          </span>
+                        )}
+                        {item.setGroupLabel && (
+                          <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">SET: {item.setGroupLabel}</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-1.5 pr-2"><Input value={item.qty ?? "1"} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" /></td>
                     <td className="py-1.5 pr-2"><Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="pcs" /></td>
                     <td className="py-1.5 pr-2"><Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs text-right" /></td>

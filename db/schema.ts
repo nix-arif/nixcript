@@ -2247,6 +2247,16 @@ export const invoiceItem = pgTable(
     costUnitPrice: text("cost_unit_price").default("0"),
     costTotal: text("cost_total").default("0"), // qty × costUnitPrice
 
+    // Inherited from SO/quotation item (sell | rent)
+    lineType: text("line_type").default("sell"),
+    rentalDuration: text("rental_duration"),
+    rentalUnit: text("rental_unit"),
+
+    // Set grouping (inherited from SO/quotation)
+    setGroupId: text("set_group_id"),
+    setGroupLabel: text("set_group_label"),
+    setQty: text("set_qty"),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("invoice_item_invoice_idx").on(t.invoiceId)],

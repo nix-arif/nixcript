@@ -180,6 +180,12 @@ export interface InvoiceItemInput {
   totalPrice?: string;
   costUnitPrice?: string;
   costTotal?: string;
+  lineType?: string;
+  rentalDuration?: string;
+  rentalUnit?: string;
+  setGroupId?: string;
+  setGroupLabel?: string;
+  setQty?: string;
 }
 
 export interface InvoiceExpenseInput {
@@ -571,6 +577,12 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
         totalPrice: i.totalPrice ?? "0",
         costUnitPrice: i.costUnitPrice ?? "0",
         costTotal: i.costTotal ?? "0",
+        lineType: i.lineType ?? "sell",
+        rentalDuration: i.rentalDuration ?? null,
+        rentalUnit: i.rentalUnit ?? null,
+        setGroupId: i.setGroupId ?? null,
+        setGroupLabel: i.setGroupLabel ?? null,
+        setQty: i.setQty ?? null,
       })),
     );
   }
@@ -662,6 +674,12 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
         totalPrice: i.totalPrice ?? "0",
         costUnitPrice: i.costUnitPrice ?? "0",
         costTotal: i.costTotal ?? "0",
+        lineType: i.lineType ?? "sell",
+        rentalDuration: i.rentalDuration ?? null,
+        rentalUnit: i.rentalUnit ?? null,
+        setGroupId: i.setGroupId ?? null,
+        setGroupLabel: i.setGroupLabel ?? null,
+        setQty: i.setQty ?? null,
       })),
     );
   }
@@ -848,6 +866,12 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
         totalPrice: i.totalPrice ?? "0",
         costUnitPrice: i.costUnitPrice ?? "0",
         costTotal: i.costTotal ?? "0",
+        lineType: i.lineType ?? "sell",
+        rentalDuration: i.rentalDuration ?? null,
+        rentalUnit: i.rentalUnit ?? null,
+        setGroupId: i.setGroupId ?? null,
+        setGroupLabel: i.setGroupLabel ?? null,
+        setQty: i.setQty ?? null,
       })),
     );
   }
