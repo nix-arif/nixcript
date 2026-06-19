@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { toast } from "sonner";
-import { deleteInvoice, type InvoiceListRow } from "@/server/invoice";
+import { deleteInvoice, type InvoiceListRow, type InvoiceStatsRow } from "@/server/invoice";
 import { type DocumentCategoryRow } from "@/server/document-category";
 import { useAppStore } from "@/lib/store/use-app-store";
 import { Button } from "@/components/ui/button";
@@ -179,6 +179,7 @@ interface Props {
   total: number;
   page: number;
   pageSize: number;
+  overallStats: InvoiceStatsRow | null;
   initialSearch: string;
   initialStatus: string;
   pendingDos: PendingDoForInvoiceRow[];
@@ -192,6 +193,7 @@ export function InvoiceListClient({
   total,
   page,
   pageSize,
+  overallStats,
   initialSearch,
   initialStatus,
   pendingDos,
@@ -284,23 +286,7 @@ export function InvoiceListClient({
     });
   }, [initialInvoices, sortKey, sortDir]);
 
-  // ── Stats (current page) ──────────────────────────────────────────────
-
-  const stats = useMemo(() => {
-    const all           = initialInvoices;
-    const totalBilled   = all.reduce((s, i) => s + parseMoney(i.grandTotal), 0);
-    const totalCollected = all.reduce((s, i) => {
-      if (i.status === "paid") return s + parseMoney(i.grandTotal);
-      return s + parseMoney(i.paidAmount);
-    }, 0);
-    const outstanding   = all.reduce((s, i) => {
-      if (i.status === "paid" || i.status === "cancelled") return s;
-      return s + Math.max(0, parseMoney(i.grandTotal) - parseMoney(i.paidAmount));
-    }, 0);
-    const overdueCount  = all.filter((i) => i.status === "overdue").length;
-    const soaPendingCount = all.filter((i) => !i.soaVerified && i.status !== "draft" && i.status !== "cancelled").length;
-    return { totalBilled, totalCollected, outstanding, overdueCount, soaPendingCount };
-  }, [initialInvoices]);
+  // ── Stats (overall — from invoice_stats table) ────────────────────────
 
   const footerTotals = useMemo(() => {
     const billed = sorted.reduce((s, i) => s + parseMoney(i.grandTotal), 0);
@@ -420,25 +406,33 @@ export function InvoiceListClient({
         </div>
       )}
 
-      {/* Stats strip (current page) */}
+      {/* Stats strip (overall — from invoice_stats cache) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <Stat
           label="Total invoices"
-          value={total.toString()}
-          sub={isFiltered ? `${sorted.length} on page` : `page ${page} of ${totalPages}`}
-        />
-        <Stat label="Billed (page)" value={`MYR ${fmtMoney(stats.totalBilled.toFixed(2))}`} color="text-foreground" />
-        <Stat label="Collected (page)" value={`MYR ${fmtMoney(stats.totalCollected.toFixed(2))}`} color="text-green-600 dark:text-green-400" />
-        <Stat
-          label="Outstanding (page)"
-          value={`MYR ${fmtMoney(stats.outstanding.toFixed(2))}`}
-          color={stats.outstanding > 0 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}
+          value={(overallStats?.totalCount ?? total).toString()}
+          sub={`${overallStats?.paidCount ?? 0} paid · ${overallStats?.overdueCount ?? 0} overdue`}
         />
         <Stat
-          label="Overdue (page)"
-          value={stats.overdueCount.toString()}
-          sub={`${stats.soaPendingCount} SOA pending`}
-          color={stats.overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-foreground"}
+          label="Total billed"
+          value={`MYR ${fmtMoney(overallStats?.totalBilled ?? "0")}`}
+          color="text-foreground"
+        />
+        <Stat
+          label="Collected"
+          value={`MYR ${fmtMoney(overallStats?.totalCollected ?? "0")}`}
+          color="text-green-600 dark:text-green-400"
+        />
+        <Stat
+          label="Outstanding"
+          value={`MYR ${fmtMoney(overallStats?.totalOutstanding ?? "0")}`}
+          color={parseFloat(overallStats?.totalOutstanding ?? "0") > 0 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}
+        />
+        <Stat
+          label="Overdue"
+          value={(overallStats?.overdueCount ?? 0).toString()}
+          sub={`${overallStats?.soaPendingCount ?? 0} SOA pending`}
+          color={(overallStats?.overdueCount ?? 0) > 0 ? "text-red-600 dark:text-red-400" : "text-foreground"}
         />
       </div>
 

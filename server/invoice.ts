@@ -6,6 +6,7 @@ import {
   invoiceItem,
   invoiceExpense,
   invoiceCounter,
+  invoiceStats,
   customer,
   customerOrganization,
   customerCompany,
@@ -284,6 +285,7 @@ export type InvoiceListResult = {
   total: number;
   page: number;
   pageSize: number;
+  stats: InvoiceStatsRow | null;
 };
 
 export async function getInvoices(opts: {
@@ -316,14 +318,17 @@ export async function getInvoices(opts: {
 
   const where = and(...conditions);
 
-  const [rows, [{ total }]] = await Promise.all([
+  const [rows, [{ total }], statsRows] = await Promise.all([
     db.select().from(invoice).where(where)
       .orderBy(desc(invoice.invoiceNo))
       .limit(pageSize).offset(offset),
     db.select({ total: count() }).from(invoice).where(where),
+    db.select().from(invoiceStats).where(eq(invoiceStats.organizationId, orgId)),
   ]);
 
-  if (rows.length === 0) return { rows: [], total: Number(total), page, pageSize };
+  const stats = statsRows[0] ?? null;
+
+  if (rows.length === 0) return { rows: [], total: Number(total), page, pageSize, stats };
 
   const creatorIds  = [...new Set(rows.map((r) => r.createdBy))];
   const customerIds = [...new Set(rows.map((r) => r.customerId).filter(Boolean))] as string[];
@@ -342,6 +347,7 @@ export async function getInvoices(opts: {
     total: Number(total),
     page,
     pageSize,
+    stats,
   };
 }
 
@@ -532,6 +538,85 @@ export async function getOrgMembersForInvoice() {
 
 export type OrgMemberForInvoice = Awaited<ReturnType<typeof getOrgMembersForInvoice>>[number];
 
+// ── Invoice stats ──────────────────────────────────────────────────────────
+// Recomputes totals from scratch for one org and upserts into invoice_stats.
+// Fast: one aggregate query; called after every create/update/delete/status-change.
+
+export type InvoiceStatsRow = typeof invoiceStats.$inferSelect;
+
+async function refreshInvoiceStats(orgId: string): Promise<void> {
+  const rows = await db
+    .select({
+      status:      invoice.status,
+      grandTotal:  invoice.grandTotal,
+      paidAmount:  invoice.paidAmount,
+      soaVerified: invoice.soaVerified,
+    })
+    .from(invoice)
+    .where(eq(invoice.organizationId, orgId));
+
+  let totalBilled = 0, totalCollected = 0, totalOutstanding = 0;
+  let draftCount = 0, sentCount = 0, paidCount = 0, overdueCount = 0, cancelledCount = 0, soaPendingCount = 0;
+
+  for (const r of rows) {
+    const gt  = parseFloat(r.grandTotal  ?? "0") || 0;
+    const pa  = parseFloat(r.paidAmount  ?? "0") || 0;
+    const st  = r.status ?? "draft";
+
+    if (st !== "cancelled") totalBilled += gt;
+    if (st === "paid")       { totalCollected += gt; }
+    else if (st !== "cancelled") { totalCollected += pa; }
+    if (st !== "paid" && st !== "cancelled") totalOutstanding += Math.max(0, gt - pa);
+
+    if (st === "draft")     draftCount++;
+    else if (st === "sent") sentCount++;
+    else if (st === "paid") paidCount++;
+    else if (st === "overdue") overdueCount++;
+    else if (st === "cancelled") cancelledCount++;
+
+    if (!r.soaVerified && st !== "draft" && st !== "cancelled") soaPendingCount++;
+  }
+
+  await db
+    .insert(invoiceStats)
+    .values({
+      id: nanoid(),
+      organizationId:   orgId,
+      totalCount:       rows.length,
+      draftCount,
+      sentCount,
+      paidCount,
+      overdueCount,
+      cancelledCount,
+      totalBilled:      totalBilled.toFixed(2),
+      totalCollected:   totalCollected.toFixed(2),
+      totalOutstanding: totalOutstanding.toFixed(2),
+      soaPendingCount,
+    })
+    .onConflictDoUpdate({
+      target: invoiceStats.organizationId,
+      set: {
+        totalCount:       rows.length,
+        draftCount,
+        sentCount,
+        paidCount,
+        overdueCount,
+        cancelledCount,
+        totalBilled:      totalBilled.toFixed(2),
+        totalCollected:   totalCollected.toFixed(2),
+        totalOutstanding: totalOutstanding.toFixed(2),
+        soaPendingCount,
+        updatedAt:        new Date(),
+      },
+    });
+}
+
+export async function getInvoiceStats(orgId?: string): Promise<InvoiceStatsRow | null> {
+  const resolved = orgId ?? (await requireAccess("invoice:read")).orgId;
+  const [row] = await db.select().from(invoiceStats).where(eq(invoiceStats.organizationId, resolved));
+  return row ?? null;
+}
+
 export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceRow> {
   const { orgId, userId } = await requireAccess("invoice:create");
 
@@ -663,6 +748,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
   }
 
   revalidatePath("/dashboard/fulfillment/invoice");
+  await refreshInvoiceStats(orgId);
   return row;
 }
 
@@ -766,6 +852,7 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
   }
 
   revalidatePath("/dashboard/fulfillment/invoice");
+  await refreshInvoiceStats(orgId);
   return row;
 }
 
@@ -776,6 +863,7 @@ export async function deleteInvoice(id: string): Promise<void> {
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled invoices can be deleted");
   await db.delete(invoice).where(eq(invoice.id, id));
   revalidatePath("/dashboard/fulfillment/invoice");
+  await refreshInvoiceStats(orgId);
 }
 
 export async function updateInvoiceStatus(id: string, status: string, paidAt?: Date, paidAmount?: string): Promise<void> {
@@ -786,6 +874,7 @@ export async function updateInvoiceStatus(id: string, status: string, paidAt?: D
     .update(invoice)
     .set({ status, ...(paidAt ? { paidAt, paidAmount: paidAmount ?? null } : {}) })
     .where(eq(invoice.id, id));
+  await refreshInvoiceStats(orgId);
 }
 
 export async function sendInvoice(id: string): Promise<void> {

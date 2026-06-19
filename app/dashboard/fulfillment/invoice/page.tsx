@@ -29,6 +29,7 @@ export default async function InvoicePage({
       total={result.total}
       page={result.page}
       pageSize={result.pageSize}
+      overallStats={result.stats}
       initialSearch={search}
       initialStatus={status}
       pendingDos={pendingDos}

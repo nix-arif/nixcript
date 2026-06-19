@@ -2264,6 +2264,25 @@ export const invoiceCounter = pgTable("invoice_counter", {
     .notNull(),
 });
 
+export const invoiceStats = pgTable("invoice_stats", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  totalCount:       integer("total_count").notNull().default(0),
+  draftCount:       integer("draft_count").notNull().default(0),
+  sentCount:        integer("sent_count").notNull().default(0),
+  paidCount:        integer("paid_count").notNull().default(0),
+  overdueCount:     integer("overdue_count").notNull().default(0),
+  cancelledCount:   integer("cancelled_count").notNull().default(0),
+  totalBilled:      text("total_billed").notNull().default("0"),
+  totalCollected:   text("total_collected").notNull().default("0"),
+  totalOutstanding: text("total_outstanding").notNull().default("0"),
+  soaPendingCount:  integer("soa_pending_count").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+});
+
 export const invoiceRelations = relations(invoice, ({ one, many }) => ({
   organization: one(organization, { fields: [invoice.organizationId], references: [organization.id] }),
   customer: one(customer, { fields: [invoice.customerId], references: [customer.id] }),
@@ -3056,6 +3075,7 @@ export const schema = {
   invoiceItem,
   invoiceExpense,
   invoiceCounter,
+  invoiceStats,
   invoiceRelations,
   invoiceItemRelations,
   invoiceExpenseRelations,

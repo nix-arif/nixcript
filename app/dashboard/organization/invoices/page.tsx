@@ -7,7 +7,7 @@ import { AdminInvoiceClient } from "./admin-invoice-client";
 
 export default async function AdminInvoicePage() {
   await requirePermission("organization-profile:update");
-  const [invoices, categories, customerPos, suppliers, members] = await Promise.all([
+  const [result, categories, customerPos, suppliers, members] = await Promise.all([
     getInvoices(),
     getDocumentCategories().catch(() => []),
     getCustomerPos(),
@@ -16,7 +16,7 @@ export default async function AdminInvoicePage() {
   ]);
   return (
     <AdminInvoiceClient
-      invoices={invoices}
+      invoices={result.rows}
       categories={categories}
       customerPos={customerPos}
       suppliers={suppliers}
