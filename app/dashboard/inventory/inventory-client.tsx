@@ -404,7 +404,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
                         <p>{customerName ?? "—"}</p>
                         {customerOrg && <p className="text-xs text-muted-foreground">{customerOrg}</p>}
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{item.description}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{item.description}</TableCell>
                       <TableCell className="text-center text-xs text-muted-foreground">{item.uom ?? "—"}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmt(item.qtySent)}</TableCell>
                       <TableCell className="text-right tabular-nums text-orange-600 dark:text-orange-400">{fmt(item.qtyUsed)}</TableCell>
@@ -421,7 +421,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
 
       {/* ── Stock Movement Sheet ─────────────────────────────────────────── */}
       <Sheet open={adjustOpen} onOpenChange={open => { if (!saving) setAdjustOpen(open); }}>
-        <SheetContent className="w-full sm:max-w-md overflow-y-auto px-8">
+        <SheetContent className="w-full data-[side=right]:sm:max-w-2xl overflow-y-auto px-6">
           <SheetHeader className="mb-5"><SheetTitle>Stock Movement</SheetTitle></SheetHeader>
           <form onSubmit={handleAdjust} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
@@ -488,7 +488,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
 
       {/* ── Transfer Sheet ───────────────────────────────────────────────── */}
       <Sheet open={transferOpen} onOpenChange={open => { if (!transferring) setTransferOpen(open); }}>
-        <SheetContent className="w-full sm:max-w-md overflow-y-auto px-8">
+        <SheetContent className="w-full data-[side=right]:sm:max-w-2xl overflow-y-auto px-6">
           <SheetHeader className="mb-5"><SheetTitle>Transfer Between Warehouses</SheetTitle></SheetHeader>
           <form onSubmit={handleTransfer} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
@@ -530,7 +530,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
 
       {/* ── Reorder Settings Sheet ───────────────────────────────────────── */}
       <Sheet open={reorderOpen} onOpenChange={open => { if (!savingReorder) setReorderOpen(open); }}>
-        <SheetContent className="w-full sm:max-w-md overflow-y-auto px-8">
+        <SheetContent className="w-full data-[side=right]:sm:max-w-2xl overflow-y-auto px-6">
           <SheetHeader className="mb-5">
             <SheetTitle>Stock Settings — {reorderItem?.productCode} @ {reorderItem?.warehouseLabel}</SheetTitle>
           </SheetHeader>
