@@ -20,6 +20,7 @@ import {
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
+import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, or } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -195,6 +196,7 @@ export interface InvoiceExpenseInput {
 }
 
 export interface CreateInvoiceInput {
+  invoiceNo?: string;
   invoiceDate?: Date;
 
   // Customer
@@ -517,7 +519,16 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
   const costTotal = input.costTotal ?? "0";
   const expensesTotal = input.expensesTotal ?? "0";
 
-  const invoiceNo = await generateInvoiceNo(orgId);
+  let invoiceNo: string;
+  if (input.invoiceNo?.trim()) {
+    const dup = await db.select({ id: invoice.id }).from(invoice)
+      .where(and(eq(invoice.organizationId, orgId), eq(invoice.invoiceNo, input.invoiceNo.trim())))
+      .limit(1);
+    if (dup.length > 0) throw new Error(`Invoice number "${input.invoiceNo.trim()}" already exists`);
+    invoiceNo = input.invoiceNo.trim();
+  } else {
+    invoiceNo = await generateInvoiceNo(orgId);
+  }
   const [row] = await db
     .insert(invoice)
     .values({
@@ -599,6 +610,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
     );
   }
 
+  revalidatePath("/dashboard/fulfillment/invoice");
   return row;
 }
 
@@ -696,6 +708,7 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
     );
   }
 
+  revalidatePath("/dashboard/fulfillment/invoice");
   return row;
 }
 
@@ -705,6 +718,7 @@ export async function deleteInvoice(id: string): Promise<void> {
   if (!existing) throw new Error("Invoice not found");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled invoices can be deleted");
   await db.delete(invoice).where(eq(invoice.id, id));
+  revalidatePath("/dashboard/fulfillment/invoice");
 }
 
 export async function updateInvoiceStatus(id: string, status: string, paidAt?: Date, paidAmount?: string): Promise<void> {
@@ -888,5 +902,6 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
     );
   }
 
+  revalidatePath("/dashboard/fulfillment/invoice");
   return row;
 }

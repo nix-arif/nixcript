@@ -5,19 +5,24 @@ import { getDoForInvoice, getPendingDosForInvoice } from "@/server/delivery-orde
 import { getCustomer } from "@/server/customer";
 import { getDocumentCategories } from "@/server/document-category";
 import { getOrgMembersForInvoice } from "@/server/invoice";
+import { getOrganizations } from "@/server/organizations";
 import { CreateInvoiceClient, type Customer } from "./create-invoice-client";
 
 export default async function CreateInvoicePage({ searchParams }: { searchParams: Promise<{ doId?: string }> }) {
-  await requirePermission("invoice:create");
+  const session = await requirePermission("invoice:create");
   const { doId } = await searchParams;
+  const activeOrgId = session.session.activeOrganizationId;
 
-  const [suppliers, customerPos, categories, members, pendingDos] = await Promise.all([
+  const [suppliers, customerPos, categories, members, pendingDos, orgs] = await Promise.all([
     getSuppliers(),
     getCustomerPos(),
     getDocumentCategories().catch(() => []),
     getOrgMembersForInvoice().catch(() => []),
     doId ? Promise.resolve([]) : getPendingDosForInvoice().catch(() => []),
+    getOrganizations().catch(() => []),
   ]);
+
+  const orgName = orgs.find((o) => o.id === activeOrgId)?.name;
 
   if (!doId) {
     return (
@@ -27,6 +32,7 @@ export default async function CreateInvoicePage({ searchParams }: { searchParams
         categories={categories}
         members={members}
         pendingDos={pendingDos}
+        orgName={orgName}
       />
     );
   }
@@ -40,6 +46,7 @@ export default async function CreateInvoicePage({ searchParams }: { searchParams
         categories={categories}
         members={members}
         pendingDos={pendingDos}
+        orgName={orgName}
       />
     );
   }
@@ -57,6 +64,7 @@ export default async function CreateInvoicePage({ searchParams }: { searchParams
       categories={categories}
       members={members}
       pendingDos={[]}
+      orgName={orgName}
     />
   );
 }

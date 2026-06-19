@@ -221,6 +221,7 @@ interface Props {
   categories?: DocumentCategoryRow[];
   members?: OrgMemberForInvoice[];
   pendingDos?: PendingDoForInvoiceRow[];
+  orgName?: string;
 }
 
 export function CreateInvoiceClient({
@@ -231,6 +232,7 @@ export function CreateInvoiceClient({
   categories = [],
   members = [],
   pendingDos = [],
+  orgName,
 }: Props) {
   const router = useRouter();
   const [skipDoPicker, setSkipDoPicker] = useState(false);
@@ -247,12 +249,13 @@ export function CreateInvoiceClient({
     initialCustomer={initialCustomer}
     categories={categories}
     members={members}
+    orgName={orgName}
   />;
 }
 
 // ── Main invoice form ──────────────────────────────────────────────────────
 
-function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categories = [], members = [] }: Omit<Props, "pendingDos">) {
+function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categories = [], members = [], orgName }: Omit<Props, "pendingDos">) {
   const router = useRouter();
   const fromSo = !!doData?.salesOrderId;
   const isProforma = false; // future: could be derived from SO type
@@ -379,6 +382,7 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
     return [newLine(1)];
   });
 
+  const [invoiceNo, setInvoiceNo] = useState("");
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -479,11 +483,15 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
     if (!billingAddress.trim()) {
       toast.error("Billing address is required"); return;
     }
+    if (!doData && !invoiceNo.trim()) {
+      toast.error("Invoice number is required"); return;
+    }
     setSaving(true);
     try {
       // Derive primary salesperson from first selected person
       const primarySp = salesPersons[0];
       await createInvoice({
+        invoiceNo: invoiceNo.trim() || undefined,
         invoiceDate: invoiceDate ? new Date(invoiceDate) : undefined,
         customerId: selectedCustomer?.id,
         customerOrgMemberId: custOrgMemberId,
@@ -533,7 +541,7 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
     <div className="p-6">
       <PageHeader
         title="New Invoice"
-        description="Create a tax invoice for a customer"
+        description={orgName ? `Creating invoice for ${orgName}` : "Create a tax invoice for a customer"}
         action={<Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/invoice")} className="gap-2"><ArrowLeftIcon className="w-3.5 h-3.5" /> Back</Button>}
       />
 
@@ -723,6 +731,20 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Invoice details</h2>
           <div className="grid grid-cols-2 gap-3">
+            {!doData && (
+              <div className="col-span-2 space-y-1.5">
+                <Label className="text-xs">Invoice no. <span className="text-destructive">*</span></Label>
+                <Input
+                  value={invoiceNo}
+                  onChange={(e) => setInvoiceNo(e.target.value)}
+                  placeholder="e.g. INV-2026-001"
+                  className={cn("h-9 text-sm font-mono", !invoiceNo.trim() && "border-destructive/50")}
+                />
+                {!invoiceNo.trim() && (
+                  <p className="text-xs text-destructive">Invoice number is required</p>
+                )}
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label className="text-xs">Invoice date <span className="text-destructive">*</span></Label>
               <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
