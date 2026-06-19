@@ -268,7 +268,7 @@ function calcProfit(grandTotal: string, costTotal: string, expensesTotal: string
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
-export const INVOICE_PAGE_SIZE = 50;
+const INVOICE_PAGE_SIZE = 50;
 
 export type InvoiceListResult = {
   rows: InvoiceListRow[];

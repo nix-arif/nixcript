@@ -290,7 +290,7 @@ export async function getDeliveryOrdersBySoId(
     .orderBy(asc(deliveryOrder.createdAt));
 }
 
-export const DO_PAGE_SIZE = 50;
+const DO_PAGE_SIZE = 50;
 
 export type DeliveryOrderListResult = {
   rows: DeliveryOrderListRow[];
