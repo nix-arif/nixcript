@@ -885,7 +885,6 @@ export const customerRelations = relations(customer, ({ one, many }) => ({
     references: [user.id],
   }),
   companies: many(customerCompany),
-  memberships: many(customerOrganizationMember),
 }));
 
 // ── Many-to-many: customer ↔ shared org entity ──────────────────────────────
@@ -918,40 +917,7 @@ export const customerOrganizationRelations = relations(customerOrganization, ({ 
     fields: [customerOrganization.organizationId],
     references: [organization.id],
   }),
-  members: many(customerOrganizationMember),
-}));
-
-export const customerOrganizationMember = pgTable(
-  "customer_organization_member",
-  {
-    id: text("id").primaryKey(),
-    customerId: text("customer_id")
-      .notNull()
-      .references(() => customer.id, { onDelete: "cascade" }),
-    customerOrganizationId: text("customer_organization_id")
-      .notNull()
-      .references(() => customerOrganization.id, { onDelete: "cascade" }),
-    position: text("position"),
-    department: text("department"),
-    isPrimary: boolean("is_primary").default(false).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (t) => [
-    uniqueIndex("com_customer_org_uidx").on(t.customerId, t.customerOrganizationId),
-    index("com_customer_idx").on(t.customerId),
-    index("com_org_idx").on(t.customerOrganizationId),
-  ],
-);
-
-export const customerOrganizationMemberRelations = relations(customerOrganizationMember, ({ one }) => ({
-  customer: one(customer, {
-    fields: [customerOrganizationMember.customerId],
-    references: [customer.id],
-  }),
-  customerOrganization: one(customerOrganization, {
-    fields: [customerOrganizationMember.customerOrganizationId],
-    references: [customerOrganization.id],
-  }),
+  companies: many(customerCompany),
 }));
 
 export const customerCompany = pgTable(
@@ -3043,8 +3009,6 @@ export const schema = {
   customerRelations,
   customerOrganization,
   customerOrganizationRelations,
-  customerOrganizationMember,
-  customerOrganizationMemberRelations,
   customerCompany,
   customerCompanyRelations,
   quotation,

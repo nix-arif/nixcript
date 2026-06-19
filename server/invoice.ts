@@ -8,7 +8,7 @@ import {
   invoiceCounter,
   customer,
   customerOrganization,
-  customerOrganizationMember,
+  customerCompany,
   customerPurchaseOrder,
   purchaseOrder,
   supplier,
@@ -125,13 +125,13 @@ async function getLiveCustomerMap(customerIds: string[]): Promise<Map<string, Li
       .from(customer)
       .where(inArray(customer.id, customerIds)),
     db.select({
-        customerId: customerOrganizationMember.customerId,
+        customerId: customerCompany.customerId,
         organizationName: customerOrganization.name,
         organizationAddress: customerOrganization.address,
       })
-      .from(customerOrganizationMember)
-      .innerJoin(customerOrganization, eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId))
-      .where(and(inArray(customerOrganizationMember.customerId, customerIds), eq(customerOrganizationMember.isPrimary, true))),
+      .from(customerCompany)
+      .innerJoin(customerOrganization, eq(customerOrganization.id, customerCompany.customerOrganizationId))
+      .where(and(inArray(customerCompany.customerId, customerIds), eq(customerCompany.isPrimary, true))),
   ]);
   const membershipMap = Object.fromEntries(memberships.map((m) => [m.customerId, m]));
   const result = new Map<string, LiveCustomerData>();

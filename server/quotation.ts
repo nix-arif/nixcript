@@ -8,7 +8,7 @@ import {
   customerPurchaseOrder,
   customer,
   customerOrganization,
-  customerOrganizationMember,
+  customerCompany,
   user,
   member,
   product,
@@ -989,16 +989,16 @@ export async function getQuotationDetail(id: string) {
         .select({
           orgName: customerOrganization.name,
           orgAddress: customerOrganization.address,
-          position: customerOrganizationMember.position,
-          department: customerOrganizationMember.department,
+          position: customerCompany.position,
+          department: customerCompany.department,
         })
-        .from(customerOrganizationMember)
+        .from(customerCompany)
         .innerJoin(
           customerOrganization,
-          eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+          eq(customerOrganization.id, customerCompany.customerOrganizationId),
         )
-        .where(eq(customerOrganizationMember.customerId, q.customerId))
-        .orderBy(desc(customerOrganizationMember.isPrimary), asc(customerOrganizationMember.createdAt))
+        .where(eq(customerCompany.customerId, q.customerId))
+        .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
         .limit(1);
 
       customerData = {
