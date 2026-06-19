@@ -12,7 +12,7 @@
  */
 
 import { db } from "@/db";
-import { customer, customerCompany, customerOrganization, customerOrganizationMember } from "@/db/schema";
+import { customer, customerCompany, customerOrganization } from "@/db/schema";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
@@ -24,8 +24,8 @@ async function main() {
     .select({
       id: customerCompany.id,
       customerId: customerCompany.customerId,
-      organizationName: customerCompany.organizationName,
-      organizationAddress: customerCompany.organizationAddress,
+      organizationName: customerOrganization.name,
+      organizationAddress: customerOrganization.address,
       position: customerCompany.position,
       department: customerCompany.department,
       isPrimary: customerCompany.isPrimary,
@@ -34,7 +34,8 @@ async function main() {
       tenantOrgId: customer.organizationId,
     })
     .from(customerCompany)
-    .innerJoin(customer, eq(customer.id, customerCompany.customerId));
+    .innerJoin(customer, eq(customer.id, customerCompany.customerId))
+    .leftJoin(customerOrganization, eq(customerOrganization.id, customerCompany.customerOrganizationId));
 
   if (rows.length === 0) {
     console.log("No customerCompany rows found — nothing to migrate.");
@@ -96,19 +97,18 @@ async function main() {
 
   console.log(`Inserted ${orgsInserted} new customerOrganization rows.`);
 
-  // 5. Check which memberships already exist (avoid duplicates on re-run)
-  //    We match by customerId + customerOrganizationId
+  // 5. Check which memberships already exist in customer_company (avoid duplicates on re-run)
   const existingMemberIds = rows.length > 0
     ? await db
-        .select({ customerId: customerOrganizationMember.customerId, customerOrganizationId: customerOrganizationMember.customerOrganizationId })
-        .from(customerOrganizationMember)
+        .select({ customerId: customerCompany.customerId, customerOrganizationId: customerCompany.customerOrganizationId })
+        .from(customerCompany)
     : [];
 
   const existingMemberSet = new Set<string>(
     existingMemberIds.map((m) => `${m.customerId}::${m.customerOrganizationId}`),
   );
 
-  // 6. Insert customerOrganizationMember rows
+  // 6. Update customer_company FK (migration already run — skip inserts)
   let membersInserted = 0;
   let membersSkipped = 0;
 
@@ -132,7 +132,7 @@ async function main() {
       continue;
     }
 
-    await db.insert(customerOrganizationMember).values({
+    await db.insert(customerCompany).values({
       id: nanoid(),
       customerId: row.customerId,
       customerOrganizationId: customerOrgId,

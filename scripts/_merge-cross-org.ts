@@ -100,9 +100,9 @@ async function main() {
         .from(customerCompany)
         .where(eq(customerCompany.customerId, keep.id));
 
-      const keepNames = new Set(keepCompanies.map(c => c.organizationName));
+      const keepOrgIds = new Set(keepCompanies.map(c => c.customerOrganizationId));
 
-      const toMove = dupCompanies.filter(c => !keepNames.has(c.organizationName));
+      const toMove = dupCompanies.filter(c => !keepOrgIds.has(c.customerOrganizationId));
       if (toMove.length > 0) {
         await db.insert(customerCompany).values(
           toMove.map(c => ({ ...c, id: nanoid(), customerId: keep.id, isPrimary: false }))

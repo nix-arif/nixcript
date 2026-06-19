@@ -3,7 +3,7 @@
 import { db } from "@/db";
 import {
   ledgerAccount, ledgerEntry, ledgerLine, ledgerDocument, ledgerEntryInvoice,
-  customer, customerCompany, supplier, member, invoice, purchaseOrder, user,
+  customer, customerCompany, customerOrganization, supplier, member, invoice, purchaseOrder, user,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -662,8 +662,9 @@ export async function getLedgerReferenceData() {
   const customerIds = customers.map((c) => c.id);
   const primaryCompanies = customerIds.length
     ? await db
-        .select({ customerId: customerCompany.customerId, organizationName: customerCompany.organizationName })
+        .select({ customerId: customerCompany.customerId, organizationName: customerOrganization.name })
         .from(customerCompany)
+        .leftJoin(customerOrganization, eq(customerOrganization.id, customerCompany.customerOrganizationId))
         .where(and(inArray(customerCompany.customerId, customerIds), eq(customerCompany.isPrimary, true)))
     : [];
   const primaryMap = Object.fromEntries(primaryCompanies.map((c) => [c.customerId, c.organizationName]));

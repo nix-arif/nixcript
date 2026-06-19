@@ -42,7 +42,7 @@ import * as XLSX from "xlsx";
 import { nanoid } from "nanoid";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
-import { invoice, caseCommission, customer, customerCompany } from "../db/schema";
+import { invoice, caseCommission, customer, customerCompany, customerOrganization } from "../db/schema";
 import { inArray, eq, and } from "drizzle-orm";
 import {
   ORG, ALL_ORG_IDS, CREATED_BY, XLSX_FILE,
@@ -84,8 +84,16 @@ async function seed() {
     .where(inArray(customer.organizationId, [...ALL_ORG_IDS]));
 
   const allCompanies = await db
-    .select()
+    .select({
+      id: customerCompany.id,
+      customerId: customerCompany.customerId,
+      customerOrganizationId: customerCompany.customerOrganizationId,
+      organizationName: customerOrganization.name,
+      organizationAddress: customerOrganization.address,
+      isPrimary: customerCompany.isPrimary,
+    })
     .from(customerCompany)
+    .leftJoin(customerOrganization, eq(customerOrganization.id, customerCompany.customerOrganizationId))
     .where(inArray(customerCompany.customerId, allCustomers.map(c => c.id)));
 
   // name → customer row

@@ -961,8 +961,8 @@ export const customerCompany = pgTable(
     customerId: text("customer_id")
       .notNull()
       .references(() => customer.id, { onDelete: "cascade" }),
-    organizationName: text("organization_name"),
-    organizationAddress: text("organization_address"),
+    customerOrganizationId: text("customer_organization_id")
+      .references(() => customerOrganization.id, { onDelete: "set null" }),
     position: text("position"),
     department: text("department"),
     isPrimary: boolean("is_primary").default(false).notNull(),
@@ -975,6 +975,10 @@ export const customerCompanyRelations = relations(customerCompany, ({ one }) => 
   customer: one(customer, {
     fields: [customerCompany.customerId],
     references: [customer.id],
+  }),
+  organization: one(customerOrganization, {
+    fields: [customerCompany.customerOrganizationId],
+    references: [customerOrganization.id],
   }),
 }));
 

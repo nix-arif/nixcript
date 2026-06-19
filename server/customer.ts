@@ -5,7 +5,6 @@ import {
   customer,
   customerCompany,
   customerOrganization,
-  customerOrganizationMember,
   user,
   member,
 } from "@/db/schema";
@@ -60,23 +59,23 @@ async function getMembershipsForCustomers(
 
   const rows = await db
     .select({
-      id: customerOrganizationMember.id,
-      customerId: customerOrganizationMember.customerId,
-      customerOrganizationId: customerOrganizationMember.customerOrganizationId,
+      id: customerCompany.id,
+      customerId: customerCompany.customerId,
+      customerOrganizationId: customerCompany.customerOrganizationId,
       orgName: customerOrganization.name,
       orgAddress: customerOrganization.address,
-      position: customerOrganizationMember.position,
-      department: customerOrganizationMember.department,
-      isPrimary: customerOrganizationMember.isPrimary,
-      createdAt: customerOrganizationMember.createdAt,
+      position: customerCompany.position,
+      department: customerCompany.department,
+      isPrimary: customerCompany.isPrimary,
+      createdAt: customerCompany.createdAt,
     })
-    .from(customerOrganizationMember)
+    .from(customerCompany)
     .innerJoin(
       customerOrganization,
-      eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+      eq(customerOrganization.id, customerCompany.customerOrganizationId),
     )
-    .where(inArray(customerOrganizationMember.customerId, customerIds))
-    .orderBy(asc(customerOrganizationMember.createdAt));
+    .where(inArray(customerCompany.customerId, customerIds))
+    .orderBy(asc(customerCompany.createdAt));
 
   return rows as (CustomerOrgMembership & { customerId: string })[];
 }
@@ -110,11 +109,11 @@ export async function getCustomers(search?: string) {
 
     // Find customers that have a matching org membership
     const matchingMemberships = await db
-      .select({ customerId: customerOrganizationMember.customerId })
-      .from(customerOrganizationMember)
+      .select({ customerId: customerCompany.customerId })
+      .from(customerCompany)
       .innerJoin(
         customerOrganization,
-        eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+        eq(customerOrganization.id, customerCompany.customerOrganizationId),
       )
       .where(ilike(customerOrganization.name, q));
     const matchingIds = [...new Set(matchingMemberships.map((c) => c.customerId))];
@@ -259,7 +258,7 @@ export async function createCustomer(data: {
         customerOrgId = newOrg.id;
       }
 
-      await db.insert(customerOrganizationMember).values({
+      await db.insert(customerCompany).values({
         id: nanoid(),
         customerId,
         customerOrganizationId: customerOrgId,
@@ -303,6 +302,23 @@ export async function deleteCustomer(id: string) {
 export async function getCustomerOrganizations() {
   const { orgId } = await requireAccess("customer:read");
 
+  // Collect all org IDs that share the same owner (mirrors getCustomers logic)
+  const [ownerMember] = await db
+    .select()
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+    .limit(1);
+
+  let orgIds = [orgId];
+  if (ownerMember) {
+    const ownedMemberships = await db
+      .select({ organizationId: member.organizationId })
+      .from(member)
+      .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
+    const ids = [...new Set(ownedMemberships.map((m) => m.organizationId))];
+    if (ids.length > 0) orgIds = ids;
+  }
+
   const orgs = await db
     .select({
       id: customerOrganization.id,
@@ -313,19 +329,19 @@ export async function getCustomerOrganizations() {
       createdAt: customerOrganization.createdAt,
     })
     .from(customerOrganization)
-    .where(eq(customerOrganization.organizationId, orgId))
+    .where(inArray(customerOrganization.organizationId, orgIds))
     .orderBy(asc(customerOrganization.name));
 
   if (orgs.length === 0) return [];
 
   const counts = await db
     .select({
-      customerOrganizationId: customerOrganizationMember.customerOrganizationId,
+      customerOrganizationId: customerCompany.customerOrganizationId,
       memberCount: sql<number>`cast(count(*) as int)`,
     })
-    .from(customerOrganizationMember)
-    .where(inArray(customerOrganizationMember.customerOrganizationId, orgs.map((o) => o.id)))
-    .groupBy(customerOrganizationMember.customerOrganizationId);
+    .from(customerCompany)
+    .where(inArray(customerCompany.customerOrganizationId, orgs.map((o) => o.id)))
+    .groupBy(customerCompany.customerOrganizationId);
 
   const countMap = Object.fromEntries(counts.map((c) => [c.customerOrganizationId, c.memberCount]));
   return orgs.map((o) => ({ ...o, memberCount: countMap[o.id] ?? 0 }));
@@ -343,19 +359,19 @@ export async function getCustomerOrganizationWithMembers(id: string) {
 
   const members = await db
     .select({
-      membershipId: customerOrganizationMember.id,
-      customerId: customerOrganizationMember.customerId,
-      position: customerOrganizationMember.position,
-      department: customerOrganizationMember.department,
-      isPrimary: customerOrganizationMember.isPrimary,
+      membershipId: customerCompany.id,
+      customerId: customerCompany.customerId,
+      position: customerCompany.position,
+      department: customerCompany.department,
+      isPrimary: customerCompany.isPrimary,
       customerTitle: customer.title,
       customerName: customer.name,
       customerEmail: customer.email,
       customerContactNo: customer.contactNo,
     })
-    .from(customerOrganizationMember)
-    .innerJoin(customer, eq(customer.id, customerOrganizationMember.customerId))
-    .where(eq(customerOrganizationMember.customerOrganizationId, id))
+    .from(customerCompany)
+    .innerJoin(customer, eq(customer.id, customerCompany.customerId))
+    .where(eq(customerCompany.customerOrganizationId, id))
     .orderBy(asc(customer.name));
 
   return { ...org, members };
@@ -490,13 +506,13 @@ export async function addCustomerOrgMembership(
 
   if (data.isPrimary) {
     await db
-      .update(customerOrganizationMember)
+      .update(customerCompany)
       .set({ isPrimary: false })
-      .where(eq(customerOrganizationMember.customerId, customerId));
+      .where(eq(customerCompany.customerId, customerId));
   }
 
   const [row] = await db
-    .insert(customerOrganizationMember)
+    .insert(customerCompany)
     .values({
       id: nanoid(),
       customerId,
@@ -516,11 +532,10 @@ export async function updateCustomerOrgMembership(
 ) {
   const { orgId } = await requireAccess("customer:update");
 
-  // Verify ownership
   const [mem] = await db
-    .select({ customerId: customerOrganizationMember.customerId })
-    .from(customerOrganizationMember)
-    .where(eq(customerOrganizationMember.id, membershipId))
+    .select({ customerId: customerCompany.customerId })
+    .from(customerCompany)
+    .where(eq(customerCompany.id, membershipId))
     .limit(1);
   if (!mem) throw new Error("Membership not found");
 
@@ -533,24 +548,24 @@ export async function updateCustomerOrgMembership(
 
   if (data.isPrimary) {
     await db
-      .update(customerOrganizationMember)
+      .update(customerCompany)
       .set({ isPrimary: false })
-      .where(eq(customerOrganizationMember.customerId, mem.customerId));
+      .where(eq(customerCompany.customerId, mem.customerId));
   }
 
   await db
-    .update(customerOrganizationMember)
+    .update(customerCompany)
     .set(data)
-    .where(eq(customerOrganizationMember.id, membershipId));
+    .where(eq(customerCompany.id, membershipId));
 }
 
 export async function deleteCustomerOrgMembership(membershipId: string) {
   const { orgId } = await requireAccess("customer:update");
 
   const [mem] = await db
-    .select({ customerId: customerOrganizationMember.customerId })
-    .from(customerOrganizationMember)
-    .where(eq(customerOrganizationMember.id, membershipId))
+    .select({ customerId: customerCompany.customerId })
+    .from(customerCompany)
+    .where(eq(customerCompany.id, membershipId))
     .limit(1);
   if (!mem) throw new Error("Membership not found");
 
@@ -562,112 +577,12 @@ export async function deleteCustomerOrgMembership(membershipId: string) {
   if (!owns) throw new Error("You don't have permission to do this");
 
   await db
-    .delete(customerOrganizationMember)
-    .where(eq(customerOrganizationMember.id, membershipId));
+    .delete(customerCompany)
+    .where(eq(customerCompany.id, membershipId));
 }
 
 // ── Legacy company management (backward-compat — kept for migration) ──────────
 
-export async function addCustomerCompany(
-  customerId: string,
-  data: {
-    organizationName?: string;
-    organizationAddress?: string;
-    position?: string;
-    department?: string;
-    isPrimary?: boolean;
-  },
-) {
-  const { orgId } = await requireAccess("customer:update");
-
-  const [exists] = await db
-    .select({ id: customer.id })
-    .from(customer)
-    .where(and(eq(customer.id, customerId), eq(customer.organizationId, orgId)))
-    .limit(1);
-  if (!exists) throw new Error("Customer not found");
-
-  if (data.isPrimary) {
-    await db
-      .update(customerCompany)
-      .set({ isPrimary: false })
-      .where(eq(customerCompany.customerId, customerId));
-  }
-
-  const [row] = await db
-    .insert(customerCompany)
-    .values({
-      id: nanoid(),
-      customerId,
-      organizationName: data.organizationName ?? null,
-      organizationAddress: data.organizationAddress ?? null,
-      position: data.position ?? null,
-      department: data.department ?? null,
-      isPrimary: data.isPrimary ?? false,
-    })
-    .returning();
-
-  return row;
-}
-
-export async function updateCustomerCompany(
-  companyId: string,
-  data: {
-    organizationName?: string;
-    organizationAddress?: string;
-    position?: string;
-    department?: string;
-    isPrimary?: boolean;
-  },
-) {
-  const { orgId } = await requireAccess("customer:update");
-
-  const [comp] = await db
-    .select({ customerId: customerCompany.customerId })
-    .from(customerCompany)
-    .where(eq(customerCompany.id, companyId))
-    .limit(1);
-  if (!comp) throw new Error("Company not found");
-
-  const [owns] = await db
-    .select({ id: customer.id })
-    .from(customer)
-    .where(and(eq(customer.id, comp.customerId), eq(customer.organizationId, orgId)))
-    .limit(1);
-  if (!owns) throw new Error("You don't have permission to do this");
-
-  if (data.isPrimary) {
-    await db
-      .update(customerCompany)
-      .set({ isPrimary: false })
-      .where(eq(customerCompany.customerId, comp.customerId));
-  }
-
-  await db
-    .update(customerCompany)
-    .set(data)
-    .where(eq(customerCompany.id, companyId));
-}
-
-export async function deleteCustomerCompany(companyId: string) {
-  const { orgId } = await requireAccess("customer:update");
-
-  const [comp] = await db
-    .select({ customerId: customerCompany.customerId })
-    .from(customerCompany)
-    .where(eq(customerCompany.id, companyId))
-    .limit(1);
-  if (!comp) throw new Error("Company not found");
-
-  const [owns] = await db
-    .select({ id: customer.id })
-    .from(customer)
-    .where(and(eq(customer.id, comp.customerId), eq(customer.organizationId, orgId)))
-    .limit(1);
-  if (!owns) throw new Error("You don't have permission to do this");
-
-  await db.delete(customerCompany).where(eq(customerCompany.id, companyId));
-}
 
 // ── Lookup helpers ────────────────────────────────────────────────────────────
 
@@ -743,18 +658,18 @@ export async function buildCustomerSnapshot(
       .select({
         orgName: customerOrganization.name,
         orgAddress: customerOrganization.address,
-        position: customerOrganizationMember.position,
-        department: customerOrganizationMember.department,
+        position: customerCompany.position,
+        department: customerCompany.department,
       })
-      .from(customerOrganizationMember)
+      .from(customerCompany)
       .innerJoin(
         customerOrganization,
-        eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+        eq(customerOrganization.id, customerCompany.customerOrganizationId),
       )
       .where(
         and(
-          eq(customerOrganizationMember.id, customerOrgMemberId),
-          eq(customerOrganizationMember.customerId, customerId),
+          eq(customerCompany.id, customerOrgMemberId),
+          eq(customerCompany.customerId, customerId),
         ),
       )
       .limit(1);
@@ -767,16 +682,16 @@ export async function buildCustomerSnapshot(
       .select({
         orgName: customerOrganization.name,
         orgAddress: customerOrganization.address,
-        position: customerOrganizationMember.position,
-        department: customerOrganizationMember.department,
+        position: customerCompany.position,
+        department: customerCompany.department,
       })
-      .from(customerOrganizationMember)
+      .from(customerCompany)
       .innerJoin(
         customerOrganization,
-        eq(customerOrganization.id, customerOrganizationMember.customerOrganizationId),
+        eq(customerOrganization.id, customerCompany.customerOrganizationId),
       )
-      .where(eq(customerOrganizationMember.customerId, customerId))
-      .orderBy(desc(customerOrganizationMember.isPrimary), asc(customerOrganizationMember.createdAt))
+      .where(eq(customerCompany.customerId, customerId))
+      .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt))
       .limit(1);
     membership = row ?? null;
   }
