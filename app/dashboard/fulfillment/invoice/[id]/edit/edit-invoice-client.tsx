@@ -175,6 +175,20 @@ export function EditInvoiceClient({ invoice, suppliers, allCustomerPos, categori
     return [];
   });
 
+  // Application specialist
+  const [appSpecialist, setAppSpecialist] = useState<SalesPerson | null>(() => {
+    if (invoice.applicationSpecialistName) return { id: invoice.applicationSpecialistId ?? null, name: invoice.applicationSpecialistName };
+    return null;
+  });
+  const [appSpecExternal, setAppSpecExternal] = useState("");
+
+  // Case details
+  const [caseType, setCaseType] = useState(invoice.caseType ?? "");
+  const [mrnNo, setMrnNo] = useState(invoice.mrnNo ?? "");
+  const [caseDate, setCaseDate] = useState(() =>
+    invoice.caseDate ? new Date(invoice.caseDate).toISOString().slice(0, 10) : "",
+  );
+
   // Invoice header
   const [invoiceDate, setInvoiceDate] = useState(() =>
     invoice.invoiceDate ? new Date(invoice.invoiceDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
@@ -342,6 +356,11 @@ export function EditInvoiceClient({ invoice, suppliers, allCustomerPos, categori
         salesPersonId: primarySp?.id ?? undefined,
         salesPersonName: primarySp?.name ?? undefined,
         associateSalesPersons: salesPersons,
+        applicationSpecialistId: appSpecialist?.id ?? undefined,
+        applicationSpecialistName: appSpecialist?.name ?? undefined,
+        caseType: caseType || undefined,
+        caseDate: caseDate ? new Date(caseDate) : undefined,
+        mrnNo: mrnNo || undefined,
         billingAddress: billingAddress.trim(),
         subtotal: totals.itemsSubtotal,
         overallDiscountPct,
@@ -563,6 +582,65 @@ export function EditInvoiceClient({ invoice, suppliers, allCustomerPos, categori
                     </button>
                   );
                 })}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* ── 4b. Case details ────────────────────────────────────────── */}
+        <section className="border border-border rounded-xl p-4">
+          <h2 className="text-sm font-semibold mb-3">Case details <span className="text-[11px] font-normal text-muted-foreground">(medical)</span></h2>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Case type</Label>
+              <Input value={caseType} onChange={(e) => setCaseType(e.target.value)} placeholder="e.g. EVLT, MILH" className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Case date</Label>
+              <input type="date" value={caseDate} onChange={(e) => setCaseDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">MRN no.</Label>
+              <Input value={mrnNo} onChange={(e) => setMrnNo(e.target.value)} placeholder="Hospital medical record no." className="h-9 text-sm" />
+            </div>
+          </div>
+          <div className="mt-3 space-y-1.5">
+            <Label className="text-xs">Application specialist</Label>
+            {appSpecialist ? (
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-800">
+                  <UserIcon className="w-2.5 h-2.5 shrink-0" />
+                  {appSpecialist.name}
+                  {!appSpecialist.id && <span className="text-[9px] opacity-60 ml-0.5">ext</span>}
+                </span>
+                <button type="button" onClick={() => setAppSpecialist(null)} className="text-muted-foreground hover:text-destructive">
+                  <XIcon className="w-3 h-3" />
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {members.filter((m) => !appSpecialist || (appSpecialist as any).id !== m.userId).length > 0 && (
+                  <div className="relative">
+                    <select value="" onChange={(e) => {
+                      if (!e.target.value) return;
+                      const m = members.find((m) => m.userId === e.target.value);
+                      if (m) { setAppSpecialist({ id: m.userId, name: m.name }); setAppSpecExternal(""); }
+                      e.target.value = "";
+                    }} className="w-full h-8 rounded-md border border-border bg-background px-2 pr-8 text-xs appearance-none">
+                      <option value="">+ Select from org members…</option>
+                      {members.map((m) => <option key={m.userId} value={m.userId}>{m.name}{m.email ? ` (${m.email})` : ""}</option>)}
+                    </select>
+                    <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Input value={appSpecExternal} onChange={(e) => setAppSpecExternal(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && appSpecExternal.trim()) { e.preventDefault(); setAppSpecialist({ id: null, name: appSpecExternal.trim() }); setAppSpecExternal(""); } }}
+                    placeholder="Or enter name manually (Enter to set)" className="h-8 text-xs flex-1" />
+                  <Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0"
+                    onClick={() => { if (appSpecExternal.trim()) { setAppSpecialist({ id: null, name: appSpecExternal.trim() }); setAppSpecExternal(""); } }}
+                    disabled={!appSpecExternal.trim()}>Set</Button>
+                </div>
               </div>
             )}
           </div>

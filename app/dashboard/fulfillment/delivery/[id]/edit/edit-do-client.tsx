@@ -39,6 +39,7 @@ export function EditDeliveryOrderClient({ order }: { order: DeliveryOrderWithIte
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [customerPoNo, setCustomerPoNo] = useState(order.customerPoNo ?? "");
   const [salesOrderNo, setSalesOrderNo] = useState(order.salesOrderNo ?? "");
   const [deliveredTo, setDeliveredTo] = useState(order.deliveredTo ?? "");
   const [deliveryAddress, setDeliveryAddress] = useState(order.deliveryAddress ?? "");
@@ -136,6 +137,7 @@ export function EditDeliveryOrderClient({ order }: { order: DeliveryOrderWithIte
         id: order.id,
         customerId: newCustomer?.id ?? (clearCustomer ? undefined : order.customerId ?? undefined),
         customerOrgMemberId: newCustomer ? custOrgMemberId : undefined,
+        customerPoNo: customerPoNo || undefined,
         salesOrderNo: salesOrderNo || undefined,
         deliveredTo: deliveredTo || undefined,
         deliveryAddress: deliveryAddress || undefined,
@@ -217,6 +219,10 @@ export function EditDeliveryOrderClient({ order }: { order: DeliveryOrderWithIte
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Delivery details</h2>
           <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Customer PO no.</Label>
+              <Input value={customerPoNo} onChange={(e) => setCustomerPoNo(e.target.value)} placeholder="Customer PO reference" className="h-9 text-sm" />
+            </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Linked SO no.</Label>
               <Input value={salesOrderNo} onChange={(e) => setSalesOrderNo(e.target.value)} placeholder="BMS-SO-2025-XXXX" className="h-9 text-sm" />

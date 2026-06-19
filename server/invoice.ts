@@ -238,6 +238,15 @@ export interface CreateInvoiceInput {
   expensesTotal?: string;
   profit?: string;
 
+  // Application specialist
+  applicationSpecialistId?: string;
+  applicationSpecialistName?: string;
+
+  // Case details (medical)
+  caseType?: string;
+  caseDate?: Date;
+  mrnNo?: string;
+
   // Payment
   status?: string;
   paymentTerms?: string;
@@ -688,6 +697,11 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
       associateSalesPersons: input.associateSalesPersons ?? existing.associateSalesPersons ?? [],
+      applicationSpecialistId: input.applicationSpecialistId ?? null,
+      applicationSpecialistName: input.applicationSpecialistName ?? null,
+      caseType: input.caseType ?? null,
+      caseDate: input.caseDate ?? null,
+      mrnNo: input.mrnNo ?? null,
       billingAddress: input.billingAddress ?? null,
       subtotal: input.subtotal ?? existing.subtotal,
       overallDiscountPct: input.overallDiscountPct ?? existing.overallDiscountPct,
