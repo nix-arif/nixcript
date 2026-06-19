@@ -308,7 +308,7 @@ export async function getProductsByCode(
 export async function searchProducts(query: string) {
   const { orgId } = await requireAccess("inventory:read");
   if (!query.trim()) return [];
-  return db
+  const rows = await db
     .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom })
     .from(product)
     .where(and(
@@ -320,4 +320,6 @@ export async function searchProducts(query: string) {
     ))
     .orderBy(asc(product.productCode))
     .limit(50);
+  console.log(`[searchProducts] query="${query}" orgId=${orgId} → ${rows.length} rows`);
+  return rows;
 }

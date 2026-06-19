@@ -101,10 +101,11 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
   }
 
   function handleBlur() {
-    // flush when user tabs away before the 300ms debounce fires
-    if (!selectedLabel && query.trim()) {
+    // use ref (not state) — state may be stale if blur fires before React commits
+    const q = latestQuery.current;
+    if (!selectedLabel && q.trim()) {
       if (debounce.current) clearTimeout(debounce.current);
-      runSearch(query);
+      runSearch(q);
     }
   }
 
