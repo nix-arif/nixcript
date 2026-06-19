@@ -769,7 +769,7 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
               <thead>
                 <tr className="border-b border-border text-muted-foreground">
                   <th className="text-left pb-2 pr-2 w-6">#</th>
-                  <th className="text-left pb-2 pr-2 w-20">Code</th>
+                  <th className="text-left pb-2 pr-2 w-32">Code</th>
                   <th className="text-left pb-2 pr-2">Description</th>
                   <th className="text-right pb-2 pr-2 w-12">Qty</th>
                   <th className="text-left pb-2 pr-2 w-12">UOM</th>
@@ -785,28 +785,92 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
                 {items.map((item) => (
                   <tr key={item._key} className={cn("border-b border-border/50 last:border-0", item.inherited && "bg-muted/20")}>
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
-                    <td className="py-1.5 pr-2"><Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs", item.inherited && "bg-transparent border-transparent")} /></td>
-                    <td className="py-1.5 pr-2">
-                      <div className="flex flex-col gap-0.5">
-                        <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs", item.inherited && "bg-transparent border-transparent")} />
-                        {item.lineType === "rent" && (
-                          <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium">
-                            RENTAL{item.rentalDuration ? ` · ${item.rentalDuration} ${(item.rentalUnit ?? "case").toUpperCase()}` : ""}
-                          </span>
-                        )}
-                        {item.setGroupLabel && (
-                          <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">SET: {item.setGroupLabel}</span>
-                        )}
-                      </div>
+
+                    {/* Code */}
+                    <td className="py-2 pr-2">
+                      {item.inherited
+                        ? <span className="text-xs font-mono">{item.productCode}</span>
+                        : <Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} className="h-7 text-xs min-w-28" />}
                     </td>
-                    <td className="py-1.5 pr-2"><Input value={item.qty ?? "1"} onChange={(e) => updateItem(item._key, { qty: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs text-right", item.inherited && "bg-transparent border-transparent")} /></td>
-                    <td className="py-1.5 pr-2"><Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs", item.inherited && "bg-transparent border-transparent")} placeholder="pcs" /></td>
-                    <td className="py-1.5 pr-2"><Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs text-right", item.inherited && "bg-transparent border-transparent")} /></td>
-                    <td className="py-1.5 pr-2"><Input value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs text-right", item.inherited && "bg-transparent border-transparent")} /></td>
-                    <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">{fmtNum(item.totalPrice ?? "0")}</td>
-                    <td className="py-1.5 pr-2"><Input value={item.costUnitPrice ?? "0"} onChange={(e) => updateItem(item._key, { costUnitPrice: e.target.value, costTotal: calcCostLineTotal(e.target.value, item.qty ?? "1") })} readOnly={item.inherited} className={cn("h-7 text-xs text-right border-amber-300 dark:border-amber-700 focus-visible:ring-amber-400", item.inherited && "bg-transparent border-transparent")} /></td>
-                    <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-amber-700 dark:text-amber-400">{fmtNum(item.costTotal ?? "0")}</td>
-                    <td className="py-1.5"><button onClick={() => removeLine(item._key)} disabled={item.inherited || items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"><TrashIcon className="w-3.5 h-3.5" /></button></td>
+
+                    {/* Description */}
+                    <td className="py-2 pr-2">
+                      {item.inherited ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs">{item.description}</span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                              <LinkIcon className="w-2.5 h-2.5" />from DO
+                            </span>
+                            {item.lineType === "rent" && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200 dark:bg-violet-950/40 dark:text-violet-400 dark:border-violet-800 font-medium">
+                                RENTAL{item.rentalDuration ? ` · ${item.rentalDuration} ${(item.rentalUnit ?? "case").toUpperCase()}` : ""}
+                              </span>
+                            )}
+                            {item.setGroupLabel && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800 font-medium">
+                                SET: {item.setGroupLabel}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-0.5">
+                          <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} className="h-7 text-xs" />
+                          {item.lineType === "rent" && (
+                            <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium">
+                              RENTAL{item.rentalDuration ? ` · ${item.rentalDuration} ${(item.rentalUnit ?? "case").toUpperCase()}` : ""}
+                            </span>
+                          )}
+                          {item.setGroupLabel && (
+                            <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">SET: {item.setGroupLabel}</span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Qty */}
+                    <td className="py-2 pr-2 text-right">
+                      {item.inherited
+                        ? <span className="text-xs tabular-nums">{item.qty}</span>
+                        : <Input value={item.qty ?? "1"} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" />}
+                    </td>
+
+                    {/* UOM */}
+                    <td className="py-2 pr-2">
+                      {item.inherited
+                        ? <span className="text-xs text-muted-foreground">{item.uom}</span>
+                        : <Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="pcs" />}
+                    </td>
+
+                    {/* Unit price */}
+                    <td className="py-2 pr-2 text-right">
+                      {item.inherited
+                        ? <span className="text-xs tabular-nums font-mono">{fmtNum(item.unitPrice ?? "0")}</span>
+                        : <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs text-right" />}
+                    </td>
+
+                    {/* Disc% */}
+                    <td className="py-2 pr-2 text-right">
+                      {item.inherited
+                        ? <span className="text-xs tabular-nums">{item.discountPct}</span>
+                        : <Input value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} className="h-7 text-xs text-right" />}
+                    </td>
+
+                    {/* Total */}
+                    <td className="py-2 pr-2 text-right font-mono tabular-nums text-muted-foreground">{fmtNum(item.totalPrice ?? "0")}</td>
+
+                    {/* Cost/unit */}
+                    <td className="py-2 pr-2 text-right">
+                      {item.inherited
+                        ? <span className="text-xs tabular-nums font-mono text-amber-700 dark:text-amber-400">{fmtNum(item.costUnitPrice ?? "0")}</span>
+                        : <Input value={item.costUnitPrice ?? "0"} onChange={(e) => updateItem(item._key, { costUnitPrice: e.target.value, costTotal: calcCostLineTotal(e.target.value, item.qty ?? "1") })} className="h-7 text-xs text-right border-amber-300 dark:border-amber-700 focus-visible:ring-amber-400" />}
+                    </td>
+
+                    {/* Cost total */}
+                    <td className="py-2 pr-2 text-right font-mono tabular-nums text-amber-700 dark:text-amber-400">{fmtNum(item.costTotal ?? "0")}</td>
+
+                    <td className="py-2"><button onClick={() => removeLine(item._key)} disabled={item.inherited || items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"><TrashIcon className="w-3.5 h-3.5" /></button></td>
                   </tr>
                 ))}
               </tbody>
