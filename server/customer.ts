@@ -84,24 +84,7 @@ async function getMembershipsForCustomers(
 
 export async function getCustomers(search?: string) {
   const { orgId } = await requireAccess("customer:read");
-
-  // Collect all org IDs that share the same owner
-  const [ownerMember] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
-    .limit(1);
-
-  let orgIds = [orgId];
-  if (ownerMember) {
-    const ownedMemberships = await db
-      .select({ organizationId: member.organizationId })
-      .from(member)
-      .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
-    const ids = [...new Set(ownedMemberships.map((m) => m.organizationId))];
-    if (ids.length > 0) orgIds = ids;
-  }
-
+  const orgIds = await getOwnerOrgIds(orgId);
   const conditions = [inArray(customer.organizationId, orgIds)];
 
   if (search && search.trim().length > 0) {
@@ -301,23 +284,7 @@ export async function deleteCustomer(id: string) {
 
 export async function getCustomerOrganizations() {
   const { orgId } = await requireAccess("customer:read");
-
-  // Collect all org IDs that share the same owner (mirrors getCustomers logic)
-  const [ownerMember] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
-    .limit(1);
-
-  let orgIds = [orgId];
-  if (ownerMember) {
-    const ownedMemberships = await db
-      .select({ organizationId: member.organizationId })
-      .from(member)
-      .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
-    const ids = [...new Set(ownedMemberships.map((m) => m.organizationId))];
-    if (ids.length > 0) orgIds = ids;
-  }
+  const orgIds = await getOwnerOrgIds(orgId);
 
   const orgs = await db
     .select({
@@ -349,11 +316,12 @@ export async function getCustomerOrganizations() {
 
 export async function getCustomerOrganizationWithMembers(id: string) {
   const { orgId } = await requireAccess("customer:read");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
 
   const [org] = await db
     .select()
     .from(customerOrganization)
-    .where(and(eq(customerOrganization.id, id), eq(customerOrganization.organizationId, orgId)))
+    .where(and(eq(customerOrganization.id, id), inArray(customerOrganization.organizationId, ownerOrgIds)))
     .limit(1);
   if (!org) return null;
 
@@ -381,12 +349,13 @@ export async function searchCustomerOrganizations(
   query: string,
 ): Promise<{ id: string; name: string; address: string | null }[]> {
   const { orgId } = await requireAccess("customer:read");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+
   if (!query.trim()) {
-    // Return recent orgs when no query
     return db
       .select({ id: customerOrganization.id, name: customerOrganization.name, address: customerOrganization.address })
       .from(customerOrganization)
-      .where(eq(customerOrganization.organizationId, orgId))
+      .where(inArray(customerOrganization.organizationId, ownerOrgIds))
       .orderBy(desc(customerOrganization.createdAt))
       .limit(20);
   }
@@ -395,7 +364,7 @@ export async function searchCustomerOrganizations(
     .from(customerOrganization)
     .where(
       and(
-        eq(customerOrganization.organizationId, orgId),
+        inArray(customerOrganization.organizationId, ownerOrgIds),
         ilike(customerOrganization.name, `%${query.trim()}%`),
       ),
     )
@@ -412,23 +381,7 @@ export async function createCustomerOrganization(data: {
   const { orgId } = await requireAccess("customer:update");
 
   const trimmedName = data.name.trim();
-
-  // Resolve all org IDs for the same owner so name is unique owner-wide
-  const [ownerMember] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
-    .limit(1);
-
-  let ownerOrgIds = [orgId];
-  if (ownerMember) {
-    const owned = await db
-      .select({ organizationId: member.organizationId })
-      .from(member)
-      .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
-    const ids = [...new Set(owned.map((m) => m.organizationId))];
-    if (ids.length > 0) ownerOrgIds = ids;
-  }
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
 
   // Case-insensitive duplicate check across all owner tenants
   const [existing] = await db
@@ -459,16 +412,32 @@ export async function createCustomerOrganization(data: {
   return { row, existed: false };
 }
 
+async function getOwnerOrgIds(orgId: string): Promise<string[]> {
+  const [ownerMember] = await db
+    .select()
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+    .limit(1);
+  if (!ownerMember) return [orgId];
+  const owned = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
+  const ids = [...new Set(owned.map((m) => m.organizationId))];
+  return ids.length > 0 ? ids : [orgId];
+}
+
 export async function updateCustomerOrganization(
   id: string,
   data: { name?: string; address?: string; phone?: string; email?: string },
 ) {
   const { orgId } = await requireAccess("customer:update");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
 
   const [existing] = await db
     .select({ id: customerOrganization.id })
     .from(customerOrganization)
-    .where(and(eq(customerOrganization.id, id), eq(customerOrganization.organizationId, orgId)))
+    .where(and(eq(customerOrganization.id, id), inArray(customerOrganization.organizationId, ownerOrgIds)))
     .limit(1);
   if (!existing) throw new Error("Organization not found");
 
@@ -480,11 +449,12 @@ export async function updateCustomerOrganization(
 
 export async function deleteCustomerOrganization(id: string) {
   const { orgId } = await requireAccess("customer:update");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
 
   const [existing] = await db
     .select({ id: customerOrganization.id })
     .from(customerOrganization)
-    .where(and(eq(customerOrganization.id, id), eq(customerOrganization.organizationId, orgId)))
+    .where(and(eq(customerOrganization.id, id), inArray(customerOrganization.organizationId, ownerOrgIds)))
     .limit(1);
   if (!existing) throw new Error("Organization not found");
 
