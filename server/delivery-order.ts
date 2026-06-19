@@ -342,7 +342,7 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     .where(eq(deliveryOrderItem.deliveryOrderId, id))
     .orderBy(asc(deliveryOrderItem.rowNo));
 
-  // Fetch SO for salesperson, pricing hints, and document links
+  // Walk the chain: DO → SO → CPO → Quotation to inherit all document links
   let salesPersonId: string | null = null;
   let salesPersonName: string | null = null;
   let associateSalesPersons: { id: string; name: string }[] | null = null;
@@ -350,6 +350,9 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
   let quotationNo: string | null = null;
   let paymentTerm: string | null = null;
   let supplierId: string | null = null;
+  // Effective CPO: DO may not store it, fall back to SO's CPO
+  let effectiveCpoId: string | null = do_.customerPoId ?? null;
+  let effectiveCpoNo: string | null = do_.customerPoNo ?? null;
   const soItemPriceMap = new Map<string, { unitPrice: string; discountPct: string }>();
 
   if (do_.salesOrderId) {
@@ -360,6 +363,8 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
         associateSalesPersons: salesOrder.associateSalesPersons,
         quotationId: salesOrder.quotationId,
         quotationNo: salesOrder.quotationNo,
+        customerPoId: salesOrder.customerPoId,
+        customerPoNo: salesOrder.customerPoNo,
       })
       .from(salesOrder)
       .where(and(eq(salesOrder.id, do_.salesOrderId), eq(salesOrder.organizationId, orgId)));
@@ -369,15 +374,42 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
       associateSalesPersons = (so.associateSalesPersons as { id: string; name: string }[] | null) ?? null;
       quotationId = so.quotationId;
       quotationNo = so.quotationNo;
+      // Fall back to SO's CPO if the DO didn't store it
+      if (!effectiveCpoId && so.customerPoId) {
+        effectiveCpoId = so.customerPoId;
+        effectiveCpoNo = so.customerPoNo ?? null;
+      }
     }
 
-    // Fetch quotation's paymentTerm if linked
+    // If SO has no direct quotation link, check via the effective CPO
+    if (!quotationId && effectiveCpoId) {
+      const [cpo] = await db
+        .select({ quotationId: customerPurchaseOrder.quotationId, quotationNo: customerPurchaseOrder.quotationNo })
+        .from(customerPurchaseOrder)
+        .where(eq(customerPurchaseOrder.id, effectiveCpoId));
+      if (cpo?.quotationId) {
+        quotationId = cpo.quotationId;
+        quotationNo = cpo.quotationNo ?? null;
+      }
+    }
+
+    // Fetch quotation's paymentTerm; also use its salesperson if SO didn't set one
     if (quotationId) {
       const [q] = await db
-        .select({ paymentTerm: quotation.paymentTerm })
+        .select({
+          paymentTerm: quotation.paymentTerm,
+          qSalesPersonId: quotation.salesPersonId,
+          qSalesPersonName: quotation.salesPersonName,
+        })
         .from(quotation)
         .where(eq(quotation.id, quotationId));
-      if (q) paymentTerm = q.paymentTerm;
+      if (q) {
+        paymentTerm = q.paymentTerm;
+        if (!salesPersonId && q.qSalesPersonId) {
+          salesPersonId = q.qSalesPersonId;
+          salesPersonName = q.qSalesPersonName;
+        }
+      }
     }
 
     // Fetch first linked PO's supplierId
@@ -403,8 +435,8 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     doNo: do_.doNo,
     salesOrderId: do_.salesOrderId,
     salesOrderNo: do_.salesOrderNo,
-    customerPoId: do_.customerPoId,
-    customerPoNo: do_.customerPoNo,
+    customerPoId: effectiveCpoId,
+    customerPoNo: effectiveCpoNo,
     customerId: do_.customerId,
     customerSnapshot: do_.customerSnapshot as DoForInvoice["customerSnapshot"],
     salesPersonId,
