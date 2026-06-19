@@ -639,6 +639,8 @@ export const stockMovement = pgTable(
     referenceId: text("reference_id"),
     referenceNo: text("reference_no"),
     notes: text("notes"),
+    lotNo: text("lot_no"),
+    expiryDate: timestamp("expiry_date"),
     // PENDING | APPROVED | REJECTED
     status: text("status").notNull().default("PENDING"),
     reviewedBy: text("reviewed_by").references(() => user.id),

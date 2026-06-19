@@ -141,6 +141,8 @@ export async function adjustStock(data: {
   referenceType?: string;
   referenceNo?: string;
   notes?: string;
+  lotNo?: string;
+  expiryDate?: Date;
 }): Promise<void> {
   const { orgId, userId } = await requireAccess("inventory:adjust");
 
@@ -171,6 +173,8 @@ export async function adjustStock(data: {
     referenceId: null,
     referenceNo: data.referenceNo?.trim() || null,
     notes: data.notes?.trim() || null,
+    lotNo: data.lotNo?.trim() || null,
+    expiryDate: data.expiryDate ?? null,
     status: "PENDING",
     createdBy: userId,
     createdAt: new Date(),

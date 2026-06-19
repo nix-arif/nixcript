@@ -47,19 +47,24 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
   const [open, setOpen] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState("");
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestQuery = useRef("");
+
+  async function runSearch(q: string) {
+    if (!q.trim()) { setResults([]); setOpen(false); return; }
+    const r = await searchProducts(q);
+    if (latestQuery.current !== q) return; // stale
+    setResults(r);
+    setOpen(r.length > 0);
+    const exact = r.find(p => p.productCode.toLowerCase() === q.trim().toLowerCase());
+    if (exact) select(exact);
+  }
 
   function handleInput(q: string) {
     setQuery(q);
+    latestQuery.current = q;
     if (debounce.current) clearTimeout(debounce.current);
     if (!q.trim()) { setResults([]); setOpen(false); return; }
-    debounce.current = setTimeout(async () => {
-      const r = await searchProducts(q);
-      setResults(r);
-      setOpen(r.length > 0);
-      // Auto-select exact product code match (case-insensitive)
-      const exact = r.find(p => p.productCode.toLowerCase() === q.trim().toLowerCase());
-      if (exact) select(exact);
-    }, 300);
+    debounce.current = setTimeout(() => runSearch(q), 300);
   }
 
   function select(p: Product) {
@@ -74,13 +79,24 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
     setSelectedLabel("");
     setQuery("");
     setResults([]);
+    latestQuery.current = "";
     onChange("", "");
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && results.length > 0) {
+    if (e.key === "Enter") {
       e.preventDefault();
-      select(results[0]);
+      if (results.length > 0) { select(results[0]); return; }
+      if (debounce.current) clearTimeout(debounce.current);
+      runSearch(query);
+    }
+  }
+
+  function handleBlur() {
+    // flush when user tabs away before the 300ms debounce fires
+    if (!selectedLabel && query.trim()) {
+      if (debounce.current) clearTimeout(debounce.current);
+      runSearch(query);
     }
   }
 
@@ -97,6 +113,7 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
           value={query}
           onChange={e => handleInput(e.target.value)}
           onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
           autoComplete="off"
         />
       )}
@@ -141,6 +158,8 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
   const [adjCost, setAdjCost] = useState("");
   const [adjRef, setAdjRef] = useState("");
   const [adjNotes, setAdjNotes] = useState("");
+  const [adjLotNo, setAdjLotNo] = useState("");
+  const [adjExpiry, setAdjExpiry] = useState("");
   const [saving, setSaving] = useState(false);
 
   // ── Transfer sheet ────────────────────────────────────────────────────────
@@ -187,10 +206,10 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
     if (isNaN(qty) || qty <= 0) { toast.error("Enter a valid quantity"); return; }
     setSaving(true);
     try {
-      await adjustStock({ productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined, referenceNo: adjRef || undefined, notes: adjNotes || undefined });
+      await adjustStock({ productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined, referenceNo: adjRef || undefined, notes: adjNotes || undefined, lotNo: adjLotNo || undefined, expiryDate: adjExpiry ? new Date(adjExpiry) : undefined });
       toast.success("Stock updated");
       setAdjustOpen(false);
-      setAdjProductId(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes("");
+      setAdjProductId(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry("");
       startTransition(() => router.refresh());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
@@ -428,6 +447,16 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
             <div className="flex flex-col gap-1.5">
               <Label>Reference No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
               <Input placeholder="e.g. PO-2025-0001" value={adjRef} onChange={e => setAdjRef(e.target.value)}/>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label>Lot No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input placeholder="e.g. LOT-240301" value={adjLotNo} onChange={e => setAdjLotNo(e.target.value)}/>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label>Expiry Date <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input type="date" value={adjExpiry} onChange={e => setAdjExpiry(e.target.value)}/>
+              </div>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Notes <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
