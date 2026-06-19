@@ -11,6 +11,8 @@ import {
   salesOrderItem,
   customerPurchaseOrder,
   invoice,
+  quotation,
+  purchaseOrder,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -77,6 +79,13 @@ export type DoForInvoice = {
   // From linked SO (when available)
   salesPersonId: string | null;
   salesPersonName: string | null;
+  associateSalesPersons: { id: string; name: string }[] | null;
+  quotationId: string | null;
+  quotationNo: string | null;
+  // From linked quotation (via SO)
+  paymentTerm: string | null;
+  // From linked purchase order (via SO)
+  supplierId: string | null;
   deliveryDate: Date | null;
   deliveryAddress: string | null;
   items: Array<{ rowNo: number; productId: string | null; productCode: string | null; description: string | null; qty: string | null; uom: string | null; unitPrice: string | null; discountPct: string | null }>;
@@ -333,20 +342,52 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     .where(eq(deliveryOrderItem.deliveryOrderId, id))
     .orderBy(asc(deliveryOrderItem.rowNo));
 
-  // Fetch SO for salesperson + pricing hints
+  // Fetch SO for salesperson, pricing hints, and document links
   let salesPersonId: string | null = null;
   let salesPersonName: string | null = null;
+  let associateSalesPersons: { id: string; name: string }[] | null = null;
+  let quotationId: string | null = null;
+  let quotationNo: string | null = null;
+  let paymentTerm: string | null = null;
+  let supplierId: string | null = null;
   const soItemPriceMap = new Map<string, { unitPrice: string; discountPct: string }>();
 
   if (do_.salesOrderId) {
     const [so] = await db
-      .select({ salesPersonId: salesOrder.salesPersonId, salesPersonName: salesOrder.salesPersonName })
+      .select({
+        salesPersonId: salesOrder.salesPersonId,
+        salesPersonName: salesOrder.salesPersonName,
+        associateSalesPersons: salesOrder.associateSalesPersons,
+        quotationId: salesOrder.quotationId,
+        quotationNo: salesOrder.quotationNo,
+      })
       .from(salesOrder)
       .where(and(eq(salesOrder.id, do_.salesOrderId), eq(salesOrder.organizationId, orgId)));
     if (so) {
       salesPersonId = so.salesPersonId;
       salesPersonName = so.salesPersonName;
+      associateSalesPersons = (so.associateSalesPersons as { id: string; name: string }[] | null) ?? null;
+      quotationId = so.quotationId;
+      quotationNo = so.quotationNo;
     }
+
+    // Fetch quotation's paymentTerm if linked
+    if (quotationId) {
+      const [q] = await db
+        .select({ paymentTerm: quotation.paymentTerm })
+        .from(quotation)
+        .where(eq(quotation.id, quotationId));
+      if (q) paymentTerm = q.paymentTerm;
+    }
+
+    // Fetch first linked PO's supplierId
+    const [po] = await db
+      .select({ supplierId: purchaseOrder.supplierId })
+      .from(purchaseOrder)
+      .where(and(eq(purchaseOrder.salesOrderId, do_.salesOrderId), eq(purchaseOrder.organizationId, orgId)))
+      .limit(1);
+    if (po) supplierId = po.supplierId;
+
     // Fetch SO item pricing so the invoice form can pre-fill unit prices
     const soItems = await db
       .select({ id: salesOrderItem.id, unitPrice: salesOrderItem.unitPrice, discountPct: salesOrderItem.discountPct })
@@ -368,6 +409,11 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     customerSnapshot: do_.customerSnapshot as DoForInvoice["customerSnapshot"],
     salesPersonId,
     salesPersonName,
+    associateSalesPersons,
+    quotationId,
+    quotationNo,
+    paymentTerm,
+    supplierId,
     deliveryDate: do_.deliveryDate,
     deliveryAddress: do_.deliveryAddress,
     items: items.map((i) => {

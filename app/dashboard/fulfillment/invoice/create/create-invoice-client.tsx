@@ -275,29 +275,50 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
   );
 
   // Document links
-  const [quotationNo, setQuotationNo] = useState("");
+  const [quotationNo, setQuotationNo] = useState(doData?.quotationNo ?? "");
   const [salesOrderNo, setSalesOrderNo] = useState(doData?.salesOrderNo ?? "");
   const [deliveryOrderId] = useState(doData?.id ?? "");
   const [deliveryOrderNo, setDeliveryOrderNo] = useState(doData?.doNo ?? "");
 
-  // Supplier
-  const [selectedSupplierId, setSelectedSupplierId] = useState<string>("");
+  // Supplier — pre-fill from first linked PO via SO chain
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>(doData?.supplierId ?? "");
 
-  // Sales persons — pre-fill from DO's SO
+  // Sales persons — pre-fill from DO's SO (primary + associates)
   const [salesPersons, setSalesPersons] = useState<SalesPerson[]>(() => {
-    if (doData?.salesPersonId && doData?.salesPersonName) {
-      return [{ id: doData.salesPersonId, name: doData.salesPersonName }];
-    }
+    const result: SalesPerson[] = [];
+    const addedIds = new Set<string>();
+
     if (doData?.salesPersonName) {
-      return [{ id: null, name: doData.salesPersonName }];
+      let spId = doData.salesPersonId ?? null;
+      // If primary SP has no id, try to resolve by name from org members
+      if (!spId) {
+        const match = members.find(
+          (m) => m.name.toLowerCase().trim() === doData.salesPersonName!.toLowerCase().trim()
+        );
+        if (match) spId = match.userId;
+      }
+      const spName = spId
+        ? (members.find((m) => m.userId === spId)?.name ?? doData.salesPersonName)
+        : doData.salesPersonName;
+      result.push({ id: spId, name: spName });
+      if (spId) addedIds.add(spId);
     }
-    return [];
+
+    // Associate salespersons from SO — all have valid org member IDs
+    for (const sp of doData?.associateSalesPersons ?? []) {
+      if (!addedIds.has(sp.id)) {
+        result.push({ id: sp.id, name: sp.name });
+        addedIds.add(sp.id);
+      }
+    }
+
+    return result;
   });
 
   // Invoice header
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState("");
-  const [paymentTerms, setPaymentTerms] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState(doData?.paymentTerm ?? "");
   const [status, setStatus] = useState("draft");
   const [notes, setNotes] = useState("");
   const [categoryIds, setCategoryIds] = useState<string[]>(() =>
@@ -438,6 +459,7 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
         customerOrgMemberId: custOrgMemberId,
         customerPoId: selectedCustomerPo?.id,
         customerPoNo: selectedCustomerPo?.customerPoNo ?? (manualCustomerPoNo || undefined),
+        quotationId: doData?.quotationId || undefined,
         quotationNo: quotationNo || undefined,
         salesOrderId: doData?.salesOrderId || undefined,
         salesOrderNo: salesOrderNo || undefined,

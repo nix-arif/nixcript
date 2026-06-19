@@ -213,7 +213,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const CODE_LINE_H = LH - 2;
   const rowInfos: RowInfo[] = items.map(item => {
     const rentalPrefix = item.lineType === "rent" && item.rentalDuration
-      ? `rental for ${item.rentalDuration} ${item.rentalUnit ?? "case"} `
+      ? `RENTAL FOR ${item.rentalDuration} ${(item.rentalUnit ?? "case").toUpperCase()} `
       : "";
     const rawDesc    = `${rentalPrefix}${item.description ?? "—"}`;
     const descLines  = wrap(rawDesc, fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
