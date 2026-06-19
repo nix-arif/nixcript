@@ -13,6 +13,7 @@ import {
   invoice,
   quotation,
   purchaseOrder,
+  purchaseOrderItem,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -84,6 +85,8 @@ export type DoForInvoice = {
   quotationNo: string | null;
   // From linked quotation (via SO)
   paymentTerm: string | null;
+  paymentTermDays: number | null;
+  dueDate: Date | null;
   // From linked purchase order (via SO)
   supplierId: string | null;
   deliveryDate: Date | null;
@@ -97,6 +100,7 @@ export type DoForInvoice = {
     uom: string | null;
     unitPrice: string | null;
     discountPct: string | null;
+    costUnitPrice: string | null;
     lineType: string | null;
     rentalDuration: string | null;
     rentalUnit: string | null;
@@ -364,11 +368,14 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
   let quotationId: string | null = null;
   let quotationNo: string | null = null;
   let paymentTerm: string | null = null;
+  let paymentTermDays: number | null = null;
+  let dueDate: Date | null = null;
   let supplierId: string | null = null;
   // Effective CPO: DO may not store it, fall back to SO's CPO
   let effectiveCpoId: string | null = do_.customerPoId ?? null;
   let effectiveCpoNo: string | null = do_.customerPoNo ?? null;
   const soItemPriceMap = new Map<string, { unitPrice: string; discountPct: string; lineType: string; rentalDuration: string | null; rentalUnit: string | null; setGroupId: string | null; setGroupLabel: string | null; setQty: string | null }>();
+  const poItemCostMap = new Map<string, string>(); // productCode → costUnitPrice
 
   if (do_.salesOrderId) {
     const [so] = await db
@@ -424,16 +431,34 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
           salesPersonId = q.qSalesPersonId;
           salesPersonName = q.qSalesPersonName;
         }
+        // Parse payment term days (e.g. "30 days", "Net 30", "30 DAYS")
+        const match = q.paymentTerm?.match(/\b(\d+)\b/);
+        if (match) {
+          paymentTermDays = parseInt(match[1], 10);
+          const d = new Date();
+          d.setDate(d.getDate() + paymentTermDays);
+          dueDate = d;
+        }
       }
     }
 
-    // Fetch first linked PO's supplierId
+    // Fetch first linked PO for supplierId + cost pricing per productCode
     const [po] = await db
-      .select({ supplierId: purchaseOrder.supplierId })
+      .select({ id: purchaseOrder.id, supplierId: purchaseOrder.supplierId })
       .from(purchaseOrder)
       .where(and(eq(purchaseOrder.salesOrderId, do_.salesOrderId), eq(purchaseOrder.organizationId, orgId)))
       .limit(1);
-    if (po) supplierId = po.supplierId;
+    if (po) {
+      supplierId = po.supplierId;
+      // Fetch PO items to get cost unit prices keyed by productCode
+      const poItems = await db
+        .select({ productCode: purchaseOrderItem.productCode, unitPrice: purchaseOrderItem.unitPrice })
+        .from(purchaseOrderItem)
+        .where(eq(purchaseOrderItem.purchaseOrderId, po.id));
+      for (const pi of poItems) {
+        if (pi.productCode) poItemCostMap.set(pi.productCode, pi.unitPrice ?? "0");
+      }
+    }
 
     // Fetch SO items — pricing + tags; build multiple lookup maps for fallback matching
     const soItems = await db
@@ -485,6 +510,8 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     quotationId,
     quotationNo,
     paymentTerm,
+    paymentTermDays,
+    dueDate,
     supplierId,
     deliveryDate: do_.deliveryDate,
     deliveryAddress: do_.deliveryAddress,
@@ -503,6 +530,7 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
         uom: i.uom ?? null,
         unitPrice: soData?.unitPrice ?? null,
         discountPct: soData?.discountPct ?? null,
+        costUnitPrice: i.productCode ? (poItemCostMap.get(i.productCode) ?? null) : null,
         lineType: soData?.lineType ?? null,
         rentalDuration: soData?.rentalDuration ?? null,
         rentalUnit: soData?.rentalUnit ?? null,

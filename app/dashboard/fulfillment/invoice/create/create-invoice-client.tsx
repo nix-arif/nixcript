@@ -24,8 +24,16 @@ import {
 
 export type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
+function InheritedBadge({ label = "inherited" }: { label?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+      <LinkIcon className="w-2.5 h-2.5" />{label}
+    </span>
+  );
+}
+
 type SalesPerson = { id?: string | null; name: string };
-interface LineItem extends InvoiceItemInput { _key: string; }
+interface LineItem extends InvoiceItemInput { _key: string; inherited?: boolean; }
 interface ExpenseRow extends InvoiceExpenseInput { _key: string; }
 
 const newLine = (rowNo: number): LineItem => ({
@@ -249,6 +257,15 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
   const fromSo = !!doData?.salesOrderId;
   const isProforma = false; // future: could be derived from SO type
 
+  // Inherited (locked) flags — fields pre-filled from DO/SO/CPO/quotation chain
+  const locks = {
+    customerPo: !!(doData?.customerPoId || doData?.customerPoNo),
+    quotationNo: !!doData?.quotationNo,
+    supplier: !!doData?.supplierId,
+    dueDate: !!doData?.dueDate,
+    items: !!doData,
+  } as const;
+
   // Customer
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Customer[]>([]);
@@ -317,7 +334,9 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
 
   // Invoice header
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [dueDate, setDueDate] = useState("");
+  const [dueDate, setDueDate] = useState(() =>
+    doData?.dueDate ? new Date(doData.dueDate).toISOString().slice(0, 10) : ""
+  );
   const [paymentTerms, setPaymentTerms] = useState(doData?.paymentTerm ?? "");
   const [status, setStatus] = useState("draft");
   const [notes, setNotes] = useState("");
@@ -345,9 +364,10 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
           discountPct: i.discountPct ?? "0",
           discountAmt,
           totalPrice,
-          costUnitPrice: "0",
-          costTotal: "0",
+          costUnitPrice: i.costUnitPrice ?? "0",
+          costTotal: calcCostLineTotal(i.costUnitPrice ?? "0", i.qty ?? "1"),
           lineType: i.lineType ?? "sell",
+          inherited: true,
           rentalDuration: i.rentalDuration ?? undefined,
           rentalUnit: i.rentalUnit ?? undefined,
           setGroupId: i.setGroupId ?? undefined,
@@ -490,7 +510,7 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
         dueDate: dueDate ? new Date(dueDate) : undefined,
         notes: notes || undefined,
         categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
-        items: items.map(({ _key, ...rest }) => rest),
+        items: items.map(({ _key, inherited, ...rest }) => rest),
         expenses: expenses.map(({ _key, ...rest }) => rest),
       });
       toast.success("Invoice created");
@@ -587,8 +607,13 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
 
         {/* ── 3. Customer PO ───────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Customer Purchase Order</h2>
-          {customerPos.length > 0 ? (
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-sm font-semibold">Customer Purchase Order</h2>
+            {locks.customerPo && <InheritedBadge />}
+          </div>
+          {locks.customerPo ? (
+            <Input value={selectedCustomerPo?.customerPoNo ?? manualCustomerPoNo} readOnly className="h-9 text-sm bg-muted/40 cursor-not-allowed" />
+          ) : customerPos.length > 0 ? (
             <div className="space-y-2">
               <div className="relative">
                 <select
@@ -628,8 +653,11 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
               <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Due date</Label>
-              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs">Due date</Label>
+                {locks.dueDate && <InheritedBadge />}
+              </div>
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} readOnly={locks.dueDate} className={cn("w-full h-9 rounded-md border border-border bg-background px-3 text-sm", locks.dueDate && "bg-muted/40 cursor-not-allowed")} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Payment terms</Label>
@@ -688,7 +716,13 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Links to other documents</h2>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5"><Label className="text-xs">Quotation no.</Label><Input value={quotationNo} onChange={(e) => setQuotationNo(e.target.value)} placeholder="BMS-QT-2025-XXXX" className="h-9 text-sm" /></div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <Label className="text-xs">Quotation no.</Label>
+                {locks.quotationNo && <InheritedBadge />}
+              </div>
+              <Input value={quotationNo} onChange={(e) => setQuotationNo(e.target.value)} placeholder="BMS-QT-2025-XXXX" readOnly={locks.quotationNo} className={cn("h-9 text-sm", locks.quotationNo && "bg-muted/40 cursor-not-allowed")} />
+            </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <Label className="text-xs">Sales order no.</Label>
@@ -708,9 +742,12 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
 
         {/* ── 6. Supplier ───────────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Supplier <span className="text-[11px] font-normal text-muted-foreground">(cost reference)</span></h2>
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-sm font-semibold">Supplier <span className="text-[11px] font-normal text-muted-foreground">(cost reference)</span></h2>
+            {locks.supplier && <InheritedBadge />}
+          </div>
           <div className="relative">
-            <select className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none" value={selectedSupplierId} onChange={(e) => setSelectedSupplierId(e.target.value)}>
+            <select disabled={locks.supplier} className={cn("w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none", locks.supplier && "bg-muted/40 cursor-not-allowed opacity-70")} value={selectedSupplierId} onChange={(e) => setSelectedSupplierId(e.target.value)}>
               <option value="">— No supplier —</option>
               {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}{s.registrationNo ? ` (${s.registrationNo})` : ""}</option>)}
             </select>
@@ -721,9 +758,9 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
         {/* ── 7. Line items ─────────────────────────────────────────────── */}
         <section className="border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <div>
+            <div className="flex items-center gap-2">
               <h2 className="text-sm font-semibold">Items</h2>
-              {doData && <p className="text-[11px] text-muted-foreground mt-0.5">Pre-filled from DO — prices inherited from SO. Adjust as needed.</p>}
+              {locks.items && <InheritedBadge label="from DO/SO/PO" />}
             </div>
             <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={addLine}><PlusIcon className="w-3 h-3" /> Add row</Button>
           </div>
@@ -746,12 +783,12 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
               </thead>
               <tbody>
                 {items.map((item) => (
-                  <tr key={item._key} className="border-b border-border/50 last:border-0">
+                  <tr key={item._key} className={cn("border-b border-border/50 last:border-0", item.inherited && "bg-muted/20")}>
                     <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
-                    <td className="py-1.5 pr-2"><Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs", item.inherited && "bg-transparent border-transparent")} /></td>
                     <td className="py-1.5 pr-2">
                       <div className="flex flex-col gap-0.5">
-                        <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} className="h-7 text-xs" />
+                        <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs", item.inherited && "bg-transparent border-transparent")} />
                         {item.lineType === "rent" && (
                           <span className="text-[10px] text-violet-600 dark:text-violet-400 font-medium">
                             RENTAL{item.rentalDuration ? ` · ${item.rentalDuration} ${(item.rentalUnit ?? "case").toUpperCase()}` : ""}
@@ -762,14 +799,14 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
                         )}
                       </div>
                     </td>
-                    <td className="py-1.5 pr-2"><Input value={item.qty ?? "1"} onChange={(e) => updateItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" /></td>
-                    <td className="py-1.5 pr-2"><Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="pcs" /></td>
-                    <td className="py-1.5 pr-2"><Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs text-right" /></td>
-                    <td className="py-1.5 pr-2"><Input value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} className="h-7 text-xs text-right" /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.qty ?? "1"} onChange={(e) => updateItem(item._key, { qty: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs text-right", item.inherited && "bg-transparent border-transparent")} /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs", item.inherited && "bg-transparent border-transparent")} placeholder="pcs" /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs text-right", item.inherited && "bg-transparent border-transparent")} /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs text-right", item.inherited && "bg-transparent border-transparent")} /></td>
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">{fmtNum(item.totalPrice ?? "0")}</td>
-                    <td className="py-1.5 pr-2"><Input value={item.costUnitPrice ?? "0"} onChange={(e) => updateItem(item._key, { costUnitPrice: e.target.value })} className="h-7 text-xs text-right border-amber-300 dark:border-amber-700 focus-visible:ring-amber-400" /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.costUnitPrice ?? "0"} onChange={(e) => updateItem(item._key, { costUnitPrice: e.target.value, costTotal: calcCostLineTotal(e.target.value, item.qty ?? "1") })} className="h-7 text-xs text-right border-amber-300 dark:border-amber-700 focus-visible:ring-amber-400" /></td>
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-amber-700 dark:text-amber-400">{fmtNum(item.costTotal ?? "0")}</td>
-                    <td className="py-1.5"><button onClick={() => removeLine(item._key)} disabled={items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"><TrashIcon className="w-3.5 h-3.5" /></button></td>
+                    <td className="py-1.5"><button onClick={() => removeLine(item._key)} disabled={item.inherited || items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"><TrashIcon className="w-3.5 h-3.5" /></button></td>
                   </tr>
                 ))}
               </tbody>
