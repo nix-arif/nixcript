@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { deleteInvoice, type InvoiceListRow } from "@/server/invoice";
+import { type DocumentCategoryRow } from "@/server/document-category";
 import { useAppStore } from "@/lib/store/use-app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -201,6 +202,7 @@ interface Props {
   pendingDos: PendingDoForInvoiceRow[];
   permissions: string[];
   currentUserId: string;
+  categories?: DocumentCategoryRow[];
 }
 
 export function InvoiceListClient({
@@ -208,8 +210,13 @@ export function InvoiceListClient({
   pendingDos,
   permissions,
   currentUserId,
+  categories = [],
 }: Props) {
   const router = useRouter();
+  const catMap = useMemo(
+    () => new Map(categories.map((c) => [c.id, c])),
+    [categories],
+  );
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("customerPoNo");
@@ -588,9 +595,9 @@ export function InvoiceListClient({
                   <Th k="customerPoNo">Customer PO</Th>
                   <Th k="customer">Customer</Th>
                   <Th k="hospital">Hospital</Th>
-                  <Th k="caseDate" className="hidden xl:table-cell">
-                    Case
-                  </Th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap hidden xl:table-cell">
+                    Categories
+                  </th>
                   <th className="px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap hidden xl:table-cell">
                     Sales Person
                   </th>
@@ -716,26 +723,27 @@ export function InvoiceListClient({
                         )}
                       </td>
 
-                      {/* Case (hidden on small screens) */}
+                      {/* Categories (hidden on small screens) */}
                       <td className="px-3 py-2.5 hidden xl:table-cell">
-                        {inv.caseType ? (
-                          <>
-                            <span className="text-xs font-medium">
-                              <Highlight
-                                text={inv.caseType}
-                                query={search}
-                              />
-                            </span>
-                            {inv.caseDate && (
-                              <div className="text-[10px] text-muted-foreground whitespace-nowrap">
-                                {fmtDate(inv.caseDate)}
-                              </div>
-                            )}
-                          </>
+                        {inv.categoryIds?.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {inv.categoryIds.map((id) => {
+                              const cat = catMap.get(id);
+                              if (!cat) return null;
+                              const hex = cat.color ?? "#6366f1";
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold text-white whitespace-nowrap"
+                                  style={{ backgroundColor: hex }}
+                                >
+                                  {cat.name}
+                                </span>
+                              );
+                            })}
+                          </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground/50">
-                            —
-                          </span>
+                          <span className="text-xs text-muted-foreground/50">—</span>
                         )}
                       </td>
 

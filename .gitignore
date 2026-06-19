@@ -41,6 +41,5 @@ yarn-error.log*
 next-env.d.ts
 
 # cloude
-.claude/worktrees/
-claude/worktrees/*
+.claude/worktrees/*
 
