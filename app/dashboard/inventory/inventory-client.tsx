@@ -112,9 +112,9 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
   return (
     <div className="relative">
       {selectedLabel ? (
-        <div className="flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm">
-          <span className="flex-1 truncate font-mono text-xs">{selectedLabel}</span>
-          <button type="button" onClick={clear} className="text-muted-foreground hover:text-foreground text-xs">✕</button>
+        <div className="flex items-start gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm">
+          <span className="flex-1 font-mono text-xs wrap-break-word min-w-0">{selectedLabel}</span>
+          <button type="button" onClick={clear} className="text-muted-foreground hover:text-foreground text-xs shrink-0 mt-0.5">✕</button>
         </div>
       ) : (
         <>

@@ -169,15 +169,20 @@ export async function adjustStock(data: {
   const [prod] = await db
     .select({ productCode: product.productCode })
     .from(product)
-    .where(and(eq(product.id, data.productId), eq(product.organizationId, orgId)))
+    .where(and(eq(product.id, data.productId), inArray(product.organizationId, await getAllOwnerOrgIds(orgId))))
     .limit(1);
   if (!prod) throw new Error("Product not found");
 
   const isOut = data.movementType === MOVEMENT_TYPE.STOCK_OUT;
   const signed = isOut ? -Math.abs(data.quantity) : Math.abs(data.quantity);
 
+  // Auto-approve if the creator also has approve rights — no extra step needed
+  const perms = await getUserPermissions(userId, orgId);
+  const canApprove = hasAccess(perms, "inventory:approve");
+
+  const movementId = nanoid();
   await db.insert(stockMovement).values({
-    id: nanoid(),
+    id: movementId,
     organizationId: orgId,
     productId: data.productId,
     productCode: prod.productCode,
@@ -185,7 +190,7 @@ export async function adjustStock(data: {
     warehouseTo: null,
     movementType: data.movementType,
     quantity: signed.toFixed(4),
-    balanceAfter: null,          // set at approval time
+    balanceAfter: null,
     unitCost: data.unitCost?.trim() || null,
     referenceType: data.referenceType ?? REF_TYPE.MANUAL,
     referenceId: null,
@@ -193,10 +198,40 @@ export async function adjustStock(data: {
     notes: data.notes?.trim() || null,
     lotNo: data.lotNo?.trim() || null,
     expiryDate: data.expiryDate ?? null,
-    status: "PENDING",
+    status: canApprove ? "APPROVED" : "PENDING",
+    reviewedBy: canApprove ? userId : null,
+    reviewedAt: canApprove ? new Date() : null,
     createdBy: userId,
     createdAt: new Date(),
   });
+
+  if (canApprove) {
+    // Apply to stock level immediately
+    const [existing] = await db
+      .select()
+      .from(stockLevel)
+      .where(and(eq(stockLevel.productId, data.productId), eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, data.warehouseLabel)))
+      .limit(1);
+
+    const newBalance = existing ? parseFloat(existing.quantity) + signed : signed;
+    if (newBalance < 0) throw new Error(`Insufficient stock in ${data.warehouseLabel}`);
+
+    if (existing) {
+      await db.update(stockLevel)
+        .set({ quantity: newBalance.toFixed(4), updatedAt: new Date() })
+        .where(eq(stockLevel.id, existing.id));
+    } else {
+      await db.insert(stockLevel).values({
+        id: nanoid(), organizationId: orgId, productId: data.productId,
+        warehouseLabel: data.warehouseLabel, quantity: newBalance.toFixed(4),
+        reservedQty: "0", updatedAt: new Date(),
+      });
+    }
+
+    await db.update(stockMovement)
+      .set({ balanceAfter: newBalance.toFixed(4) })
+      .where(eq(stockMovement.id, movementId));
+  }
 
   revalidatePath("/dashboard/inventory");
 }
