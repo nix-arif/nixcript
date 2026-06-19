@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { toast } from "sonner";
 import { deleteDeliveryOrder, type DeliveryOrderListRow, type PendingSoForDoRow } from "@/server/delivery-order";
 import { useAppStore } from "@/lib/store/use-app-store";
@@ -12,6 +12,7 @@ import { Highlight } from "@/components/highlight";
 import {
   PlusIcon, SearchIcon, XIcon, TruckIcon,
   PencilIcon, TrashIcon, UserIcon, BuildingIcon, CalendarIcon, ArrowRightIcon, ReceiptIcon,
+  ChevronLeftIcon, ChevronRightIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,43 +30,116 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
-const EDITABLE_STATUSES = new Set(["draft"]);
+const EDITABLE_STATUSES  = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft"]);
 
 const fmtAmt = (v: string | null | undefined) =>
   v ? parseFloat(v).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
 
+// ── Status filters ────────────────────────────────────────────────────────
+
+const STATUS_FILTERS = [
+  { value: "",          label: "All" },
+  { value: "draft",     label: "Draft" },
+  { value: "delivered", label: "Delivered" },
+  { value: "returned",  label: "Returned" },
+];
+
+// ── Pagination ────────────────────────────────────────────────────────────
+
+function Pagination({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (p: number) => void }) {
+  if (totalPages <= 1) return null;
+
+  const pages: (number | "…")[] = [];
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (page > 3) pages.push("…");
+    for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
+    if (page < totalPages - 2) pages.push("…");
+    pages.push(totalPages);
+  }
+
+  return (
+    <div className="flex items-center justify-center gap-1 py-4">
+      <Button variant="outline" size="icon" className="w-7 h-7" disabled={page === 1} onClick={() => onPage(page - 1)}>
+        <ChevronLeftIcon className="w-3.5 h-3.5" />
+      </Button>
+      {pages.map((p, i) =>
+        p === "…" ? (
+          <span key={`ellipsis-${i}`} className="w-7 h-7 flex items-center justify-center text-xs text-muted-foreground">…</span>
+        ) : (
+          <Button key={p} variant={p === page ? "default" : "outline"} size="icon" className="w-7 h-7 text-xs" onClick={() => onPage(p as number)}>
+            {p}
+          </Button>
+        )
+      )}
+      <Button variant="outline" size="icon" className="w-7 h-7" disabled={page === totalPages} onClick={() => onPage(page + 1)}>
+        <ChevronRightIcon className="w-3.5 h-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────
+
 interface Props {
   initialOrders: DeliveryOrderListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  initialSearch: string;
+  initialStatus: string;
   pendingSos: PendingSoForDoRow[];
   permissions: string[];
   currentUserId: string;
 }
 
-export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions, currentUserId }: Props) {
-  const router = useRouter();
-  const [search, setSearch] = useState("");
-  const [deleting, setDeleting] = useState<string | null>(null);
+export function DeliveryOrderListClient({ initialOrders, total, page, pageSize, initialSearch, initialStatus, pendingSos, permissions, currentUserId }: Props) {
+  const router   = useRouter();
+  const pathname = usePathname();
+
+  const [searchInput, setSearchInput]   = useState(initialSearch);
+  const [statusFilter, setStatusFilter] = useState(initialStatus);
+  const [deleting, setDeleting]         = useState<string | null>(null);
   const { isSwitchingOrg, setOrgSwitching } = useAppStore();
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
   useEffect(() => { setOrgSwitching(false); }, [initialOrders]);
+  useEffect(() => { setSearchInput(initialSearch); },  [initialSearch]);
+  useEffect(() => { setStatusFilter(initialStatus); }, [initialStatus]);
 
-  const filtered = initialOrders.filter((o) => {
-    if (!search) return true;
-    const s = search.toLowerCase();
-    const snap = o.customerSnapshot as any;
-    return (
-      o.doNo.toLowerCase().includes(s) ||
-      snap?.name?.toLowerCase().includes(s) ||
-      snap?.organizationName?.toLowerCase().includes(s) ||
-      o.deliveredTo?.toLowerCase().includes(s) ||
-      o.salesOrderNo?.toLowerCase().includes(s) ||
-      o.status.toLowerCase().includes(s) ||
-      o.createdByName?.toLowerCase().includes(s)
-    );
-  });
+  // ── URL navigation ────────────────────────────────────────────────────
+
+  const pushParams = useCallback(
+    (updates: Record<string, string>) => {
+      const params = new URLSearchParams(window.location.search);
+      Object.entries(updates).forEach(([k, v]) => {
+        if (v) params.set(k, v);
+        else params.delete(k);
+      });
+      router.push(`${pathname}?${params.toString()}`);
+    },
+    [pathname, router],
+  );
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      pushParams({ search: searchInput, page: "" });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [searchInput]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleStatusFilter = (v: string) => {
+    setStatusFilter(v);
+    pushParams({ status: v, page: "" });
+  };
+
+  const handlePage = (p: number) => {
+    pushParams({ page: p === 1 ? "" : String(p) });
+  };
 
   async function handleDelete(id: string, doNo: string) {
     if (!confirm(`Delete ${doNo}? This cannot be undone.`)) return;
@@ -80,6 +154,9 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
       setDeleting(null);
     }
   }
+
+  const totalPages = Math.ceil(total / pageSize);
+  const isFiltered = !!searchInput || !!statusFilter;
 
   return (
     <div className="p-6">
@@ -99,9 +176,7 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
         <div className="border border-teal-200 dark:border-teal-800/50 rounded-xl overflow-hidden mb-4">
           <div className="flex items-center gap-2 px-4 py-2.5 bg-teal-50 dark:bg-teal-950/20 border-b border-teal-200 dark:border-teal-800/50">
             <TruckIcon className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
-            <span className="text-xs font-semibold text-teal-700 dark:text-teal-400">
-              Pending DO Creation
-            </span>
+            <span className="text-xs font-semibold text-teal-700 dark:text-teal-400">Pending DO Creation</span>
             <span className="ml-auto text-[10px] text-teal-600 dark:text-teal-500 tabular-nums">
               {pendingSos.length} sales order{pendingSos.length !== 1 ? "s" : ""} ready to deliver
             </span>
@@ -136,9 +211,7 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
                           {so.customers.map((c, i) => (
                             <span key={i}>
                               {c.name}
-                              {c.organizationName && (
-                                <span className="text-muted-foreground/60"> · {c.organizationName}</span>
-                              )}
+                              {c.organizationName && <span className="text-muted-foreground/60"> · {c.organizationName}</span>}
                             </span>
                           ))}
                         </span>
@@ -159,19 +232,39 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
         </div>
       )}
 
-      <div className="relative mb-4">
-        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by DO no., customer, SO no., status..."
-          className="pl-9 h-9 text-sm"
-        />
-        {search && (
-          <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-            <XIcon className="w-3.5 h-3.5" />
-          </button>
-        )}
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center mb-2">
+        <div className="relative flex-1 min-w-0">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search by DO no., customer, SO no., status..."
+            className="pl-9 h-9 text-sm"
+          />
+          {searchInput && (
+            <button onClick={() => setSearchInput("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 flex-wrap">
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => handleStatusFilter(f.value)}
+              className={cn(
+                "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                statusFilter === f.value
+                  ? "bg-foreground text-background border-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30",
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isSwitchingOrg ? (
@@ -188,31 +281,38 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
             </div>
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : initialOrders.length === 0 ? (
         <>
           <div className="text-xs text-muted-foreground mb-3 tabular-nums">0 orders</div>
           <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
             <TruckIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-            <div className="text-sm font-medium mb-1">No delivery orders yet</div>
-            <div className="text-xs mb-4">Create your first delivery order to get started</div>
-            {can("delivery-order:create") && (
-              <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/fulfillment/delivery/create")}>
-                <PlusIcon className="w-3.5 h-3.5" /> New DO
-              </Button>
+            <div className="text-sm font-medium mb-1">
+              {isFiltered ? "No delivery orders match your filter" : "No delivery orders yet"}
+            </div>
+            {!isFiltered && (
+              <>
+                <div className="text-xs mb-4">Create your first delivery order to get started</div>
+                {can("delivery-order:create") && (
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/fulfillment/delivery/create")}>
+                    <PlusIcon className="w-3.5 h-3.5" /> New DO
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </>
       ) : (
         <>
           <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-            {filtered.length} order{filtered.length !== 1 ? "s" : ""}
+            {total} order{total !== 1 ? "s" : ""} total
+            {totalPages > 1 && ` · page ${page} / ${totalPages}`}
           </div>
           <div className="space-y-2">
-            {filtered.map((o) => {
-              const snap = o.customerSnapshot as any;
+            {initialOrders.map((o) => {
+              const snap        = o.customerSnapshot as any;
               const accentColor = DO_STATUS[o.status]?.accent ?? "bg-muted";
-              const orgName = snap?.organizationName;
-              const personName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+              const orgName     = snap?.organizationName;
+              const personName  = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
 
               return (
                 <div
@@ -220,15 +320,13 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
                   className="flex overflow-hidden rounded-xl border border-border bg-background hover:bg-muted/20 transition-colors cursor-pointer"
                   onClick={() => router.push(`/dashboard/fulfillment/delivery/${o.id}`)}
                 >
-                  {/* Status accent stripe */}
                   <div className={`w-1 shrink-0 ${accentColor}`} />
 
                   <div className="flex-1 min-w-0 px-4 py-3">
-                    {/* Row 1: DO number + status + SO link */}
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="font-mono text-sm font-semibold tracking-tight">
-                          <Highlight text={o.doNo} query={search} />
+                          <Highlight text={o.doNo} query={searchInput} />
                         </span>
                         <StatusBadge status={o.status} />
                         {o.status === "delivered" && !o.invoiceId && can("invoice:read") && (
@@ -248,20 +346,17 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
                         )}
                       </div>
                       {o.deliveryDate && (
-                        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                          {fmtDate(o.deliveryDate)}
-                        </span>
+                        <span className="text-xs text-muted-foreground tabular-nums shrink-0">{fmtDate(o.deliveryDate)}</span>
                       )}
                     </div>
 
-                    {/* Row 2: Org + person */}
                     {(orgName || personName) && (
                       <div className="mt-1.5 flex flex-col gap-0.5">
                         {orgName && (
                           <div className="flex items-center gap-1.5 min-w-0">
                             <BuildingIcon className="w-3 h-3 text-muted-foreground shrink-0" />
                             <p className="text-[12px] font-medium text-foreground/80 truncate">
-                              <Highlight text={orgName} query={search} />
+                              <Highlight text={orgName} query={searchInput} />
                             </p>
                           </div>
                         )}
@@ -269,14 +364,13 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
                           <div className="flex items-center gap-1.5 min-w-0">
                             <UserIcon className="w-3 h-3 text-muted-foreground shrink-0" />
                             <p className="text-[11px] text-muted-foreground truncate">
-                              <Highlight text={personName} query={search} />
+                              <Highlight text={personName} query={searchInput} />
                             </p>
                           </div>
                         )}
                       </div>
                     )}
 
-                    {/* Row 3: date + creator + delivered to */}
                     <div className="flex items-center justify-between mt-1.5">
                       <div className="flex items-center gap-3 flex-wrap">
                         {o.createdByName && (
@@ -312,6 +406,8 @@ export function DeliveryOrderListClient({ initialOrders, pendingSos, permissions
               );
             })}
           </div>
+
+          <Pagination page={page} totalPages={totalPages} onPage={handlePage} />
         </>
       )}
     </div>

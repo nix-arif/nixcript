@@ -19,7 +19,7 @@ import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, isNotNull, isNull, notExists, ne, sql } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, isNotNull, isNull, notExists, ne, sql, or, count } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -290,15 +290,50 @@ export async function getDeliveryOrdersBySoId(
     .orderBy(asc(deliveryOrder.createdAt));
 }
 
-export async function getDeliveryOrders(): Promise<DeliveryOrderListRow[]> {
-  const { orgId } = await requireAccess("delivery-order:read");
-  const rows = await db
-    .select()
-    .from(deliveryOrder)
-    .where(eq(deliveryOrder.organizationId, orgId))
-    .orderBy(desc(deliveryOrder.doNo));
+export const DO_PAGE_SIZE = 50;
 
-  if (rows.length === 0) return [];
+export type DeliveryOrderListResult = {
+  rows: DeliveryOrderListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export async function getDeliveryOrders(opts: {
+  page?: number;
+  search?: string;
+  status?: string;
+} = {}): Promise<DeliveryOrderListResult> {
+  const { orgId } = await requireAccess("delivery-order:read");
+  const page     = Math.max(1, opts.page ?? 1);
+  const pageSize = DO_PAGE_SIZE;
+  const offset   = (page - 1) * pageSize;
+
+  const conditions: any[] = [eq(deliveryOrder.organizationId, orgId)];
+  if (opts.status) conditions.push(eq(deliveryOrder.status, opts.status));
+  if (opts.search?.trim()) {
+    const q = `%${opts.search.trim()}%`;
+    conditions.push(or(
+      sql`${deliveryOrder.doNo} ILIKE ${q}`,
+      sql`${deliveryOrder.salesOrderNo} ILIKE ${q}`,
+      sql`${deliveryOrder.customerPoNo} ILIKE ${q}`,
+      sql`${deliveryOrder.deliveredTo} ILIKE ${q}`,
+      sql`${deliveryOrder.status} ILIKE ${q}`,
+      sql`(${deliveryOrder.customerSnapshot}->>'name') ILIKE ${q}`,
+      sql`(${deliveryOrder.customerSnapshot}->>'organizationName') ILIKE ${q}`,
+    ));
+  }
+
+  const where = and(...conditions);
+
+  const [rows, [{ total }]] = await Promise.all([
+    db.select().from(deliveryOrder).where(where)
+      .orderBy(desc(deliveryOrder.doNo))
+      .limit(pageSize).offset(offset),
+    db.select({ total: count() }).from(deliveryOrder).where(where),
+  ]);
+
+  if (rows.length === 0) return { rows: [], total: Number(total), page, pageSize };
 
   const deliveredIds = rows.filter((r) => r.status === "delivered").map((r) => r.id);
   const [users, invoiceRows] = await Promise.all([
@@ -312,12 +347,17 @@ export async function getDeliveryOrders(): Promise<DeliveryOrderListRow[]> {
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
   const invByDo = new Map(invoiceRows.map((i) => [i.deliveryOrderId, { id: i.id, no: i.invoiceNo }]));
 
-  return rows.map((r) => ({
-    ...r,
-    createdByName: nameOf(r.createdBy),
-    invoiceId: invByDo.get(r.id)?.id ?? null,
-    invoiceNo: invByDo.get(r.id)?.no ?? null,
-  }));
+  return {
+    rows: rows.map((r) => ({
+      ...r,
+      createdByName: nameOf(r.createdBy),
+      invoiceId: invByDo.get(r.id)?.id ?? null,
+      invoiceNo: invByDo.get(r.id)?.no ?? null,
+    })),
+    total: Number(total),
+    page,
+    pageSize,
+  };
 }
 
 export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderWithItems | null> {

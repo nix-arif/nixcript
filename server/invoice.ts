@@ -22,7 +22,7 @@ import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, or } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, or, sql, count } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -268,17 +268,55 @@ function calcProfit(grandTotal: string, costTotal: string, expensesTotal: string
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
-export async function getInvoices(): Promise<InvoiceListRow[]> {
+export const INVOICE_PAGE_SIZE = 50;
+
+export type InvoiceListResult = {
+  rows: InvoiceListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export async function getInvoices(opts: {
+  page?: number;
+  search?: string;
+  status?: string;
+} = {}): Promise<InvoiceListResult> {
   const { orgId } = await requireAccess("invoice:read");
-  const rows = await db
-    .select()
-    .from(invoice)
-    .where(eq(invoice.organizationId, orgId))
-    .orderBy(desc(invoice.createdAt));
+  const page     = Math.max(1, opts.page ?? 1);
+  const pageSize = INVOICE_PAGE_SIZE;
+  const offset   = (page - 1) * pageSize;
 
-  if (rows.length === 0) return [];
+  const conditions: ReturnType<typeof eq>[] = [eq(invoice.organizationId, orgId) as any];
+  if (opts.status) conditions.push(eq(invoice.status, opts.status) as any);
+  if (opts.search?.trim()) {
+    const q = `%${opts.search.trim()}%`;
+    conditions.push(or(
+      sql`${invoice.invoiceNo} ILIKE ${q}`,
+      sql`${invoice.customerPoNo} ILIKE ${q}`,
+      sql`${invoice.salesOrderNo} ILIKE ${q}`,
+      sql`${invoice.salesPersonName} ILIKE ${q}`,
+      sql`${invoice.applicationSpecialistName} ILIKE ${q}`,
+      sql`${invoice.caseType} ILIKE ${q}`,
+      sql`${invoice.mrnNo} ILIKE ${q}`,
+      sql`${invoice.status} ILIKE ${q}`,
+      sql`(${invoice.customerSnapshot}->>'name') ILIKE ${q}`,
+      sql`(${invoice.customerSnapshot}->>'organizationName') ILIKE ${q}`,
+    ) as any);
+  }
 
-  const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
+  const where = and(...conditions);
+
+  const [rows, [{ total }]] = await Promise.all([
+    db.select().from(invoice).where(where)
+      .orderBy(desc(invoice.invoiceNo))
+      .limit(pageSize).offset(offset),
+    db.select({ total: count() }).from(invoice).where(where),
+  ]);
+
+  if (rows.length === 0) return { rows: [], total: Number(total), page, pageSize };
+
+  const creatorIds  = [...new Set(rows.map((r) => r.createdBy))];
   const customerIds = [...new Set(rows.map((r) => r.customerId).filter(Boolean))] as string[];
   const [users, liveCustomers] = await Promise.all([
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds)),
@@ -286,11 +324,16 @@ export async function getInvoices(): Promise<InvoiceListRow[]> {
   ]);
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
 
-  return rows.map((r) => ({
-    ...r,
-    customerSnapshot: mergeSnapshot(r.customerSnapshot, r.customerId ? liveCustomers.get(r.customerId) : undefined),
-    createdByName: nameOf(r.createdBy),
-  }));
+  return {
+    rows: rows.map((r) => ({
+      ...r,
+      customerSnapshot: mergeSnapshot(r.customerSnapshot, r.customerId ? liveCustomers.get(r.customerId) : undefined),
+      createdByName: nameOf(r.createdBy),
+    })),
+    total: Number(total),
+    page,
+    pageSize,
+  };
 }
 
 export async function getStatementOfAccount(): Promise<SoaOrganization[]> {
