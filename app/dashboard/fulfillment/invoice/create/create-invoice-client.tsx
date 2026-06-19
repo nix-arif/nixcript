@@ -337,7 +337,7 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
   const [dueDate, setDueDate] = useState(() =>
     doData?.dueDate ? new Date(doData.dueDate).toISOString().slice(0, 10) : ""
   );
-  const [paymentTerms, setPaymentTerms] = useState(doData?.paymentTerm ?? "");
+  const [paymentTerms, setPaymentTerms] = useState(doData?.paymentTerm ?? "30 days");
   const [status, setStatus] = useState("draft");
   const [notes, setNotes] = useState("");
   const [categoryIds, setCategoryIds] = useState<string[]>(() =>
@@ -804,7 +804,7 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
                     <td className="py-1.5 pr-2"><Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs text-right", item.inherited && "bg-transparent border-transparent")} /></td>
                     <td className="py-1.5 pr-2"><Input value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} readOnly={item.inherited} className={cn("h-7 text-xs text-right", item.inherited && "bg-transparent border-transparent")} /></td>
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">{fmtNum(item.totalPrice ?? "0")}</td>
-                    <td className="py-1.5 pr-2"><Input value={item.costUnitPrice ?? "0"} onChange={(e) => updateItem(item._key, { costUnitPrice: e.target.value, costTotal: calcCostLineTotal(e.target.value, item.qty ?? "1") })} className="h-7 text-xs text-right border-amber-300 dark:border-amber-700 focus-visible:ring-amber-400" /></td>
+                    <td className="py-1.5 pr-2"><Input value={item.costUnitPrice ?? "0"} onChange={(e) => updateItem(item._key, { costUnitPrice: e.target.value, costTotal: calcCostLineTotal(e.target.value, item.qty ?? "1") })} readOnly={item.inherited} className={cn("h-7 text-xs text-right border-amber-300 dark:border-amber-700 focus-visible:ring-amber-400", item.inherited && "bg-transparent border-transparent")} /></td>
                     <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-amber-700 dark:text-amber-400">{fmtNum(item.costTotal ?? "0")}</td>
                     <td className="py-1.5"><button onClick={() => removeLine(item._key)} disabled={item.inherited || items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"><TrashIcon className="w-3.5 h-3.5" /></button></td>
                   </tr>
