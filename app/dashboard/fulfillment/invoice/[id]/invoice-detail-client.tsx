@@ -122,31 +122,17 @@ export function InvoiceDetailClient({
             <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/invoice")} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
-            {isDraft ? (
-              <>
-                {isOwner && can("invoice:update") && (
-                  <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/fulfillment/invoice/${invoice.id}/edit`)} className="gap-1.5">
-                    <PencilIcon className="w-3.5 h-3.5" /> Edit
-                  </Button>
-                )}
-                {isOwner && can("invoice:delete") && (
-                  <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
-                    <TrashIcon className="w-3.5 h-3.5" /> Delete
-                  </Button>
-                )}
-              </>
-            ) : isCancelled ? (
-              <>
-                <StatusBadge status={status} />
-                {isOwner && can("invoice:delete") && (
-                  <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
-                    <TrashIcon className="w-3.5 h-3.5" /> Delete
-                  </Button>
-                )}
-              </>
-            ) : (
-              <StatusBadge status={status} />
+            {can("invoice:update") && (
+              <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/fulfillment/invoice/${invoice.id}/edit`)} className="gap-1.5">
+                <PencilIcon className="w-3.5 h-3.5" /> Edit
+              </Button>
             )}
+            {(isDraft || isCancelled) && can("invoice:delete") && (
+              <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
+                <TrashIcon className="w-3.5 h-3.5" /> Delete
+              </Button>
+            )}
+            <StatusBadge status={status} />
           </div>
         }
       />

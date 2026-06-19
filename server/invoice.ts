@@ -165,7 +165,7 @@ function mergeSnapshot(
   };
 }
 
-const EDITABLE_STATUSES = new Set(["draft"]);
+const EDITABLE_STATUSES = new Set(["draft", "sent", "paid", "overdue", "cancelled"]);
 const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
 export interface InvoiceItemInput {

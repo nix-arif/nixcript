@@ -13,7 +13,6 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
 
   const invoice = await getInvoiceDetail(id);
   if (!invoice) notFound();
-  if (invoice.status !== "draft") redirect(`/dashboard/fulfillment/invoice/${id}`);
 
   const [suppliers, customerPos, categories, members] = await Promise.all([
     getSuppliers(),
