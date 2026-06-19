@@ -8,11 +8,14 @@ import {
   consignment,
   invoice,
   deliveryOrder,
+  member,
+  invoiceStats,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { eq, and, desc, isNull, isNotNull, inArray, sql, gte } from "drizzle-orm";
+import type { InvoiceStatsRow } from "@/server/invoice";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -82,6 +85,10 @@ export interface DashboardSummary {
     invoice: boolean;
     do: boolean;
   };
+
+  // Stakeholder / shareholder view
+  isStakeholder: boolean;
+  invoiceStats: InvoiceStatsRow | null;
 }
 
 function cpoSnap(snap: any): { name: string | null; org: string | null } {
@@ -94,7 +101,16 @@ function cpoSnap(snap: any): { name: string | null; org: string | null } {
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   const { orgId, userId } = await getSession();
-  const perms = await getUserPermissions(userId, orgId);
+  const [perms, memberRow] = await Promise.all([
+    getUserPermissions(userId, orgId),
+    db.select({ role: member.role })
+      .from(member)
+      .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
+      .limit(1)
+      .then((r) => r[0] ?? null),
+  ]);
+
+  const isStakeholder = memberRow?.role === "stakeholder";
 
   const can = {
     cpo:         hasAccess(perms, "customer-po:read"),
@@ -105,7 +121,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     do:          hasAccess(perms, "delivery-order:read"),
   };
 
-  const [cpoRows, soRows, qtRows, consignmentRows, invoiceRows, doRows] = await Promise.all([
+  const [cpoRows, soRows, qtRows, consignmentRows, invoiceRows, doRows, statsRow] = await Promise.all([
     can.cpo
       ? db
           .select()
@@ -157,6 +173,10 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
           ))
           .where(eq(deliveryOrder.organizationId, orgId))
       : Promise.resolve([] as { id: string; status: string; salesOrderId: string | null; invoiceId: string | null }[]),
+
+    isStakeholder
+      ? db.select().from(invoiceStats).where(eq(invoiceStats.organizationId, orgId)).limit(1).then((r) => r[0] ?? null)
+      : Promise.resolve(null),
   ]);
 
   // Map CPO rows
@@ -246,5 +266,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     recentCpos,
     recentSos,
     can,
+    isStakeholder,
+    invoiceStats: statsRow,
   };
 }

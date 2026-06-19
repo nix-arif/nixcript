@@ -16,6 +16,10 @@ import {
   UserIcon,
   TruckIcon,
   ReceiptIcon,
+  TrendingUpIcon,
+  WalletIcon,
+  BanknoteIcon,
+  AlertTriangleIcon,
 } from "lucide-react";
 
 const fmtDate = (d: Date | string) =>
@@ -283,6 +287,167 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
+// ── Stakeholder financial panel ─────────────────────────────────────────────
+
+function FinCard({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  accent,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  icon: React.ElementType;
+  accent: string;
+}) {
+  return (
+    <div className="rounded-xl border bg-card overflow-hidden flex flex-col">
+      <div className="p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground font-medium">{label}</span>
+          <span className={cn("rounded-lg p-1.5 shrink-0", accent)}>
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+        </div>
+        <p className="text-2xl font-bold tabular-nums leading-none">{value}</p>
+        {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+function StakeholderPanel({ stats }: { stats: DashboardSummary["invoiceStats"] }) {
+  if (!stats) return null;
+  const fmt = (v: string | number) =>
+    `RM ${Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <TrendingUpIcon className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-[13px] font-semibold">Financial Overview</h2>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <FinCard
+          label="Total Billed"
+          value={fmt(stats.totalBilled)}
+          sub={`${stats.totalCount} invoice${stats.totalCount !== 1 ? "s" : ""}`}
+          icon={ReceiptIcon}
+          accent="bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+        />
+        <FinCard
+          label="Collected"
+          value={fmt(stats.totalCollected)}
+          sub={`${stats.paidCount} paid`}
+          icon={BanknoteIcon}
+          accent="bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400"
+        />
+        <FinCard
+          label="Outstanding"
+          value={fmt(stats.totalOutstanding)}
+          sub={`${stats.sentCount} sent · ${stats.overdueCount} overdue`}
+          icon={WalletIcon}
+          accent={
+            stats.overdueCount > 0
+              ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400"
+              : "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+          }
+        />
+        <FinCard
+          label="Overdue"
+          value={String(stats.overdueCount)}
+          sub={`${stats.cancelledCount} cancelled`}
+          icon={AlertTriangleIcon}
+          accent={
+            stats.overdueCount > 0
+              ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400"
+              : "bg-muted text-muted-foreground"
+          }
+        />
+      </div>
+
+      {/* Status breakdown bar */}
+      {stats.totalCount > 0 && (
+        <div className="rounded-xl border bg-card p-4 space-y-3">
+          <p className="text-xs font-medium text-muted-foreground">Invoice status breakdown</p>
+          <div className="flex h-2 rounded-full overflow-hidden gap-px">
+            {stats.paidCount > 0 && (
+              <div
+                className="bg-green-500"
+                style={{ width: `${(stats.paidCount / stats.totalCount) * 100}%` }}
+                title={`Paid: ${stats.paidCount}`}
+              />
+            )}
+            {stats.sentCount > 0 && (
+              <div
+                className="bg-blue-400"
+                style={{ width: `${(stats.sentCount / stats.totalCount) * 100}%` }}
+                title={`Sent: ${stats.sentCount}`}
+              />
+            )}
+            {stats.draftCount > 0 && (
+              <div
+                className="bg-amber-400"
+                style={{ width: `${(stats.draftCount / stats.totalCount) * 100}%` }}
+                title={`Draft: ${stats.draftCount}`}
+              />
+            )}
+            {stats.overdueCount > 0 && (
+              <div
+                className="bg-red-500"
+                style={{ width: `${(stats.overdueCount / stats.totalCount) * 100}%` }}
+                title={`Overdue: ${stats.overdueCount}`}
+              />
+            )}
+            {stats.cancelledCount > 0 && (
+              <div
+                className="bg-muted"
+                style={{ width: `${(stats.cancelledCount / stats.totalCount) * 100}%` }}
+                title={`Cancelled: ${stats.cancelledCount}`}
+              />
+            )}
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+            {stats.paidCount > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                Paid {stats.paidCount}
+              </span>
+            )}
+            {stats.sentCount > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-blue-400" />
+                Sent {stats.sentCount}
+              </span>
+            )}
+            {stats.draftCount > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
+                Draft {stats.draftCount}
+              </span>
+            )}
+            {stats.overdueCount > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                Overdue {stats.overdueCount}
+              </span>
+            )}
+            {stats.cancelledCount > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/40" />
+                Cancelled {stats.cancelledCount}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ──────────────────────────────────────────────────────────
 
 interface Props {
@@ -292,7 +457,7 @@ interface Props {
 
 export function DashboardClient({ summary, userName }: Props) {
   const router = useRouter();
-  const { kpi, can, openCpos, pendingSoApprovals, pendingQtApprovals, recentCpos, recentSos } = summary;
+  const { kpi, can, openCpos, pendingSoApprovals, pendingQtApprovals, recentCpos, recentSos, isStakeholder, invoiceStats } = summary;
 
   const totalOpenTasks = openCpos.length + pendingSoApprovals.length + kpi.pendingDoCount + kpi.pendingInvoiceDoCount;
   const firstName = userName?.split(" ")[0] ?? null;
@@ -318,6 +483,9 @@ export function DashboardClient({ summary, userName }: Props) {
           </div>
         )}
       </div>
+
+      {/* Stakeholder financial overview */}
+      {isStakeholder && <StakeholderPanel stats={invoiceStats} />}
 
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
