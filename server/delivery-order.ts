@@ -267,6 +267,8 @@ export interface CreateDeliveryOrderInput {
   items: DeliveryOrderItemInput[];
   // Case DO fields
   isCaseDo?: boolean;
+  salesPersonId?: string;
+  salesPersonName?: string;
   applicationSpecialistId?: string;
   applicationSpecialistName?: string;
   caseType?: string;
@@ -615,6 +617,8 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       notes: input.notes ?? null,
       status: "draft",
       isCaseDo: input.isCaseDo ?? false,
+      salesPersonId: input.salesPersonId ?? null,
+      salesPersonName: input.salesPersonName ?? null,
       applicationSpecialistId: input.applicationSpecialistId ?? null,
       applicationSpecialistName: input.applicationSpecialistName ?? null,
       caseType: input.caseType ?? null,

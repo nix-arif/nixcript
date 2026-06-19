@@ -818,11 +818,17 @@ const newCaseLine = (): CaseLineItem => ({
 function CaseDoForm() {
   const router = useRouter();
 
-  // Reps
+  // Reps / members
   const [reps, setReps] = useState<OrgMember[]>([]);
-  const [repId, setRepId] = useState("");
   const [loadingReps, setLoadingReps] = useState(true);
+
+  // Application specialist (attends case, holds field stock) — required
+  const [repId, setRepId] = useState("");
   const [loadingStock, setLoadingStock] = useState(false);
+
+  // Sales person — defaults to same as app specialist; toggle to override
+  const [splitRoles, setSplitRoles] = useState(false);
+  const [salesPersonId, setSalesPersonId] = useState("");
 
   // Case fields
   const [caseDate, setCaseDate] = useState(new Date().toISOString().split("T")[0]);
@@ -953,6 +959,8 @@ function CaseDoForm() {
 
     setSaving(true);
     try {
+      const effectiveSalesPersonId = splitRoles ? salesPersonId : repId;
+      const effectiveSalesPerson = reps.find((r) => r.id === effectiveSalesPersonId);
       await createDeliveryOrder({
         customerId: selectedCustomer?.id,
         customerPoNo: customerPoNo || undefined,
@@ -960,6 +968,8 @@ function CaseDoForm() {
         notes: notes || undefined,
         items: allItems,
         isCaseDo: true,
+        salesPersonId: effectiveSalesPersonId || undefined,
+        salesPersonName: effectiveSalesPerson?.name,
         applicationSpecialistId: repId,
         applicationSpecialistName: selectedRep?.name,
         caseType: caseType || undefined,
@@ -1007,17 +1017,51 @@ function CaseDoForm() {
         </div>
       </section>
 
-      {/* Application specialist */}
+      {/* Personnel */}
       <section className="border border-border rounded-xl p-4">
-        <h2 className="text-sm font-semibold mb-3">Application specialist <span className="text-destructive">*</span></h2>
+        <h2 className="text-sm font-semibold mb-3">Personnel</h2>
         {loadingReps ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
-          <select value={repId} onChange={(e) => handleRepChange(e.target.value)}
-            className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
-            <option value="">Select rep…</option>
-            {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Sales person / Application specialist <span className="text-destructive">*</span></Label>
+              <select value={repId} onChange={(e) => { handleRepChange(e.target.value); if (!splitRoles) setSalesPersonId(""); }}
+                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
+                <option value="">Select…</option>
+                {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer w-fit">
+              <input type="checkbox" checked={splitRoles} onChange={(e) => { setSplitRoles(e.target.checked); if (!e.target.checked) setSalesPersonId(""); }}
+                className="rounded border-border" />
+              <span className="text-xs text-muted-foreground">Sales person and application specialist are different people</span>
+            </label>
+
+            {splitRoles && (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Application specialist</Label>
+                  <select value={repId} onChange={(e) => handleRepChange(e.target.value)}
+                    className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
+                    <option value="">Select…</option>
+                    {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground">Attends the case · carries field stock</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Sales person</Label>
+                  <select value={salesPersonId} onChange={(e) => setSalesPersonId(e.target.value)}
+                    className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
+                    <option value="">Select…</option>
+                    {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground">Owns the customer account</p>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </section>
 

@@ -2021,6 +2021,8 @@ export const deliveryOrder = pgTable(
 
     // Case DO fields (medical/surgical case-based billing)
     isCaseDo: boolean("is_case_do").notNull().default(false),
+    salesPersonId: text("sales_person_id").references(() => user.id),
+    salesPersonName: text("sales_person_name"),
     applicationSpecialistId: text("application_specialist_id").references(() => user.id),
     applicationSpecialistName: text("application_specialist_name"),
     caseType: text("case_type"),
