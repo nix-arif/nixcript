@@ -883,6 +883,7 @@ export async function sendInvoice(id: string): Promise<void> {
   if (!existing) throw new Error("Invoice not found");
   if (existing.status !== "draft") throw new Error("Only draft invoices can be sent");
   await db.update(invoice).set({ status: "sent" }).where(eq(invoice.id, id));
+  await refreshInvoiceStats(orgId);
 }
 
 export async function markInvoicePaid(id: string, paidAmount?: string): Promise<void> {
@@ -891,6 +892,7 @@ export async function markInvoicePaid(id: string, paidAmount?: string): Promise<
   if (!existing) throw new Error("Invoice not found");
   if (!["sent", "overdue"].includes(existing.status)) throw new Error("Only sent or overdue invoices can be marked as paid");
   await db.update(invoice).set({ status: "paid", paidAt: new Date(), paidAmount: paidAmount ?? existing.grandTotal }).where(eq(invoice.id, id));
+  await refreshInvoiceStats(orgId);
 }
 
 export async function markInvoiceOverdue(id: string): Promise<void> {
@@ -899,6 +901,7 @@ export async function markInvoiceOverdue(id: string): Promise<void> {
   if (!existing) throw new Error("Invoice not found");
   if (existing.status !== "sent") throw new Error("Only sent invoices can be marked as overdue");
   await db.update(invoice).set({ status: "overdue" }).where(eq(invoice.id, id));
+  await refreshInvoiceStats(orgId);
 }
 
 export async function cancelInvoice(id: string): Promise<void> {
@@ -907,6 +910,7 @@ export async function cancelInvoice(id: string): Promise<void> {
   if (!existing) throw new Error("Invoice not found");
   if (["paid", "cancelled"].includes(existing.status)) throw new Error("Cannot cancel a paid or already cancelled invoice");
   await db.update(invoice).set({ status: "cancelled" }).where(eq(invoice.id, id));
+  await refreshInvoiceStats(orgId);
 }
 
 export interface CreateInvoiceManualInput extends CreateInvoiceInput {
@@ -1049,5 +1053,6 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
   }
 
   revalidatePath("/dashboard/fulfillment/invoice");
+  await refreshInvoiceStats(orgId);
   return row;
 }
