@@ -139,11 +139,11 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
             <button
               key={p.id}
               type="button"
-              className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex gap-2"
+              className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex flex-col gap-0.5"
               onClick={() => select(p)}
             >
               <span className="font-mono font-medium">{p.productCode}</span>
-              <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
+              {p.description && <span className="text-muted-foreground whitespace-normal">{p.description}</span>}
             </button>
           ))}
         </div>
@@ -341,7 +341,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
               {group.rows.map(item => (
                 <TableRow key={item.id} className={item.isLowStock ? "bg-amber-50/40 dark:bg-amber-900/10" : ""}>
                   <TableCell className="font-mono text-xs font-medium">{item.productCode}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{item.description ?? "—"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{item.description ?? "—"}</TableCell>
                   <TableCell className="text-center text-xs text-muted-foreground">{item.uom ?? "—"}</TableCell>
                   <TableCell className="text-right font-medium tabular-nums">{fmt(item.quantity)}</TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{fmt(item.reservedQty)}</TableCell>
