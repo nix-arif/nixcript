@@ -413,13 +413,30 @@ export async function createCustomerOrganization(data: {
 
   const trimmedName = data.name.trim();
 
-  // Case-insensitive duplicate check — return existing rather than erroring
+  // Resolve all org IDs for the same owner so name is unique owner-wide
+  const [ownerMember] = await db
+    .select()
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+    .limit(1);
+
+  let ownerOrgIds = [orgId];
+  if (ownerMember) {
+    const owned = await db
+      .select({ organizationId: member.organizationId })
+      .from(member)
+      .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
+    const ids = [...new Set(owned.map((m) => m.organizationId))];
+    if (ids.length > 0) ownerOrgIds = ids;
+  }
+
+  // Case-insensitive duplicate check across all owner tenants
   const [existing] = await db
     .select()
     .from(customerOrganization)
     .where(
       and(
-        eq(customerOrganization.organizationId, orgId),
+        inArray(customerOrganization.organizationId, ownerOrgIds),
         ilike(customerOrganization.name, trimmedName),
       ),
     )
