@@ -42,3 +42,4 @@ next-env.d.ts
 
 # cloude
 .claude/worktrees/
+claude/worktrees/agent-a987bba63dd3c6047
