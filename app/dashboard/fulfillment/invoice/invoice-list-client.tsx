@@ -219,7 +219,7 @@ export function InvoiceListClient({
   );
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("customerPoNo");
+  const [sortKey, setSortKey] = useState<SortKey>("invoiceNo");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [deleting, setDeleting] = useState<string | null>(null);
   const { isSwitchingOrg, setOrgSwitching } = useAppStore();
@@ -727,7 +727,9 @@ export function InvoiceListClient({
                       <td className="px-3 py-2.5 hidden xl:table-cell">
                         {inv.categoryIds?.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
-                            {inv.categoryIds.map((id) => {
+                            {[...inv.categoryIds]
+                              .sort((a, b) => (catMap.get(a)?.position ?? 0) - (catMap.get(b)?.position ?? 0))
+                              .map((id) => {
                               const cat = catMap.get(id);
                               if (!cat) return null;
                               const hex = cat.color ?? "#6366f1";
