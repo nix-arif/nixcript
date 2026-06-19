@@ -129,7 +129,16 @@ export function EditInvoiceClient({ invoice, suppliers, allCustomerPos, categori
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(initialCustomer ?? null);
-  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>(undefined);
+  const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>(() => {
+    const companies = (initialCustomer as any)?.companies ?? [];
+    if (companies.length === 0) return undefined;
+    if (snap?.organizationName) {
+      const matched = companies.find((c: any) => c.organizationName === snap.organizationName);
+      if (matched) return matched.id;
+    }
+    const primary = companies.find((c: any) => c.isPrimary) ?? companies[0];
+    return primary?.id;
+  });
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Customer PO
@@ -142,7 +151,13 @@ export function EditInvoiceClient({ invoice, suppliers, allCustomerPos, categori
   );
 
   // Billing address
-  const [billingAddress, setBillingAddress] = useState(invoice.billingAddress ?? snap?.organizationAddress ?? "");
+  const [billingAddress, setBillingAddress] = useState(() => {
+    if (invoice.billingAddress) return invoice.billingAddress;
+    if (snap?.organizationAddress) return snap.organizationAddress;
+    const companies = (initialCustomer as any)?.companies ?? [];
+    const primary = companies.find((c: any) => c.isPrimary) ?? companies[0];
+    return primary?.organizationAddress ?? "";
+  });
 
   // Document links
   const [quotationNo, setQuotationNo] = useState(invoice.quotationNo ?? "");

@@ -710,7 +710,7 @@ export function InvoiceListClient({
                       {/* Hospital */}
                       <td className="px-3 py-2.5 max-w-40">
                         {snap?.organizationName ? (
-                          <span className="text-xs truncate block">
+                          <span className="text-xs wrap-break-word leading-snug">
                             <Highlight
                               text={snap.organizationName}
                               query={search}
