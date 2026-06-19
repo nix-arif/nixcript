@@ -2019,6 +2019,14 @@ export const deliveryOrder = pgTable(
     notes: text("notes"),
     status: text("status").notNull().default("draft"), // draft | delivered | returned
 
+    // Case DO fields (medical/surgical case-based billing)
+    isCaseDo: boolean("is_case_do").notNull().default(false),
+    applicationSpecialistId: text("application_specialist_id").references(() => user.id),
+    applicationSpecialistName: text("application_specialist_name"),
+    caseType: text("case_type"),
+    caseDate: timestamp("case_date"),
+    mrnNo: text("mrn_no"),
+
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")

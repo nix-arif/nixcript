@@ -265,6 +265,13 @@ export interface CreateDeliveryOrderInput {
   deliveryDate?: Date;
   notes?: string;
   items: DeliveryOrderItemInput[];
+  // Case DO fields
+  isCaseDo?: boolean;
+  applicationSpecialistId?: string;
+  applicationSpecialistName?: string;
+  caseType?: string;
+  caseDate?: Date;
+  mrnNo?: string;
 }
 
 export interface UpdateDeliveryOrderInput extends Omit<CreateDeliveryOrderInput, "items"> {
@@ -607,6 +614,12 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       deliveryDate: input.deliveryDate ?? null,
       notes: input.notes ?? null,
       status: "draft",
+      isCaseDo: input.isCaseDo ?? false,
+      applicationSpecialistId: input.applicationSpecialistId ?? null,
+      applicationSpecialistName: input.applicationSpecialistName ?? null,
+      caseType: input.caseType ?? null,
+      caseDate: input.caseDate ?? null,
+      mrnNo: input.mrnNo ?? null,
       createdBy: userId,
     })
     .returning();
@@ -626,6 +639,54 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       })),
     );
   }
+
+  // Case DO: deduct used items from the rep's field stock
+  if (input.isCaseDo && input.applicationSpecialistId) {
+    const { fieldWarehouseLabel, MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
+    const { stockLevel, stockMovement, product: productTable } = await import("@/db/schema");
+    const fieldLabel = fieldWarehouseLabel(input.applicationSpecialistId);
+    const now = new Date();
+
+    for (const item of input.items) {
+      if (!item.productId) continue;
+      const qty = parseFloat(item.qty ?? "1");
+      if (qty <= 0) continue;
+
+      const [prod] = await db.select({ productCode: productTable.productCode })
+        .from(productTable).where(eq(productTable.id, item.productId)).limit(1);
+      if (!prod) continue;
+
+      const [fieldLevel] = await db.select()
+        .from(stockLevel)
+        .where(and(
+          eq(stockLevel.organizationId, orgId),
+          eq(stockLevel.productId, item.productId),
+          eq(stockLevel.warehouseLabel, fieldLabel),
+        )).limit(1);
+
+      const currentQty = parseFloat(fieldLevel?.quantity ?? "0");
+      const newQty = Math.max(0, currentQty - qty);
+
+      if (fieldLevel) {
+        await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
+          .where(eq(stockLevel.id, fieldLevel.id));
+      }
+
+      await db.insert(stockMovement).values({
+        id: nanoid(), organizationId: orgId, productId: item.productId,
+        productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: null,
+        movementType: MT.CASE_USE,
+        quantity: (-qty).toFixed(4), balanceAfter: newQty.toFixed(4),
+        referenceType: RT.CASE, referenceId: row.id, referenceNo: doNo,
+        notes: `Case usage — ${doNo}${input.caseType ? ` (${input.caseType})` : ""}`,
+        status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+      });
+    }
+
+    revalidatePath("/dashboard/inventory/field-stock");
+    revalidatePath("/dashboard/inventory");
+  }
+
   if (input.salesOrderId) {
     await checkAndFulfillSo(input.salesOrderId, orgId);
   }

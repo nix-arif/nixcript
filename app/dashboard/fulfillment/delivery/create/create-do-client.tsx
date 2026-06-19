@@ -7,15 +7,18 @@ import { createDeliveryOrder, getSoRemainingItems, type DeliveryOrderItemInput, 
 import { searchConfirmedSalesOrders, getSalesOrderDetail, type CpoCustomer } from "@/server/sales-order";
 import { searchProducts } from "@/server/inventory";
 import { getCustomers, getCustomer } from "@/server/customer";
+import { getFieldReps, getRepFieldStock, type OrgMember, type RepStockItem } from "@/server/field-stock";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
+import { cn } from "@/lib/utils";
 import {
   ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon,
   BuildingIcon, LinkIcon, CheckCircle2Icon, Loader2Icon,
+  StethoscopeIcon, ShoppingCartIcon,
 } from "lucide-react";
 
 type Customer = Awaited<ReturnType<typeof getCustomer>>;
@@ -348,17 +351,63 @@ function SoPicker({ onSelect }: SoPickerProps) {
   );
 }
 
+// ── Mode selector ──────────────────────────────────────────────────────────
+
+function ModeSelector({ onSelect }: { onSelect: (mode: "case" | "so") => void }) {
+  const router = useRouter();
+  return (
+    <div className="p-6">
+      <PageHeader
+        title="New Delivery Order"
+        description="Choose the type of delivery order to create."
+        action={
+          <Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5">
+            <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+          </Button>
+        }
+      />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mt-2">
+        {([
+          {
+            key: "case" as const,
+            icon: StethoscopeIcon,
+            title: "Case DO",
+            desc: "Per-case billing — no Sales Order required. Deducts rep's field stock automatically.",
+            accent: "border-teal-300 dark:border-teal-700 hover:bg-teal-50 dark:hover:bg-teal-900/20",
+          },
+          {
+            key: "so" as const,
+            icon: ShoppingCartIcon,
+            title: "From Sales Order",
+            desc: "Linked to a confirmed Sales Order. For tender/contract fulfilment.",
+            accent: "border-blue-300 dark:border-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20",
+          },
+        ]).map((opt) => (
+          <button
+            key={opt.key}
+            onClick={() => onSelect(opt.key)}
+            className={cn("rounded-xl border-2 p-5 text-left transition-colors bg-card", opt.accent)}
+          >
+            <opt.icon className="w-5 h-5 mb-2 text-muted-foreground" />
+            <p className="text-sm font-semibold">{opt.title}</p>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{opt.desc}</p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function CreateDeliveryOrderClient({ prefill }: { prefill?: PrefillData }) {
   const router = useRouter();
+  const [mode, setMode] = useState<"case" | "so" | null>(prefill ? "so" : null);
   const [activePrefill, setActivePrefill] = useState<PrefillData | undefined>(prefill);
 
-  // Show SO picker when no prefill
-  if (!activePrefill) {
-    return <SoPicker onSelect={setActivePrefill} />;
-  }
-
+  if (!mode) return <ModeSelector onSelect={setMode} />;
+  if (mode === "case") return <CaseDoForm />;
+  if (!activePrefill) return <SoPicker onSelect={setActivePrefill} />;
   return <DoForm prefill={activePrefill} />;
 }
 
@@ -744,6 +793,387 @@ function DoForm({ prefill }: { prefill: PrefillData }) {
         <Button variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Case DO form ────────────────────────────────────────────────────────────
+
+interface CaseLineItem {
+  _key: string;
+  productId?: string;
+  productCode: string;
+  description: string;
+  qty: string;
+  uom: string;
+  fromFieldStock?: boolean;
+  fieldAvailable?: number;
+}
+
+const newCaseLine = (): CaseLineItem => ({
+  _key: crypto.randomUUID(), productCode: "", description: "", qty: "1", uom: "",
+});
+
+function CaseDoForm() {
+  const router = useRouter();
+
+  // Reps
+  const [reps, setReps] = useState<OrgMember[]>([]);
+  const [repId, setRepId] = useState("");
+  const [loadingReps, setLoadingReps] = useState(true);
+  const [loadingStock, setLoadingStock] = useState(false);
+
+  // Case fields
+  const [caseDate, setCaseDate] = useState(new Date().toISOString().split("T")[0]);
+  const [caseType, setCaseType] = useState("");
+  const [mrnNo, setMrnNo] = useState("");
+
+  // Customer
+  const [custSearch, setCustSearch] = useState("");
+  const [custResults, setCustResults] = useState<Awaited<ReturnType<typeof getCustomers>>>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const custTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Items
+  const [fieldItems, setFieldItems] = useState<CaseLineItem[]>([]);
+  const [extraItems, setExtraItems] = useState<CaseLineItem[]>([newCaseLine()]);
+
+  // Other
+  const [customerPoNo, setCustomerPoNo] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getFieldReps().then((r) => { setReps(r); setLoadingReps(false); }).catch(() => setLoadingReps(false));
+  }, []);
+
+  async function handleRepChange(id: string) {
+    setRepId(id);
+    if (!id) { setFieldItems([]); return; }
+    setLoadingStock(true);
+    try {
+      const stock = await getRepFieldStock(id);
+      setFieldItems(stock.map((s) => ({
+        _key: crypto.randomUUID(),
+        productId: s.productId,
+        productCode: s.productCode,
+        description: s.description,
+        qty: "0",
+        uom: s.uom ?? "",
+        fromFieldStock: true,
+        fieldAvailable: s.qty,
+      })));
+    } catch {
+      setFieldItems([]);
+    } finally {
+      setLoadingStock(false);
+    }
+  }
+
+  function updateFieldItem(key: string, qty: string) {
+    setFieldItems((prev) => prev.map((i) => i._key === key ? { ...i, qty } : i));
+  }
+
+  function updateExtraItem(key: string, patch: Partial<CaseLineItem>) {
+    setExtraItems((prev) => prev.map((i) => i._key === key ? { ...i, ...patch } : i));
+  }
+
+  const handleCustSearch = useCallback((val: string) => {
+    setCustSearch(val);
+    if (val.length < 2) { setCustResults([]); return; }
+    if (custTimer.current) clearTimeout(custTimer.current);
+    custTimer.current = setTimeout(async () => {
+      const res = await getCustomers(val);
+      setCustResults(res.slice(0, 8));
+    }, 300);
+  }, []);
+
+  function ExtraProductCell({ item }: { item: CaseLineItem }) {
+    const [q, setQ] = useState(item.productCode);
+    const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null }[]>([]);
+    const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    function handleInput(val: string) {
+      setQ(val);
+      updateExtraItem(item._key, { productCode: val, productId: undefined });
+      if (debounce.current) clearTimeout(debounce.current);
+      if (!val.trim()) { setResults([]); return; }
+      debounce.current = setTimeout(async () => {
+        const r = await searchProducts(val);
+        setResults(r);
+        const exact = r.find((p) => p.productCode.toLowerCase() === val.trim().toLowerCase());
+        if (exact) { updateExtraItem(item._key, { productId: exact.id, productCode: exact.productCode, description: item.description || exact.description || "", uom: exact.uom ?? "" }); setResults([]); }
+      }, 300);
+    }
+
+    function pick(p: typeof results[0]) {
+      updateExtraItem(item._key, { productId: p.id, productCode: p.productCode, description: item.description || p.description || "", uom: p.uom ?? "" });
+      setQ(p.productCode); setResults([]);
+    }
+
+    return (
+      <div className="relative">
+        <Input value={q} onChange={(e) => handleInput(e.target.value)} className="h-7 text-xs" placeholder="Code / name…" />
+        {results.length > 0 && (
+          <div className="absolute z-50 top-full left-0 mt-0.5 w-56 rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto text-xs">
+            {results.map((p) => (
+              <button key={p.id} type="button" className="w-full text-left px-2 py-1.5 hover:bg-accent flex gap-2" onClick={() => pick(p)}>
+                <span className="font-mono font-medium">{p.productCode}</span>
+                <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const selectedRep = reps.find((r) => r.id === repId);
+
+  async function handleSave() {
+    if (!repId) { toast.error("Select the application specialist"); return; }
+    const usedFieldItems = fieldItems.filter((i) => parseFloat(i.qty) > 0);
+    const validExtras = extraItems.filter((i) => i.description || i.productCode);
+    if (usedFieldItems.length === 0 && validExtras.length === 0) {
+      toast.error("Add at least one item"); return;
+    }
+
+    const allItems: DeliveryOrderItemInput[] = [
+      ...usedFieldItems.map((i, idx) => ({
+        rowNo: idx + 1, productId: i.productId, productCode: i.productCode,
+        description: i.description, qty: i.qty, uom: i.uom,
+      })),
+      ...validExtras.map((i, idx) => ({
+        rowNo: usedFieldItems.length + idx + 1, productId: i.productId, productCode: i.productCode,
+        description: i.description, qty: i.qty || "1", uom: i.uom,
+      })),
+    ];
+
+    setSaving(true);
+    try {
+      await createDeliveryOrder({
+        customerId: selectedCustomer?.id,
+        customerPoNo: customerPoNo || undefined,
+        deliveryAddress: deliveryAddress || undefined,
+        notes: notes || undefined,
+        items: allItems,
+        isCaseDo: true,
+        applicationSpecialistId: repId,
+        applicationSpecialistName: selectedRep?.name,
+        caseType: caseType || undefined,
+        caseDate: caseDate ? new Date(caseDate) : undefined,
+        mrnNo: mrnNo || undefined,
+      });
+      toast.success("Case DO created");
+      router.push("/dashboard/fulfillment/delivery");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="p-6 space-y-4">
+      <PageHeader
+        title="New Case DO"
+        description="Case-based delivery order — deducts from rep's field stock automatically."
+        action={
+          <Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5">
+            <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+          </Button>
+        }
+      />
+
+      {/* Case details */}
+      <section className="border border-border rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-3">Case details</h2>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Case date <span className="text-destructive">*</span></Label>
+            <input type="date" value={caseDate} onChange={(e) => setCaseDate(e.target.value)}
+              className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">MRN no.</Label>
+            <Input value={mrnNo} onChange={(e) => setMrnNo(e.target.value)} placeholder="Medical record number" className="h-9 text-sm" />
+          </div>
+          <div className="col-span-2 space-y-1.5">
+            <Label className="text-xs">Case type</Label>
+            <Input value={caseType} onChange={(e) => setCaseType(e.target.value)} placeholder="e.g. TKR, Hip Arthroplasty, Spine…" className="h-9 text-sm" />
+          </div>
+        </div>
+      </section>
+
+      {/* Application specialist */}
+      <section className="border border-border rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-3">Application specialist <span className="text-destructive">*</span></h2>
+        {loadingReps ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <select value={repId} onChange={(e) => handleRepChange(e.target.value)}
+            className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
+            <option value="">Select rep…</option>
+            {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        )}
+      </section>
+
+      {/* Customer */}
+      <section className="border border-border rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-3">Customer</h2>
+        {selectedCustomer ? (
+          <div className="flex items-center gap-2">
+            <span className="flex-1 text-sm font-medium">
+              {[(selectedCustomer as any).title, (selectedCustomer as any).name].filter(Boolean).join(" ")}
+            </span>
+            <button onClick={() => setSelectedCustomer(null)} className="text-muted-foreground hover:text-foreground">
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <div className="relative">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input value={custSearch} onChange={(e) => handleCustSearch(e.target.value)}
+              placeholder="Search customer…" className="pl-9 h-9 text-sm" />
+            {custResults.length > 0 && (
+              <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                {custResults.map((c) => (
+                  <button key={c.id} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0"
+                    onClick={() => { setSelectedCustomer(c as any); setCustSearch(""); setCustResults([]); }}>
+                    <div className="text-sm font-medium"><Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} /></div>
+                    {c.companies[0]?.organizationName && (
+                      <div className="text-[11px] text-muted-foreground"><Highlight text={c.companies[0].organizationName} query={custSearch} /></div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="mt-3 space-y-1.5">
+          <Label className="text-xs">Customer PO no. (optional — can fill later)</Label>
+          <Input value={customerPoNo} onChange={(e) => setCustomerPoNo(e.target.value)}
+            placeholder="e.g. PO-2025-0001" className="h-9 text-sm" />
+        </div>
+      </section>
+
+      {/* Field stock items */}
+      {repId && (
+        <section className="border border-teal-200 dark:border-teal-800/50 rounded-xl p-4 bg-teal-50/40 dark:bg-teal-900/10">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-sm font-semibold">Disposables from field stock</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Enter qty used from {selectedRep?.name}'s holding. Zero = not used.</p>
+            </div>
+          </div>
+          {loadingStock ? (
+            <p className="text-sm text-muted-foreground py-3">Loading rep stock…</p>
+          ) : fieldItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-3">No field stock found for this rep.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground">
+                    <th className="text-left pb-2 pr-3 w-28">Product</th>
+                    <th className="text-left pb-2 pr-3">Description</th>
+                    <th className="text-left pb-2 pr-3 w-12">UOM</th>
+                    <th className="text-right pb-2 pr-3 w-16">Available</th>
+                    <th className="text-right pb-2 w-20">Qty Used</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fieldItems.map((item) => (
+                    <tr key={item._key} className="border-b border-border/50 last:border-0">
+                      <td className="py-1.5 pr-3 font-mono font-medium">{item.productCode}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{item.description}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{item.uom || "—"}</td>
+                      <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">{item.fieldAvailable?.toFixed(0)}</td>
+                      <td className="py-1.5">
+                        <Input type="number" min="0" max={item.fieldAvailable} value={item.qty}
+                          onChange={(e) => updateFieldItem(item._key, e.target.value)}
+                          className={cn("h-7 text-xs text-right", parseFloat(item.qty) > 0 ? "border-teal-400 dark:border-teal-600" : "")} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Additional items (rental, services) */}
+      <section className="border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold">Additional items</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Machine rental, service fees, or items not in field stock.</p>
+          </div>
+          <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => setExtraItems((p) => [...p, newCaseLine()])}>
+            <PlusIcon className="w-3 h-3" /> Add row
+          </Button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground">
+                <th className="text-left pb-2 pr-2 w-24">Code</th>
+                <th className="text-left pb-2 pr-2">Description</th>
+                <th className="text-right pb-2 pr-2 w-16">Qty</th>
+                <th className="text-left pb-2 pr-2 w-14">UOM</th>
+                <th className="w-6" />
+              </tr>
+            </thead>
+            <tbody>
+              {extraItems.map((item) => (
+                <tr key={item._key} className="border-b border-border/50 last:border-0">
+                  <td className="py-1.5 pr-2"><ExtraProductCell item={item} /></td>
+                  <td className="py-1.5 pr-2">
+                    <Input value={item.description} onChange={(e) => updateExtraItem(item._key, { description: e.target.value })} className="h-7 text-xs" placeholder="e.g. Machine rental — TKR set" />
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <Input type="number" min="1" value={item.qty} onChange={(e) => updateExtraItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" />
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <Input value={item.uom} onChange={(e) => updateExtraItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="case/set/unit" />
+                  </td>
+                  <td className="py-1.5">
+                    <button onClick={() => setExtraItems((p) => p.filter((i) => i._key !== item._key))} disabled={extraItems.length === 1}
+                      className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30">
+                      <TrashIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Delivery details */}
+      <section className="border border-border rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-3">Hospital / delivery details</h2>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Hospital / delivery address</Label>
+            <Input value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Hospital name and address" className="h-9 text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Notes</Label>
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="text-sm" />
+          </div>
+        </div>
+      </section>
+
+      <div className="flex gap-3 pb-8">
+        <Button onClick={handleSave} disabled={saving}>
+          {saving ? "Creating…" : "Create Case DO"}
+        </Button>
+        <Button variant="outline" onClick={() => router.back()}>Cancel</Button>
       </div>
     </div>
   );
