@@ -296,7 +296,7 @@ export async function getDeliveryOrders(): Promise<DeliveryOrderListRow[]> {
     .select()
     .from(deliveryOrder)
     .where(eq(deliveryOrder.organizationId, orgId))
-    .orderBy(desc(deliveryOrder.createdAt));
+    .orderBy(desc(deliveryOrder.doNo));
 
   if (rows.length === 0) return [];
 
@@ -874,7 +874,7 @@ export async function getPendingDosForInvoice(): Promise<PendingDoForInvoiceRow[
           )),
       ),
     ))
-    .orderBy(desc(deliveryOrder.createdAt));
+    .orderBy(desc(deliveryOrder.doNo));
 
   return rows.map((r) => {
     const snap = r.customerSnapshot as any;
