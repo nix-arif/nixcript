@@ -1,12 +1,12 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, product, user, organizationProfile } from "@/db/schema";
+import { stockLevel, stockMovement, product, user, organizationProfile, member } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, or, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, or, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
@@ -48,6 +48,24 @@ async function requireAccess(permission: string) {
   const perms = await getUserPermissions(userId, orgId);
   if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
   return { orgId, userId };
+}
+
+async function getAllOwnerOrgIds(currentOrgId: string): Promise<string[]> {
+  const [ownerMember] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner"), isNull(member.deletedAt)))
+    .limit(1);
+
+  if (!ownerMember) return [currentOrgId];
+
+  const ownedOrgs = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
+
+  const ids = ownedOrgs.map((o) => o.organizationId);
+  return ids.length ? ids : [currentOrgId];
 }
 
 /* =========================
@@ -308,11 +326,12 @@ export async function getProductsByCode(
 export async function searchProducts(query: string) {
   const { orgId } = await requireAccess("inventory:read");
   if (!query.trim()) return [];
-  const rows = await db
+  const orgIds = await getAllOwnerOrgIds(orgId);
+  return db
     .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom })
     .from(product)
     .where(and(
-      eq(product.organizationId, orgId),
+      inArray(product.organizationId, orgIds),
       or(
         ilike(product.productCode, `%${query}%`),
         ilike(product.description, `%${query}%`),
@@ -320,6 +339,4 @@ export async function searchProducts(query: string) {
     ))
     .orderBy(asc(product.productCode))
     .limit(50);
-  console.log(`[searchProducts] query="${query}" orgId=${orgId} → ${rows.length} rows`);
-  return rows;
 }
