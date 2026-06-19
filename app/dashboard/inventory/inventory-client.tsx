@@ -46,17 +46,24 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
   const [results, setResults] = useState<Product[]>([]);
   const [open, setOpen] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState("");
+  const [noResults, setNoResults] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestQuery = useRef("");
 
   async function runSearch(q: string) {
-    if (!q.trim()) { setResults([]); setOpen(false); return; }
-    const r = await searchProducts(q);
-    if (latestQuery.current !== q) return; // stale
-    setResults(r);
-    setOpen(r.length > 0);
-    const exact = r.find(p => p.productCode.toLowerCase() === q.trim().toLowerCase());
-    if (exact) select(exact);
+    if (!q.trim()) { setResults([]); setOpen(false); setNoResults(false); return; }
+    try {
+      const r = await searchProducts(q);
+      if (latestQuery.current !== q) return; // stale
+      setResults(r);
+      setNoResults(r.length === 0);
+      setOpen(r.length > 0);
+      const exact = r.find(p => p.productCode.toLowerCase() === q.trim().toLowerCase());
+      if (exact) select(exact);
+    } catch (err) {
+      console.error("searchProducts error:", err);
+      toast.error("Product search failed");
+    }
   }
 
   function handleInput(q: string) {
@@ -79,6 +86,7 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
     setSelectedLabel("");
     setQuery("");
     setResults([]);
+    setNoResults(false);
     latestQuery.current = "";
     onChange("", "");
   }
@@ -108,14 +116,21 @@ function ProductSearch({ value, onChange }: { value: string; onChange: (id: stri
           <button type="button" onClick={clear} className="text-muted-foreground hover:text-foreground text-xs">✕</button>
         </div>
       ) : (
-        <Input
-          placeholder="Type product code or name…"
-          value={query}
-          onChange={e => handleInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={handleBlur}
-          autoComplete="off"
-        />
+        <>
+          <Input
+            placeholder="Type product code or name…"
+            value={query}
+            onChange={e => handleInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onBlur={handleBlur}
+            autoComplete="off"
+          />
+          {noResults && query.trim() && (
+            <p className="text-xs text-destructive mt-1">
+              No product found for &quot;{query}&quot;. Add it in <a href="/dashboard/products/catalogue" className="underline">Product Catalogue</a> first.
+            </p>
+          )}
+        </>
       )}
       {open && (
         <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-background shadow-md max-h-48 overflow-y-auto">
