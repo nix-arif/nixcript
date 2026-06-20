@@ -19,7 +19,7 @@ import {
 import {
   PackageIcon, PlusIcon, SettingsIcon, AlertTriangleIcon, ArrowRightIcon, ArrowLeftRightIcon, ChevronDownIcon, ChevronRightIcon,
 } from "lucide-react";
-import type { StockWithProduct, Warehouse, StockLotRow } from "@/server/inventory";
+import type { StockWithProduct, Warehouse, StockLotRow, UntrackedProduct } from "@/server/inventory";
 import { adjustStock, setReorderPoint, transferStock, searchProducts, getProductLots } from "@/server/inventory";
 import { MOVEMENT_TYPE } from "@/lib/inventory/constants";
 import type { ConsignmentItemRow } from "@/server/consignment";
@@ -54,13 +54,14 @@ interface Props {
   warehouses: Warehouse[];
   permissions: string[];
   activeConsignments?: ActiveConsignment[];
+  untracked?: UntrackedProduct[];
 }
 
-function ProductSearch({ value, onChange }: { value: string; onChange: (id: string, code: string) => void }) {
+function ProductSearch({ value, initialLabel, onChange }: { value: string; initialLabel?: string; onChange: (id: string, code: string) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
   const [open, setOpen] = useState(false);
-  const [selectedLabel, setSelectedLabel] = useState("");
+  const [selectedLabel, setSelectedLabel] = useState(initialLabel ?? "");
   const [noResults, setNoResults] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestQuery = useRef("");
@@ -171,7 +172,7 @@ function fmt(v: string | number) {
   return parseFloat(String(v)).toLocaleString("en-MY", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 }
 
-export function InventoryClient({ inventory, warehouses, permissions, activeConsignments = [] }: Props) {
+export function InventoryClient({ inventory, warehouses, permissions, activeConsignments = [], untracked = [] }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [search, setSearch] = useState("");
@@ -180,11 +181,18 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
   const canAdjust = permissions.includes("inventory:adjust") || permissions.includes("*");
   const canManage = permissions.includes("inventory:manage") || permissions.includes("*");
 
+  // ── Untracked section ────────────────────────────────────────────────────
+  const [showUntracked, setShowUntracked] = useState(false);
+  const untrackedFiltered = untracked.filter(p =>
+    !search || p.productCode.toLowerCase().includes(search.toLowerCase()) || (p.description ?? "").toLowerCase().includes(search.toLowerCase())
+  );
+
   // ── Adjust sheet ──────────────────────────────────────────────────────────
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjProductId, setAdjProductId] = useState("");
+  const [adjProductLabel, setAdjProductLabel] = useState("");
   const [adjWarehouse, setAdjWarehouse] = useState(warehouses[0]?.label ?? "Default");
-  const [adjType, setAdjType] = useState(MOVEMENT_TYPE.STOCK_IN);
+  const [adjType, setAdjType] = useState<string>(MOVEMENT_TYPE.STOCK_IN);
   const [adjQty, setAdjQty] = useState("");
   const [adjCost, setAdjCost] = useState("");
   const [adjRef, setAdjRef] = useState("");
@@ -263,7 +271,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
       await adjustStock({ productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined, referenceNo: adjRef || undefined, notes: adjNotes || undefined, lotNo: adjLotNo || undefined, expiryDate: adjExpiry ? new Date(adjExpiry) : undefined });
       toast.success("Stock updated");
       setAdjustOpen(false);
-      setAdjProductId(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry("");
+      setAdjProductId(""); setAdjProductLabel(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry("");
       startTransition(() => router.refresh());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
@@ -299,6 +307,13 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally { setSavingReorder(false); }
+  }
+
+  function openAdjustForProduct(p: UntrackedProduct) {
+    setAdjProductId(p.productId);
+    setAdjProductLabel(`${p.productCode}${p.description ? ` — ${p.description}` : ""}`);
+    setAdjType(MOVEMENT_TYPE.OPENING);
+    setAdjustOpen(true);
   }
 
   function openReorder(item: StockWithProduct) {
@@ -465,6 +480,52 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
         </div>
       ))}
 
+      {/* ── Untracked products ───────────────────────────────────────────── */}
+      {untrackedFiltered.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => setShowUntracked(v => !v)}
+            className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors w-fit"
+          >
+            {showUntracked ? <ChevronDownIcon className="h-4 w-4"/> : <ChevronRightIcon className="h-4 w-4"/>}
+            Not yet stocked
+            <span className="text-xs font-normal bg-muted rounded-full px-2 py-0.5">{untrackedFiltered.length}</span>
+          </button>
+
+          {showUntracked && (
+            <div className="rounded-lg border border-border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/20">
+                    <TableHead className="w-36">Product Code</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead className="w-16 text-center">UOM</TableHead>
+                    {canAdjust && <TableHead className="w-32"/>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {untrackedFiltered.map(p => (
+                    <TableRow key={p.productId} className="text-muted-foreground">
+                      <TableCell className="font-mono text-xs font-medium">{p.productCode}</TableCell>
+                      <TableCell className="text-sm">{p.description ?? "—"}</TableCell>
+                      <TableCell className="text-center text-xs">{p.uom ?? "—"}</TableCell>
+                      {canAdjust && (
+                        <TableCell className="text-right">
+                          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => openAdjustForProduct(p)}>
+                            <PlusIcon className="h-3 w-3"/>Add opening balance
+                          </Button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Consignment Section ──────────────────────────────────────────── */}
       {activeConsignments.length > 0 && (
         <div className="flex flex-col gap-2">
@@ -530,7 +591,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Product <span className="text-destructive">*</span></Label>
-              <ProductSearch value={adjProductId} onChange={(id) => setAdjProductId(id)} />
+              <ProductSearch value={adjProductId} initialLabel={adjProductLabel} onChange={(id) => setAdjProductId(id)} />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Movement Type <span className="text-destructive">*</span></Label>

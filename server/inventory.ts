@@ -6,7 +6,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, or, inArray, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, or, inArray, notInArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
@@ -23,6 +23,13 @@ export type StockWithProduct = StockLevelRow & {
   uom: string | null;
   availableQty: number;
   isLowStock: boolean;
+};
+
+export type UntrackedProduct = {
+  productId: string;
+  productCode: string;
+  description: string | null;
+  uom: string | null;
 };
 
 export type MovementWithMeta = StockMovementRow & {
@@ -161,6 +168,30 @@ export async function getInventory(): Promise<StockWithProduct[]> {
       isLowStock: reorder !== null && qty <= reorder,
     };
   });
+}
+
+export async function getUntrackedProducts(): Promise<UntrackedProduct[]> {
+  const { orgId } = await requireAccess("inventory:read");
+  const orgIds = await getAllOwnerOrgIds(orgId);
+
+  const trackedSubquery = db
+    .selectDistinct({ productId: stockLevel.productId })
+    .from(stockLevel)
+    .where(eq(stockLevel.organizationId, orgId));
+
+  const tracked = await trackedSubquery;
+  const trackedIds = tracked.map(r => r.productId);
+
+  const q = db
+    .select({ productId: product.id, productCode: product.productCode, description: product.description, uom: product.uom })
+    .from(product)
+    .where(inArray(product.organizationId, orgIds))
+    .orderBy(asc(product.productCode));
+
+  const rows = await q;
+  return trackedIds.length > 0
+    ? rows.filter(r => !trackedIds.includes(r.productId))
+    : rows;
 }
 
 export async function getStockMovements(productId?: string): Promise<MovementWithMeta[]> {
