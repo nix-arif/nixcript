@@ -6,7 +6,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, or, inArray, notInArray, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, or, inArray, notInArray, isNull, isNotNull, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
@@ -487,6 +487,85 @@ export async function editStockLevel(data: {
   revalidatePath("/dashboard/inventory");
 }
 
+export async function assignLotToStock(data: {
+  productId: string;
+  warehouseLabel: string;
+  lotNo: string;
+  expiryDate: Date | null;
+  quantity: number;
+}): Promise<void> {
+  const { orgId } = await requireAccess("inventory:manage");
+
+  // Verify product exists in this org
+  const [sl] = await db
+    .select()
+    .from(stockLevel)
+    .where(and(eq(stockLevel.productId, data.productId), eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, data.warehouseLabel)))
+    .limit(1);
+  if (!sl) throw new Error("Stock record not found");
+
+  if (data.quantity <= 0) throw new Error("Quantity must be greater than zero");
+  if (data.quantity > parseFloat(sl.quantity)) throw new Error(`Quantity cannot exceed current balance (${parseFloat(sl.quantity)})`);
+
+  const [dup] = await db
+    .select({ id: stockLot.id })
+    .from(stockLot)
+    .where(and(
+      eq(stockLot.productId, data.productId),
+      eq(stockLot.organizationId, orgId),
+      eq(stockLot.warehouseLabel, data.warehouseLabel),
+      eq(stockLot.lotNo, data.lotNo),
+    ))
+    .limit(1);
+  if (dup) throw new Error(`Lot "${data.lotNo}" already exists for this product`);
+
+  await db.insert(stockLot).values({
+    id: nanoid(),
+    organizationId: orgId,
+    productId: data.productId,
+    warehouseLabel: data.warehouseLabel,
+    lotNo: data.lotNo,
+    expiryDate: data.expiryDate,
+    quantity: data.quantity.toFixed(4),
+    reservedQty: "0",
+    unitCost: sl.unitCost,
+  });
+
+  revalidatePath("/dashboard/inventory");
+}
+
+export async function editStockLot(lotId: string, data: { lotNo: string; expiryDate: Date | null }): Promise<void> {
+  const { orgId } = await requireAccess("inventory:manage");
+
+  const [lot] = await db
+    .select()
+    .from(stockLot)
+    .where(and(eq(stockLot.id, lotId), eq(stockLot.organizationId, orgId)))
+    .limit(1);
+  if (!lot) throw new Error("Lot not found");
+
+  // If lot number is changing, check no duplicate exists
+  if (data.lotNo !== lot.lotNo) {
+    const [dup] = await db
+      .select({ id: stockLot.id })
+      .from(stockLot)
+      .where(and(
+        eq(stockLot.productId, lot.productId),
+        eq(stockLot.organizationId, orgId),
+        eq(stockLot.warehouseLabel, lot.warehouseLabel),
+        eq(stockLot.lotNo, data.lotNo),
+      ))
+      .limit(1);
+    if (dup) throw new Error(`Lot number "${data.lotNo}" already exists for this product`);
+  }
+
+  await db.update(stockLot)
+    .set({ lotNo: data.lotNo, expiryDate: data.expiryDate, updatedAt: new Date() })
+    .where(eq(stockLot.id, lotId));
+
+  revalidatePath("/dashboard/inventory");
+}
+
 export async function deleteStockLevel(stockLevelId: string): Promise<void> {
   const { orgId } = await requireAccess("inventory:manage");
 
@@ -574,4 +653,206 @@ export async function getProductLots(productId: string, warehouseLabel?: string)
     .from(stockLot)
     .where(and(...conditions))
     .orderBy(asc(stockLot.expiryDate), asc(stockLot.lotNo));
+}
+
+// Backfill stock_lot rows from approved movements that recorded lotNo
+// but were created before stock_lot table existed.
+export async function backfillStockLots(): Promise<{ created: number }> {
+  const { orgId } = await requireAccess("inventory:manage");
+
+  const movements = await db
+    .select()
+    .from(stockMovement)
+    .where(and(
+      eq(stockMovement.organizationId, orgId),
+      eq(stockMovement.status, "APPROVED"),
+      isNotNull(stockMovement.lotNo),
+    ));
+
+  // Group by product / warehouse / lotNo, summing signed quantities
+  type Group = { productId: string; warehouseLabel: string; lotNo: string; expiryDate: Date | null; qty: number; unitCost: string | null };
+  const groups = new Map<string, Group>();
+  for (const mv of movements) {
+    if (!mv.lotNo) continue;
+    const key = `${mv.productId}:${mv.warehouseLabel}:${mv.lotNo}`;
+    const g = groups.get(key);
+    if (g) {
+      g.qty += parseFloat(mv.quantity);
+    } else {
+      groups.set(key, {
+        productId: mv.productId,
+        warehouseLabel: mv.warehouseLabel,
+        lotNo: mv.lotNo,
+        expiryDate: mv.expiryDate ?? null,
+        qty: parseFloat(mv.quantity),
+        unitCost: mv.unitCost,
+      });
+    }
+  }
+
+  let created = 0;
+  for (const [, g] of groups) {
+    const [existing] = await db
+      .select({ id: stockLot.id })
+      .from(stockLot)
+      .where(and(
+        eq(stockLot.productId, g.productId),
+        eq(stockLot.organizationId, orgId),
+        eq(stockLot.warehouseLabel, g.warehouseLabel),
+        eq(stockLot.lotNo, g.lotNo),
+      ))
+      .limit(1);
+
+    if (!existing) {
+      await db.insert(stockLot).values({
+        id: nanoid(),
+        organizationId: orgId,
+        productId: g.productId,
+        warehouseLabel: g.warehouseLabel,
+        lotNo: g.lotNo,
+        expiryDate: g.expiryDate,
+        quantity: Math.max(0, g.qty).toFixed(4),
+        reservedQty: "0",
+        unitCost: g.unitCost,
+      });
+      created++;
+    }
+  }
+
+  revalidatePath("/dashboard/inventory");
+  return { created };
+}
+
+export async function editStockMovement(id: string, data: {
+  // Safe fields — editable on any status
+  notes: string | null;
+  referenceNo: string | null;
+  lotNo: string | null;
+  expiryDate: Date | null;
+  // Pending-only fields
+  productId?: string;
+  warehouseLabel?: string;
+  movementType?: string;
+  quantity?: number;
+  unitCost?: string | null;
+}): Promise<void> {
+  const { orgId } = await requireAccess("inventory:manage");
+
+  const [mv] = await db
+    .select()
+    .from(stockMovement)
+    .where(and(eq(stockMovement.id, id), eq(stockMovement.organizationId, orgId)))
+    .limit(1);
+  if (!mv) throw new Error("Movement not found");
+
+  const safeFields = {
+    notes: data.notes?.trim() || null,
+    referenceNo: data.referenceNo?.trim() || null,
+    lotNo: data.lotNo?.trim() || null,
+    expiryDate: data.expiryDate,
+  };
+
+  if (mv.status !== "PENDING") {
+    // Approved/rejected: only safe fields
+    await db.update(stockMovement).set(safeFields).where(eq(stockMovement.id, id));
+    revalidatePath("/dashboard/inventory/movements");
+    return;
+  }
+
+  // PENDING: full edit allowed
+  let productCode = mv.productCode;
+  if (data.productId && data.productId !== mv.productId) {
+    const orgIds = await getAllOwnerOrgIds(orgId);
+    const [prod] = await db
+      .select({ productCode: product.productCode })
+      .from(product)
+      .where(and(inArray(product.organizationId, orgIds), eq(product.id, data.productId)))
+      .limit(1);
+    if (!prod) throw new Error("Product not found");
+    productCode = prod.productCode;
+  }
+
+  const qty = data.quantity !== undefined ? data.quantity : parseFloat(mv.quantity);
+  const movementType = data.movementType ?? mv.movementType;
+  const isOut = ["STOCK_OUT", "TRANSFER_OUT"].includes(movementType);
+  const signed = isOut ? -Math.abs(qty) : Math.abs(qty);
+
+  await db.update(stockMovement)
+    .set({
+      ...safeFields,
+      productId: data.productId ?? mv.productId,
+      productCode,
+      warehouseLabel: data.warehouseLabel ?? mv.warehouseLabel,
+      movementType,
+      quantity: signed.toFixed(4),
+      unitCost: data.unitCost !== undefined ? (data.unitCost?.trim() || null) : mv.unitCost,
+    })
+    .where(eq(stockMovement.id, id));
+
+  revalidatePath("/dashboard/inventory/movements");
+}
+
+export async function deleteStockMovement(id: string): Promise<void> {
+  const { orgId } = await requireAccess("inventory:manage");
+
+  const [mv] = await db
+    .select()
+    .from(stockMovement)
+    .where(and(eq(stockMovement.id, id), eq(stockMovement.organizationId, orgId)))
+    .limit(1);
+  if (!mv) throw new Error("Movement not found");
+  if (mv.status === "APPROVED") throw new Error("Cannot delete an approved movement — create a corrective movement instead");
+
+  await db.delete(stockMovement).where(eq(stockMovement.id, id));
+  revalidatePath("/dashboard/inventory/movements");
+}
+
+export type ExpiringLot = {
+  id: string;
+  productId: string;
+  productCode: string;
+  description: string | null;
+  warehouseLabel: string;
+  lotNo: string;
+  quantity: string;
+  expiryDate: Date;
+};
+
+export async function getExpiringLots(): Promise<ExpiringLot[]> {
+  const { orgId } = await requireAccess("inventory:read");
+  const warnCutoff = new Date();
+  warnCutoff.setDate(warnCutoff.getDate() + 90);
+
+  const rows = await db
+    .select({
+      id: stockLot.id,
+      productId: stockLot.productId,
+      productCode: product.productCode,
+      description: product.description,
+      warehouseLabel: stockLot.warehouseLabel,
+      lotNo: stockLot.lotNo,
+      quantity: stockLot.quantity,
+      expiryDate: stockLot.expiryDate,
+    })
+    .from(stockLot)
+    .leftJoin(product, eq(stockLot.productId, product.id))
+    .where(and(
+      eq(stockLot.organizationId, orgId),
+      isNotNull(stockLot.expiryDate),
+      lte(stockLot.expiryDate, warnCutoff),
+    ))
+    .orderBy(asc(stockLot.expiryDate));
+
+  return rows
+    .filter(r => r.expiryDate && parseFloat(r.quantity) > 0 && r.productCode)
+    .map(r => ({
+      id: r.id,
+      productId: r.productId,
+      productCode: r.productCode!,
+      description: r.description ?? null,
+      warehouseLabel: r.warehouseLabel,
+      lotNo: r.lotNo,
+      quantity: r.quantity,
+      expiryDate: r.expiryDate!,
+    }));
 }
