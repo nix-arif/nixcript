@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useRef } from "react";
+import { useState, useTransition, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,8 @@ import { ArrowLeftIcon, ArrowRightIcon, ArrowLeftRightIcon, TrendingUpIcon, Tren
 import type { MovementWithMeta, Warehouse } from "@/server/inventory";
 import { adjustStock, transferStock, searchProducts, editStockMovement, deleteStockMovement } from "@/server/inventory";
 import { MOVEMENT_LABELS, MOVEMENT_TYPE } from "@/lib/inventory/constants";
+import { getRepFieldStock, type RepStockItem } from "@/server/field-stock";
+import { cn } from "@/lib/utils";
 
 const TYPE_STYLE: Record<string, string> = {
   STOCK_IN:   "text-green-700 border-green-300 bg-green-50 dark:text-green-400 dark:border-green-700 dark:bg-green-900/20",
@@ -27,7 +29,7 @@ const TYPE_STYLE: Record<string, string> = {
   RETURN:     "text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-400 dark:border-amber-700",
 };
 
-function ProductSearch({ value, initialLabel, onChange }: { value: string; initialLabel?: string; onChange: (id: string, code: string) => void }) {
+function ProductSearch({ value, initialLabel, onChange }: { value: string; initialLabel?: string; onChange: (id: string, code: string, fullLabel: string) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ id: string; productCode: string; description: string | null }[]>([]);
   const [open, setOpen] = useState(false);
@@ -46,7 +48,7 @@ function ProductSearch({ value, initialLabel, onChange }: { value: string; initi
 
   function pick(item: { id: string; productCode: string; description: string | null }) {
     const displayLabel = `${item.productCode}${item.description ? ` — ${item.description}` : ""}`;
-    onChange(item.id, item.productCode);
+    onChange(item.id, item.productCode, displayLabel);
     setLabel(displayLabel);
     setQuery(""); setResults([]); setOpen(false);
   }
@@ -56,7 +58,7 @@ function ProductSearch({ value, initialLabel, onChange }: { value: string; initi
       <textarea
         rows={1}
         value={label || query}
-        onChange={e => { if (value) { onChange("", ""); setLabel(""); } onInput(e.target.value); }}
+        onChange={e => { if (value) { onChange("", "", ""); setLabel(""); } onInput(e.target.value); }}
         onFocus={() => results.length > 0 && setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder="Search by product code…"
@@ -96,6 +98,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
   // ── New Movement sheet ─────────────────────────────────────────────────────
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjProductId, setAdjProductId] = useState("");
+  const [adjProductLabel, setAdjProductLabel] = useState("");
   const [adjWarehouse, setAdjWarehouse] = useState(warehouses[0]?.label ?? "Default");
   const [adjType, setAdjType] = useState<string>(MOVEMENT_TYPE.STOCK_IN);
   const [adjQty, setAdjQty] = useState("");
@@ -105,15 +108,39 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
   const [adjLotNo, setAdjLotNo] = useState("");
   const [adjExpiry, setAdjExpiry] = useState("");
   const [saving, setSaving] = useState(false);
+  const [adjFieldItems, setAdjFieldItems] = useState<RepStockItem[]>([]);
+  const [adjLoadingField, setAdjLoadingField] = useState(false);
 
   // ── Transfer sheet ─────────────────────────────────────────────────────────
   const [txOpen, setTxOpen] = useState(false);
   const [txProductId, setTxProductId] = useState("");
+  const [txProductLabel, setTxProductLabel] = useState("");
   const [txFrom, setTxFrom] = useState(warehouses[0]?.label ?? "Default");
   const [txTo, setTxTo] = useState(warehouses[1]?.label ?? warehouses[0]?.label ?? "Default");
   const [txQty, setTxQty] = useState("");
   const [txNotes, setTxNotes] = useState("");
   const [transferring, setTransferring] = useState(false);
+  const [txFieldItems, setTxFieldItems] = useState<RepStockItem[]>([]);
+
+  useEffect(() => {
+    if (!adjOpen || !adjWarehouse.startsWith("Field:")) { setAdjFieldItems([]); return; }
+    const repId = adjWarehouse.slice(6);
+    if (!repId) return;
+    setAdjLoadingField(true);
+    getRepFieldStock(repId)
+      .then(items => setAdjFieldItems(items))
+      .catch(() => setAdjFieldItems([]))
+      .finally(() => setAdjLoadingField(false));
+  }, [adjOpen, adjWarehouse]);
+
+  useEffect(() => {
+    if (!txOpen) { setTxFieldItems([]); return; }
+    const fieldWh = txTo.startsWith("Field:") ? txTo : txFrom.startsWith("Field:") ? txFrom : null;
+    if (!fieldWh) { setTxFieldItems([]); return; }
+    const repId = fieldWh.slice(6);
+    if (!repId) return;
+    getRepFieldStock(repId).then(items => setTxFieldItems(items)).catch(() => setTxFieldItems([]));
+  }, [txOpen, txFrom, txTo]);
 
   async function handleAdjust(e: React.FormEvent) {
     e.preventDefault();
@@ -125,7 +152,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
       await adjustStock({ productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined, referenceNo: adjRef || undefined, notes: adjNotes || undefined, lotNo: adjLotNo || undefined, expiryDate: adjExpiry ? new Date(adjExpiry) : undefined });
       toast.success("Movement recorded");
       setAdjOpen(false);
-      setAdjProductId(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry("");
+      setAdjProductId(""); setAdjProductLabel(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry("");
       startTransition(() => router.refresh());
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
     finally { setSaving(false); }
@@ -141,7 +168,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
       await transferStock({ productId: txProductId, fromWarehouse: txFrom, toWarehouse: txTo, quantity: qty, notes: txNotes || undefined });
       toast.success(`Transferred ${qty} units: ${txFrom} → ${txTo}`);
       setTxOpen(false);
-      setTxProductId(""); setTxQty(""); setTxNotes("");
+      setTxProductId(""); setTxProductLabel(""); setTxQty(""); setTxNotes("");
       startTransition(() => router.refresh());
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
     finally { setTransferring(false); }
@@ -247,7 +274,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
           <p className="text-sm text-muted-foreground">{movements.length} records (latest 200)</p>
         </div>
         <div className="flex items-center gap-2 ml-auto">
-          {canAdjust && warehouses.length > 1 && (
+          {canAdjust && warehouses.length > 0 && (
             <Button size="sm" variant="outline" onClick={() => setTxOpen(true)} className="gap-1.5">
               <ArrowLeftRightIcon className="h-4 w-4"/>Transfer
             </Button>
@@ -372,13 +399,13 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
                   <Select value={editWarehouse} onValueChange={setEditWarehouse}>
                     <SelectTrigger><SelectValue/></SelectTrigger>
                     <SelectContent>
-                      {warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label}{w.address ? ` — ${w.address}` : ""}</SelectItem>)}
+                      {warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : `${w.label}${w.address ? ` — ${w.address}` : ""}`}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Label>Product <span className="text-destructive">*</span></Label>
-                  <ProductSearch value={editProductId} initialLabel={editProductLabel} onChange={(id, code) => { setEditProductId(id); setEditProductLabel(code); }}/>
+                  <ProductSearch value={editProductId} initialLabel={editProductLabel} onChange={(id, _code, fullLabel) => { setEditProductId(id); setEditProductLabel(fullLabel); }}/>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Label>Movement Type <span className="text-destructive">*</span></Label>
@@ -464,16 +491,38 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
           <form onSubmit={handleAdjust} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label>Warehouse <span className="text-destructive">*</span></Label>
-              <Select value={adjWarehouse} onValueChange={setAdjWarehouse}>
+              <Select value={adjWarehouse} onValueChange={v => { setAdjWarehouse(v); setAdjProductId(""); setAdjProductLabel(""); }}>
                 <SelectTrigger><SelectValue/></SelectTrigger>
                 <SelectContent>
-                  {warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label}{w.address ? ` — ${w.address}` : ""}</SelectItem>)}
+                  {warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : `${w.label}${w.address ? ` — ${w.address}` : ""}`}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Product <span className="text-destructive">*</span></Label>
-              <ProductSearch value={adjProductId} onChange={(id) => setAdjProductId(id)}/>
+              {adjLoadingField && <p className="text-xs text-muted-foreground animate-pulse">Loading field stock…</p>}
+              {adjFieldItems.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {adjFieldItems.map(item => {
+                    const fl = `${item.productCode}${item.description ? ` — ${item.description}` : ""}`;
+                    return (
+                      <button key={item.productId} type="button"
+                        onClick={() => { setAdjProductId(item.productId); setAdjProductLabel(fl); }}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                          adjProductId === item.productId
+                            ? "bg-teal-600 text-white border-teal-600 dark:bg-teal-700"
+                            : "border-border bg-background hover:bg-muted"
+                        )}
+                      >
+                        <span className="font-mono font-medium">{item.productCode}</span>
+                        <span className="ml-1 opacity-60 text-[10px]">{item.qty}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <ProductSearch key={adjProductId} value={adjProductId} initialLabel={adjProductLabel} onChange={(id, _code, fullLabel) => { setAdjProductId(id); setAdjProductLabel(fullLabel); }}/>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Movement Type <span className="text-destructive">*</span></Label>
@@ -529,26 +578,47 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
         <SheetContent className="w-full data-[side=right]:sm:max-w-2xl overflow-y-auto px-6">
           <SheetHeader className="mb-5"><SheetTitle>Transfer Between Warehouses</SheetTitle></SheetHeader>
           <form onSubmit={handleTransfer} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label>Product <span className="text-destructive">*</span></Label>
-              <ProductSearch value={txProductId} onChange={(id) => setTxProductId(id)}/>
-            </div>
             <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
               <div className="flex flex-col gap-1.5">
                 <Label>From</Label>
-                <Select value={txFrom} onValueChange={setTxFrom}>
+                <Select value={txFrom} onValueChange={v => { setTxFrom(v); setTxProductId(""); setTxProductLabel(""); }}>
                   <SelectTrigger><SelectValue/></SelectTrigger>
-                  <SelectContent>{warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label}</SelectItem>)}</SelectContent>
+                  <SelectContent>{warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : w.label}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <ArrowRightIcon className="h-4 w-4 text-muted-foreground mb-2 shrink-0"/>
               <div className="flex flex-col gap-1.5">
                 <Label>To</Label>
-                <Select value={txTo} onValueChange={setTxTo}>
+                <Select value={txTo} onValueChange={v => { setTxTo(v); setTxProductId(""); setTxProductLabel(""); }}>
                   <SelectTrigger><SelectValue/></SelectTrigger>
-                  <SelectContent>{warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label}</SelectItem>)}</SelectContent>
+                  <SelectContent>{warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : w.label}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Product <span className="text-destructive">*</span></Label>
+              {txFieldItems.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {txFieldItems.map(item => {
+                    const fl = `${item.productCode}${item.description ? ` — ${item.description}` : ""}`;
+                    return (
+                      <button key={item.productId} type="button"
+                        onClick={() => { setTxProductId(item.productId); setTxProductLabel(fl); }}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                          txProductId === item.productId
+                            ? "bg-teal-600 text-white border-teal-600 dark:bg-teal-700"
+                            : "border-border bg-background hover:bg-muted"
+                        )}
+                      >
+                        <span className="font-mono font-medium">{item.productCode}</span>
+                        <span className="ml-1 opacity-60 text-[10px]">{item.qty}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <ProductSearch key={txProductId} value={txProductId} initialLabel={txProductLabel} onChange={(id, _code, fullLabel) => { setTxProductId(id); setTxProductLabel(fullLabel); }}/>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Quantity <span className="text-destructive">*</span></Label>
