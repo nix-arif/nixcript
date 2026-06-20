@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, product, user, organizationProfile, member } from "@/db/schema";
+import { stockLevel, stockMovement, stockLot, product, user, organizationProfile, member } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -66,6 +66,54 @@ async function getAllOwnerOrgIds(currentOrgId: string): Promise<string[]> {
 
   const ids = ownedOrgs.map((o) => o.organizationId);
   return ids.length ? ids : [currentOrgId];
+}
+
+// Upsert a stock_lot row and return its id + new quantity
+async function applyToLot(opts: {
+  orgId: string;
+  productId: string;
+  warehouseLabel: string;
+  lotNo: string;
+  expiryDate?: Date | null;
+  signed: number;
+  unitCost?: string | null;
+}): Promise<{ lotId: string; newQty: number }> {
+  const { orgId, productId, warehouseLabel, lotNo, expiryDate, signed, unitCost } = opts;
+
+  const [existing] = await db
+    .select()
+    .from(stockLot)
+    .where(and(
+      eq(stockLot.productId, productId),
+      eq(stockLot.organizationId, orgId),
+      eq(stockLot.warehouseLabel, warehouseLabel),
+      eq(stockLot.lotNo, lotNo),
+    ))
+    .limit(1);
+
+  if (existing) {
+    const newQty = parseFloat(existing.quantity) + signed;
+    if (newQty < 0) throw new Error(`Lot ${lotNo} has insufficient quantity`);
+    await db.update(stockLot)
+      .set({ quantity: newQty.toFixed(4), updatedAt: new Date() })
+      .where(eq(stockLot.id, existing.id));
+    return { lotId: existing.id, newQty };
+  } else {
+    if (signed < 0) throw new Error(`Lot ${lotNo} does not exist — cannot deduct`);
+    const lotId = nanoid();
+    await db.insert(stockLot).values({
+      id: lotId,
+      organizationId: orgId,
+      productId,
+      warehouseLabel,
+      lotNo,
+      expiryDate: expiryDate ?? null,
+      quantity: signed.toFixed(4),
+      reservedQty: "0",
+      unitCost: unitCost ?? null,
+    });
+    return { lotId, newQty: signed };
+  }
 }
 
 /* =========================
@@ -206,7 +254,18 @@ export async function adjustStock(data: {
   });
 
   if (canApprove) {
-    // Apply to stock level immediately
+    // Apply to stock_lot if lot number provided
+    let lotId: string | null = null;
+    if (data.lotNo?.trim()) {
+      const result = await applyToLot({
+        orgId, productId: data.productId, warehouseLabel: data.warehouseLabel,
+        lotNo: data.lotNo.trim(), expiryDate: data.expiryDate,
+        signed, unitCost: data.unitCost,
+      });
+      lotId = result.lotId;
+    }
+
+    // Apply to aggregate stock_level
     const [existing] = await db
       .select()
       .from(stockLevel)
@@ -229,7 +288,7 @@ export async function adjustStock(data: {
     }
 
     await db.update(stockMovement)
-      .set({ balanceAfter: newBalance.toFixed(4) })
+      .set({ balanceAfter: newBalance.toFixed(4), lotId })
       .where(eq(stockMovement.id, movementId));
   }
 
@@ -280,7 +339,18 @@ export async function approveStockMovement(movementId: string, comment?: string)
 
   const signed = parseFloat(mv.quantity);
 
-  // Upsert stock level
+  // Apply to stock_lot if movement has a lot number
+  let lotId: string | null = mv.lotId ?? null;
+  if (mv.lotNo) {
+    const result = await applyToLot({
+      orgId, productId: mv.productId, warehouseLabel: mv.warehouseLabel,
+      lotNo: mv.lotNo, expiryDate: mv.expiryDate,
+      signed, unitCost: mv.unitCost,
+    });
+    lotId = result.lotId;
+  }
+
+  // Upsert aggregate stock level
   const [existing] = await db
     .select()
     .from(stockLevel)
@@ -299,7 +369,7 @@ export async function approveStockMovement(movementId: string, comment?: string)
   }
 
   await db.update(stockMovement)
-    .set({ status: "APPROVED", balanceAfter: newBalance.toFixed(4), reviewedBy: userId, reviewedAt: new Date(), reviewComment: comment?.trim() || null })
+    .set({ status: "APPROVED", balanceAfter: newBalance.toFixed(4), lotId, reviewedBy: userId, reviewedAt: new Date(), reviewComment: comment?.trim() || null })
     .where(eq(stockMovement.id, movementId));
 
   revalidatePath("/dashboard/inventory");
@@ -374,4 +444,20 @@ export async function searchProducts(query: string) {
     ))
     .orderBy(asc(product.productCode))
     .limit(50);
+}
+
+export type StockLotRow = typeof stockLot.$inferSelect;
+
+export async function getProductLots(productId: string, warehouseLabel?: string) {
+  const { orgId } = await requireAccess("inventory:read");
+  const conditions = [
+    eq(stockLot.productId, productId),
+    eq(stockLot.organizationId, orgId),
+  ];
+  if (warehouseLabel) conditions.push(eq(stockLot.warehouseLabel, warehouseLabel));
+  return db
+    .select()
+    .from(stockLot)
+    .where(and(...conditions))
+    .orderBy(asc(stockLot.expiryDate), asc(stockLot.lotNo));
 }

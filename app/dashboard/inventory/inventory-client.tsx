@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useRef } from "react";
+import React, { useState, useTransition, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -17,12 +17,27 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  PackageIcon, PlusIcon, SettingsIcon, AlertTriangleIcon, ArrowRightIcon, ArrowLeftRightIcon,
+  PackageIcon, PlusIcon, SettingsIcon, AlertTriangleIcon, ArrowRightIcon, ArrowLeftRightIcon, ChevronDownIcon, ChevronRightIcon,
 } from "lucide-react";
-import type { StockWithProduct, Warehouse } from "@/server/inventory";
-import { adjustStock, setReorderPoint, transferStock, searchProducts } from "@/server/inventory";
+import type { StockWithProduct, Warehouse, StockLotRow } from "@/server/inventory";
+import { adjustStock, setReorderPoint, transferStock, searchProducts, getProductLots } from "@/server/inventory";
 import { MOVEMENT_TYPE } from "@/lib/inventory/constants";
 import type { ConsignmentItemRow } from "@/server/consignment";
+
+const EXPIRY_WARN_DAYS = 90;
+
+function expiryStatus(date: Date | null): "ok" | "warn" | "expired" {
+  if (!date) return "ok";
+  const days = Math.ceil((date.getTime() - Date.now()) / 86_400_000);
+  if (days < 0) return "expired";
+  if (days <= EXPIRY_WARN_DAYS) return "warn";
+  return "ok";
+}
+
+function fmtDate(d: Date | null) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+}
 
 interface Product { id: string; productCode: string; description: string | null; uom: string | null }
 type ActiveConsignment = {
@@ -197,6 +212,29 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
   const allWarehouses = Array.from(new Set(inventory.map(i => i.warehouseLabel)));
   const lowStockCount = inventory.filter(i => i.isLowStock).length;
 
+  // Lot expansion
+  const [expandedLots, setExpandedLots] = useState<Set<string>>(new Set());
+  const [lotData, setLotData] = useState<Record<string, StockLotRow[]>>({});
+  const [loadingLots, setLoadingLots] = useState<Set<string>>(new Set());
+
+  async function toggleLots(item: StockWithProduct) {
+    const key = item.id;
+    if (expandedLots.has(key)) {
+      setExpandedLots(prev => { const s = new Set(prev); s.delete(key); return s; });
+      return;
+    }
+    if (!lotData[key]) {
+      setLoadingLots(prev => new Set(prev).add(key));
+      try {
+        const lots = await getProductLots(item.productId, item.warehouseLabel);
+        setLotData(prev => ({ ...prev, [key]: lots }));
+      } finally {
+        setLoadingLots(prev => { const s = new Set(prev); s.delete(key); return s; });
+      }
+    }
+    setExpandedLots(prev => new Set(prev).add(key));
+  }
+
   const filtered = inventory.filter(i => {
     const matchSearch =
       i.productCode.toLowerCase().includes(search.toLowerCase()) ||
@@ -326,11 +364,11 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/20">
+                <TableHead className="w-6"/>
                 <TableHead className="w-36">Product Code</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead className="w-16 text-center">UOM</TableHead>
                 <TableHead className="w-28 text-right">On Hand</TableHead>
-                <TableHead className="w-28 text-right">Reserved</TableHead>
                 <TableHead className="w-28 text-right">Available</TableHead>
                 <TableHead className="w-28 text-right">Reorder Pt.</TableHead>
                 <TableHead className="w-20 text-center">Status</TableHead>
@@ -338,33 +376,90 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
               </TableRow>
             </TableHeader>
             <TableBody>
-              {group.rows.map(item => (
-                <TableRow key={item.id} className={item.isLowStock ? "bg-amber-50/40 dark:bg-amber-900/10" : ""}>
-                  <TableCell className="font-mono text-xs font-medium">{item.productCode}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{item.description ?? "—"}</TableCell>
-                  <TableCell className="text-center text-xs text-muted-foreground">{item.uom ?? "—"}</TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">{fmt(item.quantity)}</TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{fmt(item.reservedQty)}</TableCell>
-                  <TableCell className="text-right font-semibold tabular-nums text-green-700 dark:text-green-400">{fmt(item.availableQty)}</TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{item.reorderPoint ? fmt(item.reorderPoint) : "—"}</TableCell>
-                  <TableCell className="text-center">
-                    {item.isLowStock ? (
-                      <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 gap-1">
-                        <AlertTriangleIcon className="h-3 w-3"/>Low
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs text-green-700 border-green-300 bg-green-50 dark:text-green-400">OK</Badge>
+              {group.rows.map(item => {
+                const isExpanded = expandedLots.has(item.id);
+                const isLoading = loadingLots.has(item.id);
+                const lots = lotData[item.id] ?? [];
+                const expiredLot = isExpanded && lots.some(l => l.expiryDate && expiryStatus(new Date(l.expiryDate)) === "expired");
+                const warnLot = isExpanded && !expiredLot && lots.some(l => l.expiryDate && expiryStatus(new Date(l.expiryDate)) === "warn");
+                return (
+                  <React.Fragment key={item.id}>
+                    <TableRow className={item.isLowStock ? "bg-amber-50/40 dark:bg-amber-900/10" : ""}>
+                      <TableCell className="pr-0 pl-3">
+                        <button onClick={() => toggleLots(item)} className="text-muted-foreground hover:text-foreground transition-colors">
+                          {isLoading ? <span className="text-xs">…</span> : isExpanded ? <ChevronDownIcon className="h-3.5 w-3.5"/> : <ChevronRightIcon className="h-3.5 w-3.5"/>}
+                        </button>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs font-medium">{item.productCode}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{item.description ?? "—"}</TableCell>
+                      <TableCell className="text-center text-xs text-muted-foreground">{item.uom ?? "—"}</TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">{fmt(item.quantity)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums text-green-700 dark:text-green-400">{fmt(item.availableQty)}</TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{item.reorderPoint ? fmt(item.reorderPoint) : "—"}</TableCell>
+                      <TableCell className="text-center">
+                        {item.isLowStock ? (
+                          <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 gap-1">
+                            <AlertTriangleIcon className="h-3 w-3"/>Low
+                          </Badge>
+                        ) : expiredLot ? (
+                          <Badge variant="outline" className="text-xs bg-red-50 text-red-700 border-red-300">Expired lot</Badge>
+                        ) : warnLot ? (
+                          <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-300">Expiring</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs text-green-700 border-green-300 bg-green-50 dark:text-green-400">OK</Badge>
+                        )}
+                      </TableCell>
+                      {canManage && (
+                        <TableCell>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openReorder(item)} title="Settings">
+                            <SettingsIcon className="h-3.5 w-3.5"/>
+                          </Button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                    {isExpanded && (
+                      <TableRow className="bg-muted/20 hover:bg-muted/20">
+                        <TableCell/>
+                        <TableCell colSpan={canManage ? 8 : 7} className="py-2 pb-3">
+                          {lots.length === 0 ? (
+                            <p className="text-xs text-muted-foreground italic">No lot records — stock was added without a lot number.</p>
+                          ) : (
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="text-muted-foreground">
+                                  <th className="text-left pb-1 pr-6 font-medium">Lot No.</th>
+                                  <th className="text-right pb-1 pr-6 font-medium">Qty</th>
+                                  <th className="text-right pb-1 pr-6 font-medium">Expiry</th>
+                                  <th className="text-left pb-1 font-medium">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {lots.map(lot => {
+                                  const st = expiryStatus(lot.expiryDate ? new Date(lot.expiryDate) : null);
+                                  return (
+                                    <tr key={lot.id} className="border-t border-border/30">
+                                      <td className="py-1 pr-6 font-mono font-medium">{lot.lotNo}</td>
+                                      <td className="py-1 pr-6 text-right tabular-nums">{fmt(lot.quantity)}</td>
+                                      <td className={`py-1 pr-6 text-right tabular-nums ${st === "expired" ? "text-red-600" : st === "warn" ? "text-orange-600" : "text-muted-foreground"}`}>
+                                        {fmtDate(lot.expiryDate ? new Date(lot.expiryDate) : null)}
+                                      </td>
+                                      <td className="py-1">
+                                        {st === "expired" && <span className="text-red-600 font-medium">Expired</span>}
+                                        {st === "warn" && <span className="text-orange-600">Expiring soon</span>}
+                                        {st === "ok" && lot.expiryDate && <span className="text-green-600">OK</span>}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          )}
+                        </TableCell>
+                      </TableRow>
                     )}
-                  </TableCell>
-                  {canManage && (
-                    <TableCell>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openReorder(item)} title="Settings">
-                        <SettingsIcon className="h-3.5 w-3.5"/>
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
+                  </React.Fragment>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

@@ -641,6 +641,7 @@ export const stockMovement = pgTable(
     notes: text("notes"),
     lotNo: text("lot_no"),
     expiryDate: timestamp("expiry_date"),
+    lotId: text("lot_id"),   // FK to stock_lot — populated at approval time
     // PENDING | APPROVED | REJECTED
     status: text("status").notNull().default("PENDING"),
     reviewedBy: text("reviewed_by").references(() => user.id),
@@ -666,6 +667,39 @@ export const stockMovementRelations = relations(stockMovement, ({ one }) => ({
   organization: one(organization, { fields: [stockMovement.organizationId], references: [organization.id] }),
   product: one(product, { fields: [stockMovement.productId], references: [product.id] }),
   createdByUser: one(user, { fields: [stockMovement.createdBy], references: [user.id] }),
+}));
+
+// ── Stock lots (per-lot tracking) ────────────────────────────────────────
+
+export const stockLot = pgTable(
+  "stock_lot",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => product.id, { onDelete: "cascade" }),
+    warehouseLabel: text("warehouse_label").notNull().default("Default"),
+    lotNo: text("lot_no").notNull(),
+    expiryDate: timestamp("expiry_date"),
+    quantity: text("quantity").notNull().default("0"),
+    reservedQty: text("reserved_qty").notNull().default("0"),
+    unitCost: text("unit_cost"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("stock_lot_product_wh_lot_uidx").on(t.productId, t.organizationId, t.warehouseLabel, t.lotNo),
+    index("stock_lot_org_idx").on(t.organizationId),
+    index("stock_lot_expiry_idx").on(t.expiryDate),
+  ],
+);
+
+export const stockLotRelations = relations(stockLot, ({ one }) => ({
+  organization: one(organization, { fields: [stockLot.organizationId], references: [organization.id] }),
+  product: one(product, { fields: [stockLot.productId], references: [product.id] }),
 }));
 
 // ── Staff stock requests ──────────────────────────────────────────────────
