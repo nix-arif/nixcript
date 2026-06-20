@@ -17,10 +17,10 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  PackageIcon, PlusIcon, SettingsIcon, AlertTriangleIcon, ArrowRightIcon, ArrowLeftRightIcon, ChevronDownIcon, ChevronRightIcon,
+  PackageIcon, PlusIcon, SettingsIcon, AlertTriangleIcon, ArrowRightIcon, ArrowLeftRightIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, Trash2Icon,
 } from "lucide-react";
-import type { StockWithProduct, Warehouse, StockLotRow, UntrackedProduct } from "@/server/inventory";
-import { adjustStock, setReorderPoint, transferStock, searchProducts, getProductLots } from "@/server/inventory";
+import type { StockWithProduct, Warehouse, StockLotRow } from "@/server/inventory";
+import { adjustStock, setReorderPoint, transferStock, searchProducts, getProductLots, editStockLevel, deleteStockLevel } from "@/server/inventory";
 import { MOVEMENT_TYPE } from "@/lib/inventory/constants";
 import type { ConsignmentItemRow } from "@/server/consignment";
 
@@ -54,7 +54,6 @@ interface Props {
   warehouses: Warehouse[];
   permissions: string[];
   activeConsignments?: ActiveConsignment[];
-  untracked?: UntrackedProduct[];
 }
 
 function ProductSearch({ value, initialLabel, onChange }: { value: string; initialLabel?: string; onChange: (id: string, code: string) => void }) {
@@ -172,7 +171,7 @@ function fmt(v: string | number) {
   return parseFloat(String(v)).toLocaleString("en-MY", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 }
 
-export function InventoryClient({ inventory, warehouses, permissions, activeConsignments = [], untracked = [] }: Props) {
+export function InventoryClient({ inventory, warehouses, permissions, activeConsignments = [] }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [search, setSearch] = useState("");
@@ -180,12 +179,6 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
 
   const canAdjust = permissions.includes("inventory:adjust") || permissions.includes("*");
   const canManage = permissions.includes("inventory:manage") || permissions.includes("*");
-
-  // ── Untracked section ────────────────────────────────────────────────────
-  const [showUntracked, setShowUntracked] = useState(false);
-  const untrackedFiltered = untracked.filter(p =>
-    !search || p.productCode.toLowerCase().includes(search.toLowerCase()) || (p.description ?? "").toLowerCase().includes(search.toLowerCase())
-  );
 
   // ── Adjust sheet ──────────────────────────────────────────────────────────
   const [adjustOpen, setAdjustOpen] = useState(false);
@@ -216,6 +209,20 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
   const [reorderPoint, setReorderPointVal] = useState("");
   const [maxStockVal, setMaxStockVal] = useState("");
   const [savingReorder, setSavingReorder] = useState(false);
+
+  // ── Edit sheet ────────────────────────────────────────────────────────────
+  const [editOpen, setEditOpen] = useState(false);
+  const [editItem, setEditItem] = useState<StockWithProduct | null>(null);
+  const [editTargetQty, setEditTargetQty] = useState("");
+  const [editReorderPoint, setEditReorderPoint] = useState("");
+  const [editMaxStock, setEditMaxStock] = useState("");
+  const [editUnitCost, setEditUnitCost] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // ── Delete confirm ────────────────────────────────────────────────────────
+  const [deleteItem, setDeleteItem] = useState<StockWithProduct | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const allWarehouses = Array.from(new Set(inventory.map(i => i.warehouseLabel)));
   const lowStockCount = inventory.filter(i => i.isLowStock).length;
@@ -309,11 +316,49 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
     } finally { setSavingReorder(false); }
   }
 
-  function openAdjustForProduct(p: UntrackedProduct) {
-    setAdjProductId(p.productId);
-    setAdjProductLabel(`${p.productCode}${p.description ? ` — ${p.description}` : ""}`);
-    setAdjType(MOVEMENT_TYPE.OPENING);
-    setAdjustOpen(true);
+  function openEdit(item: StockWithProduct) {
+    setEditItem(item);
+    setEditTargetQty(fmt(item.quantity));
+    setEditReorderPoint(item.reorderPoint ?? "");
+    setEditMaxStock(item.maxStock ?? "");
+    setEditUnitCost(item.unitCost ?? "");
+    setEditNotes("");
+    setEditOpen(true);
+  }
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editItem) return;
+    const targetQty = parseFloat(editTargetQty);
+    if (isNaN(targetQty) || targetQty < 0) { toast.error("Enter a valid quantity"); return; }
+    setSavingEdit(true);
+    try {
+      await editStockLevel({
+        stockLevelId: editItem.id,
+        targetQty,
+        reorderPoint: editReorderPoint || null,
+        maxStock: editMaxStock || null,
+        unitCost: editUnitCost || null,
+        correctionNotes: editNotes || undefined,
+      });
+      toast.success("Stock record updated");
+      setEditOpen(false);
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally { setSavingEdit(false); }
+  }
+
+  async function handleDelete(item: StockWithProduct) {
+    setDeletingId(item.id);
+    try {
+      await deleteStockLevel(item.id);
+      toast.success(`${item.productCode} removed from inventory`);
+      setDeleteItem(null);
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally { setDeletingId(null); }
   }
 
   function openReorder(item: StockWithProduct) {
@@ -387,7 +432,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
                 <TableHead className="w-28 text-right">Available</TableHead>
                 <TableHead className="w-28 text-right">Reorder Pt.</TableHead>
                 <TableHead className="w-20 text-center">Status</TableHead>
-                {canManage && <TableHead className="w-10"/>}
+                {canManage && <TableHead className="w-20"/>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -426,9 +471,14 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
                       </TableCell>
                       {canManage && (
                         <TableCell>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openReorder(item)} title="Settings">
-                            <SettingsIcon className="h-3.5 w-3.5"/>
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(item)} title="Edit">
+                              <PencilIcon className="h-3.5 w-3.5"/>
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => setDeleteItem(item)} title="Delete">
+                              <Trash2Icon className="h-3.5 w-3.5"/>
+                            </Button>
+                          </div>
                         </TableCell>
                       )}
                     </TableRow>
@@ -479,52 +529,6 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
           </Table>
         </div>
       ))}
-
-      {/* ── Untracked products ───────────────────────────────────────────── */}
-      {untrackedFiltered.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={() => setShowUntracked(v => !v)}
-            className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors w-fit"
-          >
-            {showUntracked ? <ChevronDownIcon className="h-4 w-4"/> : <ChevronRightIcon className="h-4 w-4"/>}
-            Not yet stocked
-            <span className="text-xs font-normal bg-muted rounded-full px-2 py-0.5">{untrackedFiltered.length}</span>
-          </button>
-
-          {showUntracked && (
-            <div className="rounded-lg border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/20">
-                    <TableHead className="w-36">Product Code</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead className="w-16 text-center">UOM</TableHead>
-                    {canAdjust && <TableHead className="w-32"/>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {untrackedFiltered.map(p => (
-                    <TableRow key={p.productId} className="text-muted-foreground">
-                      <TableCell className="font-mono text-xs font-medium">{p.productCode}</TableCell>
-                      <TableCell className="text-sm">{p.description ?? "—"}</TableCell>
-                      <TableCell className="text-center text-xs">{p.uom ?? "—"}</TableCell>
-                      {canAdjust && (
-                        <TableCell className="text-right">
-                          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => openAdjustForProduct(p)}>
-                            <PlusIcon className="h-3 w-3"/>Add opening balance
-                          </Button>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── Consignment Section ──────────────────────────────────────────── */}
       {activeConsignments.length > 0 && (
@@ -707,6 +711,90 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
           </form>
         </SheetContent>
       </Sheet>
+
+      {/* ── Edit Sheet ────────────────────────────────────────────────────── */}
+      <Sheet open={editOpen} onOpenChange={o => { if (!savingEdit) setEditOpen(o); }}>
+        <SheetContent className="w-full data-[side=right]:sm:max-w-2xl overflow-y-auto px-6">
+          <SheetHeader className="mb-5">
+            <SheetTitle>Edit Stock Record</SheetTitle>
+            {editItem && <p className="text-xs text-muted-foreground font-mono">{editItem.productCode} · {editItem.warehouseLabel}</p>}
+          </SheetHeader>
+          <form onSubmit={handleEdit} className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label>Current Balance</Label>
+                <div className="h-9 rounded-md border border-border bg-muted px-3 flex items-center text-sm tabular-nums text-muted-foreground">
+                  {editItem ? fmt(editItem.quantity) : "—"}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label>Correct Balance To <span className="text-destructive">*</span></Label>
+                <Input type="number" min="0" step="0.0001" value={editTargetQty} onChange={e => setEditTargetQty(e.target.value)} placeholder="0"/>
+              </div>
+            </div>
+            {editItem && parseFloat(editTargetQty) !== parseFloat(editItem.quantity) && !isNaN(parseFloat(editTargetQty)) && (
+              <p className="text-xs text-muted-foreground">
+                This will create an <strong>Adjustment</strong> of{" "}
+                <span className={parseFloat(editTargetQty) - parseFloat(editItem.quantity) > 0 ? "text-green-600" : "text-red-600"}>
+                  {parseFloat(editTargetQty) - parseFloat(editItem.quantity) > 0 ? "+" : ""}
+                  {(parseFloat(editTargetQty) - parseFloat(editItem.quantity)).toFixed(4)}
+                </span>
+                {" "}units for audit trail.
+              </p>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <Label>Correction Reason <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+              <Input placeholder="e.g. Physical count correction" value={editNotes} onChange={e => setEditNotes(e.target.value)}/>
+            </div>
+            <hr className="border-border"/>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label>Reorder Point <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input type="number" min="0" step="1" placeholder="—" value={editReorderPoint} onChange={e => setEditReorderPoint(e.target.value)}/>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label>Max Stock <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input type="number" min="0" step="1" placeholder="—" value={editMaxStock} onChange={e => setEditMaxStock(e.target.value)}/>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Unit Cost (RM) <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+              <Input type="number" min="0" step="0.01" placeholder="0.00" value={editUnitCost} onChange={e => setEditUnitCost(e.target.value)}/>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button type="submit" disabled={savingEdit} className="flex-1">{savingEdit ? "Saving…" : "Save"}</Button>
+              <Button type="button" variant="outline" onClick={() => setEditOpen(false)} disabled={savingEdit}>Cancel</Button>
+            </div>
+          </form>
+        </SheetContent>
+      </Sheet>
+
+      {/* ── Delete Confirmation ───────────────────────────────────────────── */}
+      {deleteItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-background rounded-xl border border-border shadow-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4">
+            <h2 className="text-base font-semibold">Remove from inventory?</h2>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-mono font-medium">{deleteItem.productCode}</span> · {deleteItem.warehouseLabel}
+              <br/>Current balance: <strong>{fmt(deleteItem.quantity)}</strong>
+              {parseFloat(deleteItem.quantity) > 0 && (
+                <span className="block mt-1 text-orange-600">⚠ Balance is not zero — all stock records and lot data will be removed.</span>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground">Movement history is preserved for audit purposes.</p>
+            <div className="flex gap-2">
+              <Button
+                variant="destructive" className="flex-1"
+                disabled={deletingId === deleteItem.id}
+                onClick={() => handleDelete(deleteItem)}
+              >
+                {deletingId === deleteItem.id ? "Removing…" : "Remove"}
+              </Button>
+              <Button variant="outline" onClick={() => setDeleteItem(null)} disabled={deletingId !== null}>Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -426,6 +426,89 @@ export async function rejectStockMovement(movementId: string, reason: string): P
   revalidatePath("/dashboard/inventory");
 }
 
+export async function editStockLevel(data: {
+  stockLevelId: string;
+  targetQty: number;
+  reorderPoint: string | null;
+  maxStock: string | null;
+  unitCost: string | null;
+  correctionNotes?: string;
+}): Promise<void> {
+  const { orgId, userId } = await requireAccess("inventory:manage");
+
+  const [sl] = await db
+    .select()
+    .from(stockLevel)
+    .where(and(eq(stockLevel.id, data.stockLevelId), eq(stockLevel.organizationId, orgId)))
+    .limit(1);
+  if (!sl) throw new Error("Stock record not found");
+
+  const currentQty = parseFloat(sl.quantity);
+  const delta = data.targetQty - currentQty;
+
+  // Update metadata regardless
+  await db.update(stockLevel)
+    .set({ reorderPoint: data.reorderPoint, maxStock: data.maxStock, unitCost: data.unitCost, updatedAt: new Date() })
+    .where(eq(stockLevel.id, sl.id));
+
+  // If qty changed, record an adjustment movement (auto-approved)
+  if (Math.abs(delta) > 0.00001) {
+    const [prod] = await db.select({ productCode: product.productCode }).from(product).where(eq(product.id, sl.productId)).limit(1);
+    const movementId = nanoid();
+    await db.insert(stockMovement).values({
+      id: movementId,
+      organizationId: orgId,
+      productId: sl.productId,
+      productCode: prod?.productCode ?? "",
+      warehouseLabel: sl.warehouseLabel,
+      warehouseTo: null,
+      movementType: MOVEMENT_TYPE.ADJUSTMENT,
+      quantity: delta.toFixed(4),
+      balanceAfter: data.targetQty.toFixed(4),
+      unitCost: data.unitCost,
+      referenceType: REF_TYPE.MANUAL,
+      referenceId: null,
+      referenceNo: null,
+      notes: data.correctionNotes?.trim() || "Balance correction",
+      lotNo: null,
+      expiryDate: null,
+      lotId: null,
+      status: "APPROVED",
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      createdBy: userId,
+      createdAt: new Date(),
+    });
+    await db.update(stockLevel)
+      .set({ quantity: data.targetQty.toFixed(4), updatedAt: new Date() })
+      .where(eq(stockLevel.id, sl.id));
+  }
+
+  revalidatePath("/dashboard/inventory");
+}
+
+export async function deleteStockLevel(stockLevelId: string): Promise<void> {
+  const { orgId } = await requireAccess("inventory:manage");
+
+  const [sl] = await db
+    .select()
+    .from(stockLevel)
+    .where(and(eq(stockLevel.id, stockLevelId), eq(stockLevel.organizationId, orgId)))
+    .limit(1);
+  if (!sl) throw new Error("Stock record not found");
+
+  // Remove lot records for this product/warehouse
+  await db.delete(stockLot).where(and(
+    eq(stockLot.productId, sl.productId),
+    eq(stockLot.organizationId, orgId),
+    eq(stockLot.warehouseLabel, sl.warehouseLabel),
+  ));
+
+  await db.delete(stockLevel).where(eq(stockLevel.id, stockLevelId));
+
+  revalidatePath("/dashboard/inventory");
+}
+
 export async function setReorderPoint(
   productId: string,
   warehouseLabel: string,
