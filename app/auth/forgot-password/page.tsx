@@ -37,7 +37,7 @@ export default function ForgotPasswordPage() {
   });
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
-    const { error } = await authClient.forgetPassword({
+    const { error } = await authClient.requestPasswordReset({
       email: values.email,
       redirectTo: "/auth/reset-password",
     });

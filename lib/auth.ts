@@ -63,7 +63,7 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 3,
-    async sendResetPasswordEmail({ user, url }) {
+    async sendResetPassword({ user, url }) {
       await resend.emails.send({
         from: `${process.env.EMAIL_SENDER_NAME} <${process.env.EMAIL_SENDER_ADDRESS}>`,
         to: user.email,
