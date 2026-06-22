@@ -1063,6 +1063,10 @@ export const quotation = pgTable(
     title: text("title").default("Loose Items"),
     sets: integer("sets").notNull().default(1),
 
+    // Revision tracking
+    revisionNo: integer("revision_no").notNull().default(0),
+    originalQuotationId: text("original_quotation_id"), // no FK reference to avoid self-ref complexity
+
     // Status
     status: text("status").notNull().default("draft"), // draft | final
 

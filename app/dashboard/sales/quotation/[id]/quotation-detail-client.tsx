@@ -7,6 +7,7 @@ import {
   finalizeQuotation,
   deleteQuotation,
   getQuotationGroupAllDetails,
+  reviseQuotation,
 } from "@/server/quotation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,6 +93,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
   const [finalizing, setFinalizing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [revising, setRevising] = useState(false);
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
   const [markupRows, setMarkupRows] = useState<MarkupRow[]>([]);
 
@@ -314,10 +316,20 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                   Dummy
                 </span>
               )}
+              {(q.revisionNo ?? 0) > 0 && (
+                <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                  Rev.{q.revisionNo}
+                </span>
+              )}
             </div>
             <div className="text-xs text-muted-foreground mt-0.5">
               {orgName} · Created {fmtDate(q.createdAt)}
             </div>
+            {(q.revisionNo ?? 0) > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Revision {q.revisionNo} of <span className="font-mono">{q.quotationNo.replace(/-R\d+$/, "")}</span>
+              </p>
+            )}
           </div>
         </div>
 
@@ -367,6 +379,25 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                   Download All ({siblings.length})
                 </Button>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={revising}
+                onClick={async () => {
+                  setRevising(true);
+                  try {
+                    const newId = await reviseQuotation(q.id);
+                    toast.success("Revision created — now in draft");
+                    router.push(`/dashboard/sales/quotation/${newId}/edit`);
+                  } catch (e: any) {
+                    toast.error(e.message);
+                  } finally {
+                    setRevising(false);
+                  }
+                }}
+              >
+                {revising ? "Creating…" : "Revise"}
+              </Button>
             </>
           )}
           {isDraft && (

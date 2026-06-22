@@ -18,7 +18,8 @@ import {
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc, inArray, sql, ilike, count } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql, ilike, count, or } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -661,6 +662,8 @@ export async function getQuotationsList() {
       createdAt: quotation.createdAt,
       title: quotation.title,
       orgName: organization.name,
+      revisionNo: quotation.revisionNo,
+      originalQuotationId: quotation.originalQuotationId,
     })
     .from(quotation)
     .innerJoin(organization, eq(organization.id, quotation.organizationId))
@@ -699,6 +702,8 @@ export async function getQuotationsList() {
         isDummy: m.isDummy,
         status: m.status,
         createdAt: m.createdAt,
+        revisionNo: m.revisionNo ?? 0,
+        originalQuotationId: m.originalQuotationId ?? null,
       })),
     };
   });
@@ -2126,4 +2131,72 @@ export async function deleteQuotation(id: string) {
   } else {
     await db.delete(quotation).where(eq(quotation.id, id));
   }
+}
+
+export async function reviseQuotation(quotationId: string): Promise<string> {
+  const { orgId, userId } = await requireAccess("quotation:create");
+
+  // 1. Load the source quotation
+  const [source] = await db
+    .select()
+    .from(quotation)
+    .where(and(eq(quotation.id, quotationId), eq(quotation.organizationId, orgId)))
+    .limit(1);
+  if (!source) throw new Error("Quotation not found");
+  if (source.status !== "final") throw new Error("Only finalized quotations can be revised");
+
+  // 2. Determine original — if source is already a revision, point back to the root
+  const originalId = source.originalQuotationId ?? quotationId;
+
+  // 3. Get the original's base quotation number
+  const [original] = await db
+    .select({ quotationNo: quotation.quotationNo })
+    .from(quotation)
+    .where(eq(quotation.id, originalId))
+    .limit(1);
+  const baseNo = original?.quotationNo ?? source.quotationNo.replace(/-R\d+$/, "");
+
+  // 4. Count all existing revisions (original + all -Rn) to get next revision number
+  const siblings = await db
+    .select({ revisionNo: quotation.revisionNo })
+    .from(quotation)
+    .where(
+      and(
+        eq(quotation.organizationId, orgId),
+        or(eq(quotation.id, originalId), eq(quotation.originalQuotationId, originalId))
+      )
+    );
+  const maxRev = siblings.reduce((m, r) => Math.max(m, r.revisionNo ?? 0), 0);
+  const newRevisionNo = maxRev + 1;
+  const newQuotationNo = `${baseNo}-R${newRevisionNo}`;
+
+  // 5. Clone items from source
+  const sourceItems = await db
+    .select()
+    .from(quotationItem)
+    .where(eq(quotationItem.quotationId, quotationId));
+
+  // 6. Insert new quotation
+  const newId = nanoid();
+  await db.insert(quotation).values({
+    ...source,
+    id: newId,
+    quotationNo: newQuotationNo,
+    revisionNo: newRevisionNo,
+    originalQuotationId: originalId,
+    status: "draft",
+    createdBy: userId,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  // 7. Clone items
+  if (sourceItems.length > 0) {
+    await db.insert(quotationItem).values(
+      sourceItems.map((item) => ({ ...item, id: nanoid(), quotationId: newId }))
+    );
+  }
+
+  revalidatePath("/dashboard/sales/quotation");
+  return newId;
 }

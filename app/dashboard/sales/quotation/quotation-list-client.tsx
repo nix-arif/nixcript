@@ -242,6 +242,11 @@ export function QuotationListClient({ initialGroups }: Props) {
                         <span className="font-mono text-sm font-medium">
                           <Highlight text={m.quotationNo} query={search} />
                         </span>
+                        {(m.revisionNo ?? 0) > 0 && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                            R{m.revisionNo}
+                          </span>
+                        )}
                         <span className="text-[10px] font-medium bg-muted/60 rounded px-1.5 py-0.5 text-muted-foreground tabular-nums">
                           {fmtDate(group.createdAt)}
                         </span>
@@ -418,6 +423,11 @@ export function QuotationListClient({ initialGroups }: Props) {
                       <span className="font-mono text-xs font-medium shrink-0">
                         {m.quotationNo}
                       </span>
+                      {(m.revisionNo ?? 0) > 0 && (
+                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 shrink-0">
+                          R{m.revisionNo}
+                        </span>
+                      )}
                       {m.isDummy === 0 ? (
                         <span className="text-[9px] font-medium border border-primary/30 text-primary rounded px-1.5 py-0.5 shrink-0">
                           Original
