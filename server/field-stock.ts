@@ -114,6 +114,20 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
     .filter((r) => r.qty > 0);
 }
 
+export async function getWarehouseStockQty(productId: string, warehouseLabel: string): Promise<number> {
+  const { orgId } = await requireAccess("inventory:read");
+  const [row] = await db
+    .select({ quantity: stockLevel.quantity })
+    .from(stockLevel)
+    .where(and(
+      eq(stockLevel.organizationId, orgId),
+      eq(stockLevel.productId, productId),
+      eq(stockLevel.warehouseLabel, warehouseLabel),
+    ))
+    .limit(1);
+  return row ? parseFloat(row.quantity) : 0;
+}
+
 export async function getAllRepFieldStock(): Promise<RepSummary[]> {
   const { orgId } = await requireAccess("inventory:read");
 
