@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
+import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
@@ -170,7 +171,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
       // Append items from this quotation, tagged with source
       const startRow = items.length;
       const imported: EditableItem[] = qt.items.map((item, idx) => ({
-        _key:        crypto.randomUUID(),
+        _key:        uid(),
         _quotationId: qt.id,
         _quotationNo: qt.quotationNo,
         included:    true,

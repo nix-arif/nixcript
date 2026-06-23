@@ -12,6 +12,8 @@ import {
   user,
   organization,
   supplier,
+  salesOrder,
+  salesOrderItem,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -23,6 +25,7 @@ import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
 import { createApprovedMovement } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
+import { performStockCheckAndReserve } from "@/server/stock-reservation";
 
 // ── Auth helpers ────────────────────────────────────────────────────────────
 
@@ -104,6 +107,8 @@ export type GoodsReceiptListRow = GoodsReceiptRow & {
   prNo: string | null;
   supplierName: string | null;
   itemCount: number;
+  salesOrderId: string | null;
+  salesOrderNo: string | null;
 };
 
 export type ConfirmedPoForGr = {
@@ -170,13 +175,19 @@ export async function getAllGoodsReceipts(): Promise<GoodsReceiptListRow[]> {
 
   const [users, pos, grItems] = await Promise.all([
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds)),
-    db.select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, supplierSnapshot: purchaseOrder.supplierSnapshot })
+    db.select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, supplierSnapshot: purchaseOrder.supplierSnapshot, salesOrderId: purchaseOrder.salesOrderId })
       .from(purchaseOrder)
       .where(inArray(purchaseOrder.id, poIds)),
     db.select({ goodsReceiptId: goodsReceiptItem.goodsReceiptId })
       .from(goodsReceiptItem)
       .where(inArray(goodsReceiptItem.goodsReceiptId, grIds)),
   ]);
+
+  const soIds = [...new Set(pos.map((p) => p.salesOrderId).filter(Boolean))] as string[];
+  const soRows = soIds.length > 0
+    ? await db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(inArray(salesOrder.id, soIds))
+    : [];
+  const soMap = Object.fromEntries(soRows.map((s) => [s.id, s.soNo]));
 
   const userMap    = Object.fromEntries(users.map((u) => [u.id, u.name]));
   const poMap      = Object.fromEntries(pos.map((p) => [p.id, p]));
@@ -186,6 +197,7 @@ export async function getAllGoodsReceipts(): Promise<GoodsReceiptListRow[]> {
   return grs.map((gr) => {
     const po   = poMap[gr.purchaseOrderId];
     const snap = po?.supplierSnapshot as any;
+    const soId = po?.salesOrderId ?? null;
     return {
       ...gr,
       receivedByName: userMap[gr.receivedBy] ?? null,
@@ -193,6 +205,8 @@ export async function getAllGoodsReceipts(): Promise<GoodsReceiptListRow[]> {
       prNo:           po?.prNo ?? null,
       supplierName:   snap?.name ?? null,
       itemCount:      itemCounts[gr.id] ?? 0,
+      salesOrderId:   soId,
+      salesOrderNo:   soId ? (soMap[soId] ?? null) : null,
     };
   });
 }
@@ -326,12 +340,48 @@ export async function createGoodsReceipt(input: CreateGoodsReceiptInput): Promis
   // Auto-fulfill the PO if all items are fully received across all GRs
   await maybeAutoFulfill(input.purchaseOrderId, orgId);
 
+  // Re-attempt stock reservation for any SOs that were previously insufficient
+  // and contain the products just received into the Default warehouse.
+  if (warehouseLabel === "Default") {
+    const receivedProductIds = input.items
+      .filter((i) => i.productId && parseFloat(i.qtyReceived) > 0)
+      .map((i) => i.productId!);
+
+    if (receivedProductIds.length > 0) {
+      await retryInsufficientSos(orgId, userId, receivedProductIds);
+    }
+  }
+
   revalidatePath(`/dashboard/procurement/purchase-order/${input.purchaseOrderId}`);
   revalidatePath("/dashboard/procurement/purchase-order");
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard/inventory/movements");
+  revalidatePath("/dashboard/fulfillment/delivery");
 
   return gr;
+}
+
+async function retryInsufficientSos(orgId: string, userId: string, productIds: string[]) {
+  // Find confirmed SOs with insufficient stock that contain any of the received products
+  const affectedSoItems = await db
+    .select({ salesOrderId: salesOrderItem.salesOrderId })
+    .from(salesOrderItem)
+    .innerJoin(salesOrder, eq(salesOrderItem.salesOrderId, salesOrder.id))
+    .where(and(
+      eq(salesOrder.organizationId, orgId),
+      eq(salesOrder.status, "confirmed"),
+      eq(salesOrder.stockReservationStatus, "insufficient"),
+      inArray(salesOrderItem.productId, productIds),
+    ));
+
+  const soIds = [...new Set(affectedSoItems.map((r) => r.salesOrderId))];
+  for (const soId of soIds) {
+    try {
+      await performStockCheckAndReserve(orgId, userId, soId);
+    } catch {
+      // Ignore — SO may still not have enough stock, that's fine
+    }
+  }
 }
 
 async function maybeAutoFulfill(purchaseOrderId: string, orgId: string) {

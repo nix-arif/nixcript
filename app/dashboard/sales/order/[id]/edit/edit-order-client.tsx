@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
+import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon,
   PlusIcon,
@@ -68,7 +69,7 @@ const SO_STATUS_LABELS: Record<string, string> = {
 };
 
 const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(),
+  _key: uid(),
   rowNo,
   productCode: "",
   description: "",
@@ -181,7 +182,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
   const [items, setItems] = useState<LineItem[]>(
     order.items.length > 0
       ? order.items.map((i) => ({
-          _key: crypto.randomUUID(),
+          _key: uid(),
           rowNo: i.rowNo,
           productCode: i.productCode ?? "",
           description: i.description ?? "",

@@ -20,7 +20,6 @@ const MB = 30;
 const CW = W - ML - MR;
 
 // ── Palette ────────────────────────────────────────────────────────────────
-const C_BLACK   = rgb(0.06, 0.06, 0.06);
 const C_DARK    = rgb(0.10, 0.10, 0.10);
 const C_MID     = rgb(0.40, 0.40, 0.40);
 const C_LITE    = rgb(0.62, 0.62, 0.62);
@@ -86,7 +85,6 @@ async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<
 }
 
 export type CatalogueRequestBody = {
-  /** Ordered list from the spreadsheet (de-duped by caller, but API de-dupes again) */
   items: Array<{ no: string; productCode: string; sku?: string; description?: string; qty?: string; uom?: string }>;
   title: string;
   subtitle?: string;
@@ -133,7 +131,6 @@ export async function POST(req: NextRequest) {
       .from(product)
       .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, codes)));
 
-    // De-dup by productCode (same code may exist in multiple owner orgs)
     const dbMap = new Map<string, typeof dbRows[number]>();
     for (const row of dbRows) {
       if (!dbMap.has(row.productCode)) dbMap.set(row.productCode, row);
@@ -154,7 +151,6 @@ export async function POST(req: NextRequest) {
       const b = parseInt(hex.slice(4, 6), 16) / 255;
       return rgb(r, g, b);
     })();
-    // Darkened accent for the header band so white text is always legible
     const accentDark = (() => {
       const hex = brandHex.replace("#", "");
       const r = parseInt(hex.slice(0, 2), 16) / 255;
@@ -199,7 +195,6 @@ export async function POST(req: NextRequest) {
     const r2ImgBase = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
     const imageCache = new Map<string, PDFImage>();
 
-    // Create doc early so we can embed images
     const pdfDoc = await PDFDocument.create();
     const fontR  = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontB  = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -221,10 +216,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── Layout constants (mirrors zinc.ts catalogue section) ───────────────
+    // ── Layout constants ───────────────────────────────────────────────────
     const ROWS_PER_PG  = 5;
-    const CAT_HDR_H    = 60;   // page header band
-    const CAT_COLHDR_H = 18;   // column label row
+    const CAT_HDR_H    = 60;
+    const CAT_COLHDR_H = 18;
     const CAT_FOOT_H   = 28;
     const CAT_COL_NO   = 24;
 
@@ -242,12 +237,10 @@ export async function POST(req: NextRequest) {
       const catPage  = pdfDoc.addPage([W, H]);
       const pageRows = enrichedItems.slice(pi * ROWS_PER_PG, (pi + 1) * ROWS_PER_PG);
 
-      // ── Header band — full-width accent colour ───────────────────────────
+      // Header band — full-width accent colour
       catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H, color: accentDark });
-      // Bottom accent bar (brighter) to create a two-tone effect
       catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: 3, color: accent });
 
-      // Title (left)
       catPage.drawText(trunc(title, fontB, 13, CW * 0.65), {
         x: ML, y: H - 22, size: 13, font: fontB, color: C_WHITE,
       });
@@ -262,7 +255,6 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Right side: page / date / count
       const pgLabel = `Page ${pi + 1} / ${totalCatPgs}`;
       catPage.drawText(pgLabel, {
         x: W - MR - fontB.widthOfTextAtSize(pgLabel, 9),
@@ -278,51 +270,37 @@ export async function POST(req: NextRequest) {
         y: H - 45, size: 7, font: fontR, color: rgb(0.45, 0.45, 0.50),
       });
 
-      // ── Column header — brand accent colour ───────────────────────────────
+      // Column header — brand accent colour
       const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
       catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: accent });
 
       for (const col of [
-        { label: "#",               x: ML + 4                                },
+        { label: "#",               x: ML + 4 },
         { label: "Image",           x: ML + CAT_COL_NO + CAT_COL_IMG / 2 - 10 },
-        { label: "Product Details", x: ML + CAT_COL_NO + CAT_COL_IMG + 8   },
+        { label: "Product Details", x: ML + CAT_COL_NO + CAT_COL_IMG + 8 },
       ]) {
         catPage.drawText(col.label.toUpperCase(), {
           x: col.x, y: colHdrY + 5, size: 6.5, font: fontB, color: C_WHITE,
         });
       }
 
-      // ── Table outer border ────────────────────────────────────────────────
       const tableTopY    = colHdrY;
       const tableBottomY = tableTopY - pageRows.length * CAT_ROW_H;
 
-      // Vertical col dividers
-      catPage.drawLine({
-        start: { x: ML + CAT_COL_NO, y: tableBottomY },
-        end:   { x: ML + CAT_COL_NO, y: tableTopY },
-        thickness: 0.3, color: C_LINE,
-      });
-      catPage.drawLine({
-        start: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableBottomY },
-        end:   { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableTopY },
-        thickness: 0.3, color: C_LINE,
-      });
+      catPage.drawLine({ start: { x: ML + CAT_COL_NO,             y: tableBottomY }, end: { x: ML + CAT_COL_NO,             y: tableTopY }, thickness: 0.3, color: C_LINE });
+      catPage.drawLine({ start: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableBottomY }, end: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableTopY }, thickness: 0.3, color: C_LINE });
 
-      // ── Rows ──────────────────────────────────────────────────────────────
       let rowTopY = colHdrY;
       for (let ri = 0; ri < pageRows.length; ri++) {
         const item = pageRows[ri];
         const rowY = rowTopY - CAT_ROW_H;
 
-        // Alternating row bg
         if (ri % 2 === 1) {
           catPage.drawRectangle({ x: ML, y: rowY, width: CW, height: CAT_ROW_H, color: C_ALT });
         }
 
-        // Bottom separator
         catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
 
-        // Row number (string — may be roman numerals from spreadsheet)
         const noStr = sanitize(item.no);
         catPage.drawText(noStr, {
           x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2,
@@ -330,7 +308,6 @@ export async function POST(req: NextRequest) {
           size: 8, font: fontR, color: C_LITE,
         });
 
-        // Image
         const imgColX = ML + CAT_COL_NO;
         const img = imageCache.get(item.productCode);
         if (img) {
@@ -343,7 +320,6 @@ export async function POST(req: NextRequest) {
             width: iw, height: ih,
           });
         } else {
-          // Placeholder box
           const ph = CAT_IMG_SZ * 0.7;
           catPage.drawRectangle({
             x: imgColX + (CAT_COL_IMG - ph) / 2,
@@ -352,43 +328,33 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        // Product details
         const detX    = ML + CAT_COL_NO + CAT_COL_IMG + 8;
         const detMaxW = CAT_COL_DET - 16;
         let   detY    = rowY + CAT_ROW_H - 14;
 
-        // SKU (if enabled and present)
         if (options.showSku && item.sku) {
           catPage.drawText(trunc(`SKU: ${item.sku}`, fontR, 7.5, detMaxW), {
             x: detX, y: detY, size: 7.5, font: fontR, color: C_MID,
           });
           detY -= 10;
         }
-
-        // Code (if enabled)
         if (options.showProductCode) {
           catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), {
             x: detX, y: detY, size: 8, font: fontB, color: accent,
           });
           detY -= 11;
         }
-
-        // Description
         if (item.description) {
           for (const line of wrap(item.description, fontR, 8.5, detMaxW).slice(0, 3)) {
             catPage.drawText(line, { x: detX, y: detY, size: 8.5, font: fontR, color: C_DARK });
             detY -= 11;
           }
         }
-
-        // UOM / qty
         if (item.uom || item.qty) {
           const uomStr = [item.qty && `Qty: ${item.qty}`, item.uom].filter(Boolean).join("  ·  ");
           catPage.drawText(uomStr, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MID });
           detY -= 10;
         }
-
-        // MDA reg
         if (options.showRegNo) {
           if (item.mdaRegNo) {
             catPage.drawText(`MDA: ${item.mdaRegNo}`, {
@@ -401,8 +367,6 @@ export async function POST(req: NextRequest) {
           }
           detY -= 10;
         }
-
-        // MDA validity
         if (options.showValidity && item.mdaValidity) {
           catPage.drawText(`Exp: ${fmtD(item.mdaValidity)}`, {
             x: detX, y: detY, size: 7.5, font: fontR, color: C_LITE,
@@ -412,14 +376,13 @@ export async function POST(req: NextRequest) {
         rowTopY = rowY;
       }
 
-      // Outer border
       catPage.drawRectangle({
         x: ML, y: tableBottomY,
         width: CW, height: tableTopY - tableBottomY,
         borderColor: C_LINE, borderWidth: 0.4,
       });
 
-      // ── Footer ────────────────────────────────────────────────────────────
+      // Footer
       catPage.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.6, color: accent });
       const footLeft = effectiveCompanyName ? `${effectiveCompanyName.toUpperCase()}  ·  ${title}` : title;
       catPage.drawText(trunc(footLeft, fontR, 7, CW * 0.7), {

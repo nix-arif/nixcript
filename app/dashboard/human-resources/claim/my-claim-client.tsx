@@ -26,6 +26,7 @@ import {
   finalizeDraftClaim, resubmitRejectedClaim, createClaimDocumentRecord, deleteClaimDocument,
 } from "@/server/claim";
 import { CLAIM_FORM, LINE_CATEGORY, TRAVEL_MODE, TRAVEL_MODE_LABELS } from "@/lib/claim/constants";
+import { uid } from "@/lib/uid";
 import {
   PlusIcon, FileDownIcon, XIcon, ReceiptIcon,
   AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon, LoaderIcon, RouteIcon,
@@ -72,7 +73,7 @@ interface OvFxRow     { id:string; lineDate:string; destination:string; currency
 interface OvOtherRow  { id:string; lineDate:string; description:string; amountMyr:string }
 interface QueuedFile  { file:File; id:string }
 
-const newId = () => crypto.randomUUID();
+const newId = () => uid();
 const emptyTravel = (): TravelRow => ({
   id:newId(), lineDate:"", fromLocation:"", toLocation:"", distanceKm:"", mode:"", purpose:"",
   dailyId:newId(), breakfastDays:"", lunchDays:"", dinnerDays:"",

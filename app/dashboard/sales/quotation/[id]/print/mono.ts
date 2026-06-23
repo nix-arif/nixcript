@@ -1208,9 +1208,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
         catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, borderColor: C_BLACK, borderWidth: 0.8 });
         const colDefs: { label: string; x: number; w: number }[] = [
-          { label: "#",               x: ML,                               w: CAT_COL_NO  },
-          { label: "IMAGE",           x: ML + CAT_COL_NO,                  w: CAT_COL_IMG },
-          { label: "PRODUCT DETAILS", x: ML + CAT_COL_NO + CAT_COL_IMG,   w: CAT_COL_DET },
+          { label: "#",               x: ML,                             w: CAT_COL_NO  },
+          { label: "IMAGE",           x: ML + CAT_COL_NO,                w: CAT_COL_IMG },
+          { label: "PRODUCT DETAILS", x: ML + CAT_COL_NO + CAT_COL_IMG, w: CAT_COL_DET },
         ];
         for (const col of colDefs) {
           const tw = fontB.widthOfTextAtSize(col.label, 7);
@@ -1228,7 +1228,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         let rowTopY = colHdrY;
         for (let ri = 0; ri < pageRows.length; ri++) {
           const { item, displayCode } = pageRows[ri];
-          const rowY    = rowTopY - CAT_ROW_H;
+          const rowY = rowTopY - CAT_ROW_H;
           catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.4, color: C_BLACK });
 
           const noStr = sanitizeText(item.rowNo);

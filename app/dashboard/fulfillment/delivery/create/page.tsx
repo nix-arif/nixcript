@@ -3,6 +3,7 @@ import { CreateDeliveryOrderClient } from "./create-do-client";
 import { getSalesOrderDetail } from "@/server/sales-order";
 import { getCustomer } from "@/server/customer";
 import { getSoRemainingItems } from "@/server/delivery-order";
+import { getDocumentCategories } from "@/server/document-category";
 
 export default async function CreateDeliveryOrderPage({
   searchParams,
@@ -11,6 +12,7 @@ export default async function CreateDeliveryOrderPage({
 }) {
   await requirePermission("delivery-order:create");
   const { soId, customerPoId } = await searchParams;
+  const categories = await getDocumentCategories().catch(() => []);
 
   let prefill: React.ComponentProps<typeof CreateDeliveryOrderClient>["prefill"] = undefined;
 
@@ -67,5 +69,5 @@ export default async function CreateDeliveryOrderPage({
     }
   }
 
-  return <CreateDeliveryOrderClient prefill={prefill} />;
+  return <CreateDeliveryOrderClient prefill={prefill} categories={categories} />;
 }

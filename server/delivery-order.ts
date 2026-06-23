@@ -274,6 +274,7 @@ export interface CreateDeliveryOrderInput {
   caseType?: string;
   caseDate?: Date;
   mrnNo?: string;
+  categoryIds?: string[];
 }
 
 export interface UpdateDeliveryOrderInput extends Omit<CreateDeliveryOrderInput, "items"> {
@@ -624,6 +625,7 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       caseType: input.caseType ?? null,
       caseDate: input.caseDate ?? null,
       mrnNo: input.mrnNo ?? null,
+      categoryIds: input.categoryIds ?? [],
       createdBy: userId,
     })
     .returning();

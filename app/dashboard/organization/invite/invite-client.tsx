@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Department } from "@/server/departments";
+import { uid } from "@/lib/uid";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -132,7 +133,7 @@ export function InviteClient({
   expiredCount: number;
 }) {
   const [rows, setRows] = React.useState<InviteRow[]>([
-    { id: crypto.randomUUID(), email: "", role: "", departmentId: "" },
+    { id: uid(), email: "", role: "", departmentId: "" },
   ]);
   const [sending, setSending]         = React.useState(false);
   const [invitations, setInvitations] = React.useState<Invitation[]>(initialInvitations);
@@ -166,11 +167,11 @@ export function InviteClient({
   });
 
   const addRow = () =>
-    setRows((prev) => [...prev, { id: crypto.randomUUID(), email: "", role: "", departmentId: "" }]);
+    setRows((prev) => [...prev, { id: uid(), email: "", role: "", departmentId: "" }]);
 
   const removeRow = (id: string) => {
     if (rows.length === 1) {
-      setRows([{ id: crypto.randomUUID(), email: "", role: "", departmentId: "" }]);
+      setRows([{ id: uid(), email: "", role: "", departmentId: "" }]);
       return;
     }
     setRows((prev) => prev.filter((r) => r.id !== id));
@@ -190,7 +191,7 @@ export function InviteClient({
     const failed    = results.filter((r) => !r.success);
     if (succeeded.length > 0) {
       toast.success(`${succeeded.length} invitation${succeeded.length > 1 ? "s" : ""} sent.`);
-      setRows([{ id: crypto.randomUUID(), email: "", role: "", departmentId: "" }]);
+      setRows([{ id: uid(), email: "", role: "", departmentId: "" }]);
       await refreshInvitations();
     }
     failed.forEach((f) => toast.error(`${f.email}: ${f.message}`));
@@ -369,7 +370,7 @@ export function InviteClient({
             )}
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setRows([{ id: crypto.randomUUID(), email: "", role: "", departmentId: "" }])}>
+            <Button variant="outline" size="sm" onClick={() => setRows([{ id: uid(), email: "", role: "", departmentId: "" }])}>
               Clear all
             </Button>
             <Button

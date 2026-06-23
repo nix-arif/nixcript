@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon, ChevronDownIcon, ImageIcon, UploadIcon, DatabaseIcon, ShoppingCartIcon, PencilIcon, BanIcon, Loader2Icon, FlaskConicalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { uid } from "@/lib/uid";
 
 const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
 const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
@@ -212,7 +213,7 @@ interface LineItem extends PrItemInput {
 }
 
 const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(),
+  _key: uid(),
   rowNo,
   productCode: "",
   description: "",
@@ -344,7 +345,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props)
       setLinkedSoId(soId);
       setLinkedSoNo(result.soNo);
       setLines(result.items.map((i) => ({
-        _key: crypto.randomUUID(),
+        _key: uid(),
         rowNo: i.rowNo,
         productId: i.productId,
         productCode: i.productCode,

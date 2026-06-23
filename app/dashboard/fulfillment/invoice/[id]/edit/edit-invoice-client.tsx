@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
+import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon,
   BuildingIcon, ChevronDownIcon, LinkIcon, UserIcon,
@@ -34,12 +35,12 @@ interface LineItem extends InvoiceItemInput { _key: string; }
 interface ExpenseRow extends InvoiceExpenseInput { _key: string; }
 
 const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(), rowNo,
+  _key: uid(), rowNo,
   productCode: "", description: "", qty: "1", uom: "",
   unitPrice: "0", discountPct: "0", discountAmt: "0", totalPrice: "0",
   costUnitPrice: "0", costTotal: "0",
 });
-const newExpense = (): ExpenseRow => ({ _key: crypto.randomUUID(), description: "", category: "other", amount: "0" });
+const newExpense = (): ExpenseRow => ({ _key: uid(), description: "", category: "other", amount: "0" });
 
 const EXPENSE_CATEGORIES = ["transport", "handling", "customs", "other"] as const;
 
@@ -211,7 +212,7 @@ export function EditInvoiceClient({ invoice, suppliers, allCustomerPos, categori
       ? invoice.items.map((i) => {
           const { discountAmt, totalPrice } = calcLineTotal(i.unitPrice ?? "0", i.qty ?? "1", i.discountPct ?? "0");
           return {
-            _key: crypto.randomUUID(),
+            _key: uid(),
             rowNo: i.rowNo,
             productId: i.productId ?? undefined,
             productCode: i.productCode ?? "",
@@ -238,7 +239,7 @@ export function EditInvoiceClient({ invoice, suppliers, allCustomerPos, categori
   // Expenses
   const [expenses, setExpenses] = useState<ExpenseRow[]>(() =>
     invoice.expenses.map((e) => ({
-      _key: crypto.randomUUID(),
+      _key: uid(),
       description: e.description ?? "",
       category: e.category ?? "other",
       amount: e.amount ?? "0",

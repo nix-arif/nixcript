@@ -1,6 +1,7 @@
 import { requirePermission } from "@/lib/auth/require-permission";
 import { getDeliveryOrders, getPendingSosForDo } from "@/server/delivery-order";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { recheckAllInsufficientSos } from "@/server/stock-reservation";
 import { DeliveryOrderListClient } from "./delivery-list-client";
 
 export default async function DeliveryOrderPage({
@@ -13,6 +14,10 @@ export default async function DeliveryOrderPage({
   const page   = parseInt(sp.page ?? "1") || 1;
   const search = sp.search ?? "";
   const status = sp.status ?? "";
+
+  // Silently re-check any SOs stuck as insufficient — catches GRs received
+  // before the auto-trigger was in place.
+  await recheckAllInsufficientSos().catch(() => {});
 
   const [result, pendingSos, permissions] = await Promise.all([
     getDeliveryOrders({ page, search: search || undefined, status: status || undefined }),

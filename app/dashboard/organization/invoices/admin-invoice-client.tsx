@@ -24,6 +24,7 @@ import {
   PlusIcon, XIcon, SearchIcon, BuildingIcon, ChevronDownIcon, TrashIcon, UserIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { uid } from "@/lib/uid";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 type SalesPerson = { id?: string | null; name: string };
@@ -31,12 +32,12 @@ interface LineItem extends InvoiceItemInput { _key: string; }
 interface ExpenseRow extends InvoiceExpenseInput { _key: string; }
 
 const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(), rowNo,
+  _key: uid(), rowNo,
   productCode: "", description: "", qty: "1", uom: "",
   unitPrice: "0", discountPct: "0", discountAmt: "0", totalPrice: "0",
   costUnitPrice: "0", costTotal: "0",
 });
-const newExpense = (): ExpenseRow => ({ _key: crypto.randomUUID(), description: "", category: "other", amount: "0" });
+const newExpense = (): ExpenseRow => ({ _key: uid(), description: "", category: "other", amount: "0" });
 const EXPENSE_CATEGORIES = ["transport", "handling", "customs", "other"] as const;
 
 function calcLineTotal(unitPrice: string, qty: string, discountPct: string) {

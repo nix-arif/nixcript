@@ -29,6 +29,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
 import { cn } from "@/lib/utils";
+import { uid } from "@/lib/uid";
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -182,7 +183,7 @@ function calcTotal(item: EditLine): number {
 
 function toEditLine(item: PrWithItems["items"][number]): EditLine {
   return {
-    _key: crypto.randomUUID(),
+    _key: uid(),
     rowNo: item.rowNo,
     productId: item.productId ?? undefined,
     productCode: item.productCode ?? "",
@@ -329,7 +330,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
 
   function addLine() {
     setLines((prev) => [...prev, {
-      _key: crypto.randomUUID(), rowNo: prev.length + 1,
+      _key: uid(), rowNo: prev.length + 1,
       productCode: "", description: "", qty: "1", uom: "", estimatedUnitCost: "0", currency: "MYR",
     }]);
   }

@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
+import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon,
   PlusIcon,
@@ -113,7 +114,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
   const [items, setItems] = useState<LineItem[]>(
     order.items.length > 0
       ? order.items.map((i) => ({
-          _key: crypto.randomUUID(),
+          _key: uid(),
           rowNo: i.rowNo,
           productCode: i.productCode ?? "",
           description: i.description ?? "",
@@ -124,7 +125,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
           totalPrice: i.totalPrice ?? "0",
           imageKey: i.imageKey ?? undefined,
         }))
-      : [{ _key: crypto.randomUUID(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", currency: "MYR", totalPrice: "0" }],
+      : [{ _key: uid(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", currency: "MYR", totalPrice: "0" }],
   );
 
   // PDF
@@ -172,7 +173,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
   }
 
   function addLine() {
-    setItems((prev) => [...prev, { _key: crypto.randomUUID(), rowNo: prev.length + 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", currency: "MYR", totalPrice: "0" }]);
+    setItems((prev) => [...prev, { _key: uid(), rowNo: prev.length + 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", currency: "MYR", totalPrice: "0" }]);
   }
 
   function removeLine(key: string) {
@@ -320,7 +321,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
                   <span className="text-xs text-muted-foreground ml-2">— {selectedSo.customerName}</span>
                 )}
               </div>
-              <button onClick={() => { setSelectedSo(null); setItems([{ _key: crypto.randomUUID(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", totalPrice: "0" }]); }} className="text-muted-foreground hover:text-foreground shrink-0">
+              <button onClick={() => { setSelectedSo(null); setItems([{ _key: uid(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", totalPrice: "0" }]); }} className="text-muted-foreground hover:text-foreground shrink-0">
                 <XIcon className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -351,7 +352,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
                         const detected = detectCurrency(soItems);
                         setCurrency(detected);
                         setItems(soItems.map((si) => ({
-                          _key: crypto.randomUUID(),
+                          _key: uid(),
                           rowNo: si.rowNo,
                           productId: si.productId ?? undefined,
                           productCode: si.productCode ?? "",

@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
   PlusIcon, SearchIcon, XIcon,
-  TruckIcon, BuildingIcon, CalendarIcon, PackageIcon,
+  TruckIcon, BuildingIcon, CalendarIcon, PackageIcon, FileTextIcon, ArrowRightIcon,
 } from "lucide-react";
 
 const fmtDate = (d: Date | string | null | undefined) =>
@@ -145,6 +145,21 @@ export function GoodsReceiptListClient({ initialGrs, permissions }: Props) {
                       </span>
                     </div>
                   </div>
+
+                  {gr.salesOrderId && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/dashboard/fulfillment/delivery/create?soId=${gr.salesOrderId}`);
+                      }}
+                      className="flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 text-[11px] font-medium hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                      title="Go to pending delivery order"
+                    >
+                      <FileTextIcon className="w-3 h-3" />
+                      {gr.salesOrderNo ?? "SO"}
+                      <ArrowRightIcon className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

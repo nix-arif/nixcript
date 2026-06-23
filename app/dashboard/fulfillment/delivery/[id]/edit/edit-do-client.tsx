@@ -13,12 +13,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import { ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon, BuildingIcon } from "lucide-react";
+import { uid } from "@/lib/uid";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 interface LineItem extends DeliveryOrderItemInput { _key: string; }
 
 const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(), rowNo, productId: undefined, productCode: "", description: "", qty: "1", uom: "",
+  _key: uid(), rowNo, productId: undefined, productCode: "", description: "", qty: "1", uom: "",
 });
 
 function toDateInput(d: Date | string | null | undefined): string {
@@ -49,7 +50,7 @@ export function EditDeliveryOrderClient({ order }: { order: DeliveryOrderWithIte
   const [items, setItems] = useState<LineItem[]>(
     order.items.length > 0
       ? order.items.map((i) => ({
-          _key: crypto.randomUUID(),
+          _key: uid(),
           rowNo: i.rowNo,
           productId: i.productId ?? undefined,
           productCode: i.productCode ?? "",

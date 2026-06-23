@@ -2,7 +2,8 @@
 
 import { db } from "@/db";
 import { salesOrder, salesOrderItem, stockLevel, product } from "@/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, desc } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -174,4 +175,41 @@ export async function performStockCheckAndReserve(
   }
 
   return { canReserve, items: result };
+}
+
+/**
+ * Re-checks every confirmed SO that is stuck in "insufficient" status.
+ * Called from the delivery list page on load to catch SOs whose stock
+ * arrived via GR before the auto-trigger was in place.
+ */
+export async function recheckAllInsufficientSos(): Promise<{ resolved: number }> {
+  const { orgId, userId } = await requireAccess("delivery-order:create");
+
+  const insufficientSos = await db
+    .select({ id: salesOrder.id })
+    .from(salesOrder)
+    .where(and(
+      eq(salesOrder.organizationId, orgId),
+      eq(salesOrder.status, "confirmed"),
+      eq(salesOrder.stockReservationStatus, "insufficient"),
+    ))
+    .orderBy(desc(salesOrder.createdAt));
+
+  if (insufficientSos.length === 0) return { resolved: 0 };
+
+  let resolved = 0;
+  for (const so of insufficientSos) {
+    try {
+      const result = await performStockCheckAndReserve(orgId, userId, so.id);
+      if (result.canReserve) resolved++;
+    } catch {
+      // Still insufficient — skip silently
+    }
+  }
+
+  if (resolved > 0) {
+    revalidatePath("/dashboard/fulfillment/delivery");
+  }
+
+  return { resolved };
 }

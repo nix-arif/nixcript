@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { ArrowLeftIcon, PlusIcon, TrashIcon, ArrowRightIcon, ArrowLeftRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { uid } from "@/lib/uid";
 
 type Direction = "to_rep" | "from_rep";
 
@@ -28,7 +29,7 @@ interface LineItem {
 }
 
 const newLine = (): LineItem => ({
-  _key: crypto.randomUUID(),
+  _key: uid(),
   productId: "", productCode: "", description: "", uom: "", qty: "1",
 });
 
@@ -114,7 +115,7 @@ export function TransferClient({ reps }: Props) {
       const stock = await getRepFieldStock(id);
       setItems(stock.length > 0
         ? stock.map((s) => ({
-            _key: crypto.randomUUID(),
+            _key: uid(),
             productId: s.productId,
             productCode: s.productCode,
             description: s.description,
@@ -231,24 +232,16 @@ export function TransferClient({ reps }: Props) {
       {/* Rep */}
       <section className="border border-border rounded-xl p-4">
         <h2 className="text-sm font-semibold mb-3">Sales Rep</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <select
+          value={repId}
+          onChange={(e) => handleRepChange(e.target.value)}
+          className="w-full h-10 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Select rep…</option>
           {reps.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => handleRepChange(r.id)}
-              className={cn(
-                "rounded-lg border-2 px-4 py-3 text-left transition-colors",
-                repId === r.id
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:bg-muted/40",
-              )}
-            >
-              <p className="text-sm font-medium">{r.name}</p>
-              <p className="text-xs text-muted-foreground capitalize">{r.role}</p>
-            </button>
+            <option key={r.id} value={r.id}>{r.name} ({r.role})</option>
           ))}
-        </div>
+        </select>
       </section>
 
       {/* Items */}

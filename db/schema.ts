@@ -2069,6 +2069,8 @@ export const deliveryOrder = pgTable(
     caseDate: timestamp("case_date"),
     mrnNo: text("mrn_no"),
 
+    categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
+
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")

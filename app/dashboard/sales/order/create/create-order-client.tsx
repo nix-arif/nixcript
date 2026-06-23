@@ -41,6 +41,7 @@ import {
   ChevronDownIcon,
 } from "lucide-react";
 import type { CustomerPoForSoCreate } from "@/server/customer-purchase-order";
+import { uid } from "@/lib/uid";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
@@ -79,7 +80,7 @@ interface LineItem extends SalesOrderItemInput {
 }
 
 const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(),
+  _key: uid(),
   rowNo,
   productCode: "",
   description: "",
@@ -220,14 +221,12 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
   const cpoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cpoDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Quotation search (optional)
-  const [showQtSection, setShowQtSection] = useState(false);
+  // Quotation search (required)
   const [qtSearch, setQtSearch] = useState("");
   const [qtResults, setQtResults] = useState<Awaited<ReturnType<typeof searchQuotationsByNo>>>([]);
   const [qtHighlight, setQtHighlight] = useState(-1);
   const [linkedQuotations, setLinkedQuotations] = useState<LinkedQuotation[]>([]);
   const [qtLoading, setQtLoading] = useState(false);
-  const [includeDummy, setIncludeDummy] = useState(false);
   const qtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Customer
@@ -283,7 +282,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
         setItems(
           cpo.items!.map((item, idx) =>
             calcLine({
-              _key: crypto.randomUUID(),
+              _key: uid(),
               rowNo: idx + 1,
               productId: item.productCode ? codeMap.get(item.productCode) : undefined,
               productCode: item.productCode ?? "",
@@ -401,7 +400,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
               const base = prev.filter((i) => i.description || i.productCode);
               const newItems = (data.items ?? []).map((item) =>
                 calcLine({
-                  _key: crypto.randomUUID(),
+                  _key: uid(),
                   rowNo: 0,
                   productId: item.productCode ? codeMap.get(item.productCode) : undefined,
                   productCode: item.productCode ?? "",
@@ -499,23 +498,17 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
 
   // ── Quotation search ────────────────────────────────────────────────────────
 
-  const handleQtSearch = useCallback((val: string, withDummy = includeDummy) => {
+  const handleQtSearch = useCallback((val: string) => {
     setQtSearch(val);
     setQtHighlight(-1);
     if (val.length < 2) { setQtResults([]); return; }
     if (qtTimer.current) clearTimeout(qtTimer.current);
     qtTimer.current = setTimeout(async () => {
-      const res = await searchQuotationsByNo(val, withDummy);
+      const res = await searchQuotationsByNo(val);
       setQtResults(res);
       setQtHighlight(-1);
     }, 300);
-  }, [includeDummy]);
-
-  function handleToggleDummy() {
-    const next = !includeDummy;
-    setIncludeDummy(next);
-    if (qtSearch.length >= 2) handleQtSearch(qtSearch, next);
-  }
+  }, []);
 
   function handleQtKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!qtResults.length) return;
@@ -557,7 +550,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
       // Append items (renumber after existing), tag with source quotation
       const newItems = qt.items.map((item) =>
         calcLine({
-          _key: crypto.randomUUID(),
+          _key: uid(),
           rowNo: 0, // renumbered below
           productId: item.productId ?? undefined,
           productCode: item.productCode ?? "",
@@ -590,6 +583,7 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
         setSstPct(qt.sstPct ?? "0");
         setOverallDiscPct(qt.overallDiscountPct ?? "0");
         if (qt.salesPersonName) setSalesPerson(qt.salesPersonName);
+        if (qt.notes && !notes) setNotes(qt.notes);
       }
 
       // Auto-fill customer whenever not yet set
@@ -723,6 +717,10 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
   // ── Save ────────────────────────────────────────────────────────────────────
 
   async function buildAndCreate() {
+    if (soType !== "proforma" && linkedQuotations.length === 0) {
+      toast.error("Please link at least one quotation");
+      return null;
+    }
     const primaryCustomerId = selectedCustomer?.id
       ?? linkedCpos.find((c) => c.customerId)?.customerId
       ?? linkedQuotations.find((q) => q.customerId)?.customerId
@@ -973,13 +971,74 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
           </div>
         )}
 
-        {/* ── 1. Linked Customer POs — combobox ── */}
-        {soType !== "proforma" && <section className={`border rounded-xl p-4 ${linkedQuotations.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
+        {/* ── 1. Linked Quotations (required) ── */}
+        {(soType !== "proforma" || proformaReason === "sample") && (
+          <section className="border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold">
+                Quotations <span className="text-destructive">*</span>
+              </h2>
+            </div>
+
+            <div className="space-y-2">
+              {linkedQuotations.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {linkedQuotations.map((q) => (
+                    <span key={q.id} className="flex items-center gap-1 text-[11px] bg-muted border border-border/60 rounded-full px-2.5 py-1 font-mono">
+                      <FileTextIcon className="w-3 h-3 text-muted-foreground" />
+                      {q.quotationNo}
+                      <button onClick={() => removeLinkedQuotation(q.id)} className="text-muted-foreground hover:text-foreground ml-0.5">
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="relative">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none z-10" />
+                <Input
+                  value={qtSearch}
+                  onChange={(e) => handleQtSearch(e.target.value)}
+                  onKeyDown={handleQtKeyDown}
+                  placeholder={linkedQuotations.length === 0 ? "Search quotation no.…" : "Add another quotation…"}
+                  className="pl-9 h-9 text-sm"
+                  disabled={qtLoading}
+                />
+                {qtLoading && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>}
+                {qtResults.length > 0 && (
+                  <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                    {qtResults.map((qt, idx) => {
+                      const snap = qt.customerSnapshot as any;
+                      const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                      const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
+                      return (
+                        <button
+                          key={qt.id}
+                          disabled={alreadyLinked}
+                          className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${idx === qtHighlight ? "bg-muted" : "hover:bg-muted/50"}`}
+                          onClick={() => selectQuotation(qt.id, qt.quotationNo)}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</span>
+                            {qt.isDummy === 1 && (
+                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded border border-muted-foreground/30 bg-muted text-muted-foreground">Dummy</span>
+                            )}
+                          </div>
+                          {custName && <div className="text-[11px] text-muted-foreground">{custName}</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ── 2. Linked Customer POs (optional) ── */}
+        {soType !== "proforma" && <section className="border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">Customer POs</h2>
-            {linkedQuotations.length > 0 && (
-              <span className="text-[11px] text-muted-foreground">Remove quotation first</span>
-            )}
+            <h2 className="text-sm font-semibold">Customer POs <span className="text-muted-foreground font-normal text-xs">(optional)</span></h2>
           </div>
 
           <div className="relative" ref={cpoDropdownRef}>
@@ -1081,88 +1140,6 @@ export function CreateSalesOrderClient({ members, cpo, openCpos = [], currentUse
           </div>
         </section>}
 
-        {/* ── 1b. Linked quotations (optional) ── */}
-        {(soType !== "proforma" || proformaReason === "sample") && <section className={`border rounded-xl p-4 ${linkedCpos.length > 0 ? "border-border/40 opacity-50 pointer-events-none" : "border-border"}`}>
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">
-              Quotations <span className="text-muted-foreground font-normal text-xs">(optional)</span>
-            </h2>
-            {linkedCpos.length > 0 ? (
-              <span className="text-[11px] text-muted-foreground">Remove customer PO first</span>
-            ) : !showQtSection && (
-              <button className="text-xs text-primary hover:underline flex items-center gap-1"
-                onClick={() => setShowQtSection(true)}>
-                <PlusIcon className="w-3 h-3" /> Link quotation
-              </button>
-            )}
-          </div>
-
-          {showQtSection && (
-            <div className="mt-3 space-y-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                {linkedQuotations.map((q) => (
-                  <span key={q.id} className="flex items-center gap-1 text-[11px] bg-muted rounded-full px-2.5 py-1 font-mono">
-                    <FileTextIcon className="w-3 h-3 text-muted-foreground" />
-                    {q.quotationNo}
-                    <button onClick={() => removeLinkedQuotation(q.id)} className="text-muted-foreground hover:text-foreground ml-0.5">
-                      <XIcon className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="relative">
-                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none z-10" />
-                <Input
-                  value={qtSearch}
-                  onChange={(e) => handleQtSearch(e.target.value)}
-                  onKeyDown={handleQtKeyDown}
-                  placeholder={linkedQuotations.length === 0 ? "Search quotation no.…" : "Add another quotation…"}
-                  className="pl-9 h-9 text-sm"
-                  disabled={qtLoading}
-                />
-                {qtLoading && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>}
-                {qtResults.length > 0 && (
-                  <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
-                    {qtResults.map((qt, idx) => {
-                      const snap = qt.customerSnapshot as any;
-                      const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
-                      const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
-                      return (
-                        <button
-                          key={qt.id}
-                          disabled={alreadyLinked}
-                          className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${idx === qtHighlight ? "bg-muted" : "hover:bg-muted/50"}`}
-                          onClick={() => selectQuotation(qt.id, qt.quotationNo)}
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</span>
-                            {qt.isDummy === 1 && (
-                              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded border border-muted-foreground/30 bg-muted text-muted-foreground">Dummy</span>
-                            )}
-                          </div>
-                          {custName && <div className="text-[11px] text-muted-foreground">{custName}</div>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center justify-between">
-                <button type="button" onClick={handleToggleDummy}
-                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground">
-                  <div className={`w-7 h-4 rounded-full transition-colors flex items-center px-0.5 ${includeDummy ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                    <div className={`w-3 h-3 rounded-full bg-white shadow transition-transform ${includeDummy ? "translate-x-3" : "translate-x-0"}`} />
-                  </div>
-                  Include dummy quotations
-                </button>
-                <button className="text-[11px] text-muted-foreground hover:text-foreground"
-                  onClick={() => { setShowQtSection(false); setQtSearch(""); setQtResults([]); }}>
-                  Hide
-                </button>
-              </div>
-            </div>
-          )}
-        </section>}
 
         {/* ── 2. Customer ── */}
         <section className="border border-border rounded-xl p-4">

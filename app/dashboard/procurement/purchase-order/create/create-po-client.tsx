@@ -41,6 +41,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Highlight } from "@/components/highlight";
+import { uid } from "@/lib/uid";
 
 const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
 
@@ -319,7 +320,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
         const detected = detectCurrency(soItems);
         setCurrency(detected);
         setItems(soItems.map((si) => ({
-          _key: crypto.randomUUID(),
+          _key: uid(),
           rowNo: si.rowNo,
           productId: si.productId ?? undefined,
           productCode: si.productCode ?? "",
@@ -409,7 +410,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   }
 
   function addLine() {
-    setItems((prev) => [...prev, newLine(prev.length + 1, crypto.randomUUID())]);
+    setItems((prev) => [...prev, newLine(prev.length + 1, uid())]);
   }
 
   function removeLine(key: string) {
@@ -702,7 +703,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
                           const detected = detectCurrency(soItems);
                           setCurrency(detected);
                           setItems(soItems.map((si) => ({
-                            _key: crypto.randomUUID(),
+                            _key: uid(),
                             rowNo: si.rowNo,
                             productId: si.productId ?? undefined,
                             productCode: si.productCode ?? "",

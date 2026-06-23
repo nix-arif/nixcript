@@ -11,9 +11,10 @@ const nextConfig: NextConfig = {
   },
   serverExternalPackages: ["pdfjs-dist", "pdf-parse"],
   allowedDevOrigins: [
-    "192.168.0.*", // your local network range
-    "192.168.1.*", // common router range
-    "10.0.0.*", // some routers use this
+    "192.168.0.*",
+    "192.168.1.*",
+    "10.0.0.*",
+    "172.20.10.*",
   ],
   images: {
     remotePatterns: [

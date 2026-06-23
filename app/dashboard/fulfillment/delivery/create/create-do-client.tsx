@@ -8,6 +8,7 @@ import { searchConfirmedSalesOrders, getSalesOrderDetail, type CpoCustomer } fro
 import { searchProducts } from "@/server/inventory";
 import { getCustomers, getCustomer } from "@/server/customer";
 import { getFieldReps, getRepFieldStock, type OrgMember, type RepStockItem } from "@/server/field-stock";
+import { type DocumentCategoryRow } from "@/server/document-category";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import { cn } from "@/lib/utils";
+import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon,
   BuildingIcon, LinkIcon, CheckCircle2Icon, Loader2Icon,
@@ -27,7 +29,7 @@ interface LineItem extends DeliveryOrderItemInput { _key: string; originalQty?: 
 const TOTAL_COLS = 4; // code, description, qty, uom
 
 const newLine = (rowNo: number): LineItem => ({
-  _key: crypto.randomUUID(), rowNo,
+  _key: uid(), rowNo,
   productId: undefined, productCode: "", description: "", qty: "1", uom: "",
 });
 
@@ -400,20 +402,20 @@ function ModeSelector({ onSelect }: { onSelect: (mode: "case" | "so") => void })
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export function CreateDeliveryOrderClient({ prefill }: { prefill?: PrefillData }) {
+export function CreateDeliveryOrderClient({ prefill, categories = [] }: { prefill?: PrefillData; categories?: DocumentCategoryRow[] }) {
   const router = useRouter();
   const [mode, setMode] = useState<"case" | "so" | null>(prefill ? "so" : null);
   const [activePrefill, setActivePrefill] = useState<PrefillData | undefined>(prefill);
 
   if (!mode) return <ModeSelector onSelect={setMode} />;
-  if (mode === "case") return <CaseDoForm />;
+  if (mode === "case") return <CaseDoForm categories={categories} />;
   if (!activePrefill) return <SoPicker onSelect={setActivePrefill} />;
-  return <DoForm prefill={activePrefill} />;
+  return <DoForm prefill={activePrefill} categories={categories} />;
 }
 
 // ── Form (always has prefill at this point) ────────────────────────────────
 
-function DoForm({ prefill }: { prefill: PrefillData }) {
+function DoForm({ prefill, categories = [] }: { prefill: PrefillData; categories?: DocumentCategoryRow[] }) {
   const router = useRouter();
   const tableRef = useRef<HTMLDivElement>(null);
 
@@ -434,9 +436,12 @@ function DoForm({ prefill }: { prefill: PrefillData }) {
   const [deliveryAddress, setDeliveryAddress] = useState(prefill.deliveryAddress ?? "");
   const [deliveryDate, setDeliveryDate] = useState(prefill.deliveryDate ?? "");
   const [notes, setNotes] = useState("");
+  const [categoryIds, setCategoryIds] = useState<string[]>(() =>
+    categories.filter((c) => c.isDefault).map((c) => c.id),
+  );
   const [items, setItems] = useState<LineItem[]>(() =>
     prefill.items?.length
-      ? prefill.items.map((i) => ({ ...i, _key: crypto.randomUUID() }))
+      ? prefill.items.map((i) => ({ ...i, _key: uid() }))
       : [newLine(1)],
   );
   const [saving, setSaving] = useState(false);
@@ -521,6 +526,7 @@ function DoForm({ prefill }: { prefill: PrefillData }) {
         deliveryAddress: deliveryAddress || undefined,
         deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
         notes: notes || undefined,
+        categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
         items: items.map(({ _key, originalQty: _oq, ...rest }) => rest),
       });
       toast.success("Delivery order created");
@@ -694,6 +700,32 @@ function DoForm({ prefill }: { prefill: PrefillData }) {
             className="text-sm"
           />
         </div>
+
+        <div className="mt-3 space-y-1.5">
+          <Label className="text-xs">Categories</Label>
+          {categories.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic py-1">No categories yet — create one in Organization → Categories</p>
+          ) : (
+            <div className="flex flex-wrap gap-2 pt-0.5">
+              {categories.map((c) => {
+                const selected = categoryIds.includes(c.id);
+                const hex = c.color ?? "#6366f1";
+                return (
+                  <button key={c.id} type="button"
+                    onClick={() => setCategoryIds((prev) => selected ? prev.filter((id) => id !== c.id) : [...prev, c.id])}
+                    className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-all select-none",
+                      selected ? "text-white shadow-sm" : "bg-background text-foreground/70 hover:text-foreground")}
+                    style={selected ? { backgroundColor: hex, borderColor: hex } : { borderColor: hex + "55" }}
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }} />
+                    {c.name}
+                    {selected && <span className="ml-0.5 opacity-80">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </section>
 
       {/* ── 4. Items ── */}
@@ -812,10 +844,10 @@ interface CaseLineItem {
 }
 
 const newCaseLine = (): CaseLineItem => ({
-  _key: crypto.randomUUID(), productCode: "", description: "", qty: "1", uom: "",
+  _key: uid(), productCode: "", description: "", qty: "1", uom: "",
 });
 
-function CaseDoForm() {
+function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] }) {
   const router = useRouter();
 
   // Reps / members
@@ -839,6 +871,7 @@ function CaseDoForm() {
   const [custSearch, setCustSearch] = useState("");
   const [custResults, setCustResults] = useState<Awaited<ReturnType<typeof getCustomers>>>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
   const custTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Items
@@ -849,6 +882,9 @@ function CaseDoForm() {
   const [customerPoNo, setCustomerPoNo] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [notes, setNotes] = useState("");
+  const [categoryIds, setCategoryIds] = useState<string[]>(() =>
+    categories.filter((c) => c.isDefault).map((c) => c.id),
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -862,7 +898,7 @@ function CaseDoForm() {
     try {
       const stock = await getRepFieldStock(id);
       setFieldItems(stock.map((s) => ({
-        _key: crypto.randomUUID(),
+        _key: uid(),
         productId: s.productId,
         productCode: s.productCode,
         description: s.description,
@@ -963,9 +999,11 @@ function CaseDoForm() {
       const effectiveSalesPerson = reps.find((r) => r.id === effectiveSalesPersonId);
       await createDeliveryOrder({
         customerId: selectedCustomer?.id,
+        customerOrgMemberId: custCompanyId || undefined,
         customerPoNo: customerPoNo || undefined,
         deliveryAddress: deliveryAddress || undefined,
         notes: notes || undefined,
+        categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
         items: allItems,
         isCaseDo: true,
         salesPersonId: effectiveSalesPersonId || undefined,
@@ -1069,13 +1107,44 @@ function CaseDoForm() {
       <section className="border border-border rounded-xl p-4">
         <h2 className="text-sm font-semibold mb-3">Customer</h2>
         {selectedCustomer ? (
-          <div className="flex items-center gap-2">
-            <span className="flex-1 text-sm font-medium">
-              {[(selectedCustomer as any).title, (selectedCustomer as any).name].filter(Boolean).join(" ")}
-            </span>
-            <button onClick={() => setSelectedCustomer(null)} className="text-muted-foreground hover:text-foreground">
-              <XIcon className="w-3.5 h-3.5" />
-            </button>
+          <div className="flex items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-sm">
+                  {[(selectedCustomer as any).title, (selectedCustomer as any).name].filter(Boolean).join(" ")}
+                </span>
+                <button onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); }}
+                  className="text-muted-foreground hover:text-foreground">
+                  <XIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              {(() => {
+                const companies = (selectedCustomer as any)?.companies ?? [];
+                if (companies.length > 1) return (
+                  <div className="mt-2 space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Organization</Label>
+                    <select
+                      className="w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm"
+                      value={custCompanyId ?? ""}
+                      onChange={(e) => setCustCompanyId(e.target.value || undefined)}
+                    >
+                      <option value="">Primary / default</option>
+                      {companies.map((c: any) => (
+                        <option key={c.id} value={c.id}>
+                          {c.organizationName}{c.isPrimary ? " (primary)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+                if (companies.length === 1) return (
+                  <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                    <BuildingIcon className="w-3 h-3" /> {companies[0].organizationName}
+                  </p>
+                );
+                return null;
+              })()}
+            </div>
           </div>
         ) : (
           <div className="relative">
@@ -1086,7 +1155,7 @@ function CaseDoForm() {
               <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
                 {custResults.map((c) => (
                   <button key={c.id} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0"
-                    onClick={() => { setSelectedCustomer(c as any); setCustSearch(""); setCustResults([]); }}>
+                    onClick={() => { setSelectedCustomer(c as any); setCustSearch(""); setCustResults([]); setCustCompanyId(undefined); }}>
                     <div className="text-sm font-medium"><Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} /></div>
                     {c.companies[0]?.organizationName && (
                       <div className="text-[11px] text-muted-foreground"><Highlight text={c.companies[0].organizationName} query={custSearch} /></div>
@@ -1209,6 +1278,31 @@ function CaseDoForm() {
           <div className="space-y-1.5">
             <Label className="text-xs">Notes</Label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Categories</Label>
+            {categories.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic py-1">No categories yet — create one in Organization → Categories</p>
+            ) : (
+              <div className="flex flex-wrap gap-2 pt-0.5">
+                {categories.map((c) => {
+                  const selected = categoryIds.includes(c.id);
+                  const hex = c.color ?? "#6366f1";
+                  return (
+                    <button key={c.id} type="button"
+                      onClick={() => setCategoryIds((prev) => selected ? prev.filter((id) => id !== c.id) : [...prev, c.id])}
+                      className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-all select-none",
+                        selected ? "text-white shadow-sm" : "bg-background text-foreground/70 hover:text-foreground")}
+                      style={selected ? { backgroundColor: hex, borderColor: hex } : { borderColor: hex + "55" }}
+                    >
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }} />
+                      {c.name}
+                      {selected && <span className="ml-0.5 opacity-80">✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </section>
