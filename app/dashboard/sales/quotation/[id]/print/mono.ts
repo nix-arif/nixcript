@@ -1204,9 +1204,12 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         const pgLabel = `PAGE ${pi + 1} / ${totalCatPgs}`;
         catPage.drawText(pgLabel, { x: W - MR - fontR.widthOfTextAtSize(pgLabel, 8), y: H - 28, size: 8, font: fontR, color: C_BLACK });
 
-        // Column header row — no fill, black border, black text, all caps
+        // Thick divider below page header — matches mono quotation's 1.5pt black rule
+        catPage.drawLine({ start: { x: ML, y: H - CAT_HDR_H }, end: { x: ML + CW, y: H - CAT_HDR_H }, thickness: 1.5, color: C_BLACK });
+
+        // Column header row — accent fill + black text, all caps (mirrors TemplateMono table header)
         const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
-        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, borderColor: C_BLACK, borderWidth: 0.8 });
+        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: accentColor, borderColor: C_BLACK, borderWidth: 0.8 });
         const colDefs: { label: string; x: number; w: number }[] = [
           { label: "#",               x: ML,                             w: CAT_COL_NO  },
           { label: "IMAGE",           x: ML + CAT_COL_NO,                w: CAT_COL_IMG },

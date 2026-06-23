@@ -20,6 +20,7 @@ const MB = 30;
 const CW = W - ML - MR;
 
 // ── Palette ────────────────────────────────────────────────────────────────
+const C_BLACK   = rgb(0, 0, 0);
 const C_DARK    = rgb(0.10, 0.10, 0.10);
 const C_MID     = rgb(0.40, 0.40, 0.40);
 const C_LITE    = rgb(0.62, 0.62, 0.62);
@@ -136,12 +137,14 @@ export async function POST(req: NextRequest) {
       if (!dbMap.has(row.productCode)) dbMap.set(row.productCode, row);
     }
 
-    // ── Org profile (logo + brand color) ───────────────────────────────────
+    // ── Org profile (logo + brand color + template) ────────────────────────
     const [orgProfile] = await db
-      .select({ brandColor: organizationProfile.brandColor, logoKey: organizationProfile.logoKey, companyName: organizationProfile.companyName })
+      .select({ brandColor: organizationProfile.brandColor, logoKey: organizationProfile.logoKey, companyName: organizationProfile.companyName, pdfTemplate: organizationProfile.pdfTemplate })
       .from(organizationProfile)
       .where(eq(organizationProfile.organizationId, orgId))
       .limit(1);
+
+    const isMono = (orgProfile?.pdfTemplate ?? "affirma") === "mono";
 
     const brandHex = orgProfile?.brandColor ?? "#141414";
     const accent = (() => {
@@ -237,162 +240,211 @@ export async function POST(req: NextRequest) {
       const catPage  = pdfDoc.addPage([W, H]);
       const pageRows = enrichedItems.slice(pi * ROWS_PER_PG, (pi + 1) * ROWS_PER_PG);
 
-      // Header band — full-width accent colour
-      catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H, color: accentDark });
-      catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: 3, color: accent });
-
-      catPage.drawText(trunc(title, fontB, 13, CW * 0.65), {
-        x: ML, y: H - 22, size: 13, font: fontB, color: C_WHITE,
-      });
-      if (subtitle) {
-        catPage.drawText(trunc(subtitle, fontR, 8.5, CW * 0.65), {
-          x: ML, y: H - 36, size: 8.5, font: fontR, color: C_WHITE80,
-        });
-      }
-      if (effectiveCompanyName) {
-        catPage.drawText(trunc(effectiveCompanyName, fontR, 7.5, CW * 0.65), {
-          x: ML, y: H - (subtitle ? 48 : 38), size: 7.5, font: fontR, color: rgb(0.55, 0.55, 0.60),
-        });
-      }
-
-      const pgLabel = `Page ${pi + 1} / ${totalCatPgs}`;
-      catPage.drawText(pgLabel, {
-        x: W - MR - fontB.widthOfTextAtSize(pgLabel, 9),
-        y: H - 22, size: 9, font: fontB, color: C_WHITE80,
-      });
-      catPage.drawText(dateStr, {
-        x: W - MR - fontR.widthOfTextAtSize(dateStr, 7.5),
-        y: H - 34, size: 7.5, font: fontR, color: rgb(0.5, 0.5, 0.55),
-      });
-      const countLabel = `${enrichedItems.length} item${enrichedItems.length !== 1 ? "s" : ""}`;
-      catPage.drawText(countLabel, {
-        x: W - MR - fontR.widthOfTextAtSize(countLabel, 7),
-        y: H - 45, size: 7, font: fontR, color: rgb(0.45, 0.45, 0.50),
-      });
-
-      // Column header — brand accent colour
-      const colHdrY = H - CAT_HDR_H - CAT_COLHDR_H;
-      catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: accent });
-
-      for (const col of [
-        { label: "#",               x: ML + 4 },
-        { label: "Image",           x: ML + CAT_COL_NO + CAT_COL_IMG / 2 - 10 },
-        { label: "Product Details", x: ML + CAT_COL_NO + CAT_COL_IMG + 8 },
-      ]) {
-        catPage.drawText(col.label.toUpperCase(), {
-          x: col.x, y: colHdrY + 5, size: 6.5, font: fontB, color: C_WHITE,
-        });
-      }
-
-      const tableTopY    = colHdrY;
+      const tableTopY    = H - CAT_HDR_H - CAT_COLHDR_H;
       const tableBottomY = tableTopY - pageRows.length * CAT_ROW_H;
+      const colHdrY      = tableTopY;
 
-      catPage.drawLine({ start: { x: ML + CAT_COL_NO,             y: tableBottomY }, end: { x: ML + CAT_COL_NO,             y: tableTopY }, thickness: 0.3, color: C_LINE });
-      catPage.drawLine({ start: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableBottomY }, end: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableTopY }, thickness: 0.3, color: C_LINE });
-
-      let rowTopY = colHdrY;
-      for (let ri = 0; ri < pageRows.length; ri++) {
-        const item = pageRows[ri];
-        const rowY = rowTopY - CAT_ROW_H;
-
-        if (ri % 2 === 1) {
-          catPage.drawRectangle({ x: ML, y: rowY, width: CW, height: CAT_ROW_H, color: C_ALT });
-        }
-
-        catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
-
-        const noStr = sanitize(item.no);
-        catPage.drawText(noStr, {
-          x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2,
-          y: rowY + CAT_ROW_H / 2 - 4,
-          size: 8, font: fontR, color: C_LITE,
-        });
-
-        const imgColX = ML + CAT_COL_NO;
-        const img = imageCache.get(item.productCode);
-        if (img) {
-          const scale = Math.min(CAT_IMG_SZ / img.height, CAT_IMG_SZ / img.width, 1);
-          const iw = img.width  * scale;
-          const ih = img.height * scale;
-          catPage.drawImage(img, {
-            x: imgColX + (CAT_COL_IMG - iw) / 2,
-            y: rowY    + (CAT_ROW_H  - ih) / 2,
-            width: iw, height: ih,
-          });
+      if (isMono) {
+        // ── Mono design: white bg, black borders, accent column header ────────
+        catPage.drawText("PRODUCT CATALOGUE", { x: ML, y: H - 22, size: 13, font: fontB, color: C_BLACK });
+        if (subtitle) {
+          catPage.drawText(trunc(subtitle, fontR, 8.5, CW * 0.65), { x: ML, y: H - 36, size: 8.5, font: fontR, color: C_BLACK });
+          catPage.drawText(trunc(title, fontR, 7, CW * 0.65), { x: ML, y: H - 46, size: 7, font: fontR, color: C_BLACK });
         } else {
-          const ph = CAT_IMG_SZ * 0.7;
-          catPage.drawRectangle({
-            x: imgColX + (CAT_COL_IMG - ph) / 2,
-            y: rowY    + (CAT_ROW_H   - ph) / 2,
-            width: ph, height: ph, color: C_LINE,
+          catPage.drawText(trunc(title, fontR, 8, CW * 0.65), { x: ML, y: H - 37, size: 8, font: fontR, color: C_BLACK });
+        }
+        if (effectiveCompanyName) {
+          catPage.drawText(trunc(effectiveCompanyName.toUpperCase(), fontR, 7, CW * 0.65), {
+            x: ML, y: H - (subtitle ? 56 : 48), size: 7, font: fontR, color: C_BLACK,
           });
         }
 
-        const detX    = ML + CAT_COL_NO + CAT_COL_IMG + 8;
-        const detMaxW = CAT_COL_DET - 16;
-        let   detY    = rowY + CAT_ROW_H - 14;
+        const pgLabelM = `PAGE ${pi + 1} / ${totalCatPgs}`;
+        catPage.drawText(pgLabelM, { x: W - MR - fontR.widthOfTextAtSize(pgLabelM, 8), y: H - 28, size: 8, font: fontR, color: C_BLACK });
 
-        if (options.showSku && item.sku) {
-          catPage.drawText(trunc(`SKU: ${item.sku}`, fontR, 7.5, detMaxW), {
-            x: detX, y: detY, size: 7.5, font: fontR, color: C_MID,
-          });
-          detY -= 10;
+        // Thick divider below header — matches mono quotation style
+        catPage.drawLine({ start: { x: ML, y: H - CAT_HDR_H }, end: { x: ML + CW, y: H - CAT_HDR_H }, thickness: 1.5, color: C_BLACK });
+
+        // Column header — accent fill + black border + black text all-caps
+        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: accent, borderColor: C_BLACK, borderWidth: 0.8 });
+        const monoColDefs = [
+          { label: "#",               x: ML,                             w: CAT_COL_NO  },
+          { label: "IMAGE",           x: ML + CAT_COL_NO,                w: CAT_COL_IMG },
+          { label: "PRODUCT DETAILS", x: ML + CAT_COL_NO + CAT_COL_IMG, w: CAT_COL_DET },
+        ];
+        for (const col of monoColDefs) {
+          const tw = fontB.widthOfTextAtSize(col.label, 7);
+          catPage.drawText(col.label, { x: col.x + (col.w - tw) / 2, y: colHdrY + 5, size: 7, font: fontB, color: C_BLACK });
         }
-        if (options.showProductCode) {
-          catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), {
-            x: detX, y: detY, size: 8, font: fontB, color: accent,
-          });
-          detY -= 11;
-        }
-        if (item.description) {
-          for (const line of wrap(item.description, fontR, 8.5, detMaxW).slice(0, 3)) {
-            catPage.drawText(line, { x: detX, y: detY, size: 8.5, font: fontR, color: C_DARK });
+
+        // Vertical separators — black
+        catPage.drawLine({ start: { x: ML + CAT_COL_NO,               y: tableBottomY }, end: { x: ML + CAT_COL_NO,               y: tableTopY }, thickness: 0.4, color: C_BLACK });
+        catPage.drawLine({ start: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableBottomY }, end: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableTopY }, thickness: 0.4, color: C_BLACK });
+
+        let rowTopY = colHdrY;
+        for (let ri = 0; ri < pageRows.length; ri++) {
+          const item = pageRows[ri];
+          const rowY = rowTopY - CAT_ROW_H;
+
+          catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.4, color: C_BLACK });
+
+          const noStr = sanitize(item.no);
+          catPage.drawText(noStr, { x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2, y: rowY + CAT_ROW_H / 2 - 4, size: 8, font: fontR, color: C_BLACK });
+
+          const imgColX = ML + CAT_COL_NO;
+          const img = imageCache.get(item.productCode);
+          if (img) {
+            const scale = Math.min(CAT_IMG_SZ / img.height, CAT_IMG_SZ / img.width, 1);
+            catPage.drawImage(img, { x: imgColX + (CAT_COL_IMG - img.width * scale) / 2, y: rowY + (CAT_ROW_H - img.height * scale) / 2, width: img.width * scale, height: img.height * scale });
+          } else {
+            catPage.drawRectangle({ x: imgColX + (CAT_COL_IMG - CAT_IMG_SZ) / 2, y: rowY + (CAT_ROW_H - CAT_IMG_SZ) / 2, width: CAT_IMG_SZ, height: CAT_IMG_SZ, borderColor: C_BLACK, borderWidth: 0.4 });
+          }
+
+          const detX    = ML + CAT_COL_NO + CAT_COL_IMG + 8;
+          const detMaxW = CAT_COL_DET - 16;
+          let   detY    = rowY + CAT_ROW_H - 14;
+
+          if (options.showSku && item.sku) {
+            catPage.drawText(trunc(`SKU: ${sanitize(item.sku)}`.toUpperCase(), fontR, 7.5, detMaxW), { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
+            detY -= 10;
+          }
+          if (options.showProductCode) {
+            catPage.drawText(trunc(sanitize(item.productCode).toUpperCase(), fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: C_BLACK });
             detY -= 11;
           }
-        }
-        if (item.uom || item.qty) {
-          const uomStr = [item.qty && `Qty: ${item.qty}`, item.uom].filter(Boolean).join("  ·  ");
-          catPage.drawText(uomStr, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MID });
-          detY -= 10;
-        }
-        if (options.showRegNo) {
-          if (item.mdaRegNo) {
-            catPage.drawText(`MDA: ${item.mdaRegNo}`, {
-              x: detX, y: detY, size: 7.5, font: fontR, color: C_GREEN,
-            });
-          } else {
-            catPage.drawText("No MDA certificate", {
-              x: detX, y: detY, size: 7.5, font: fontR, color: C_AMBER,
-            });
+          if (item.description) {
+            for (const line of wrap(sanitize(item.description).toUpperCase(), fontR, 8, detMaxW).slice(0, 3)) {
+              catPage.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_BLACK });
+              detY -= 10;
+            }
           }
-          detY -= 10;
+          if (item.uom || item.qty) {
+            const uomStr = [item.qty && `QTY: ${item.qty}`, item.uom && sanitize(item.uom).toUpperCase()].filter(Boolean).join("  ·  ");
+            catPage.drawText(uomStr, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
+            detY -= 10;
+          }
+          if (options.showRegNo) {
+            if (item.mdaRegNo) {
+              catPage.drawText(sanitize(`MDA REG NO: ${item.mdaRegNo}`).toUpperCase(), { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
+              detY -= 10;
+            }
+            if (options.showValidity && item.mdaValidity) {
+              catPage.drawText(`MDA VALIDITY: ${fmtD(item.mdaValidity).toUpperCase()}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_BLACK });
+            }
+          }
+
+          rowTopY = rowY;
         }
-        if (options.showValidity && item.mdaValidity) {
-          catPage.drawText(`Exp: ${fmtD(item.mdaValidity)}`, {
-            x: detX, y: detY, size: 7.5, font: fontR, color: C_LITE,
+
+        catPage.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_BLACK, borderWidth: 0.8 });
+
+        // Footer
+        catPage.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: ML + CW, y: MB + 18 }, thickness: 0.8, color: C_BLACK });
+        const monoFootLeft = effectiveCompanyName ? `${effectiveCompanyName.toUpperCase()}  ·  PRODUCT CATALOGUE  ·  COMPUTER GENERATED DOCUMENT.` : "PRODUCT CATALOGUE  ·  COMPUTER GENERATED DOCUMENT.";
+        catPage.drawText(trunc(monoFootLeft, fontR, 7.5, CW * 0.75), { x: ML, y: MB + 8, size: 7.5, font: fontR, color: C_BLACK });
+        const monoFootRight = `${pi + 1} / ${totalCatPgs}`;
+        catPage.drawText(monoFootRight, { x: W - MR - fontR.widthOfTextAtSize(monoFootRight, 7.5), y: MB + 8, size: 7.5, font: fontR, color: C_BLACK });
+
+      } else {
+        // ── Default design: coloured header band, alternating rows ────────────
+        catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: CAT_HDR_H, color: accentDark });
+        catPage.drawRectangle({ x: 0, y: H - CAT_HDR_H, width: W, height: 3, color: accent });
+
+        catPage.drawText(trunc(title, fontB, 13, CW * 0.65), { x: ML, y: H - 22, size: 13, font: fontB, color: C_WHITE });
+        if (subtitle) {
+          catPage.drawText(trunc(subtitle, fontR, 8.5, CW * 0.65), { x: ML, y: H - 36, size: 8.5, font: fontR, color: C_WHITE80 });
+        }
+        if (effectiveCompanyName) {
+          catPage.drawText(trunc(effectiveCompanyName, fontR, 7.5, CW * 0.65), {
+            x: ML, y: H - (subtitle ? 48 : 38), size: 7.5, font: fontR, color: rgb(0.55, 0.55, 0.60),
           });
         }
 
-        rowTopY = rowY;
+        const pgLabel = `Page ${pi + 1} / ${totalCatPgs}`;
+        catPage.drawText(pgLabel, { x: W - MR - fontB.widthOfTextAtSize(pgLabel, 9), y: H - 22, size: 9, font: fontB, color: C_WHITE80 });
+        catPage.drawText(dateStr, { x: W - MR - fontR.widthOfTextAtSize(dateStr, 7.5), y: H - 34, size: 7.5, font: fontR, color: rgb(0.5, 0.5, 0.55) });
+        const countLabel = `${enrichedItems.length} item${enrichedItems.length !== 1 ? "s" : ""}`;
+        catPage.drawText(countLabel, { x: W - MR - fontR.widthOfTextAtSize(countLabel, 7), y: H - 45, size: 7, font: fontR, color: rgb(0.45, 0.45, 0.50) });
+
+        catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: CAT_COLHDR_H, color: accent });
+        for (const col of [
+          { label: "#",               x: ML + 4 },
+          { label: "Image",           x: ML + CAT_COL_NO + CAT_COL_IMG / 2 - 10 },
+          { label: "Product Details", x: ML + CAT_COL_NO + CAT_COL_IMG + 8 },
+        ]) {
+          catPage.drawText(col.label.toUpperCase(), { x: col.x, y: colHdrY + 5, size: 6.5, font: fontB, color: C_WHITE });
+        }
+
+        catPage.drawLine({ start: { x: ML + CAT_COL_NO,               y: tableBottomY }, end: { x: ML + CAT_COL_NO,               y: tableTopY }, thickness: 0.3, color: C_LINE });
+        catPage.drawLine({ start: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableBottomY }, end: { x: ML + CAT_COL_NO + CAT_COL_IMG, y: tableTopY }, thickness: 0.3, color: C_LINE });
+
+        let rowTopY = colHdrY;
+        for (let ri = 0; ri < pageRows.length; ri++) {
+          const item = pageRows[ri];
+          const rowY = rowTopY - CAT_ROW_H;
+
+          if (ri % 2 === 1) catPage.drawRectangle({ x: ML, y: rowY, width: CW, height: CAT_ROW_H, color: C_ALT });
+          catPage.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
+
+          const noStr = sanitize(item.no);
+          catPage.drawText(noStr, { x: ML + (CAT_COL_NO - fontR.widthOfTextAtSize(noStr, 8)) / 2, y: rowY + CAT_ROW_H / 2 - 4, size: 8, font: fontR, color: C_LITE });
+
+          const imgColX = ML + CAT_COL_NO;
+          const img = imageCache.get(item.productCode);
+          if (img) {
+            const scale = Math.min(CAT_IMG_SZ / img.height, CAT_IMG_SZ / img.width, 1);
+            catPage.drawImage(img, { x: imgColX + (CAT_COL_IMG - img.width * scale) / 2, y: rowY + (CAT_ROW_H - img.height * scale) / 2, width: img.width * scale, height: img.height * scale });
+          } else {
+            const ph = CAT_IMG_SZ * 0.7;
+            catPage.drawRectangle({ x: imgColX + (CAT_COL_IMG - ph) / 2, y: rowY + (CAT_ROW_H - ph) / 2, width: ph, height: ph, color: C_LINE });
+          }
+
+          const detX    = ML + CAT_COL_NO + CAT_COL_IMG + 8;
+          const detMaxW = CAT_COL_DET - 16;
+          let   detY    = rowY + CAT_ROW_H - 14;
+
+          if (options.showSku && item.sku) {
+            catPage.drawText(trunc(`SKU: ${item.sku}`, fontR, 7.5, detMaxW), { x: detX, y: detY, size: 7.5, font: fontR, color: C_MID });
+            detY -= 10;
+          }
+          if (options.showProductCode) {
+            catPage.drawText(trunc(item.productCode, fontB, 8, detMaxW), { x: detX, y: detY, size: 8, font: fontB, color: accent });
+            detY -= 11;
+          }
+          if (item.description) {
+            for (const line of wrap(item.description, fontR, 8.5, detMaxW).slice(0, 3)) {
+              catPage.drawText(line, { x: detX, y: detY, size: 8.5, font: fontR, color: C_DARK });
+              detY -= 11;
+            }
+          }
+          if (item.uom || item.qty) {
+            const uomStr = [item.qty && `Qty: ${item.qty}`, item.uom].filter(Boolean).join("  ·  ");
+            catPage.drawText(uomStr, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MID });
+            detY -= 10;
+          }
+          if (options.showRegNo) {
+            if (item.mdaRegNo) {
+              catPage.drawText(`MDA: ${item.mdaRegNo}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_GREEN });
+            } else {
+              catPage.drawText("No MDA certificate", { x: detX, y: detY, size: 7.5, font: fontR, color: C_AMBER });
+            }
+            detY -= 10;
+          }
+          if (options.showValidity && item.mdaValidity) {
+            catPage.drawText(`Exp: ${fmtD(item.mdaValidity)}`, { x: detX, y: detY, size: 7.5, font: fontR, color: C_LITE });
+          }
+
+          rowTopY = rowY;
+        }
+
+        catPage.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_LINE, borderWidth: 0.4 });
+
+        catPage.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.6, color: accent });
+        const footLeft = effectiveCompanyName ? `${effectiveCompanyName.toUpperCase()}  ·  ${title}` : title;
+        catPage.drawText(trunc(footLeft, fontR, 7, CW * 0.7), { x: ML, y: MB + 8, size: 7, font: fontR, color: C_LITE });
+        const footRight = `${pi + 1} / ${totalCatPgs}`;
+        catPage.drawText(footRight, { x: W - MR - fontR.widthOfTextAtSize(footRight, 7), y: MB + 8, size: 7, font: fontR, color: C_LITE });
       }
-
-      catPage.drawRectangle({
-        x: ML, y: tableBottomY,
-        width: CW, height: tableTopY - tableBottomY,
-        borderColor: C_LINE, borderWidth: 0.4,
-      });
-
-      // Footer
-      catPage.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.6, color: accent });
-      const footLeft = effectiveCompanyName ? `${effectiveCompanyName.toUpperCase()}  ·  ${title}` : title;
-      catPage.drawText(trunc(footLeft, fontR, 7, CW * 0.7), {
-        x: ML, y: MB + 8, size: 7, font: fontR, color: C_LITE,
-      });
-      const footRight = `${pi + 1} / ${totalCatPgs}`;
-      catPage.drawText(footRight, {
-        x: W - MR - fontR.widthOfTextAtSize(footRight, 7),
-        y: MB + 8, size: 7, font: fontR, color: C_LITE,
-      });
     }
 
     const bytes = await pdfDoc.save();
