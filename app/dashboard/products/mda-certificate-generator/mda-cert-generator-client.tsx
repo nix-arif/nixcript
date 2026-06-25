@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { getProductDetailsByCodes } from "@/server/products";
 
 type ParsedRow = {
-  no: number;
+  no: string;
   productCode: string;
 };
 
@@ -41,6 +41,17 @@ function extractProductCode(row: Record<string, any>): string {
     }
   }
   return "";
+}
+
+function extractRowNo(row: Record<string, any>, fallback: number): string {
+  const normalize = (k: string) => k.toLowerCase().replace(/[\s_\.\-]/g, "");
+  const targets = new Set(["no", "#", "bil", "number", "num", "item", "seq"]);
+  for (const k of Object.keys(row)) {
+    if (targets.has(normalize(k)) && row[k] !== undefined && row[k] !== "") {
+      return String(row[k]).trim();
+    }
+  }
+  return String(fallback);
 }
 
 function formatDate(iso: string | null): string {
@@ -72,7 +83,7 @@ export function MdaCertGeneratorClient() {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const raw = XLSX.utils.sheet_to_json(ws, { defval: "" }) as Record<string, any>[];
       const parsed: ParsedRow[] = raw
-        .map((row, i) => ({ no: i + 1, productCode: extractProductCode(row) }))
+        .map((row, i) => ({ no: extractRowNo(row, i + 1), productCode: extractProductCode(row) }))
         .filter((r) => r.productCode);
       if (!parsed.length)
         throw new Error("No valid product codes found — make sure there is a 'product code' column");

@@ -50,7 +50,7 @@ async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<
 }
 
 type EnrichedItem = {
-  no: number;
+  no: string;
   productCode: string;
   mdaPdfFile: string;
   mdaPdfUrl: string;
@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
   const perms = await getUserPermissions(session.user.id, orgId);
   if (!hasAccess(perms, "product:read")) return new Response("Forbidden", { status: 403 });
 
-  const { rows }: { rows: Array<{ no: number; productCode: string }> } = await req.json();
+  const { rows }: { rows: Array<{ no: string; productCode: string }> } = await req.json();
   if (!rows?.length) return new Response("No rows provided", { status: 400 });
 
   const ownerOrgIds = await getAllOwnerOrgIds(session.user.id, orgId);
@@ -187,8 +187,8 @@ export async function POST(req: NextRequest) {
       const total = srcPdf.getPageCount();
 
       const allNos = [...new Set(
-        g.items.map((i) => i.no).filter((n): n is number => n != null),
-      )].sort((a, b) => a - b);
+        g.items.map((i) => i.no).filter((n): n is string => n != null && n !== ""),
+      )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
       const nosLabel = allNos.join(", ");
 
       if (isMdapc(g.items)) {
@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
         // Standard: pages 1 & 2 + item-specific pages with row highlights
         const pageSet = new Set<number>([0, 1].filter((i) => i < total));
         // Key: "pageIdx:y" — merges same-product duplicate rows into one highlight
-        const hlMap = new Map<string, { x: number; y: number; w: number; h: number; nos: number[] }>();
+        const hlMap = new Map<string, { x: number; y: number; w: number; h: number; nos: string[] }>();
 
         for (const item of g.items) {
           if (!item.mdaPageNo) continue;
@@ -235,7 +235,7 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        const highlights = new Map<number, Array<{ x: number; y: number; w: number; h: number; nos: number[] }>>();
+        const highlights = new Map<number, Array<{ x: number; y: number; w: number; h: number; nos: string[] }>>();
         for (const [key, hl] of hlMap) {
           const idx = parseInt(key.split(":")[0]);
           const arr = highlights.get(idx) ?? [];
@@ -250,7 +250,7 @@ export async function POST(req: NextRequest) {
           for (const hl of highlights.get(srcIdx) ?? []) {
             page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
             if (hl.nos.length > 0) {
-              const label = hl.nos.slice().sort((a, b) => a - b).join(", ");
+              const label = hl.nos.slice().sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })).join(", ");
               const badgeH = hl.h;
               const badgeX = hl.w - font.widthOfTextAtSize(label, Math.max(7, Math.min(10, badgeH * 0.75))) - 6 - 2;
               drawBadge(page, font, label, badgeX, hl.y, badgeH);
