@@ -469,23 +469,24 @@ export async function addCustomerOrgMembership(
   data: { position?: string; department?: string; isPrimary?: boolean },
 ) {
   const { orgId } = await requireAccess("customer:update");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
 
-  // Verify customer belongs to org
+  // Verify customer belongs to the tenant
   const [exists] = await db
     .select({ id: customer.id })
     .from(customer)
-    .where(and(eq(customer.id, customerId), eq(customer.organizationId, orgId)))
+    .where(and(eq(customer.id, customerId), inArray(customer.organizationId, ownerOrgIds)))
     .limit(1);
   if (!exists) throw new Error("Customer not found");
 
-  // Verify org belongs to same tenant
+  // Verify org belongs to the same tenant
   const [orgExists] = await db
     .select({ id: customerOrganization.id })
     .from(customerOrganization)
     .where(
       and(
         eq(customerOrganization.id, customerOrganizationId),
-        eq(customerOrganization.organizationId, orgId),
+        inArray(customerOrganization.organizationId, ownerOrgIds),
       ),
     )
     .limit(1);

@@ -64,7 +64,10 @@ async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<
 }
 
 function isMdapc(items: MdaItem[]): boolean {
-  return items.some((i) => i.mdaRegNo?.toUpperCase().startsWith("MDAPC"));
+  return (
+    items.some((i) => i.mdaRegNo?.toUpperCase().startsWith("MDAPC")) ||
+    items.every((i) => !i.mdaPageNo)
+  );
 }
 
 function drawBadge(

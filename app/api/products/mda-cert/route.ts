@@ -64,7 +64,12 @@ type EnrichedItem = {
 };
 
 function isMdapc(items: EnrichedItem[]): boolean {
-  return items.some((i) => i.mdaRegistrationNo?.toUpperCase().startsWith("MDAPC"));
+  // Treat as MDAPC (full-copy cert) when any item has an MDAPC reg no,
+  // OR when no items have page coordinates (cert matcher was never run — copy whole PDF).
+  return (
+    items.some((i) => i.mdaRegistrationNo?.toUpperCase().startsWith("MDAPC")) ||
+    items.every((i) => !i.mdaPageNo)
+  );
 }
 
 function drawBadge(
@@ -138,9 +143,10 @@ export async function POST(req: NextRequest) {
   const enrichedItems: EnrichedItem[] = [];
   for (const row of rows) {
     const p = pMap.get(row.productCode);
-    if (!p?.mdaPdfFile) continue;
+    if (!p) { console.warn("[mda-cert] product not found in DB:", row.productCode); continue; }
+    if (!p.mdaPdfFile) { console.warn("[mda-cert] no mdaPdfFile for:", row.productCode, "reg:", p.mdaRegistrationNo); continue; }
     const url = presignMap.get(p.mdaPdfFile);
-    if (!url) continue;
+    if (!url) { console.warn("[mda-cert] no presign URL for:", row.productCode, "key:", p.mdaPdfFile); continue; }
     enrichedItems.push({
       no: row.no,
       productCode: row.productCode,
@@ -181,7 +187,7 @@ export async function POST(req: NextRequest) {
   for (const [, g] of mdaGroups) {
     try {
       const res = await fetch(g.url);
-      if (!res.ok) continue;
+      if (!res.ok) { console.error("[mda-cert] fetch failed:", res.status, res.statusText, "codes:", g.items.map((i) => i.productCode)); continue; }
       const buf = await res.arrayBuffer();
       const srcPdf = await PDFDocument.load(buf);
       const total = srcPdf.getPageCount();
@@ -259,8 +265,8 @@ export async function POST(req: NextRequest) {
           mergedPdf.addPage(page);
         });
       }
-    } catch {
-      /* skip unavailable cert */
+    } catch (e) {
+      console.error("[mda-cert] cert processing error for group:", g.url, e);
     }
   }
 

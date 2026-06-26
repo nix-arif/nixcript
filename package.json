@@ -10,7 +10,8 @@
     "db-prod:push": "drizzle-kit push",
     "db-dev:push": "dotenv -e .env.local -- drizzle-kit push",
     "audit:permissions": "tsx scripts/audit-permissions.ts",
-    "audit:roles": "tsx scripts/audit-roles.ts"
+    "audit:roles": "tsx scripts/audit-roles.ts",
+    "test:clear-so": "dotenv -e .env.local -- tsx scripts/clear-test-docs.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",
