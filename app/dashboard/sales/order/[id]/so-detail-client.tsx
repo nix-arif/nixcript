@@ -386,6 +386,7 @@ export function SalesOrderDetailClient({
                         + (can("sales-order:update") && status === "confirmed" ? 1 : 0);
 
                       let lastCpoId: string | undefined = undefined;
+                      const shownLooseHeaderForCpo = new Set<string>();
                       return order.items.flatMap((item, idx) => {
                         const rows: React.JSX.Element[] = [];
                         const color = getColor(item);
@@ -416,6 +417,24 @@ export function SalesOrderDetailClient({
                               </td>
                             </tr>,
                           );
+                        }
+
+                        // Other items header (ungrouped items when sets also exist)
+                        if (!(item as any).setGroupId) {
+                          const cpoKey = (item as any).sourceCustomerPoId ?? "__global__";
+                          const sectionHasGroups = order.items.some((i) =>
+                            (i as any).setGroupId && (distinctCpos.size > 1 ? (i as any).sourceCustomerPoId === (item as any).sourceCustomerPoId : true),
+                          );
+                          if (sectionHasGroups && !shownLooseHeaderForCpo.has(cpoKey)) {
+                            shownLooseHeaderForCpo.add(cpoKey);
+                            rows.push(
+                              <tr key={`loose-hdr-${cpoKey}`} className="bg-muted/40 border-b border-border/40">
+                                <td colSpan={colCount} className="px-2 py-1.5">
+                                  <span className="text-[11px] font-bold tracking-tight text-muted-foreground">other items</span>
+                                </td>
+                              </tr>,
+                            );
+                          }
                         }
 
                         // Set group header

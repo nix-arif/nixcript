@@ -448,6 +448,17 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       e.preventDefault();
       const targetKey = getRowKeyAtY(e.clientY);
       if (targetKey && dragKey.current && dragKey.current !== targetKey) {
+        const current = itemsRef.current;
+        const dragged = current.find((i) => i._key === dragKey.current);
+        const target  = current.find((i) => i._key === targetKey);
+        if (dragged && !dragged.setGroupId && target?.setGroupId) {
+          toast.error("Other items cannot be moved into a set group");
+          dragKey.current = null;
+          setDragOverKey(null);
+          setIsDragging(false);
+          if (dragRafId.current !== null) { cancelAnimationFrame(dragRafId.current); dragRafId.current = null; }
+          return;
+        }
         setItems((prev) => {
           const from = prev.findIndex((i) => i._key === dragKey.current);
           const to   = prev.findIndex((i) => i._key === targetKey);
@@ -1383,6 +1394,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     return key ? COLOR_PALETTE[stableColorIdx(key)] : null;
                   };
                   let lastCpoId: string | undefined = undefined;
+                  const shownLooseHeaderForCpo = new Set<string>();
                   return items.flatMap((item, rowIdx) => {
                   const rows: React.JSX.Element[] = [];
                   const color = getColor(item);
@@ -1414,6 +1426,22 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                         </td>
                       </tr>,
                     );
+                  }
+                  if (!item.setGroupId) {
+                    const cpoKey = item.sourceCustomerPoId ?? "__global__";
+                    const sectionHasGroups = items.some((i) =>
+                      i.setGroupId && (linkedCpos.length > 1 ? i.sourceCustomerPoId === item.sourceCustomerPoId : true),
+                    );
+                    if (sectionHasGroups && !shownLooseHeaderForCpo.has(cpoKey)) {
+                      shownLooseHeaderForCpo.add(cpoKey);
+                      rows.push(
+                        <tr key={`loose-hdr-${cpoKey}`} className="bg-muted/40 border-b border-border/40">
+                          <td colSpan={colCount} className="px-2 py-1.5">
+                            <span className="text-[11px] font-bold tracking-tight text-muted-foreground">other items</span>
+                          </td>
+                        </tr>,
+                      );
+                    }
                   }
                   if (item.setGroupId && items.findIndex((i) => i.setGroupId === item.setGroupId) === rowIdx) {
                     const groupItems = items.filter((i) => i.setGroupId === item.setGroupId);

@@ -219,13 +219,19 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
       // Append items from this quotation, tagged with source
       const startRow = items.length;
-      // If the quotation title is not "Loose Items", auto-group all items under that title
+      // If the quotation title is not "Loose Items", auto-group items without an explicit set under that title
       const qtTitle = qt.title ?? "Loose Items";
       const autoGroup = qtTitle.trim().toLowerCase() !== "loose items";
       const autoGroupId    = autoGroup ? `g-${qt.id}` : "";
       const autoGroupLabel = autoGroup ? qtTitle : "";
 
       const imported: EditableItem[] = qt.items.map((item, idx) => {
+        // If the item already belongs to a named set, preserve it (scoped to avoid cross-quotation ID collisions).
+        // Only fall back to the quotation-level auto-group for items that have no set assignment.
+        const itemHasGroup = Boolean(item.setGroupId);
+        const resolvedGroupId    = itemHasGroup ? `${qt.id}:${item.setGroupId}` : autoGroupId;
+        const resolvedGroupLabel = itemHasGroup ? (item.setGroupLabel ?? "") : autoGroupLabel;
+        const resolvedSetQty     = itemHasGroup ? (item.setQty ?? "1") : (autoGroup ? "1" : "");
         const base: EditableItem = {
           _key:          uid(),
           _quotationId:  qt.id,
@@ -240,9 +246,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           discountPct:   String(item.discountPct ?? "0"),
           totalPrice:    String(item.totalPrice  ?? "0"),
           lineType:      item.lineType ?? "sell",
-          setGroupId:    autoGroup ? autoGroupId    : (item.setGroupId    ?? ""),
-          setGroupLabel: autoGroup ? autoGroupLabel : (item.setGroupLabel ?? ""),
-          setQty:        autoGroup ? "1"            : (item.setQty        ?? ""),
+          setGroupId:    resolvedGroupId,
+          setGroupLabel: resolvedGroupLabel,
+          setQty:        resolvedSetQty,
           _descriptionSource: ["quote"],
           _editedBy: null,
           _codeSource: "quote",
@@ -927,7 +933,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                               <input
                                 value={first.setGroupLabel}
                                 onChange={(e) => handleGroupLabelEdit(gid, e.target.value)}
-                                className="h-6 flex-1 min-w-0 border border-blue-200 rounded px-2 text-[11px] md:text-[11px] font-semibold text-blue-700 dark:text-blue-300 bg-background"
+                                className="h-6 flex-1 min-w-0 bg-transparent border border-transparent hover:border-blue-200 focus:border-blue-300 focus:bg-background rounded px-1 text-[13px] md:text-[13px] font-bold text-blue-700 dark:text-blue-300 outline-none transition-colors"
                               />
                               <span className="text-[10px] text-muted-foreground">×</span>
                               <input
@@ -962,6 +968,17 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                       );
                     };
 
+                    const renderSpacer = (key: string) => (
+                      <tr key={key}><td colSpan={9} className="h-2" /></tr>
+                    );
+                    const renderLooseHeader = (key: string) => (
+                      <tr key={key} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                        <td colSpan={9} className="py-1.5 pl-7 text-[13px] md:text-[13px] font-bold text-blue-700 dark:text-blue-300">
+                          other items
+                        </td>
+                      </tr>
+                    );
+
                     if (linkedQuotations.length > 1) {
                       // Multi-quotation: show quotation headers, then render with set grouping per quotation
                       for (const group of quotationGroups) {
@@ -979,16 +996,27 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                         for (const gid of qtGroupIds) {
                           rows.push(renderGroupHeader(gid));
                           group.items.filter((i) => i.setGroupId === gid).forEach((i) => rows.push(renderRow(i, true)));
+                          rows.push(renderSpacer(`sp-${gid}`));
                         }
-                        group.items.filter((i) => !i.setGroupId).forEach((i) => rows.push(renderRow(i, false)));
+                        const ungrouped = group.items.filter((i) => !i.setGroupId);
+                        if (ungrouped.length > 0) {
+                          if (qtGroupIds.length > 0) rows.push(renderLooseHeader(`lh-${group.quotation.quotationNo}`));
+                          ungrouped.forEach((i) => rows.push(renderRow(i, false)));
+                          rows.push(renderSpacer(`sp-loose-${group.quotation.quotationNo}`));
+                        }
                       }
                     } else {
                       // Single quotation: render set groups first, then standalone
                       for (const gid of groupOrder) {
                         rows.push(renderGroupHeader(gid));
                         items.filter((i) => i.setGroupId === gid).forEach((i) => rows.push(renderRow(i, true)));
+                        rows.push(renderSpacer(`sp-${gid}`));
                       }
-                      items.filter((i) => !i.setGroupId).forEach((i) => rows.push(renderRow(i, false)));
+                      const ungrouped = items.filter((i) => !i.setGroupId);
+                      if (ungrouped.length > 0) {
+                        if (groupOrder.length > 0) rows.push(renderLooseHeader("lh-loose"));
+                        ungrouped.forEach((i) => rows.push(renderRow(i, false)));
+                      }
                     }
 
                     return rows;
