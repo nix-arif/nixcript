@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/server/quotation";
 import { getCustomers } from "@/server/customer";
 import { getOrgMembersForQuotation } from "@/server/quotation";
+import { type DocumentCategoryRow } from "@/server/document-category";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,6 +30,7 @@ import {
   AlertCircleIcon,
   CheckIcon,
   LayersIcon,
+  XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { nanoid } from "nanoid";
@@ -51,15 +53,17 @@ function Field({
   label,
   children,
   className,
+  required,
 }: {
   label: string;
   children: React.ReactNode;
   className?: string;
+  required?: boolean;
 }) {
   return (
     <div className={cn("space-y-1.5", className)}>
       <label className="block text-xs font-medium text-muted-foreground">
-        {label}
+        {label}{required && <span className="text-destructive ml-0.5">*</span>}
       </label>
       {children}
     </div>
@@ -110,9 +114,10 @@ interface Props {
   data: Data;
   customers: Customer[];
   members: Member[];
+  categories: DocumentCategoryRow[];
 }
 
-export function EditQuotationClient({ data, customers, members }: Props) {
+export function EditQuotationClient({ data, customers, members, categories }: Props) {
   const router = useRouter();
   const { quotation: q, items: existingItems } = data;
 
@@ -132,14 +137,30 @@ export function EditQuotationClient({ data, customers, members }: Props) {
     }
     return cust.memberships.find((co) => co.isPrimary)?.id ?? cust.memberships[0]?.id ?? "";
   });
-  const [salesPersonId, setSalesPersonId] = useState(q.salesPersonId ?? "");
-  const [salesPersonName, setSalesPersonName] = useState(q.salesPersonName ?? "");
+  const [customerSearch, setCustomerSearch] = useState(() => {
+    if (!q.customerId) return "";
+    const cust = customers.find((c) => c.id === q.customerId);
+    return cust ? [cust.title, cust.name].filter(Boolean).join(" ") : "";
+  });
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const customerBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spInputRef = useRef<HTMLInputElement>(null);
+  const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>(() => {
+    const list: { id: string; name: string; isExt: boolean }[] = [];
+    if (q.salesPersonName) {
+      list.push({ id: q.salesPersonId ?? `mem-${q.salesPersonName}`, name: q.salesPersonName, isExt: !q.salesPersonId });
+    }
+    (q.associateSalesPersons ?? []).forEach((a) => list.push({ id: a.id, name: a.name, isExt: true }));
+    return list;
+  });
+  const [spInput, setSpInput] = useState("");
   const [validDays, setValidDays] = useState(() => {
-    if (!q.validUntil) return "30";
+    if (!q.validUntil) return "90";
     const base = q.createdAt ? new Date(q.createdAt).getTime() : Date.now();
     const diff = Math.round((new Date(q.validUntil).getTime() - base) / 86400000);
     return String(Math.max(1, diff));
   });
+  const [categoryIds, setCategoryIds] = useState<string[]>((q.categoryIds as string[]) ?? []);
   const [notes, setNotes] = useState(q.notes ?? "");
   const [deliveryTerm, setDeliveryTerm] = useState(q.deliveryTerm ?? "EX-STOCK SUBJECT PRIOR SALES, OTHERWISE 8 – 12 WEEKS");
   const [paymentTerm, setPaymentTerm] = useState(q.paymentTerm ?? "30 days");
@@ -276,6 +297,8 @@ export function EditQuotationClient({ data, customers, members }: Props) {
 
   // ── Save ─────────────────────────────────────────────────────────────────
   const handleSave = async () => {
+    if (!customerId) { toast.error("Please select a customer"); return; }
+    if (salesPersons.length === 0) { toast.error("Please add at least one sales person"); return; }
     if (items.length === 0) {
       toast.error("Add at least one item");
       return;
@@ -287,8 +310,9 @@ export function EditQuotationClient({ data, customers, members }: Props) {
         sets,
         customerId: customerId || null,
         customerOrgMemberId: customerOrgMemberId || null,
-        salesPersonId: salesPersonId || null,
-        salesPersonName: salesPersonName || null,
+        salesPersonId: salesPersons.find((s) => !s.isExt)?.id || null,
+        salesPersonName: salesPersons[0]?.name || null,
+        associateSalesPersons: salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : null,
         validDays: Number(validDays) || 30,
         notes: notes || null,
         deliveryTerm: deliveryTerm || null,
@@ -310,6 +334,7 @@ export function EditQuotationClient({ data, customers, members }: Props) {
         inclMdaEstablishment,
         inclLampiran12,
         inclLampiran13,
+        categoryIds,
         items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, ...it }) => ({
           ...it,
           lineType,
@@ -558,11 +583,15 @@ export function EditQuotationClient({ data, customers, members }: Props) {
       <div className="grid grid-cols-[1fr_280px] gap-4 items-start">
         {/* Left column */}
         <div className="space-y-4">
-          {/* Details card */}
+          {/* Card 1: Customer */}
           <div className="bg-background border border-border rounded-xl overflow-hidden">
-            <SectionHeader title="Details" />
-            <div className="p-4 grid grid-cols-2 gap-4">
-              <Field label="Quotation title" className="col-span-2">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Customer<span className="text-destructive ml-0.5 normal-case">*</span>
+              </div>
+            </div>
+            <div className="p-4 space-y-4">
+              <Field label="Quotation title">
                 <Input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
@@ -588,37 +617,69 @@ export function EditQuotationClient({ data, customers, members }: Props) {
                 </div>
               </Field>
 
-              <Field label="Customer">
-                <Select
-                  value={customerId || "_none"}
-                  onValueChange={(v) => {
-                    const id = v === "_none" ? "" : v;
-                    setCustomerId(id);
-                    // Pre-select the primary hospital for this customer
-                    if (id) {
-                      const cust = customers.find((c) => c.id === id);
-                      const primary =
-                        cust?.memberships.find((co) => co.isPrimary) ??
-                        cust?.memberships[0];
-                      setCustomerOrgMemberId(primary?.id ?? "");
-                    } else {
-                      setCustomerOrgMemberId("");
-                    }
-                  }}
-                >
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue placeholder="Select customer" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none">No customer</SelectItem>
-                    {customers.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {[c.title, c.name].filter(Boolean).join(" ")}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
+              <div>
+                {(() => {
+                  const trimmed = customerSearch.trim();
+                  const filtered = trimmed.length >= 3
+                    ? customers.filter((c) => {
+                        const full = [c.title, c.name].filter(Boolean).join(" ").toLowerCase();
+                        const t = trimmed.toLowerCase();
+                        return full.includes(t) || (c.email ?? "").toLowerCase().includes(t) || (c.contactNo ?? "").toLowerCase().includes(t);
+                      })
+                    : [];
+                  const selectedLabel = customerId
+                    ? [customers.find((c) => c.id === customerId)?.title, customers.find((c) => c.id === customerId)?.name].filter(Boolean).join(" ")
+                    : "";
+                  return (
+                    <div className="relative">
+                      <Input
+                        className="h-9 text-sm"
+                        placeholder={selectedLabel || "Type 3+ characters to search…"}
+                        value={customerSearch}
+                        onChange={(e) => {
+                          setCustomerSearch(e.target.value);
+                          setCustomerOpen(true);
+                          if (!e.target.value) { setCustomerId(""); setCustomerOrgMemberId(""); }
+                        }}
+                        onFocus={() => setCustomerOpen(true)}
+                        onBlur={() => {
+                          customerBlurTimer.current = setTimeout(() => setCustomerOpen(false), 150);
+                        }}
+                      />
+                      {customerOpen && (
+                        <div className="absolute z-50 w-full mt-1 bg-background border border-border rounded-md shadow-md max-h-52 overflow-y-auto">
+                          {trimmed.length < 3 ? (
+                            <div className="px-3 py-2 text-xs text-muted-foreground">Type at least 3 characters to search</div>
+                          ) : filtered.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-muted-foreground">No customers found</div>
+                          ) : (
+                            filtered.map((c) => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  if (customerBlurTimer.current) clearTimeout(customerBlurTimer.current);
+                                  const label = [c.title, c.name].filter(Boolean).join(" ");
+                                  setCustomerId(c.id);
+                                  setCustomerSearch(label);
+                                  setCustomerOpen(false);
+                                  const primary = c.memberships.find((co) => co.isPrimary) ?? c.memberships[0];
+                                  setCustomerOrgMemberId(primary?.id ?? "");
+                                }}
+                              >
+                                {[c.title, c.name].filter(Boolean).join(" ")}
+                                {c.contactNo && <span className="ml-2 text-xs text-muted-foreground">{c.contactNo}</span>}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
 
               {/* Hospital / organization selector */}
               {(() => {
@@ -629,104 +690,269 @@ export function EditQuotationClient({ data, customers, members }: Props) {
                   selectedCustomer.memberships.find((co) => co.isPrimary) ??
                   selectedCustomer.memberships[0];
                 return (
-                  <Field label="Hospital / organization">
-                    <Select
-                      onValueChange={setCustomerOrgMemberId}
-                      value={customerOrgMemberId || (selectedCompany?.id ?? "")}
-                    >
-                      <SelectTrigger className="h-9 text-sm">
-                        <SelectValue placeholder="Select hospital" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedCustomer.memberships.map((co) => (
-                          <SelectItem key={co.id} value={co.id}>
-                            {co.orgName ?? "—"}
-                            {co.isPrimary ? " ★" : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
+                  <>
+                    <Field label="Hospital / organization">
+                      <Select
+                        onValueChange={setCustomerOrgMemberId}
+                        value={customerOrgMemberId || (selectedCompany?.id ?? "")}
+                      >
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="Select hospital" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {selectedCustomer.memberships.map((co) => (
+                            <SelectItem key={co.id} value={co.id}>
+                              {co.orgName ?? "—"}
+                              {co.isPrimary ? " ★" : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    {selectedCompany && (
+                      <div className="p-3 bg-muted/30 rounded-lg text-xs text-muted-foreground space-y-1">
+                        <div>
+                          {selectedCompany.position}
+                          {selectedCompany.department ? ` · ${selectedCompany.department}` : ""}
+                        </div>
+                        <div>{selectedCompany.orgAddress}</div>
+                        <div>
+                          {selectedCustomer.email}
+                          {selectedCustomer.contactNo ? ` · ${selectedCustomer.contactNo}` : ""}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 );
               })()}
+            </div>
+          </div>
 
-              <Field label="Sales person">
-                <Select
-                  value={salesPersonId || "_none"}
-                  onValueChange={(v) => {
-                    if (v === "_none") {
-                      setSalesPersonId("");
-                      setSalesPersonName("");
-                    } else {
-                      const m = members.find((m) => m.userId === v);
-                      setSalesPersonId(v);
-                      setSalesPersonName(m?.name ?? "");
-                    }
-                  }}
+          {/* Card 2: Sales & validity */}
+          <div className="bg-background border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Sales & validity
+              </div>
+            </div>
+            <div className="p-4 space-y-4">
+              {/* Valid for */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-muted-foreground">Valid for</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min="1"
+                    value={validDays}
+                    onChange={(e) => setValidDays(e.target.value)}
+                    className="h-9 text-sm w-20 text-right"
+                  />
+                  <span className="text-sm text-muted-foreground">days</span>
+                </div>
+              </div>
+              {/* Sales person — unified tag input */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-muted-foreground">Sales person<span className="text-destructive ml-0.5">*</span></label>
+                <div
+                  className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
+                  onClick={() => spInputRef.current?.focus()}
                 >
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue placeholder="Select sales person" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none">None</SelectItem>
-                    {members.map((m) => (
-                      <SelectItem key={m.userId} value={m.userId}>
-                        {m.name}
-                      </SelectItem>
+                  {salesPersons.map((s) => (
+                    <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
+                      {s.name}
+                      {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setSalesPersons((prev) => prev.filter((x) => x.id !== s.id)); }}
+                        className="text-blue-500/60 hover:text-blue-700 ml-0.5"
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <select
+                    value=""
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const m = members.find((x) => x.userId === e.target.value);
+                      if (!m) return;
+                      const mName = (m.name ?? m.email).toLowerCase();
+                      if (salesPersons.some((s) => s.id === m.userId || s.name.toLowerCase() === mName)) return;
+                      setSalesPersons((prev) => [...prev, { id: m.userId, name: m.name ?? m.email, isExt: false }]);
+                    }}
+                    className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer"
+                  >
+                    <option value="">+ member</option>
+                    {members.filter((m) => !salesPersons.some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
+                      <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
                     ))}
-                  </SelectContent>
-                </Select>
-              </Field>
+                  </select>
+                  <input
+                    ref={spInputRef}
+                    type="text"
+                    value={spInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val.includes(",")) {
+                        const parts = val.split(",");
+                        const toAdd = parts.slice(0, -1).map((p) => p.trim()).filter(Boolean);
+                        if (toAdd.length) {
+                          const memberNames = new Set(members.map((m) => (m.name ?? m.email).toLowerCase()));
+                          const blocked = toAdd.filter((n) => memberNames.has(n.toLowerCase()));
+                          if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); }
+                          const t = Date.now();
+                          setSalesPersons((prev) => {
+                            const existing = new Set(prev.map((s) => s.name.toLowerCase()));
+                            const unique = toAdd.filter((n) => !existing.has(n.toLowerCase()) && !memberNames.has(n.toLowerCase()));
+                            return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                          });
+                        }
+                        setSpInput(parts[parts.length - 1].trimStart());
+                      } else {
+                        setSpInput(val);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Backspace" && !spInput && salesPersons.length > 0) {
+                        setSalesPersons((prev) => prev.slice(0, -1));
+                        return;
+                      }
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (!spInput.trim()) return;
+                        const names = spInput.split(",").map((p) => p.trim()).filter(Boolean);
+                        const memberNames = new Set(members.map((m) => (m.name ?? m.email).toLowerCase()));
+                        const blocked = names.filter((n) => memberNames.has(n.toLowerCase()));
+                        if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); return; }
+                        const t = Date.now();
+                        setSalesPersons((prev) => {
+                          const existing = new Set(prev.map((s) => s.name.toLowerCase()));
+                          const unique = names.filter((n) => !existing.has(n.toLowerCase()));
+                          return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                        });
+                        setSpInput("");
+                      }
+                    }}
+                    placeholder={salesPersons.length === 0 ? "Type a name… (Enter or , to add)" : ""}
+                    className="flex-1 min-w-24 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
 
-              <Field label="Valid for (days)">
-                <Input
-                  type="number"
-                  min="1"
-                  value={validDays}
-                  onChange={(e) => setValidDays(e.target.value)}
-                  className="h-9 text-sm"
-                />
-              </Field>
+          {/* Card 3: Categories */}
+          <div className="bg-background border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Categories<span className="text-destructive ml-0.5 normal-case">*</span>
+              </div>
+            </div>
+            <div className="p-4">
+              <div>
+                {categories.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic py-1">
+                    No categories yet — create one in Organization → Categories
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2 pt-0.5">
+                    {categories.map((c) => {
+                      const selected = categoryIds.includes(c.id);
+                      const hex = c.color ?? "#6366f1";
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() =>
+                            setCategoryIds((prev) =>
+                              selected ? prev.filter((id) => id !== c.id) : [...prev, c.id],
+                            )
+                          }
+                          className={cn(
+                            "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-all select-none",
+                            selected
+                              ? "text-white shadow-sm"
+                              : "bg-background text-foreground/70 hover:text-foreground",
+                          )}
+                          style={
+                            selected
+                              ? { backgroundColor: hex, borderColor: hex }
+                              : { borderColor: hex + "55" }
+                          }
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }}
+                          />
+                          {c.name}
+                          {selected && <span className="ml-0.5 opacity-80">✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
 
-              <Field label="Notes" className="col-span-2">
-                <Textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Additional notes..."
-                  rows={3}
-                  className="text-sm resize-none"
-                />
-              </Field>
-              <Field label="Delivery" className="col-span-2">
-                <Textarea
-                  value={deliveryTerm}
-                  onChange={(e) => setDeliveryTerm(e.target.value)}
-                  rows={2}
-                  className="text-sm resize-none"
-                />
-              </Field>
-              <Field label="Payment Terms">
-                <Input
-                  value={paymentTerm}
-                  onChange={(e) => setPaymentTerm(e.target.value)}
-                  className="h-9 text-sm"
-                />
-              </Field>
-              <Field label="Return Policy" className="col-span-2">
-                <Textarea
-                  value={returnPolicy}
-                  onChange={(e) => setReturnPolicy(e.target.value)}
-                  rows={2}
-                  className="text-sm resize-none"
-                />
-              </Field>
-              <Field label="Warranty">
-                <Input
-                  value={warranty}
-                  onChange={(e) => setWarranty(e.target.value)}
-                  className="h-9 text-sm"
-                />
-              </Field>
+          {/* Card 4: Terms & conditions */}
+          <div className="bg-background border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Terms & conditions
+              </div>
+            </div>
+            <div className="p-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Delivery" className="col-span-2">
+                  <Textarea
+                    value={deliveryTerm}
+                    onChange={(e) => setDeliveryTerm(e.target.value)}
+                    rows={2}
+                    className="text-sm resize-none"
+                  />
+                </Field>
+                <Field label="Payment Terms">
+                  <Input
+                    value={paymentTerm}
+                    onChange={(e) => setPaymentTerm(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                </Field>
+                <Field label="Warranty">
+                  <Input
+                    value={warranty}
+                    onChange={(e) => setWarranty(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                </Field>
+                <Field label="Return Policy" className="col-span-2">
+                  <Textarea
+                    value={returnPolicy}
+                    onChange={(e) => setReturnPolicy(e.target.value)}
+                    rows={2}
+                    className="text-sm resize-none"
+                  />
+                </Field>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 5: Notes */}
+          <div className="bg-background border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Notes
+              </div>
+            </div>
+            <div className="p-4">
+              <Textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Additional notes..."
+                rows={3}
+                className="text-sm resize-none"
+              />
             </div>
           </div>
 

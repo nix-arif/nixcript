@@ -416,6 +416,7 @@ export type CreateQuotationInput = {
   customerOrgMemberId?: string;
   salesPersonId?: string;
   salesPersonName?: string;
+  associateSalesPersons?: { id: string; name: string }[] | null;
   validDays?: number;
   notes?: string;
   deliveryTerm?: string;
@@ -527,6 +528,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     customerSnapshot,
     salesPersonId: input.salesPersonId,
     salesPersonName: input.salesPersonName,
+    associateSalesPersons: input.associateSalesPersons ?? null,
     preparedById: userId,
     preparedByName: me?.name ?? "",
     notes: input.notes,
@@ -780,13 +782,7 @@ export type QuotationBasic = NonNullable<Awaited<ReturnType<typeof getQuotationB
 
 // ── Search quotations by number (for SO creation lookup) ─────────────────
 export async function searchQuotationsByNo(query: string, includeDummy = false) {
-  const { orgId, userId } = await requireAccess("quotation:read");
-
-  // When including dummy quotations, search across the entire owner-org cluster.
-  const ownerOrgs = includeDummy ? await getAllOwnerOrgs(userId, orgId) : [];
-  const searchOrgIds = includeDummy && ownerOrgs.length > 0
-    ? ownerOrgs.map((o) => o.id)
-    : [orgId];
+  const { orgId } = await requireAccess("quotation:read");
 
   // Match against the running number only (part after the last "-")
   // e.g. typing "42" matches "BMS-QT-2025-0042", not the prefix
@@ -804,7 +800,7 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
     .from(quotation)
     .where(
       and(
-        inArray(quotation.organizationId, searchOrgIds),
+        eq(quotation.organizationId, orgId),
         sql`REGEXP_REPLACE(${quotation.quotationNo}, '^.*-', '') ILIKE ${'%' + query + '%'}`,
         includeDummy ? undefined : eq(quotation.isDummy, 0),
         eq(quotation.status, "final"),
@@ -839,6 +835,7 @@ export async function getQuotationForSO(id: string) {
     .select({
       id: quotation.id,
       quotationNo: quotation.quotationNo,
+      title: quotation.title,
       status: quotation.status,
       isDummy: quotation.isDummy,
       grandTotal: quotation.grandTotal,
@@ -850,6 +847,7 @@ export async function getQuotationForSO(id: string) {
       customerSnapshot: quotation.customerSnapshot,
       customerId: quotation.customerId,
       salesPersonName: quotation.salesPersonName,
+      associateSalesPersons: quotation.associateSalesPersons,
       notes: quotation.notes,
     })
     .from(quotation)
@@ -1675,6 +1673,7 @@ export type UpdateQuotationInput = {
   customerOrgMemberId?: string | null;
   salesPersonId?: string | null;
   salesPersonName?: string | null;
+  associateSalesPersons?: { id: string; name: string }[] | null;
   validDays?: number;
   notes?: string | null;
   deliveryTerm?: string | null;
@@ -1696,6 +1695,7 @@ export type UpdateQuotationInput = {
   inclMdaEstablishment: boolean;
   inclLampiran12: boolean;
   inclLampiran13: boolean;
+  categoryIds?: string[];
   items: {
     rowNo: string;
     sku?: string | null;
@@ -1772,6 +1772,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       customerSnapshot,
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
+      associateSalesPersons: input.associateSalesPersons ?? null,
       validUntil,
       notes: input.notes ?? null,
       deliveryTerm: input.deliveryTerm ?? null,
@@ -1797,6 +1798,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       inclMdaEstablishment: input.inclMdaEstablishment ? 1 : 0,
       inclLampiran12: input.inclLampiran12 ? 1 : 0,
       inclLampiran13: input.inclLampiran13 ? 1 : 0,
+      categoryIds: input.categoryIds ?? [],
     })
     .where(eq(quotation.id, id));
 

@@ -58,7 +58,7 @@ const QT_STATUS: Record<string, { label: string; className: string }> = {
 
 export function SalesOrderDetailClient({
   order,
-  linkedQuotation,
+  linkedQuotations = [],
   linkedDos,
   linkedPrs,
   permissions,
@@ -67,7 +67,7 @@ export function SalesOrderDetailClient({
   itemDeliveredQtys = {},
 }: {
   order: SalesOrderWithItems;
-  linkedQuotation: QuotationBasic | null;
+  linkedQuotations?: QuotationBasic[];
   linkedDos: { id: string; doNo: string; customerPoId: string | null; customerPoNo: string | null; status: string }[];
   linkedPrs: PrListRow[];
   permissions: string[];
@@ -341,17 +341,18 @@ export function SalesOrderDetailClient({
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border text-muted-foreground">
-                      <th className="text-left pb-2 pr-3 w-6">#</th>
-                      <th className="text-left pb-2 pr-3 w-20">Code</th>
-                      <th className="text-left pb-2 pr-3">Description</th>
-                      <th className="text-right pb-2 pr-3 w-12">Qty</th>
-                      <th className="text-left pb-2 pr-3 w-12">UOM</th>
+                      <th className="text-left align-bottom pb-2 pr-3 w-6 uppercase">#</th>
+                      <th className="text-left align-bottom pb-2 pr-3 w-20 uppercase">Code</th>
+                      <th className="text-left align-bottom pb-2 pr-3 uppercase">Description</th>
+                      <th className="text-right align-bottom pb-2 pr-3 w-12 uppercase">Qty</th>
+                      <th className="text-center align-bottom pb-2 pr-3 w-16 uppercase">Total qty</th>
+                      <th className="text-left align-bottom pb-2 pr-3 w-12 uppercase">UOM</th>
                       {(status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 && (
-                        <th className="text-right pb-2 pr-3 w-20">Delivered</th>
+                        <th className="text-right align-bottom pb-2 pr-3 w-20 uppercase">Delivered</th>
                       )}
-                      <th className="text-right pb-2 pr-3 w-24">Unit price</th>
-                      <th className="text-right pb-2 pr-3 w-14">Disc%</th>
-                      <th className="text-right pb-2 w-24">Total</th>
+                      <th className="text-right align-bottom pb-2 pr-3 w-24 uppercase">Unit price</th>
+                      <th className="text-right align-bottom pb-2 pr-3 w-14 uppercase">Disc%</th>
+                      <th className="text-right align-bottom pb-2 w-24 uppercase">Total</th>
                       {can("sales-order:update") && status === "confirmed" && (
                         <th className="pb-2 w-8" />
                       )}
@@ -359,85 +360,188 @@ export function SalesOrderDetailClient({
                   </thead>
                   <tbody>
                     {(() => {
-                      // Build CPO id → { customerName, cpoNo } map
-                      const cpoInfoMap = new Map(
-                        order.cpoCustomers.map((c) => [
-                          c.customerPoId,
-                          {
-                            customerName: c.customerSnapshot
-                              ? [c.customerSnapshot.title, c.customerSnapshot.name].filter(Boolean).join(" ")
-                              : null,
-                            cpoNo: c.customerPoNo,
-                          },
-                        ]),
-                      );
+                      const COLOR_PALETTE = [
+                        { hdr: "bg-violet-100/70 dark:bg-violet-900/25", row: "bg-violet-50/40 dark:bg-violet-900/10", border: "border-l-4 border-l-violet-400 dark:border-l-violet-500", text: "text-violet-700 dark:text-violet-300" },
+                        { hdr: "bg-indigo-100/70 dark:bg-indigo-900/25", row: "bg-indigo-50/40 dark:bg-indigo-900/10", border: "border-l-4 border-l-indigo-400 dark:border-l-indigo-500", text: "text-indigo-700 dark:text-indigo-300" },
+                        { hdr: "bg-rose-100/70 dark:bg-rose-900/25", row: "bg-rose-50/40 dark:bg-rose-900/10", border: "border-l-4 border-l-rose-400 dark:border-l-rose-500", text: "text-rose-700 dark:text-rose-300" },
+                        { hdr: "bg-fuchsia-100/70 dark:bg-fuchsia-900/25", row: "bg-fuchsia-50/40 dark:bg-fuchsia-900/10", border: "border-l-4 border-l-fuchsia-400 dark:border-l-fuchsia-500", text: "text-fuchsia-700 dark:text-fuchsia-300" },
+                        { hdr: "bg-orange-100/70 dark:bg-orange-900/25", row: "bg-orange-50/40 dark:bg-orange-900/10", border: "border-l-4 border-l-orange-400 dark:border-l-orange-500", text: "text-orange-700 dark:text-orange-300" },
+                        { hdr: "bg-teal-100/70 dark:bg-teal-900/25", row: "bg-teal-50/40 dark:bg-teal-900/10", border: "border-l-4 border-l-teal-400 dark:border-l-teal-500", text: "text-teal-700 dark:text-teal-300" },
+                      ];
+                      const stableColorIdx = (key: string) => {
+                        let h = 0;
+                        for (let i = 0; i < key.length; i++) { h = Math.imul(31, h) + key.charCodeAt(i) | 0; }
+                        return Math.abs(h) % COLOR_PALETTE.length;
+                      };
+                      const getColor = (item: typeof order.items[0]) => {
+                        const key = (item as any).setGroupId || (item as any).sourceCustomerPoId || (item as any).sourceQuotationId;
+                        return key ? COLOR_PALETTE[stableColorIdx(key)] : null;
+                      };
 
-                      // Only tag when items span more than one distinct CPO
                       const distinctCpos = new Set(
                         order.items.map((i) => (i as any).sourceCustomerPoId).filter(Boolean),
                       );
-                      const showTags = distinctCpos.size > 1;
+                      const colCount = 9
+                        + ((status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 ? 1 : 0)
+                        + (can("sales-order:update") && status === "confirmed" ? 1 : 0);
 
-                      return order.items.map((item) => {
-                        const info = cpoInfoMap.get((item as any).sourceCustomerPoId ?? "");
-                        return (
-                          <tr key={item.id} className={cn("border-b border-border/40 last:border-0", prExcludedItems.has(item.id) && "opacity-50")}>
-                            <td className="py-2 pr-3 text-muted-foreground">{item.rowNo}</td>
-                            <td className="py-2 pr-3 font-mono text-muted-foreground">{item.productCode || "—"}</td>
+                      let lastCpoId: string | undefined = undefined;
+                      return order.items.flatMap((item, idx) => {
+                        const rows: React.JSX.Element[] = [];
+                        const color = getColor(item);
+                        const isAdditional = (item as any).isAdditional;
+
+                        // CPO section header
+                        if (distinctCpos.size > 1 && (item as any).sourceCustomerPoId !== lastCpoId) {
+                          lastCpoId = (item as any).sourceCustomerPoId;
+                          const cpoInfo = order.cpoCustomers.find((c) => c.customerPoId === (item as any).sourceCustomerPoId);
+                          const cpoCustomer = cpoInfo?.customerSnapshot
+                            ? [cpoInfo.customerSnapshot.title, cpoInfo.customerSnapshot.name].filter(Boolean).join(" ")
+                            : null;
+                          rows.push(
+                            <tr key={`cpo-section-${(item as any).sourceCustomerPoId ?? "none"}-${idx}`}>
+                              <td colSpan={colCount} className={`pt-4 pb-1 ${idx === 0 ? "pt-1" : ""}`}>
+                                <div className={`flex items-center gap-2 border-t border-border/60 pt-2 ${idx === 0 ? "border-t-0 pt-0" : ""}`}>
+                                  {cpoInfo ? (
+                                    <>
+                                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono ${color?.text ?? "text-muted-foreground"} ${color?.hdr ?? "bg-muted/50"} border border-current/20`}>
+                                        {cpoInfo.customerPoNo}
+                                      </span>
+                                      {cpoCustomer && <span className="text-[10px] text-muted-foreground">{cpoCustomer}</span>}
+                                    </>
+                                  ) : (
+                                    <span className="text-[10px] text-muted-foreground italic">No CPO</span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>,
+                          );
+                        }
+
+                        // Set group header
+                        if ((item as any).setGroupId && order.items.findIndex((i) => (i as any).setGroupId === (item as any).setGroupId) === idx) {
+                          const groupItems = order.items.filter((i) => (i as any).setGroupId === (item as any).setGroupId);
+                          const groupTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
+                          const setQtyNum = parseFloat((item as any).setQty || "1") || 1;
+                          const perSetPrice = groupTotal / setQtyNum;
+                          rows.push(
+                            <tr key={`grp-${(item as any).setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
+                              <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{(item as any).setGroupLabel || "Set"}</span>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
+                                    × {(item as any).setQty || "1"} sets
+                                  </span>
+                                  {groupTotal > 0 && (
+                                    <>
+                                      <span className={`text-[10px] tabular-nums ${color?.text ?? "text-muted-foreground"}`}>1 set: {fmt(perSetPrice)}</span>
+                                      <span className={`ml-auto text-[11px] font-semibold ${color?.text ?? "text-foreground"} tabular-nums`}>{fmt(groupTotal)}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>,
+                          );
+                        }
+
+                        rows.push(
+                          <tr key={item.id} className={cn("border-b border-border/40 last:border-0", prExcludedItems.has(item.id) && "opacity-50", color ? color.row : "bg-background", isAdditional ? "text-red-500 dark:text-red-400" : "")}>
+                            <td className={`py-2 pr-3 align-top ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.rowNo}</td>
+                            <td className="py-2 pr-3 align-top">
+                              <div className={`font-mono ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.productCode || "—"}</div>
+                              {((item as any).codeSource ?? []).includes("quotation") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                                  <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+                                </span>
+                              )}
+                              {((item as any).codeSource ?? []).includes("cpo") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                                  <FileTextIcon className="w-3 h-3 shrink-0" />from CPO
+                                </span>
+                              )}
+                              {((item as any).codeSource ?? []).includes("user") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).editedBy || "?"} edited CPO
+                                </span>
+                              )}
+                              {((item as any).codeSource ?? []).includes("so") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edited SO
+                                </span>
+                              )}
+                            </td>
                             <td className="py-2 pr-3">
                               <div className="flex flex-col gap-1">
                                 <span>{item.description || "—"}</span>
                                 <div className="flex items-center gap-1 flex-wrap">
-                                  {showTags && info && (
-                                    <>
-                                      {info.customerName && (
-                                        <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
-                                          {info.customerName}
-                                        </span>
-                                      )}
-                                      <span className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                                        {info.cpoNo}
-                                      </span>
-                                    </>
-                                  )}
                                   {prExcludedItems.has(item.id) && (
                                     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
                                       <BanIcon className="w-3 h-3 shrink-0" /> no PR
                                     </span>
                                   )}
-                                  {(item as any).isAdditional && (
-                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                                  {isAdditional && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
                                       <PlusIcon className="w-3 h-3 shrink-0" /> additional row
                                     </span>
                                   )}
-                                  {(item as any).descriptionSource === "cpo" && (
+                                  {((item as any).descriptionSource ?? []).includes("quote") && (
                                     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-                                      <FileTextIcon className="w-3 h-3 shrink-0" /> from quotation
+                                      <LinkIcon className="w-3 h-3 shrink-0" /> from quotation
                                     </span>
                                   )}
-                                  {(item as any).descriptionSource === "catalog" && (
+                                  {((item as any).descriptionSource ?? []).includes("cpo") && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                                      <FileTextIcon className="w-3 h-3 shrink-0" /> from CPO
+                                    </span>
+                                  )}
+                                  {((item as any).descriptionSource ?? []).includes("catalog") && (
                                     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
                                       <DatabaseIcon className="w-3 h-3 shrink-0" /> from product table
                                     </span>
                                   )}
-                                  {(item as any).descriptionSource === "user" && (
+                                  {((item as any).descriptionSource ?? []).includes("user") && (
                                     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
                                       <PencilIcon className="w-3 h-3 shrink-0" />
-                                      {(item as any).editedBy ? `${(item as any).editedBy} edited` : "edited"}
+                                      {(item as any).editedBy || "?"} edited CPO
                                     </span>
                                   )}
                                 </div>
                               </div>
                             </td>
-                            <td className="py-2 pr-3 text-right tabular-nums">{item.qty}</td>
-                            <td className="py-2 pr-3 text-muted-foreground">{item.uom || "—"}</td>
+                            <td className="py-2 pr-3 align-top">
+                              <div className="text-right tabular-nums">{item.qty}</div>
+                              {((item as any).qtySource ?? []).includes("quotation") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                                  <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+                                </span>
+                              )}
+                              {((item as any).qtySource ?? []).includes("cpo") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                                  <FileTextIcon className="w-3 h-3 shrink-0" />from CPO
+                                </span>
+                              )}
+                              {((item as any).qtySource ?? []).includes("user") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).editedBy || "?"} edited CPO
+                                </span>
+                              )}
+                              {((item as any).qtySource ?? []).includes("so") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edited SO
+                                </span>
+                              )}
+                            </td>
+                            <td className={`py-2 pr-3 align-top text-center tabular-nums font-mono ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
+                              {(() => { const s = parseFloat((item as any).setQty || "0") || 1; const q = parseFloat(item.qty || "0"); return s > 1 ? (q * s).toLocaleString("en-MY") : q.toLocaleString("en-MY"); })()}
+                            </td>
+                            <td className={`py-2 pr-3 align-top ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</td>
                             {(status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 && (() => {
                               const delivered = itemDeliveredQtys[item.id] ?? 0;
                               const total = parseFloat(item.qty ?? "0");
                               const pct = total > 0 ? Math.min(100, (delivered / total) * 100) : 0;
                               const full = delivered >= total;
                               return (
-                                <td className="py-2 pr-3 text-right tabular-nums">
+                                <td className="py-2 pr-3 align-top text-right tabular-nums">
                                   <span className={cn("text-[11px] font-medium", full ? "text-green-600 dark:text-green-400" : delivered > 0 ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground")}>
                                     {delivered > 0 ? `${delivered}/${item.qty}` : "—"}
                                   </span>
@@ -449,11 +553,33 @@ export function SalesOrderDetailClient({
                                 </td>
                               );
                             })()}
-                            <td className="py-2 pr-3 text-right tabular-nums">{fmt(item.unitPrice)}</td>
-                            <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">{item.discountPct || "0"}%</td>
-                            <td className="py-2 text-right tabular-nums font-medium">{fmt(item.totalPrice)}</td>
+                            <td className="py-2 pr-3 align-top">
+                              <div className="text-right tabular-nums">{fmt(item.unitPrice)}</div>
+                              {((item as any).unitPriceSource ?? []).includes("quotation") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                                  <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+                                </span>
+                              )}
+                              {((item as any).unitPriceSource ?? []).includes("cpo") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                                  <FileTextIcon className="w-3 h-3 shrink-0" />from CPO
+                                </span>
+                              )}
+                              {((item as any).unitPriceSource ?? []).includes("user") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).editedBy || "?"} edited CPO
+                                </span>
+                              )}
+                              {((item as any).unitPriceSource ?? []).includes("so") && (
+                                <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edited SO
+                                </span>
+                              )}
+                            </td>
+                            <td className={`py-2 pr-3 align-top text-right tabular-nums ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.discountPct || "0"}%</td>
+                            <td className="py-2 align-top text-right tabular-nums font-medium">{fmt(item.totalPrice)}</td>
                             {can("sales-order:update") && status === "confirmed" && (
-                              <td className="py-2 pl-2">
+                              <td className="py-2 pl-2 align-top">
                                 <button
                                   title={prExcludedItems.has(item.id) ? "Include in PR" : "Exclude from PR"}
                                   disabled={togglingPrExclude === item.id}
@@ -471,8 +597,9 @@ export function SalesOrderDetailClient({
                                 </button>
                               </td>
                             )}
-                          </tr>
+                          </tr>,
                         );
+                        return rows;
                       });
                     })()}
                   </tbody>
@@ -501,6 +628,11 @@ export function SalesOrderDetailClient({
               {order.soType === "proforma" && (
                 <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 capitalize">
                   Pro-forma · {order.proformaReason ?? ""}
+                </span>
+              )}
+              {order.soType === "urgent" && (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                  Urgent · PO pending
                 </span>
               )}
             </div>
@@ -868,6 +1000,46 @@ export function SalesOrderDetailClient({
           <section className="border border-border rounded-xl p-4 space-y-2.5">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Details</h2>
 
+            {/* Urgent authorization details */}
+            {order.soType === "urgent" && (
+              <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800 space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">Urgent authorization</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                  {(order as any).urgentAuthBy && (
+                    <>
+                      <span className="text-muted-foreground">Authorized by</span>
+                      <span className="font-medium">{(order as any).urgentAuthBy}</span>
+                    </>
+                  )}
+                  {(order as any).urgentAuthType && (
+                    <>
+                      <span className="text-muted-foreground">Channel</span>
+                      <span className="capitalize">{(order as any).urgentAuthType === "loi" ? "LOI" : (order as any).urgentAuthType}</span>
+                    </>
+                  )}
+                  {(order as any).urgentAuthDate && (
+                    <>
+                      <span className="text-muted-foreground">Auth date</span>
+                      <span>{(order as any).urgentAuthDate}</span>
+                    </>
+                  )}
+                  {(order as any).urgentPoExpectedBy && (
+                    <>
+                      <span className="text-muted-foreground">CPO expected by</span>
+                      <span className={new Date((order as any).urgentPoExpectedBy) < new Date() ? "text-destructive font-medium" : ""}>
+                        {(order as any).urgentPoExpectedBy}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {(order as any).urgentAuthNotes && (
+                  <p className="text-xs text-muted-foreground italic border-t border-amber-200 dark:border-amber-800 pt-2">
+                    {(order as any).urgentAuthNotes}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Original SO — shown on warranty/replacement pro-forma SOs */}
             {order.originalSoNo && (
               <div className="flex items-start gap-2">
@@ -890,86 +1062,98 @@ export function SalesOrderDetailClient({
               </div>
             )}
 
+            {linkedQuotations.length > 0 && (
+              <div className="flex items-start gap-2">
+                <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] text-muted-foreground mb-1">
+                    Quotation{linkedQuotations.length > 1 ? "s" : ""}
+                  </p>
+                  <div className="space-y-1">
+                    {linkedQuotations.map((q) => (
+                      <button
+                        key={q.id}
+                        onClick={() => router.push(`/dashboard/sales/quotation/${q.id}`)}
+                        className="w-full text-left border border-border rounded-lg px-2.5 py-2 hover:bg-muted/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-mono font-medium">{q.quotationNo}</span>
+                          {q.status && (
+                            <span className={cn("text-[10px] font-medium rounded px-1.5 py-0.5", (QT_STATUS[q.status] ?? QT_STATUS.draft).className)}>
+                              {(QT_STATUS[q.status] ?? QT_STATUS.draft).label}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
+                          {fmt(q.grandTotal)}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* Sales person — per-CPO when CPOs linked, else SO-level */}
             {(() => {
-              const allLinked = (order.linkedQuotations as { id: string; quotationNo: string }[] | null) ??
-                (order.quotationId && order.quotationNo ? [{ id: order.quotationId, quotationNo: order.quotationNo }] : []);
-              if (allLinked.length === 0) return null;
+              const associates = (order.associateSalesPersons as { id: string; name: string }[] | null) ?? [];
+
+              if (order.cpoCustomers.length > 0) {
+                // Build effective per-CPO rows:
+                // soSalesPersonName (SO-edited) → order.salesPersonName for first CPO (old SOs) → CPO table original
+                const rows = order.cpoCustomers.map((c, idx) => ({
+                  ...c,
+                  effectiveSp: c.soSalesPersonName ?? (idx === 0 ? order.salesPersonName : null) ?? c.salesPersonName ?? null,
+                }));
+                const anyData = rows.some((r) => r.effectiveSp || r.externalPersons.length > 0);
+                if (!anyData) return null;
+                return (
+                  <div className="flex items-start gap-2">
+                    <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] text-muted-foreground">Sales person</p>
+                      <div className="space-y-1 mt-0.5">
+                        {rows.map((c) => {
+                          if (!c.effectiveSp && c.externalPersons.length === 0) return null;
+                          return (
+                            <div key={c.customerPoId} className="flex flex-wrap items-center gap-1">
+                              <span className="text-[10px] font-mono bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400 rounded px-1.5 py-0.5 shrink-0">
+                                {c.customerPoNo}
+                              </span>
+                              {c.effectiveSp && <span className="text-xs">{c.effectiveSp}</span>}
+                              {c.externalPersons.map((e) => (
+                                <span key={e.id} className="inline-flex items-center gap-0.5 text-[10px] bg-muted border border-border rounded px-1.5 py-0.5">
+                                  {e.name}<span className="text-[9px] opacity-60 font-bold ml-0.5">ext</span>
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // Cash sale — SO-level
+              const soSp = order.salesPersonName || null;
+              if (!soSp && associates.length === 0) return null;
               return (
                 <div className="flex items-start gap-2">
-                  <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] text-muted-foreground mb-1">
-                      Quotation{allLinked.length > 1 ? "s" : ""}
-                    </p>
-                    <div className="space-y-1">
-                      {allLinked.map((q) => {
-                        const match = q.id === linkedQuotation?.id ? linkedQuotation : null;
-                        return match ? (
-                          <button
-                            key={q.id}
-                            onClick={() => router.push(`/dashboard/sales/quotation/${q.id}`)}
-                            className="w-full text-left border border-border rounded-lg px-2.5 py-2 hover:bg-muted/40 transition-colors"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-mono font-medium">{match.quotationNo}</span>
-                              {match.status && (
-                                <span className={cn("text-[10px] font-medium rounded px-1.5 py-0.5", (QT_STATUS[match.status] ?? QT_STATUS.draft).className)}>
-                                  {(QT_STATUS[match.status] ?? QT_STATUS.draft).label}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
-                              {fmt(match.grandTotal)}
-                            </div>
-                          </button>
-                        ) : (
-                          <p key={q.id} className="text-xs font-mono text-muted-foreground px-0.5">{q.quotationNo}</p>
-                        );
-                      })}
-                    </div>
+                  <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Sales person</p>
+                    {soSp && <p className="text-xs">{soSp}</p>}
+                    {associates.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {associates.map((a) => (
+                          <span key={a.id} className="text-[10px] bg-muted rounded-full px-2 py-0.5">{a.name}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
             })()}
-            {/* Sales person — per-CPO when linked, else order-level */}
-            {order.cpoCustomers.length > 0 ? (
-              <div className="flex items-start gap-2">
-                <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-[10px] text-muted-foreground mb-1">Sales person</p>
-                  <div className="space-y-1">
-                    {order.cpoCustomers.map((c) => (
-                      <div key={c.customerPoId} className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
-                        <span className="text-xs">{c.salesPersonName ?? <span className="text-muted-foreground">—</span>}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {(order.associateSalesPersons as { id: string; name: string }[] | null)?.length ? (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {(order.associateSalesPersons as { id: string; name: string }[]).map((a) => (
-                        <span key={a.id} className="text-[10px] bg-muted rounded-full px-2 py-0.5">{a.name}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : order.salesPersonName ? (
-              <div className="flex items-start gap-2">
-                <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] text-muted-foreground">Sales person</p>
-                  <p className="text-xs">{order.salesPersonName}</p>
-                  {(order.associateSalesPersons as { id: string; name: string }[] | null)?.length ? (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {(order.associateSalesPersons as { id: string; name: string }[]).map((a) => (
-                        <span key={a.id} className="text-[10px] bg-muted rounded-full px-2 py-0.5">{a.name}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
 
             {/* Due delivery date — per-CPO when linked, else order-level */}
             {order.cpoCustomers.length > 0 ? (

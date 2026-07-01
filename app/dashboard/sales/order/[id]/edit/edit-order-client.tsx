@@ -15,6 +15,7 @@ import {
   type CustomerPoSearchResult,
 } from "@/server/customer-purchase-order";
 import { getProductByCode } from "@/server/products";
+import { searchProducts } from "@/server/inventory";
 import { type OrgMember } from "@/server/members";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,8 @@ import {
   PencilIcon,
   DatabaseIcon,
   FileTextIcon,
+  GripVerticalIcon,
+  ChevronDownIcon,
 } from "lucide-react";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
@@ -48,25 +51,39 @@ type LinkedCpo = {
   } | null;
   deliveryDate: string;
   salesPersonName: string | null;
+  deliveryAddress?: string | null;
+  _salesPersonInherited?: string | null;
+  _deliveryDateInherited?: string | null;
+  _deliveryAddressInherited?: string | null;
 };
 
 interface LineItem extends SalesOrderItemInput {
   _key: string;
   sourceCustomerPoId: string;
   sourceCustomerPoNo: string;
-  _descriptionSource?: "cpo" | "catalog" | "user" | null;
+  _descriptionSource?: Array<"quote" | "catalog" | "user" | "cpo" | "so"> | null;
+  _codeSource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
+  _qtySource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
+  _uomSource?: string | null;
+  _unitPriceSource?: string | null;
+  _discountSource?: string | null;
   _editedBy?: string | null;
+  _soEditedBy?: string | null;
   _isAdditional?: boolean;
 }
 
-const SO_STATUS = ["draft", "confirmed", "fulfilled", "cancelled"] as const;
-
-const SO_STATUS_LABELS: Record<string, string> = {
-  draft: "Draft",
-  confirmed: "Confirmed",
-  fulfilled: "Fulfilled",
-  cancelled: "Cancelled",
+const SO_STATUS_MAP: Record<string, { label: string; className: string }> = {
+  draft:     { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  submitted: { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
+  confirmed: { label: "Confirmed",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
+  fulfilled: { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
+  cancelled: { label: "Cancelled",         className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
+
+function StatusBadge({ status }: { status: string }) {
+  const cfg = SO_STATUS_MAP[status] ?? SO_STATUS_MAP.draft;
+  return <span className={`text-[11px] font-medium rounded px-2 py-0.5 ${cfg.className}`}>{cfg.label}</span>;
+}
 
 const newLine = (rowNo: number): LineItem => ({
   _key: uid(),
@@ -79,12 +96,102 @@ const newLine = (rowNo: number): LineItem => ({
   discountPct: "0",
   discountAmt: "0",
   totalPrice: "0",
+  lineType: "sell",
+  rentalDuration: "",
+  rentalUnit: "case",
+  setGroupId: "",
+  setGroupLabel: "",
+  setQty: "",
   sourceQuotationId: "",
   sourceCustomerPoId: "",
   sourceCustomerPoNo: "",
   _descriptionSource: null,
   _isAdditional: true,
 });
+
+interface ProductCellProps {
+  item: LineItem;
+  rowIdx: number;
+  onUpdate: (key: string, patch: Partial<LineItem>) => void;
+  onCellKeyDown: (e: React.KeyboardEvent<HTMLInputElement>, row: number, col: number) => void;
+  onBlur?: (key: string, code: string, prevCode: string) => void;
+}
+
+function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown, onBlur: onCodeBlur }: ProductCellProps) {
+  const [q, setQ] = useState(item.productCode ?? "");
+  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null }[]>([]);
+  const [open, setOpen] = useState(false);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const codeOnFocus = useRef("");
+
+  useEffect(() => { setQ(item.productCode ?? ""); }, [item.productCode]);
+
+  function handleInput(val: string) {
+    setQ(val);
+    onUpdate(item._key, { productCode: val, productId: undefined });
+    if (debounce.current) clearTimeout(debounce.current);
+    if (!val.trim()) { setResults([]); setOpen(false); return; }
+    debounce.current = setTimeout(async () => {
+      const r = await searchProducts(val);
+      setResults(r);
+      setOpen(r.length > 0);
+      const exact = r.find((p) => p.productCode.toLowerCase() === val.trim().toLowerCase());
+      if (exact) {
+        onUpdate(item._key, {
+          productId: exact.id,
+          productCode: exact.productCode,
+          description: item.description || exact.description || "",
+          uom: item.uom || exact.uom || "",
+        });
+        setOpen(false);
+      }
+    }, 300);
+  }
+
+  function pick(p: { id: string; productCode: string; description: string | null; uom: string | null }) {
+    onUpdate(item._key, {
+      productId: p.id,
+      productCode: p.productCode,
+      description: item.description || p.description || "",
+      uom: item.uom || p.uom || "",
+    });
+    setQ(p.productCode);
+    setResults([]);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <Input
+        data-row={rowIdx}
+        data-col={0}
+        value={q}
+        onChange={(e) => handleInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (open && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) return;
+          onCellKeyDown(e, rowIdx, 0);
+        }}
+        onFocus={() => { codeOnFocus.current = q; }}
+        onBlur={() => { setTimeout(() => setOpen(false), 150); onCodeBlur?.(item._key, q, codeOnFocus.current); }}
+        className="h-7 text-xs"
+        placeholder="Code…"
+      />
+      {open && (
+        <div className="absolute z-50 top-full left-0 mt-0.5 w-64 rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto text-xs">
+          {results.map((p) => (
+            <button key={p.id} type="button"
+              className="w-full text-left px-2 py-1.5 hover:bg-accent flex gap-2"
+              onClick={() => pick(p)}
+            >
+              <span className="font-mono font-medium shrink-0">{p.productCode}</span>
+              <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function calcLine(item: LineItem): LineItem {
   const qty = parseFloat(item.qty || "0") || 0;
@@ -114,24 +221,35 @@ interface Props {
   order: SalesOrderWithItems;
   members: OrgMember[];
   currentUserName: string;
+  openCpos?: CustomerPoSearchResult[];
 }
 
-export function EditSalesOrderClient({ order, members, currentUserName }: Props) {
+export function EditSalesOrderClient({ order, members, currentUserName, openCpos = [] }: Props) {
   const router = useRouter();
   const snap = order.customerSnapshot as any;
 
   // ── Customer POs ─────────────────────────────────────────────────────────────
-  const existingCpoLinks = (order.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null) ?? [];
+  const existingCpoLinks = (order.customerPoLinks as { customerPoId: string; customerPoNo: string; salesPersonName?: string | null; externalPersons?: { id: string; name: string }[] }[] | null) ?? [];
   const [linkedCpos, setLinkedCpos] = useState<LinkedCpo[]>(
-    existingCpoLinks.map((c) => {
-      const cpoCustomer = order.cpoCustomers.find((cc) => cc.customerPoId === c.customerPoId);
+    existingCpoLinks.map((l, idx) => {
+      const cpoCustomer = order.cpoCustomers.find((cc) => cc.customerPoId === l.customerPoId);
+      const spInherited = cpoCustomer?.salesPersonName ?? null;         // CPO original (for badge)
+      const spCurrent = l.salesPersonName ?? cpoCustomer?.salesPersonName ?? null; // SO-edited or CPO original
+      const dateInherited = cpoCustomer?.deliveryDate
+        ? new Date(cpoCustomer.deliveryDate).toISOString().slice(0, 10) : "";
+      const addrInherited = cpoCustomer?.customerSnapshot?.organizationAddress ?? null;
+      const deliveryAddr = idx === 0 ? (order.deliveryAddress ?? "") : (addrInherited ?? "");
       return {
-        id: c.customerPoId,
-        customerPoNo: c.customerPoNo,
+        id: l.customerPoId,
+        customerPoNo: l.customerPoNo,
         customerId: cpoCustomer?.customerId ?? null,
         customerSnapshot: cpoCustomer?.customerSnapshot ?? null,
-        deliveryDate: cpoCustomer?.deliveryDate ? new Date(cpoCustomer.deliveryDate).toISOString().slice(0, 10) : "",
-        salesPersonName: cpoCustomer?.salesPersonName ?? null,
+        deliveryDate: dateInherited,
+        salesPersonName: spCurrent,
+        deliveryAddress: deliveryAddr,
+        _salesPersonInherited: spInherited,
+        _deliveryDateInherited: dateInherited,
+        _deliveryAddressInherited: addrInherited ?? "",
       };
     }),
   );
@@ -139,7 +257,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
   const [cpoResults, setCpoResults] = useState<CustomerPoSearchResult[]>([]);
   const [cpoHighlight, setCpoHighlight] = useState(-1);
   const [cpoLoading, setCpoLoading] = useState(false);
-  const [showAddCpo, setShowAddCpo] = useState(false);
+  const [cpoDropdownOpen, setCpoDropdownOpen] = useState(false);
   const cpoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Customer ────────────────────────────────────────────────────────────────
@@ -163,16 +281,37 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(initialCustomer);
   const [custOrgMemberId, setCustOrgMemberId] = useState<string | undefined>(undefined);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const custDropdownRef = useRef<HTMLDivElement>(null);
+  const cpoSearchRef = useRef<HTMLDivElement>(null);
+
+  // ── Urgent auth fields ───────────────────────────────────────────────────────
+  const isUrgent = order.soType === "urgent";
+  const [urgentAuthType, setUrgentAuthType] = useState<"verbal" | "email" | "loi" | "internal">(
+    ((order as any).urgentAuthType as "verbal" | "email" | "loi" | "internal") ?? "verbal",
+  );
+  const [urgentAuthBy, setUrgentAuthBy] = useState((order as any).urgentAuthBy ?? "");
+  const [urgentAuthDate, setUrgentAuthDate] = useState((order as any).urgentAuthDate ?? "");
+  const [urgentPoExpectedBy, setUrgentPoExpectedBy] = useState((order as any).urgentPoExpectedBy ?? "");
+  const [urgentAuthNotes, setUrgentAuthNotes] = useState((order as any).urgentAuthNotes ?? "");
 
   // ── Header ──────────────────────────────────────────────────────────────────
   const [status, setStatus] = useState(order.status ?? "draft");
   const [salesPerson, setSalesPerson] = useState(order.salesPersonName ?? "");
-  const [associateSalesPersons, setAssociateSalesPersons] = useState<{ id: string; name: string }[]>(
-    (order.associateSalesPersons as { id: string; name: string }[] | null) ?? [],
-  );
+  const [associateSalesPersons, setAssociateSalesPersons] = useState<{ id: string; name: string }[]>(() => {
+    // Prefer per-CPO external persons from customerPoLinks (has sourceCpoNo info)
+    const fromLinks = existingCpoLinks.flatMap((l) =>
+      (l.externalPersons ?? []).map((e) => ({ ...e, sourceCpoNo: l.customerPoNo } as any))
+    );
+    if (fromLinks.length > 0) return fromLinks;
+    // Fall back to flat order.associateSalesPersons (old saves without per-CPO data)
+    return (order.associateSalesPersons as { id: string; name: string }[] | null) ?? [];
+  });
   const [deliveryDate, setDeliveryDate] = useState(toDateInput(order.deliveryDate));
   const [deliveryAddress, setDeliveryAddress] = useState(order.deliveryAddress ?? "");
   const [notes, setNotes] = useState(order.notes ?? "");
+  const [externalPersonInput, setExternalPersonInput] = useState<Record<string, string>>({});
+  const getExtInput = (key: string) => externalPersonInput[key] ?? "";
+  const setExtInput = (key: string, val: string) => setExternalPersonInput((prev) => ({ ...prev, [key]: val }));
 
   // ── Pricing ─────────────────────────────────────────────────────────────────
   const [sstPct, setSstPct] = useState(order.sstPct ?? "0");
@@ -192,21 +331,122 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
           discountPct: String(i.discountPct ?? "0"),
           discountAmt: String(i.discountAmt ?? "0"),
           totalPrice: String(i.totalPrice ?? "0"),
+          lineType: (i as any).lineType ?? "sell",
+          rentalDuration: (i as any).rentalDuration ?? "",
+          rentalUnit: (i as any).rentalUnit ?? "case",
+          setGroupId: (i as any).setGroupId ?? "",
+          setGroupLabel: (i as any).setGroupLabel ?? "",
+          setQty: (i as any).setQty ?? "",
           sourceQuotationId: i.sourceQuotationId ?? "",
           sourceCustomerPoId: (i as any).sourceCustomerPoId ?? "",
           sourceCustomerPoNo: (i as any).sourceCustomerPoNo ?? "",
-          _descriptionSource: ((i as any).descriptionSource as "cpo" | "catalog" | "user" | null)
-            ?? ((i as any).sourceCustomerPoId ? "cpo" : null),
+          _descriptionSource: (() => {
+            const s = (i as any).descriptionSource;
+            if (!s) return (i as any).sourceCustomerPoId ? ["cpo" as const] : null;
+            if (Array.isArray(s)) return s as Array<"quote" | "catalog" | "user" | "cpo" | "so">;
+            return [s as "quote" | "catalog" | "user" | "cpo" | "so"];
+          })(),
+          _codeSource: (() => {
+            const s = (i as any).codeSource ?? ((i as any).sourceCustomerPoId ? "cpo" : null);
+            if (!s) return null;
+            if (Array.isArray(s)) return s as Array<"cpo" | "quotation" | "user" | "so">;
+            return [s as "cpo" | "quotation" | "user" | "so"];
+          })(),
+          _qtySource: (() => {
+            const s = (i as any).qtySource ?? ((i as any).sourceCustomerPoId ? "cpo" : null);
+            if (!s) return null;
+            if (Array.isArray(s)) return s as Array<"cpo" | "quotation" | "user" | "so">;
+            return [s as "cpo" | "quotation" | "user" | "so"];
+          })(),
+          _uomSource: (i as any).uomSource ?? ((i as any).sourceCustomerPoId ? "cpo" : null),
+          _unitPriceSource: (i as any).unitPriceSource ?? ((i as any).sourceCustomerPoId ? "cpo" : null),
+          _discountSource: (i as any).discountSource ?? ((i as any).sourceCustomerPoId ? "cpo" : null),
           _editedBy: (i as any).editedBy ?? null,
+          _soEditedBy: (i as any).soEditedBy ?? null,
           _isAdditional: (i as any).isAdditional === true,
         }))
       : [newLine(1)],
   );
 
   const [saving, setSaving] = useState(false);
+  const [cpoPicker, setCpoPicker] = useState<string | null>(null);
+  const [cpoPickerPos, setCpoPickerPos] = useState<{ top: number; left: number } | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const itemsRef = useRef(items);
+  const codeOnFocus = useRef<Map<string, string>>(new Map());
+  const dragKey        = useRef<string | null>(null);
+  const [isDragging, setIsDragging]   = useState(false);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const dragClientY = useRef<number>(0);
+  const dragRafId   = useRef<number | null>(null);
   useEffect(() => { itemsRef.current = items; }, [items]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (custDropdownRef.current && !custDropdownRef.current.contains(e.target as Node)) {
+        setCustResults([]);
+      }
+      if (cpoSearchRef.current && !cpoSearchRef.current.contains(e.target as Node)) {
+        setCpoResults([]);
+        setCpoDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  function getRowKeyAtY(clientY: number): string | null {
+    const rows = tableRef.current?.querySelectorAll<HTMLElement>("[data-key]");
+    if (!rows) return null;
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) return row.dataset.key ?? null;
+    }
+    return null;
+  }
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      dragClientY.current = e.clientY;
+      const key = getRowKeyAtY(e.clientY);
+      setDragOverKey((prev) => (prev !== key ? key : prev));
+      const el = tableRef.current;
+      if (el) {
+        const ZONE = 80, SPEED = 10;
+        const rect = el.getBoundingClientRect();
+        const rel  = e.clientY - rect.top;
+        if (rel < ZONE && rel >= 0)                              el.scrollTop -= SPEED * (1 - rel / ZONE);
+        else if (rel > rect.height - ZONE && rel <= rect.height) el.scrollTop += SPEED * (1 - (rect.height - rel) / ZONE);
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      const targetKey = getRowKeyAtY(e.clientY);
+      if (targetKey && dragKey.current && dragKey.current !== targetKey) {
+        setItems((prev) => {
+          const from = prev.findIndex((i) => i._key === dragKey.current);
+          const to   = prev.findIndex((i) => i._key === targetKey);
+          if (from < 0 || to < 0) return prev;
+          const arr = [...prev];
+          arr.splice(to, 0, arr.splice(from, 1)[0]);
+          return arr.map((i, n) => ({ ...i, rowNo: n + 1 }));
+        });
+      }
+      dragKey.current = null;
+      setDragOverKey(null);
+      setIsDragging(false);
+      if (dragRafId.current !== null) { cancelAnimationFrame(dragRafId.current); dragRafId.current = null; }
+    };
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop",     onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop",     onDrop);
+    };
+  }, [isDragging]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── CPO search ──────────────────────────────────────────────────────────────
 
@@ -226,7 +466,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
     if (e.key === "ArrowDown") { e.preventDefault(); setCpoHighlight((i) => Math.min(i + 1, cpoResults.length - 1)); return; }
     if (e.key === "ArrowUp")   { e.preventDefault(); setCpoHighlight((i) => Math.max(i - 1, 0)); return; }
     if (e.key === "Enter")     { e.preventDefault(); const r = cpoResults[cpoHighlight] ?? cpoResults[0]; if (r) selectCpo(r.id); return; }
-    if (e.key === "Escape")    { setCpoResults([]); setCpoHighlight(-1); setShowAddCpo(false); }
+    if (e.key === "Escape")    { setCpoResults([]); setCpoHighlight(-1); setCpoDropdownOpen(false); }
   }
 
   async function selectCpo(cpoId: string) {
@@ -239,15 +479,31 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
     try {
       const data = await getCustomerPoForSoCreate(cpoId);
       if (!data) return;
+      const spInherited = data.salesPersonName ?? null;
+      const dateInherited = data.deliveryDate ? new Date(data.deliveryDate).toISOString().slice(0, 10) : "";
+      const addrInherited = (data.customerSnapshot as any)?.organizationAddress ?? null;
       setLinkedCpos((prev) => [...prev, {
         id: data.id,
         customerPoNo: data.customerPoNo,
         customerId: data.customerId,
         customerSnapshot: data.customerSnapshot,
-        deliveryDate: data.deliveryDate ? new Date(data.deliveryDate).toISOString().slice(0, 10) : "",
+        deliveryDate: dateInherited,
         salesPersonName: data.salesPersonName ?? null,
+        deliveryAddress: addrInherited ?? "",
+        _salesPersonInherited: spInherited,
+        _deliveryDateInherited: dateInherited,
+        _deliveryAddressInherited: addrInherited ?? "",
       }]);
-      setShowAddCpo(false);
+      if (data.associateSalesPersons && data.associateSalesPersons.length > 0) {
+        setAssociateSalesPersons((prev) => {
+          const existingIds = new Set(prev.map((a) => a.id));
+          const toAdd = data.associateSalesPersons!
+            .filter((a) => !existingIds.has(a.id))
+            .map((a) => ({ ...a, sourceCpoNo: data.customerPoNo } as any));
+          return [...prev, ...toAdd];
+        });
+      }
+      setCpoDropdownOpen(false);
     } catch {
       toast.error("Failed to load customer PO");
     } finally {
@@ -298,16 +554,16 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
     setItems((prev) => prev.filter((i) => i._key !== key).map((i, idx) => ({ ...i, rowNo: idx + 1 })));
   }
 
-  async function handleProductCodeBlur(key: string, code: string) {
+  async function handleProductCodeBlur(key: string, code: string, prevCode: string) {
     const trimmed = code.trim();
-    if (!trimmed) return;
-    const current = itemsRef.current.find((i) => i._key === key);
-    if (!current) return;
-    if (current.description && current._descriptionSource !== "user") return;
+    if (!trimmed || trimmed === prevCode.trim()) return;
     const product = await getProductByCode(trimmed);
-    if (!product?.description) return;
+    if (!product) {
+      setItems((prev) => prev.map((i) => i._key === key ? { ...i, description: "N/A" } : i));
+      return;
+    }
     setItems((prev) => prev.map((i) => i._key === key
-      ? { ...i, description: product.description!, uom: product.uom ?? i.uom, _descriptionSource: "catalog", _editedBy: null }
+      ? { ...i, description: product.description ?? "N/A", uom: product.uom ?? i.uom, _descriptionSource: ["catalog"], _editedBy: null }
       : i,
     ));
   }
@@ -319,8 +575,8 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
     rowIdx: number,
     colIdx: number,
   ) {
-    const el = e.currentTarget;
     const COLS = 6;
+    const isModifier = e.metaKey || e.ctrlKey;
 
     const focus = (r: number, c: number) => {
       const target = tableRef.current?.querySelector<HTMLInputElement>(
@@ -331,10 +587,12 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
 
     switch (e.key) {
       case "ArrowDown":
+        if (!isModifier) break;
         e.preventDefault();
         focus(rowIdx + 1, colIdx);
         break;
       case "ArrowUp":
+        if (!isModifier) break;
         e.preventDefault();
         if (rowIdx > 0) focus(rowIdx - 1, colIdx);
         break;
@@ -344,24 +602,28 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
           focus(rowIdx + 1, colIdx);
         } else {
           addLine();
-          setTimeout(() => focus(rowIdx + 1, colIdx), 0);
+          setTimeout(() => focus(rowIdx + 1, 0), 0);
         }
         break;
       case "ArrowRight":
-        if (el.selectionStart === el.value.length) {
-          e.preventDefault();
-          if (colIdx < COLS - 1) focus(rowIdx, colIdx + 1);
-          else focus(rowIdx + 1, 0);
-        }
+        if (!isModifier) break;
+        e.preventDefault();
+        if (colIdx < COLS - 1) focus(rowIdx, colIdx + 1);
+        else focus(rowIdx + 1, 0);
         break;
       case "ArrowLeft":
-        if (el.selectionStart === 0) {
-          e.preventDefault();
-          if (colIdx > 0) focus(rowIdx, colIdx - 1);
-          else if (rowIdx > 0) focus(rowIdx - 1, COLS - 1);
-        }
+        if (!isModifier) break;
+        e.preventDefault();
+        if (colIdx > 0) focus(rowIdx, colIdx - 1);
+        else if (rowIdx > 0) focus(rowIdx - 1, COLS - 1);
         break;
     }
+  }
+
+  // ── Update linked CPO ────────────────────────────────────────────────────────
+
+  function updateLinkedCpo(id: string, patch: Partial<Pick<LinkedCpo, "salesPersonName" | "deliveryDate" | "deliveryAddress">>) {
+    setLinkedCpos((prev) => prev.map((c) => c.id === id ? { ...c, ...patch } : c));
   }
 
   // ── Save ────────────────────────────────────────────────────────────────────
@@ -373,40 +635,67 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
       null;
     if (!primaryCustomerId) { toast.error("Please select a customer"); return; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return; }
+    if (linkedCpos.length > 0) {
+      for (const cpo of linkedCpos) {
+        const hasExternal = associateSalesPersons.some((a) => (a as any).sourceCpoNo === cpo.customerPoNo);
+        if (!cpo.salesPersonName && !hasExternal) {
+          toast.error(`Sales person or external person required for ${cpo.customerPoNo}`);
+          return;
+        }
+      }
+    }
 
     setSaving(true);
     try {
       const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
-      const inheritedSalesPerson = linkedCpos.find((c) => c.salesPersonName)?.salesPersonName ?? null;
-      const inheritedDeliveryAddress = linkedCpos.find((c) => c.customerSnapshot?.organizationAddress)?.customerSnapshot?.organizationAddress ?? null;
       const finalDeliveryDate = linkedCpos.length > 0
-        ? (() => { const d = linkedCpos.find((c) => c.deliveryDate)?.deliveryDate; return d ? new Date(d) : undefined; })()
+        ? (() => { const d = linkedCpos[0]?.deliveryDate; return d ? new Date(d) : undefined; })()
         : deliveryDate ? new Date(deliveryDate) : undefined;
       await updateSalesOrder({
         id: order.id,
         customerId: primaryCustomerId,
         customerOrgMemberId: selectedCustomer ? custOrgMemberId : undefined,
         customerPoLinks: linkedCpos.length > 0
-          ? linkedCpos.map((c) => ({ customerPoId: c.id, customerPoNo: c.customerPoNo }))
+          ? linkedCpos.map((c) => ({
+              customerPoId: c.id,
+              customerPoNo: c.customerPoNo,
+              salesPersonName: c.salesPersonName ?? null,
+              externalPersons: associateSalesPersons
+                .filter((a) => (a as any).sourceCpoNo === c.customerPoNo)
+                .map(({ id, name }) => ({ id, name })),
+            }))
           : undefined,
         status,
-        salesPersonName: (inheritedSalesPerson ?? salesPerson) || undefined,
+        salesPersonName: (linkedCpos.length > 0 ? linkedCpos[0]?.salesPersonName : salesPerson) || undefined,
         associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
         deliveryDate: finalDeliveryDate,
-        deliveryAddress: (inheritedDeliveryAddress ?? deliveryAddress) || undefined,
+        deliveryAddress: (linkedCpos.length > 0 ? linkedCpos[0]?.deliveryAddress : deliveryAddress) || undefined,
         notes: notes || undefined,
+        ...(isUrgent && {
+          urgentAuthType,
+          urgentAuthBy: urgentAuthBy.trim() || undefined,
+          urgentAuthDate: urgentAuthDate || undefined,
+          urgentPoExpectedBy: urgentPoExpectedBy || undefined,
+          urgentAuthNotes: urgentAuthNotes.trim() || undefined,
+        }),
         subtotal: subtotal.toFixed(2),
         overallDiscountPct: overallDiscPct,
         overallDiscountAmt: overallDiscAmt.toFixed(2),
         sstPct,
         sst: sstAmt.toFixed(2),
         grandTotal: grand.toFixed(2),
-        items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, _descriptionSource, _editedBy, _isAdditional, ...rest }) => ({
+        items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, _descriptionSource, _codeSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, ...rest }) => ({
           ...rest,
           sourceCustomerPoId: sourceCustomerPoId || undefined,
           sourceCustomerPoNo: sourceCustomerPoNo || undefined,
           descriptionSource: _descriptionSource ?? null,
+          codeSource: _codeSource ?? null,
+          qtySource: _qtySource ?? null,
+          uomSource: _uomSource ?? null,
+          unitPriceSource: _unitPriceSource ?? null,
+          discountSource: _discountSource ?? null,
           editedBy: _editedBy ?? null,
+          soEditedBy: _soEditedBy ?? null,
           isAdditional: _isAdditional ?? false,
         })),
       });
@@ -422,6 +711,17 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
   const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
   const allCompanies = selectedCustomer?.companies ?? [];
   const showCpoColumn = linkedCpos.length > 1;
+  const cpoLinkedCustomers = linkedCpos.length > 0
+    ? (() => {
+        const seen = new Set<string>();
+        return linkedCpos.filter((c) => {
+          const key = c.customerId ?? c.customerSnapshot?.organizationName ?? c.customerSnapshot?.name ?? "";
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      })()
+    : [];
 
   return (
     <div className="p-6">
@@ -430,6 +730,7 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
         description="Edit sales order"
         action={
           <div className="flex items-center gap-2">
+            <StatusBadge status={status} />
             <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/order/${order.id}`)} className="gap-2">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
@@ -439,88 +740,183 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
 
       <div className="space-y-6">
 
+        {/* ── Urgent authorization ── */}
+        {isUrgent && (
+          <section className="border border-amber-300 dark:border-amber-700 rounded-xl p-4 bg-amber-50/40 dark:bg-amber-900/10">
+            <h2 className="text-sm font-semibold mb-3 text-amber-800 dark:text-amber-300">Urgent authorization</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Authorization channel</Label>
+                <div className="flex gap-2 flex-wrap">
+                  {(["verbal", "email", "loi", "internal"] as const).map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setUrgentAuthType(c)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium border capitalize transition-colors ${
+                        urgentAuthType === c
+                          ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border-amber-400 dark:border-amber-600"
+                          : "border-border text-muted-foreground hover:border-foreground/30"
+                      }`}
+                    >
+                      {c === "loi" ? "LOI" : c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Authorization date</Label>
+                <input
+                  type="date"
+                  value={urgentAuthDate}
+                  onChange={(e) => setUrgentAuthDate(e.target.value)}
+                  className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Authorized by (customer contact)</Label>
+                <Input
+                  value={urgentAuthBy}
+                  onChange={(e) => setUrgentAuthBy(e.target.value)}
+                  placeholder="Name of person who approved…"
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">CPO expected by</Label>
+                <input
+                  type="date"
+                  value={urgentPoExpectedBy}
+                  onChange={(e) => setUrgentPoExpectedBy(e.target.value)}
+                  className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
+                />
+              </div>
+              <div className="col-span-2 space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Reference / notes</Label>
+                <Input
+                  value={urgentAuthNotes}
+                  onChange={(e) => setUrgentAuthNotes(e.target.value)}
+                  placeholder="e.g. Email from John on 25 Jun re: urgent delivery for Ward 5…"
+                  className="h-9 text-sm"
+                />
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* ── 1. Linked Customer POs ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Customer POs</h2>
-          <div className="space-y-2">
-            {linkedCpos.map((c) => {
-              const csnap = c.customerSnapshot;
-              const custName = csnap ? [csnap.title, csnap.name].filter(Boolean).join(" ") : null;
-              return (
-                <div key={c.id} className="flex items-center gap-3 px-3 py-2 bg-muted/40 rounded-lg border border-border">
-                  <LinkIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <span className="font-mono text-sm font-medium">{c.customerPoNo}</span>
-                    {custName && <span className="text-[11px] text-muted-foreground ml-2">{custName}</span>}
-                  </div>
-                  <button onClick={() => removeCpo(c.id)} className="text-muted-foreground hover:text-foreground shrink-0">
-                    <XIcon className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              );
-            })}
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold">Customer POs</h2>
+          </div>
 
-            {(linkedCpos.length === 0 || showAddCpo) && (
-              <div className="relative">
-                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none z-10" />
-                <Input
-                  value={cpoSearch}
-                  onChange={(e) => handleCpoSearch(e.target.value)}
-                  onKeyDown={handleCpoKeyDown}
-                  placeholder={linkedCpos.length === 0 ? "Search customer PO number…" : "Search another customer PO…"}
-                  className="pl-9 h-9 text-sm"
-                  disabled={cpoLoading}
-                />
-                {cpoLoading && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>}
-                {showAddCpo && (
-                  <button className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => { setShowAddCpo(false); setCpoSearch(""); setCpoResults([]); }}>
-                    <XIcon className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                {cpoResults.length > 0 && (
-                  <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
-                    {cpoResults.map((r, idx) => {
-                      const rsnap = r.customerSnapshot as any;
-                      const custName = rsnap ? [rsnap.title, rsnap.name].filter(Boolean).join(" ") : null;
+          <div className="relative" ref={cpoSearchRef}>
+            {/* Trigger — pills + chevron */}
+            <div
+              className={`min-h-9 flex flex-wrap gap-1.5 items-center px-3 py-2 rounded-md border cursor-pointer transition-colors ${cpoDropdownOpen ? "border-ring ring-1 ring-ring" : "border-border hover:border-ring/50"}`}
+              onClick={() => setCpoDropdownOpen((o) => !o)}
+            >
+              {linkedCpos.length === 0 && (
+                <span className="text-sm text-muted-foreground flex-1 select-none">Select customer POs…</span>
+              )}
+              {linkedCpos.map((c) => {
+                const snap = c.customerSnapshot;
+                const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                const fmtD = (d: string | null | undefined) =>
+                  d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : null;
+                const dateStr = fmtD(c.deliveryDate);
+                const addrStr = c.deliveryAddress;
+                return (
+                  <span key={c.id} className="flex items-start gap-1.5 bg-muted border border-border/60 rounded-md px-2 py-1 text-xs font-mono leading-5 max-w-xs">
+                    <span className="flex-1 min-w-0">
+                      <span className="font-semibold">{c.customerPoNo}</span>
+                      {custName && <span className="text-[10px] text-muted-foreground font-sans ml-1.5 hidden sm:inline">{custName}</span>}
+                      {(dateStr || addrStr) && (
+                        <span className="flex flex-col gap-0 mt-0.5 font-sans">
+                          {dateStr && <span className="text-[10px] text-muted-foreground">Due: {dateStr}</span>}
+                          {addrStr && <span className="text-[10px] text-muted-foreground whitespace-pre-line">{addrStr}</span>}
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      className="text-muted-foreground hover:text-foreground mt-0.5 shrink-0"
+                      onClick={(e) => { e.stopPropagation(); removeCpo(c.id); }}
+                    >
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              })}
+              <ChevronDownIcon className={`w-3.5 h-3.5 text-muted-foreground ml-auto shrink-0 transition-transform duration-150 ${cpoDropdownOpen ? "rotate-180" : ""}`} />
+            </div>
+
+            {/* Dropdown panel */}
+            {cpoDropdownOpen && (
+              <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                {/* Search */}
+                <div className="p-2 border-b border-border/60">
+                  <div className="relative">
+                    <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                    <Input
+                      value={cpoSearch}
+                      onChange={(e) => handleCpoSearch(e.target.value)}
+                      onKeyDown={handleCpoKeyDown}
+                      placeholder="Search by PO number…"
+                      className="pl-8 h-8 text-sm"
+                      autoFocus
+                    />
+                    {cpoLoading && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">Loading…</span>}
+                  </div>
+                </div>
+
+                {/* Options list */}
+                <div className="max-h-64 overflow-y-auto">
+                  {(() => {
+                    const rows = cpoSearch.length >= 2
+                      ? cpoResults
+                      : openCpos.filter((r) => !linkedCpos.some((l) => l.id === r.id));
+
+                    if (rows.length === 0) {
+                      return (
+                        <p className="px-3 py-5 text-sm text-muted-foreground text-center">
+                          {cpoSearch.length >= 2 ? "No results" : openCpos.length > 0 ? "All pending CPOs linked" : "No pending CPOs — search above"}
+                        </p>
+                      );
+                    }
+
+                    return rows.map((r, idx) => {
+                      const snap = r.customerSnapshot as any;
+                      const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
                       const alreadyLinked = linkedCpos.some((c) => c.id === r.id);
                       return (
                         <button
                           key={r.id}
                           disabled={alreadyLinked}
-                          className={`w-full text-left px-3 py-2 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${idx === cpoHighlight ? "bg-muted" : "hover:bg-muted/50"}`}
-                          onClick={() => !alreadyLinked && selectCpo(r.id)}
+                          className={`w-full text-left px-3 py-2.5 transition-colors border-b border-border/30 last:border-0 disabled:opacity-40 ${idx === cpoHighlight ? "bg-muted" : "hover:bg-muted/50"}`}
+                          onClick={() => { if (!alreadyLinked) selectCpo(r.id); }}
                         >
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-mono font-medium">{r.customerPoNo}</span>
                             <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                              r.status === "fulfilled" ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
-                              : r.status === "cancelled" ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                              r.status === "received"     ? "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400"
+                              : r.status === "acknowledged" ? "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400"
+                              : r.status === "fulfilled"  ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                              : r.status === "cancelled"  ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
                               : "bg-muted text-muted-foreground"}`}>
                               {r.status}
                             </span>
-                            {alreadyLinked && <span className="text-[10px] text-muted-foreground">already linked</span>}
+                            {alreadyLinked && <span className="text-[10px] text-muted-foreground">linked</span>}
+                            <span className="text-[11px] text-muted-foreground ml-auto tabular-nums shrink-0">
+                              {r.currency} {parseFloat(r.amount).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                            </span>
                           </div>
                           {custName && <div className="text-[11px] text-muted-foreground mt-0.5">{custName}</div>}
                         </button>
                       );
-                    })}
-                  </div>
-                )}
+                    });
+                  })()}
+                </div>
               </div>
-            )}
-
-            {linkedCpos.length > 0 && !showAddCpo && (
-              <button className="text-xs text-primary hover:underline flex items-center gap-1"
-                onClick={() => setShowAddCpo(true)}>
-                <PlusIcon className="w-3 h-3" /> Add another customer PO
-              </button>
-            )}
-
-            {linkedCpos.length === 0 && (
-              <p className="text-[11px] text-muted-foreground">
-                Link customer POs that this sales order fulfils.
-              </p>
             )}
           </div>
         </section>
@@ -528,42 +924,39 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
         {/* ── 2. Customer ── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">
-            Customer{linkedCpos.length > 0 && linkedCpos.filter((c) => c.customerSnapshot).length > 1 ? "s" : ""}
+            Customer{(cpoLinkedCustomers.length > 1) ? "s" : ""}
           </h2>
 
-          {linkedCpos.length > 0 ? (
-            /* Customers derived from linked CPO snapshots — group by customer, show all CPO numbers */
-            <div className="space-y-2">
-              {(() => {
-                const groupMap = new Map<string, { snap: NonNullable<LinkedCpo["customerSnapshot"]>; cpos: LinkedCpo[] }>();
-                linkedCpos.forEach((c) => {
-                  if (!c.customerSnapshot) return;
-                  const key = c.customerSnapshot.name;
-                  if (!groupMap.has(key)) groupMap.set(key, { snap: c.customerSnapshot, cpos: [] });
-                  groupMap.get(key)!.cpos.push(c);
-                });
-                return Array.from(groupMap.values()).map(({ snap, cpos }) => (
-                  <div key={snap.name} className="flex items-start gap-3 px-3 py-2 bg-muted/40 rounded-lg border border-border">
-                    <BuildingIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{[snap.title, snap.name].filter(Boolean).join(" ")}</p>
-                      {snap.organizationName && (
-                        <p className="text-[11px] text-muted-foreground">{snap.organizationName}</p>
-                      )}
+          {cpoLinkedCustomers.length > 0 ? (
+            <div className="divide-y divide-border/40">
+              {cpoLinkedCustomers.map((cpo) => {
+                const snap = cpo.customerSnapshot;
+                const name = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : "—";
+                const orgName = snap?.organizationName;
+                const cposForThisCustomer = linkedCpos.filter(
+                  (c) => c.customerId === cpo.customerId ||
+                    (!cpo.customerId && c.customerSnapshot?.name === snap?.name)
+                );
+                return (
+                  <div key={cpo.id} className="py-2 first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="font-medium text-sm">{name}</span>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {cposForThisCustomer.map((c) => (
+                          <span key={c.id} className="text-[10px] text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
+                            {c.customerPoNo}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-1 justify-end shrink-0">
-                      {cpos.map((c) => (
-                        <span key={c.id} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                          {c.customerPoNo}
-                        </span>
-                      ))}
-                    </div>
+                    {orgName && (
+                      <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <BuildingIcon className="w-3 h-3 shrink-0" />{orgName}
+                      </p>
+                    )}
                   </div>
-                ));
-              })()}
-              {linkedCpos.every((c) => !c.customerSnapshot) && (
-                <p className="text-[11px] text-muted-foreground">No customer info available. Remove and re-add CPOs to refresh.</p>
-              )}
+                );
+              })}
             </div>
           ) : selectedCustomer ? (
             <div className="flex items-start gap-3">
@@ -607,11 +1000,12 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
               </div>
             </div>
           ) : (
-            <div className="relative">
+            <div className="relative" ref={custDropdownRef}>
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input
                 value={custSearch}
                 onChange={(e) => handleCustSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") { setCustResults([]); setCustSearch(""); } }}
                 placeholder="Search customer by name..."
                 className="pl-9 h-9 text-sm"
               />
@@ -647,138 +1041,157 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
           return (
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Order details</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Status</Label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-2.5 text-sm"
-              >
-                {SO_STATUS.map((s) => (
-                  <option key={s} value={s}>{SO_STATUS_LABELS[s]}</option>
-                ))}
-              </select>
-            </div>
 
-            {/* Due delivery date — read-only from CPO when linked */}
-            <div className={linkedCpos.length > 0 ? "col-span-2 space-y-1.5" : "space-y-1.5"}>
-              <Label className="text-xs">Due delivery date</Label>
-              {linkedCpos.length > 0 ? (
-                <div className="space-y-1.5 mt-1">
-                  {linkedCpos.map((c) => (
-                    <div key={c.id} className="flex items-center gap-2 h-9 px-3 rounded-md border border-border bg-muted/40">
-                      <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
-                      <span className="text-sm text-foreground flex-1">
-                        {c.deliveryDate ? new Date(c.deliveryDate).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : <span className="text-muted-foreground">—</span>}
-                      </span>
-                      <span className="text-[9px] text-muted-foreground">from CPO</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <input
-                  type="date"
-                  value={deliveryDate}
-                  onChange={(e) => setDeliveryDate(e.target.value)}
-                  className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                />
-              )}
-            </div>
-
-            {/* Sales person — per-CPO when linked */}
-            <div className="col-span-2 space-y-1.5">
-              <Label className="text-xs">Sales person</Label>
-              {linkedCpos.length > 0 ? (
-                <div className="space-y-1.5 mt-1">
-                  {linkedCpos.map((c) => (
-                    <div key={c.id} className="flex items-center gap-2 h-9 px-3 rounded-md border border-border bg-muted/40">
-                      <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
-                      <span className="text-sm text-foreground flex-1">
-                        {c.salesPersonName ?? <span className="text-muted-foreground">—</span>}
-                      </span>
-                      <span className="text-[9px] text-muted-foreground shrink-0">from CPO</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <select
-                    value={salesPerson}
-                    onChange={(e) => setSalesPerson(e.target.value)}
-                    className="h-9 rounded-md border border-border bg-background px-2.5 text-sm shrink-0"
-                  >
-                    <option value="">— Select —</option>
-                    {members.map((m) => (
-                      <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
-                    ))}
-                  </select>
-                  {associateSalesPersons.map((a) => (
-                    <span key={a.id} className="flex items-center gap-1 text-[11px] bg-muted rounded-full px-2.5 py-1 shrink-0">
-                      {a.name}
-                      <button
-                        onClick={() => setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id))}
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        <XIcon className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      const m = members.find((x) => x.userId === e.target.value);
-                      if (!m) return;
-                      if (associateSalesPersons.some((a) => a.id === m.userId)) return;
-                      setAssociateSalesPersons((prev) => [...prev, { id: m.userId, name: m.name ?? m.email }]);
-                    }}
-                    className="h-9 rounded-md border border-dashed border-border bg-background px-2.5 text-sm text-muted-foreground shrink-0"
-                  >
-                    <option value="">+ Add associate…</option>
-                    {members
-                      .filter((m) => !associateSalesPersons.some((a) => a.id === m.userId))
-                      .map((m) => (
-                        <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
-                      ))}
-                  </select>
-                </div>
-              )}
-            </div>
-
-            {/* Delivery address — per-CPO when linked */}
-            <div className={linkedCpos.length > 0 ? "col-span-2 space-y-1.5" : "space-y-1.5 col-span-2"}>
-              <Label className="text-xs">Delivery address</Label>
-              {linkedCpos.length > 0 ? (
-                <div className="space-y-1.5 mt-1">
-                  {linkedCpos.map((c) => (
-                    <div key={c.id} className="flex items-start gap-2 min-h-9 px-3 py-2 rounded-md border border-border bg-muted/40">
-                      <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 shrink-0 pt-0.5">{c.customerPoNo}</span>
-                      <span className="text-sm text-foreground flex-1 leading-snug">
-                        {c.customerSnapshot?.organizationAddress ? (
-                          <>
-                            {c.customerSnapshot.organizationName && (
-                              <span className="block text-xs font-medium text-muted-foreground">{c.customerSnapshot.organizationName}</span>
-                            )}
-                            {c.customerSnapshot.organizationAddress}
-                          </>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </span>
-                      <span className="text-[9px] text-muted-foreground shrink-0 pt-0.5">from CPO</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <Input
-                  value={deliveryAddress}
-                  onChange={(e) => setDeliveryAddress(e.target.value)}
-                  placeholder="Address"
-                  className="h-9 text-sm"
-                />
-              )}
-            </div>
+          <div className="overflow-x-auto mb-3">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="text-left pb-2 pr-3 w-32 font-medium">CPO / Type</th>
+                  <th className="text-left pb-2 pr-3 font-medium">Sales person</th>
+                  <th className="text-left pb-2 pr-3 w-36 font-medium">Due delivery</th>
+                  <th className="text-left pb-2 font-medium">Delivery address</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40">
+                {linkedCpos.length === 0 ? (
+                  <tr>
+                    <td className="py-2 pr-3">
+                      <span className="text-[11px] text-muted-foreground italic">Cash sale</span>
+                    </td>
+                    <td className="py-2 pr-3 align-top">
+                      <div className="space-y-1.5">
+                        <select
+                          value={salesPerson}
+                          onChange={(e) => setSalesPerson(e.target.value)}
+                          className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+                        >
+                          <option value="">— Select —</option>
+                          {members.map((m) => (
+                            <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
+                          ))}
+                        </select>
+                        <div className="flex flex-wrap items-center gap-1 min-h-7 w-full rounded-md border border-input bg-background px-2 py-0.5 focus-within:ring-1 focus-within:ring-ring">
+                          {associateSalesPersons.filter((a) => !a.id.startsWith("cpo-")).map((a) => (
+                            <span key={a.id} className="inline-flex items-center gap-0.5 text-[10px] bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-1.5 py-0.5 shrink-0">
+                              {a.name}
+                              {a.id.startsWith("ext-") && <span className="self-start text-[6px] font-bold leading-none mt-0.5 opacity-70">ext</span>}
+                              <button type="button" onClick={() => setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id))} className="opacity-60 hover:opacity-100 ml-0.5"><XIcon className="w-2 h-2" /></button>
+                            </span>
+                          ))}
+                          <input
+                            value={getExtInput("__cash__")}
+                            onChange={(e) => setExtInput("__cash__", e.target.value)}
+                            placeholder="Add external…"
+                            className="flex-1 min-w-16 bg-transparent text-[11px] outline-none placeholder:text-muted-foreground"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && getExtInput("__cash__").trim()) {
+                                setAssociateSalesPersons((prev) => [...prev, { id: `ext-${Date.now()}`, name: getExtInput("__cash__").trim() }]);
+                                setExtInput("__cash__", "");
+                                e.preventDefault();
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 align-top">
+                      <input
+                        type="date"
+                        value={deliveryDate}
+                        onChange={(e) => setDeliveryDate(e.target.value)}
+                        className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </td>
+                    <td className="py-2 align-top">
+                      <Textarea
+                        value={deliveryAddress}
+                        onChange={(e) => setDeliveryAddress(e.target.value)}
+                        placeholder={"Organization name\nFull address"}
+                        rows={2}
+                        className="text-xs resize-none"
+                      />
+                    </td>
+                  </tr>
+                ) : (
+                  linkedCpos.map((cpo) => {
+                    const spSame = cpo._salesPersonInherited != null && cpo.salesPersonName === cpo._salesPersonInherited;
+                    const dateSame = cpo._deliveryDateInherited != null && cpo.deliveryDate === cpo._deliveryDateInherited;
+                    const addrSame = cpo._deliveryAddressInherited != null && (cpo.deliveryAddress ?? "") === cpo._deliveryAddressInherited;
+                    const tagFrom = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-2.5 h-2.5 shrink-0" />from CPO</span>;
+                    const tagEdited = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edited</span>;
+                    return (
+                      <tr key={cpo.id}>
+                        <td className="py-2 pr-3 align-top">
+                          <span className="font-mono text-[11px] font-semibold">{cpo.customerPoNo}</span>
+                        </td>
+                        <td className="py-2 pr-3 align-top">
+                          <div className="space-y-1">
+                            {cpo._salesPersonInherited != null && (spSame ? tagFrom : tagEdited)}
+                            <select
+                              value={cpo.salesPersonName ?? ""}
+                              onChange={(e) => updateLinkedCpo(cpo.id, { salesPersonName: e.target.value || null })}
+                              className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+                            >
+                              <option value="">— Select —</option>
+                              {members.map((m) => (
+                                <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
+                              ))}
+                            </select>
+                            <div className="flex flex-wrap items-center gap-1 min-h-7 w-full rounded-md border border-input bg-background px-2 py-0.5 focus-within:ring-1 focus-within:ring-ring">
+                              {associateSalesPersons.filter((a) => (a as any).sourceCpoNo === cpo.customerPoNo).map((a) => (
+                                <span key={a.id} className="inline-flex items-center gap-0.5 text-[10px] bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-1.5 py-0.5 shrink-0">
+                                  {a.name}
+                                  <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>
+                                  <button type="button" onClick={() => setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id))} className="opacity-60 hover:opacity-100 ml-0.5"><XIcon className="w-2 h-2" /></button>
+                                </span>
+                              ))}
+                              <input
+                                value={getExtInput(cpo.id)}
+                                onChange={(e) => setExtInput(cpo.id, e.target.value)}
+                                placeholder="Add external…"
+                                className="flex-1 min-w-16 bg-transparent text-[11px] outline-none placeholder:text-muted-foreground"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && getExtInput(cpo.id).trim()) {
+                                    setAssociateSalesPersons((prev) => [...prev, { id: `ext-${Date.now()}`, name: getExtInput(cpo.id).trim(), sourceCpoNo: cpo.customerPoNo } as any]);
+                                    setExtInput(cpo.id, "");
+                                    e.preventDefault();
+                                  }
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3 align-top">
+                          <div className="space-y-1">
+                            {cpo._deliveryDateInherited != null && (dateSame ? tagFrom : tagEdited)}
+                            <input
+                              type="date"
+                              value={cpo.deliveryDate}
+                              onChange={(e) => updateLinkedCpo(cpo.id, { deliveryDate: e.target.value })}
+                              className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                            />
+                          </div>
+                        </td>
+                        <td className="py-2 align-top">
+                          <div className="space-y-1">
+                            {cpo._deliveryAddressInherited != null && (addrSame ? tagFrom : tagEdited)}
+                            <Textarea
+                              value={cpo.deliveryAddress ?? ""}
+                              onChange={(e) => updateLinkedCpo(cpo.id, { deliveryAddress: e.target.value || null })}
+                              placeholder={"Organization name\nFull address"}
+                              rows={2}
+                              className="text-xs resize-none"
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
+
           <div className="mt-3 space-y-1.5">
             <Label className="text-xs">Notes</Label>
             <Textarea
@@ -797,138 +1210,281 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
         <section className="border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold">Items</h2>
-            <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={addLine}>
-              <PlusIcon className="w-3 h-3" /> Add row
-            </Button>
           </div>
-          <div className="overflow-x-auto" ref={tableRef}>
+          <div className="overflow-x-auto overflow-y-auto max-h-[55vh]" ref={tableRef}>
             <table className="w-full text-xs">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-background">
                 <tr className="border-b border-border text-muted-foreground">
-                  <th className="text-left pb-2 pr-2 w-8">#</th>
-                  <th className="text-left pb-2 pr-2 w-24">Code</th>
-                  <th className="text-left pb-2 pr-2">Description</th>
-                  <th className="text-right pb-2 pr-2 w-16">Qty</th>
-                  <th className="text-left pb-2 pr-2 w-14">UOM</th>
-                  <th className="text-right pb-2 pr-2 w-24">Unit price</th>
-                  <th className="text-right pb-2 pr-2 w-16">Disc %</th>
-                  <th className="text-right pb-2 pr-2 w-24">Total</th>
-                  {showCpoColumn && (
-                    <th className="text-left pb-2 pr-2 w-28">From CPO</th>
-                  )}
+                  <th className="text-left align-bottom pb-2 pr-2 w-8 uppercase">#</th>
+                  <th className="text-left align-bottom pb-2 pr-2 w-24 uppercase">Code</th>
+                  <th className="text-left align-bottom pb-2 pr-2 uppercase">Description</th>
+                  <th className="text-right align-bottom pb-2 pr-2 w-16 uppercase">Qty/Set</th>
+                  <th className="text-center align-bottom pb-2 pr-2 w-16 uppercase">Total qty</th>
+                  <th className="text-left align-bottom pb-2 pr-2 w-14 uppercase">UOM</th>
+                  <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Unit price</th>
+                  <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Total unit price</th>
                   <th className="w-6" />
                 </tr>
               </thead>
               <tbody>
-                {items.map((item, rowIdx) => {
+                {(() => {
+                  const colCount = 9;
+                  const SrcTag = ({ src: rawSrc, item: it }: { src: Array<"cpo" | "quotation" | "user" | "so"> | string | null | undefined; item: LineItem }) => {
+                    const src: Array<"cpo" | "quotation" | "user" | "so"> | null = !rawSrc ? null : Array.isArray(rawSrc) ? rawSrc : [rawSrc as "cpo" | "quotation" | "user" | "so"];
+                    if (!src?.length) return null;
+                    return (
+                      <>
+                        {src.includes("quotation") && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                            <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+                          </span>
+                        )}
+                        {src.includes("cpo") && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                            <FileTextIcon className="w-3 h-3 shrink-0" />from CPO
+                          </span>
+                        )}
+                        {src.includes("user") && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                            <PencilIcon className="w-3 h-3 shrink-0" />{it._editedBy || currentUserName || "user"} edited CPO
+                          </span>
+                        )}
+                        {src.includes("so") && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
+                            <PencilIcon className="w-3 h-3 shrink-0" />{it._soEditedBy || currentUserName || "user"} edited SO
+                          </span>
+                        )}
+                      </>
+                    );
+                  };
+                  const COLOR_PALETTE = [
+                    { hdr: "bg-violet-100/70 dark:bg-violet-900/25", row: "bg-violet-50/40 dark:bg-violet-900/10", border: "border-l-4 border-l-violet-400 dark:border-l-violet-500", text: "text-violet-700 dark:text-violet-300" },
+                    { hdr: "bg-indigo-100/70 dark:bg-indigo-900/25", row: "bg-indigo-50/40 dark:bg-indigo-900/10", border: "border-l-4 border-l-indigo-400 dark:border-l-indigo-500", text: "text-indigo-700 dark:text-indigo-300" },
+                    { hdr: "bg-rose-100/70 dark:bg-rose-900/25", row: "bg-rose-50/40 dark:bg-rose-900/10", border: "border-l-4 border-l-rose-400 dark:border-l-rose-500", text: "text-rose-700 dark:text-rose-300" },
+                    { hdr: "bg-fuchsia-100/70 dark:bg-fuchsia-900/25", row: "bg-fuchsia-50/40 dark:bg-fuchsia-900/10", border: "border-l-4 border-l-fuchsia-400 dark:border-l-fuchsia-500", text: "text-fuchsia-700 dark:text-fuchsia-300" },
+                    { hdr: "bg-orange-100/70 dark:bg-orange-900/25", row: "bg-orange-50/40 dark:bg-orange-900/10", border: "border-l-4 border-l-orange-400 dark:border-l-orange-500", text: "text-orange-700 dark:text-orange-300" },
+                    { hdr: "bg-teal-100/70 dark:bg-teal-900/25", row: "bg-teal-50/40 dark:bg-teal-900/10", border: "border-l-4 border-l-teal-400 dark:border-l-teal-500", text: "text-teal-700 dark:text-teal-300" },
+                  ];
+                  const stableColorIdx = (key: string) => {
+                    let h = 0;
+                    for (let i = 0; i < key.length; i++) { h = Math.imul(31, h) + key.charCodeAt(i) | 0; }
+                    return Math.abs(h) % COLOR_PALETTE.length;
+                  };
+                  const getColor = (it: LineItem) => {
+                    const key = it.setGroupId || it.sourceCustomerPoId || (it as any).sourceQuotationId;
+                    return key ? COLOR_PALETTE[stableColorIdx(key)] : null;
+                  };
+                  let lastCpoId: string | undefined = undefined;
+                  return items.flatMap((item, rowIdx) => {
+                  const rows: React.JSX.Element[] = [];
+                  const color = getColor(item);
                   const sourceCpo = item.sourceCustomerPoId
                     ? linkedCpos.find((c) => c.id === item.sourceCustomerPoId)
                     : undefined;
                   const cpoCustomerName = sourceCpo?.customerSnapshot
                     ? [sourceCpo.customerSnapshot.title, sourceCpo.customerSnapshot.name].filter(Boolean).join(" ")
                     : null;
-                  return (
-                  <tr key={item._key} className="border-b border-border/50 last:border-0">
-                    <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
-                    <td className="py-1.5 pr-2">
-                      <Input data-row={rowIdx} data-col={0} value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} onBlur={(e) => handleProductCodeBlur(item._key, e.target.value)} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 0)} className="h-7 text-xs" />
-                    </td>
-                    <td className="py-1.5 pr-2">
-                      <Input data-row={rowIdx} data-col={1} value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value, _descriptionSource: "user", _editedBy: currentUserName || null } as Partial<LineItem>)} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)} className="h-7 text-xs" />
-                      {item._isAdditional && (
-                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
-                          <PlusIcon className="w-3 h-3 shrink-0" />
-                          additional row
-                        </span>
-                      )}
-                      {item._descriptionSource === "cpo" && (
-                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-                          <FileTextIcon className="w-3 h-3 shrink-0" />
-                          from quotation
-                        </span>
-                      )}
-                      {item._descriptionSource === "catalog" && (
-                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
-                          <DatabaseIcon className="w-3 h-3 shrink-0" />
-                          from product table
-                        </span>
-                      )}
-                      {item._descriptionSource === "user" && (
-                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                          <PencilIcon className="w-3 h-3 shrink-0" />
-                          {item._editedBy || currentUserName || "user"} edited
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-1.5 pr-2">
-                      <Input data-row={rowIdx} data-col={2} value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)} className="h-7 text-xs text-right" />
-                    </td>
-                    <td className="py-1.5 pr-2">
-                      <Input data-row={rowIdx} data-col={3} value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 3)} className="h-7 text-xs" placeholder="unit" />
-                    </td>
-                    <td className="py-1.5 pr-2">
-                      <Input data-row={rowIdx} data-col={4} value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 4)} className="h-7 text-xs text-right" />
-                    </td>
-                    <td className="py-1.5 pr-2">
-                      <Input data-row={rowIdx} data-col={5} value={item.discountPct ?? "0"} onChange={(e) => updateItem(item._key, { discountPct: e.target.value })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 5)} className="h-7 text-xs text-right" />
-                    </td>
-                    <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
-                      {fmt(parseFloat(item.totalPrice ?? "0"))}
-                    </td>
-                    {showCpoColumn && (
-                      <td className="py-1.5 pr-2">
-                        {item._isAdditional ? (
-                          <select
-                            value={item.sourceCustomerPoId ?? ""}
-                            onChange={(e) => {
-                              const cpo = linkedCpos.find((c) => c.id === e.target.value);
-                              updateItem(item._key, {
-                                sourceCustomerPoId: e.target.value || "",
-                                sourceCustomerPoNo: cpo?.customerPoNo || "",
-                              } as Partial<LineItem>);
-                            }}
-                            className="h-6 rounded border border-border bg-background px-1 text-[10px] max-w-27.5"
-                          >
-                            <option value="">— assign —</option>
-                            {linkedCpos.map((c) => {
-                              const csnap = c.customerSnapshot;
-                              const label = csnap
-                                ? `${c.customerPoNo} · ${[csnap.title, csnap.name].filter(Boolean).join(" ")}`
-                                : c.customerPoNo;
-                              return <option key={c.id} value={c.id}>{label}</option>;
-                            })}
-                          </select>
-                        ) : sourceCpo ? (
-                          <div className="space-y-0.5">
-                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 font-mono">
-                              {sourceCpo.customerPoNo}
-                            </span>
-                            {cpoCustomerName && (
-                              <p className="text-[10px] text-muted-foreground truncate max-w-25" title={cpoCustomerName}>
-                                {cpoCustomerName}
-                              </p>
+                  if (linkedCpos.length > 1 && item.sourceCustomerPoId !== lastCpoId) {
+                    lastCpoId = item.sourceCustomerPoId;
+                    const cpo = item.sourceCustomerPoId ? linkedCpos.find((c) => c.id === item.sourceCustomerPoId) : undefined;
+                    const cpoCustomer = cpo?.customerSnapshot ? [cpo.customerSnapshot.title, cpo.customerSnapshot.name].filter(Boolean).join(" ") : null;
+                    rows.push(
+                      <tr key={`cpo-section-${item.sourceCustomerPoId ?? "none"}-${rowIdx}`}>
+                        <td colSpan={colCount} className={rowIdx === 0 ? "pb-1" : "pt-4 pb-1"}>
+                          <div className={`flex items-center gap-2 ${rowIdx > 0 ? "border-t border-border/60 pt-2" : ""}`}>
+                            {cpo ? (
+                              <>
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono ${color?.text ?? "text-muted-foreground"} ${color?.hdr ?? "bg-muted/50"} border border-current/20`}>
+                                  {cpo.customerPoNo}
+                                </span>
+                                {cpoCustomer && <span className="text-[10px] text-muted-foreground">{cpoCustomer}</span>}
+                              </>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground italic">No CPO</span>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-[10px] text-muted-foreground">—</span>
-                        )}
-                      </td>
-                    )}
-                    <td className="py-1.5">
-                      <button
-                        onClick={() => removeLine(item._key)}
-                        disabled={items.length === 1}
-                        className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"
-                      >
-                        <TrashIcon className="w-3.5 h-3.5" />
-                      </button>
+                        </td>
+                      </tr>,
+                    );
+                  }
+                  if (item.setGroupId && items.findIndex((i) => i.setGroupId === item.setGroupId) === rowIdx) {
+                    const groupItems = items.filter((i) => i.setGroupId === item.setGroupId);
+                    const groupTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
+                    const setQtyNum = parseFloat((item as any).setQty || "1") || 1;
+                    const perSetPrice = groupTotal / setQtyNum;
+                    rows.push(
+                      <tr key={`grp-${item.setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
+                        <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{(item as any).setGroupLabel || "Set"}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
+                              × {(item as any).setQty || "1"} sets
+                            </span>
+                            {groupTotal > 0 && (
+                              <>
+                                <span className={`text-[10px] tabular-nums ${color?.text ?? "text-muted-foreground"}`}>1 set: {fmt(perSetPrice)}</span>
+                                <span className={`ml-auto text-[11px] font-semibold ${color?.text ?? "text-foreground"} tabular-nums`}>{fmt(groupTotal)}</span>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>,
+                    );
+                  }
+                  rows.push(
+                  <tr
+                    key={item._key}
+                    data-key={item._key}
+                    className={`border-b border-border/50 last:border-0 ${isDragging ? "" : "transition-colors"} ${dragOverKey === item._key ? "border-t-2 border-t-primary" : ""} ${color ? color.row : "bg-background"} ${isDragging && dragKey.current === item._key ? "outline-2 outline-primary/40 -outline-offset-1" : ""} ${item._isAdditional ? "text-red-500 dark:text-red-400" : ""}`}
+                  >
+                    <td className={`py-1.5 pr-2 align-top pt-2.5 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"} ${color?.border ?? ""}`}>{item.rowNo}</td>
+                    <td className="py-1.5 pr-2 align-top">
+                      <ProductCell
+                        item={item}
+                        rowIdx={rowIdx}
+                        onUpdate={(key, patch) => updateItem(key, patch)}
+                        onBlur={(key, code, prevCode) => {
+                          if (code.trim() !== prevCode.trim()) {
+                            const prev = items.find(i => i._key === key);
+                            updateItem(key, {
+                              _codeSource: [...new Set([...(prev?._codeSource ?? []).filter(s => s !== "quotation"), "so" as const])],
+                              _soEditedBy: currentUserName || "user",
+                            });
+                          }
+                          handleProductCodeBlur(key, code, prevCode);
+                        }}
+                        onCellKeyDown={handleCellKeyDown}
+                      />
+                      <SrcTag src={item._codeSource} item={item} />
+                    </td>
+                    <td className="py-1.5 pr-2 align-top">
+                      <Input data-row={rowIdx} data-col={1} value={item.description ?? ""} onChange={(e) => updateItem(item._key, {
+                        description: e.target.value,
+                        _descriptionSource: [...new Set([...(item._descriptionSource ?? []).filter(s => s !== "quote" && s !== "catalog"), "so"])] as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
+                        _soEditedBy: currentUserName || "user",
+                      })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)} className="h-7 text-xs" />
+                      {item._isAdditional && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
+                          <PlusIcon className="w-3 h-3 shrink-0" />additional row
+                        </span>
+                      )}
+                      {(item._descriptionSource ?? []).includes("quote") && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                          <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+                        </span>
+                      )}
+                      {(item._descriptionSource ?? []).includes("cpo") && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                          <FileTextIcon className="w-3 h-3 shrink-0" />from CPO
+                        </span>
+                      )}
+                      {(item._descriptionSource ?? []).includes("catalog") && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                          <DatabaseIcon className="w-3 h-3 shrink-0" />from product table
+                        </span>
+                      )}
+                      {(item._descriptionSource ?? []).includes("user") && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                          <PencilIcon className="w-3 h-3 shrink-0" />{item._editedBy || currentUserName || "user"} edited CPO
+                        </span>
+                      )}
+                      {(item._descriptionSource ?? []).includes("so") && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
+                          <PencilIcon className="w-3 h-3 shrink-0" />{item._soEditedBy || currentUserName || "user"} edited SO
+                        </span>
+                      )}
+                      {linkedCpos.length > 0 && (
+                        <div className="mt-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              if (cpoPicker === item._key) {
+                                setCpoPicker(null);
+                                setCpoPickerPos(null);
+                              } else {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setCpoPickerPos({ top: rect.bottom + 4, left: rect.left });
+                                setCpoPicker(item._key);
+                              }
+                            }}
+                            className={`text-[9px] px-1 py-0.5 rounded border font-mono leading-tight break-all line-clamp-2 transition-colors ${
+                              item.sourceCustomerPoId
+                                ? "text-blue-700 border-blue-200 bg-blue-50 dark:text-blue-300 dark:border-blue-800 dark:bg-blue-950/40"
+                                : "text-muted-foreground border-dashed border-border/60 hover:border-border hover:bg-muted/50"
+                            }`}
+                          >
+                            {item.sourceCustomerPoNo || "— assign CPO"}
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-1.5 pr-2 align-top">
+                      <Input data-row={rowIdx} data-col={2} value={item.qty} onChange={(e) => updateItem(item._key, {
+                        qty: e.target.value,
+                        _qtySource: [...new Set([...(item._qtySource ?? []).filter(s => s !== "quotation"), "so" as const])],
+                        _soEditedBy: currentUserName || "user",
+                      })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)} className="h-7 text-xs text-right" />
+                      <SrcTag src={item._qtySource} item={item} />
+                    </td>
+                    <td className="py-1.5 pr-2 align-top">
+                      <div className={`h-7 flex items-center justify-center font-mono tabular-nums text-xs ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
+                        {(() => { const s = parseFloat((item as any).setQty || "0") || 1; const q = parseFloat(item.qty || "0"); return s > 1 ? (q * s).toLocaleString("en-MY") : q.toLocaleString("en-MY"); })()}
+                      </div>
+                    </td>
+                    <td className="py-1.5 pr-2 align-top">
+                      <div className={`h-7 flex items-center text-xs px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</div>
+                    </td>
+                    <td className="py-1.5 pr-2 align-top">
+                      <div className={`h-7 flex items-center justify-end text-xs font-mono tabular-nums px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-foreground"}`}>{fmt(parseFloat(item.unitPrice ?? "0"))}</div>
+                      <SrcTag src={item._unitPriceSource} item={item} />
+                    </td>
+                    <td className="py-1.5 pr-2 align-top">
+                      <div className={`h-7 flex items-center justify-end font-mono tabular-nums text-xs ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
+                        {(() => { const s = parseFloat((item as any).setQty || "0") || 1; const q = parseFloat(item.qty || "0"); const u = parseFloat(item.unitPrice || "0"); return fmt(q * s * u); })()}
+                      </div>
+                    </td>
+                    <td className="py-1.5 align-top">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          draggable
+                          onDragStart={(e) => { dragKey.current = item._key; e.dataTransfer.effectAllowed = "move"; setIsDragging(true); }}
+                          onDragEnd={() => { dragKey.current = null; setDragOverKey(null); setIsDragging(false); if (dragRafId.current !== null) { cancelAnimationFrame(dragRafId.current); dragRafId.current = null; } }}
+                          className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+                        >
+                          <GripVerticalIcon className="w-3.5 h-3.5 shrink-0" />
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeLine(item._key)}
+                          disabled={items.length === 1}
+                          className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"
+                        >
+                          <TrashIcon className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   );
-                })}
+                  return rows;
+                  });
+                })()}
               </tbody>
             </table>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              const newRowIdx = items.length;
+              addLine();
+              setTimeout(() => {
+                const target = tableRef.current?.querySelector<HTMLInputElement>(`[data-row="${newRowIdx}"][data-col="0"]`);
+                if (target) { target.focus(); target.select(); }
+              }, 0);
+            }}
+            className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <PlusIcon className="w-3.5 h-3.5" /> Add row
+          </button>
         </section>
 
         {/* ── 5. Pricing summary ── */}
@@ -974,6 +1530,50 @@ export function EditSalesOrderClient({ order, members, currentUserName }: Props)
           </Button>
         </div>
       </div>
+
+      {/* ── CPO row picker (fixed portal, not clipped by table overflow) ── */}
+      {cpoPicker && cpoPickerPos && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => { setCpoPicker(null); setCpoPickerPos(null); }} />
+          <div
+            className="fixed z-50 rounded-md border border-border bg-background shadow-lg text-xs max-h-64 overflow-y-auto min-w-52"
+            style={{ top: cpoPickerPos.top, left: cpoPickerPos.left }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                const key = cpoPicker;
+                updateItem(key, { sourceCustomerPoId: "", sourceCustomerPoNo: "" });
+                setCpoPicker(null); setCpoPickerPos(null);
+              }}
+              className="w-full text-left px-3 py-2 hover:bg-accent text-muted-foreground border-b border-border/50"
+            >
+              — No CPO
+            </button>
+            {linkedCpos.map(cpo => {
+              const snap = cpo.customerSnapshot;
+              const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+              const current = items.find(i => i._key === cpoPicker);
+              const isSelected = current?.sourceCustomerPoId === cpo.id;
+              return (
+                <button
+                  key={cpo.id}
+                  type="button"
+                  onClick={() => {
+                    const key = cpoPicker;
+                    updateItem(key, { sourceCustomerPoId: cpo.id, sourceCustomerPoNo: cpo.customerPoNo });
+                    setCpoPicker(null); setCpoPickerPos(null);
+                  }}
+                  className={`w-full text-left px-3 py-2 hover:bg-accent border-b border-border/30 last:border-0 ${isSelected ? "bg-blue-50/60 dark:bg-blue-950/20" : ""}`}
+                >
+                  <span className={`font-mono font-medium ${isSelected ? "text-blue-700 dark:text-blue-300" : ""}`}>{cpo.customerPoNo}</span>
+                  {custName && <div className="text-[10px] text-muted-foreground mt-0.5">{custName}</div>}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }

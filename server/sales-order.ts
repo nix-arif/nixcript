@@ -142,7 +142,9 @@ export type CpoCustomer = {
   customerId: string | null;
   customerSnapshot: { title?: string; name: string; organizationName?: string; organizationAddress?: string } | null;
   deliveryDate: Date | null;
-  salesPersonName: string | null;
+  salesPersonName: string | null;     // original from CPO table
+  soSalesPersonName: string | null;   // SO-level override (from customerPoLinks)
+  externalPersons: { id: string; name: string }[];
 };
 
 export type SalesOrderListRow = SalesOrderRow & {
@@ -170,8 +172,14 @@ export interface SalesOrderItemInput {
   sourceQuotationId?: string;
   sourceCustomerPoId?: string;
   sourceCustomerPoNo?: string;
-  descriptionSource?: "cpo" | "catalog" | "user" | null;
+  descriptionSource?: Array<"quote" | "catalog" | "user" | "cpo" | "so"> | null;
+  codeSource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
+  qtySource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
+  uomSource?: string | null;
+  unitPriceSource?: string | null;
+  discountSource?: string | null;
   editedBy?: string | null;
+  soEditedBy?: string | null;
   isAdditional?: boolean;
 }
 
@@ -180,7 +188,7 @@ export interface CreateSalesOrderInput {
   customerOrgMemberId?: string;
   customerPoId?: string;
   customerPoNo?: string;
-  customerPoLinks?: { customerPoId: string; customerPoNo: string; deliveryDate?: string }[];
+  customerPoLinks?: { customerPoId: string; customerPoNo: string; deliveryDate?: string; salesPersonName?: string | null; externalPersons?: { id: string; name: string }[] }[];
   quotationId?: string;
   quotationNo?: string;
   linkedQuotations?: { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string; organizationAddress?: string; email?: string; contactNo?: string } | null }[];
@@ -197,10 +205,15 @@ export interface CreateSalesOrderInput {
   deliveryDate?: Date;
   deliveryAddress?: string;
   supplierQuotationKey?: string;
-  soType?: "standard" | "proforma";
+  soType?: "standard" | "proforma" | "urgent";
   proformaReason?: "sample" | "warranty" | "replacement";
   originalSoId?: string;
   originalSoNo?: string;
+  urgentAuthType?: "verbal" | "email" | "loi" | "internal";
+  urgentAuthBy?: string;
+  urgentAuthDate?: string;
+  urgentPoExpectedBy?: string;
+  urgentAuthNotes?: string;
   items: SalesOrderItemInput[];
 }
 
@@ -293,7 +306,7 @@ export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
   const cpoMap = new Map(cpoRows.map((c) => [c.id, c]));
 
   return rows.map((r) => {
-    const links = r.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null;
+    const links = r.customerPoLinks as { customerPoId: string; customerPoNo: string; salesPersonName?: string | null; externalPersons?: { id: string; name: string }[] }[] | null;
     const cpoCustomers: CpoCustomer[] = (links ?? []).map((l) => {
       const cpo = cpoMap.get(l.customerPoId);
       return {
@@ -303,6 +316,8 @@ export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
         customerSnapshot: (cpo?.customerSnapshot as CpoCustomer["customerSnapshot"]) ?? null,
         deliveryDate: cpo?.deliveryDate ?? null,
         salesPersonName: cpo?.salesPersonName ?? null,
+        soSalesPersonName: l.salesPersonName ?? null,
+        externalPersons: l.externalPersons ?? [],
       };
     });
     return { ...r, createdByName: nameOf(r.createdBy), cpoCustomers };
@@ -351,7 +366,7 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
   const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
   const cpoMap = new Map(cpoRows.map((c) => [c.id, c]));
 
-  const links = (so.customerPoLinks as { customerPoId: string; customerPoNo: string }[] | null) ?? [];
+  const links = (so.customerPoLinks as { customerPoId: string; customerPoNo: string; salesPersonName?: string | null; externalPersons?: { id: string; name: string }[] }[] | null) ?? [];
   const cpoCustomers: CpoCustomer[] = links.map((l) => {
     const cpo = cpoMap.get(l.customerPoId);
     return {
@@ -361,6 +376,8 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
       customerSnapshot: (cpo?.customerSnapshot as CpoCustomer["customerSnapshot"]) ?? null,
       deliveryDate: cpo?.deliveryDate ?? null,
       salesPersonName: cpo?.salesPersonName ?? null,
+      soSalesPersonName: l.salesPersonName ?? null,
+      externalPersons: l.externalPersons ?? [],
     };
   });
 
@@ -481,6 +498,11 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
       proformaReason: input.proformaReason ?? null,
       originalSoId: input.originalSoId ?? null,
       originalSoNo: input.originalSoNo ?? null,
+      urgentAuthType: input.urgentAuthType ?? null,
+      urgentAuthBy: input.urgentAuthBy ?? null,
+      urgentAuthDate: input.urgentAuthDate ?? null,
+      urgentPoExpectedBy: input.urgentPoExpectedBy ?? null,
+      urgentAuthNotes: input.urgentAuthNotes ?? null,
       status: "draft",
       createdBy: userId,
     })
@@ -511,7 +533,13 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
         sourceCustomerPoId: item.sourceCustomerPoId || null,
         sourceCustomerPoNo: item.sourceCustomerPoNo || null,
         descriptionSource: item.descriptionSource ?? null,
-        editedBy: item.descriptionSource === "user" ? (item.editedBy ?? null) : null,
+        codeSource: item.codeSource ?? null,
+        qtySource: item.qtySource ?? null,
+        uomSource: item.uomSource ?? null,
+        unitPriceSource: item.unitPriceSource ?? null,
+        discountSource: item.discountSource ?? null,
+        editedBy: item.editedBy ?? null,
+        soEditedBy: item.soEditedBy ?? null,
         isAdditional: item.isAdditional ?? false,
       })),
     );
@@ -597,6 +625,11 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
       notes: input.notes !== undefined ? (input.notes ?? null) : existing.notes,
       deliveryDate: input.deliveryDate !== undefined ? (input.deliveryDate ?? null) : existing.deliveryDate,
       deliveryAddress: input.deliveryAddress !== undefined ? (input.deliveryAddress ?? null) : existing.deliveryAddress,
+      urgentAuthType: input.urgentAuthType !== undefined ? (input.urgentAuthType ?? null) : existing.urgentAuthType,
+      urgentAuthBy: input.urgentAuthBy !== undefined ? (input.urgentAuthBy ?? null) : existing.urgentAuthBy,
+      urgentAuthDate: input.urgentAuthDate !== undefined ? (input.urgentAuthDate ?? null) : existing.urgentAuthDate,
+      urgentPoExpectedBy: input.urgentPoExpectedBy !== undefined ? (input.urgentPoExpectedBy ?? null) : existing.urgentPoExpectedBy,
+      urgentAuthNotes: input.urgentAuthNotes !== undefined ? (input.urgentAuthNotes ?? null) : existing.urgentAuthNotes,
       status: input.status ?? existing.status,
     })
     .where(eq(salesOrder.id, input.id))
@@ -630,7 +663,13 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
         sourceCustomerPoId: item.sourceCustomerPoId || null,
         sourceCustomerPoNo: item.sourceCustomerPoNo || null,
         descriptionSource: item.descriptionSource ?? null,
-        editedBy: item.descriptionSource === "user" ? (item.editedBy ?? null) : null,
+        codeSource: item.codeSource ?? null,
+        qtySource: item.qtySource ?? null,
+        uomSource: item.uomSource ?? null,
+        unitPriceSource: item.unitPriceSource ?? null,
+        discountSource: item.discountSource ?? null,
+        editedBy: item.editedBy ?? null,
+        soEditedBy: item.soEditedBy ?? null,
         isAdditional: item.isAdditional ?? false,
       })),
     );

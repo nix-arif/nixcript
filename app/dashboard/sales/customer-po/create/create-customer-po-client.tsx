@@ -1,22 +1,31 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createCustomerPo, getNextCashSaleNo, type CpoItemInput } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
 import { searchQuotationsByNo, getQuotationForSO } from "@/server/quotation";
+import { getProductByCode } from "@/server/products";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
+  PencilIcon, DatabaseIcon, LinkIcon,
 } from "lucide-react";
 
 type LinkedQuotation = {
@@ -34,13 +43,22 @@ type EditableItem = CpoItemInput & {
   included: boolean;
   _quotationId: string;
   _quotationNo: string;
+  setGroupId: string;
+  setGroupLabel: string;
+  setQty: string;
+  _descriptionSource?: Array<"quote" | "catalog" | "user"> | null;
+  _editedBy?: string | null;
+  _codeSource?: "quote" | "user" | null;
+  _unitPriceSource?: "quote" | "user" | null;
+  _qtySource?: "quote" | "user" | null;
 };
 
 function calcItemTotal(item: EditableItem): EditableItem {
-  const qty  = parseFloat(item.qty        || "0") || 0;
-  const up   = parseFloat(item.unitPrice  || "0") || 0;
-  const dPct = parseFloat(item.discountPct || "0") || 0;
-  const gross = qty * up;
+  const qty    = parseFloat(item.qty         || "0") || 0;
+  const up     = parseFloat(item.unitPrice   || "0") || 0;
+  const dPct   = parseFloat(item.discountPct || "0") || 0;
+  const setMul = item.setGroupId ? (parseFloat(item.setQty || "1") || 1) : 1;
+  const gross  = qty * up * setMul;
   return { ...item, totalPrice: (gross - (gross * dPct) / 100).toFixed(2) };
 }
 
@@ -51,7 +69,7 @@ function sumItems(items: EditableItem[]): string {
     .toFixed(2);
 }
 
-export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
+export function CreateCustomerPoClient({ members, currentUserName = "" }: { members: OrgMember[]; currentUserName?: string }) {
   const router = useRouter();
 
   // ── Quotations (multiple) ──────────────────────────────────────────────────
@@ -62,9 +80,13 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
   const [qtHighlight,      setQtHighlight]      = useState(-1);
   const [qtLoading,        setQtLoading]        = useState(false);
   const qtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+  const tagInputRef = useRef<HTMLInputElement>(null);
 
   // ── Items ──────────────────────────────────────────────────────────────────
   const [items, setItems] = useState<EditableItem[]>([]);
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
 
   // ── PO details ─────────────────────────────────────────────────────────────
   const [customerPoNo,   setCustomerPoNo]   = useState("");
@@ -72,8 +94,12 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
   const [amountOverride, setAmountOverride] = useState(false);
   const [currency,       setCurrency]       = useState("MYR");
   const [receivedDate,   setReceivedDate]   = useState(new Date().toISOString().split("T")[0]);
-  const [deliveryDate,   setDeliveryDate]   = useState("");
-  const [salesPersonName, setSalesPersonName] = useState("");
+  const [deliveryDate,    setDeliveryDate]    = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [salesPersonName,        setSalesPersonName]        = useState("");
+  const [salesPersonInherited,   setSalesPersonInherited]   = useState("");
+  const [associateSalesPersons,  setAssociateSalesPersons]  = useState<{ id: string; name: string }[]>([]);
+  const [externalPersonInput,    setExternalPersonInput]    = useState("");
   const [status,         setStatus]         = useState("received");
   const [notes,          setNotes]          = useState("");
 
@@ -98,7 +124,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
     if (val.length < 2) { setQtResults([]); return; }
     if (qtTimer.current) clearTimeout(qtTimer.current);
     qtTimer.current = setTimeout(async () => {
-      setQtResults(await searchQuotationsByNo(val));
+      setQtResults(await searchQuotationsByNo(val, true));
       setQtHighlight(-1);
     }, 300);
   }, []);
@@ -166,25 +192,60 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
         customerOrgMemberId,
       };
 
-      setLinkedQuotations((prev) => [...prev, linked]);
+      setLinkedQuotations((prev) => {
+        if (!salesPersonName && qt.salesPersonName) {
+          setSalesPersonName(qt.salesPersonName);
+          setSalesPersonInherited(qt.salesPersonName);
+        }
+        if (qt.associateSalesPersons?.length) {
+          setAssociateSalesPersons((prevAssoc) => {
+            const existingNames = new Set(prevAssoc.map(p => p.name));
+            const toAdd = qt.associateSalesPersons!.filter(p => !existingNames.has(p.name));
+            return toAdd.length ? [...prevAssoc, ...toAdd] : prevAssoc;
+          });
+        }
+        if (prev.length === 0) {
+          const snap = qt.customerSnapshot as any;
+          const addrLines = [snap?.organizationName, snap?.organizationAddress].filter(Boolean).join("\n");
+          if (addrLines) setDeliveryAddress(addrLines);
+        }
+        return [...prev, linked];
+      });
 
       // Append items from this quotation, tagged with source
       const startRow = items.length;
-      const imported: EditableItem[] = qt.items.map((item, idx) => ({
-        _key:        uid(),
-        _quotationId: qt.id,
-        _quotationNo: qt.quotationNo,
-        included:    true,
-        rowNo:       startRow + idx + 1,
-        productCode: item.productCode  ?? "",
-        description: item.description  ?? "",
-        qty:         String(item.qty   ?? "1"),
-        uom:         item.uom          ?? "",
-        unitPrice:   String(item.unitPrice  ?? "0"),
-        discountPct: String(item.discountPct ?? "0"),
-        totalPrice:  String(item.totalPrice  ?? "0"),
-        lineType:    item.lineType ?? "sell",
-      }));
+      // If the quotation title is not "Loose Items", auto-group all items under that title
+      const qtTitle = qt.title ?? "Loose Items";
+      const autoGroup = qtTitle.trim().toLowerCase() !== "loose items";
+      const autoGroupId    = autoGroup ? `g-${qt.id}` : "";
+      const autoGroupLabel = autoGroup ? qtTitle : "";
+
+      const imported: EditableItem[] = qt.items.map((item, idx) => {
+        const base: EditableItem = {
+          _key:          uid(),
+          _quotationId:  qt.id,
+          _quotationNo:  qt.quotationNo,
+          included:      true,
+          rowNo:         startRow + idx + 1,
+          productCode:   item.productCode  ?? "",
+          description:   item.description  ?? "",
+          qty:           String(item.qty   ?? "1"),
+          uom:           item.uom          ?? "",
+          unitPrice:     String(item.unitPrice  ?? "0"),
+          discountPct:   String(item.discountPct ?? "0"),
+          totalPrice:    String(item.totalPrice  ?? "0"),
+          lineType:      item.lineType ?? "sell",
+          setGroupId:    autoGroup ? autoGroupId    : (item.setGroupId    ?? ""),
+          setGroupLabel: autoGroup ? autoGroupLabel : (item.setGroupLabel ?? ""),
+          setQty:        autoGroup ? "1"            : (item.setQty        ?? ""),
+          _descriptionSource: ["quote"],
+          _editedBy: null,
+          _codeSource: "quote",
+          _unitPriceSource: "quote",
+          _qtySource: "quote",
+        };
+        return calcItemTotal(base);
+      });
 
       setItems((prev) => {
         const next = [...prev, ...imported];
@@ -213,6 +274,61 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
 
   // ── Item editing ──────────────────────────────────────────────────────────
 
+  const TOTAL_COLS = 5; // code, description, qty, uom, unit price
+
+  async function handleProductCodeBlur(key: string, code: string, prevCode: string) {
+    const trimmed = code.trim();
+    if (!trimmed || trimmed.toLowerCase() === prevCode.trim().toLowerCase()) return;
+    setItems((prev) => prev.map((i) => i._key === key
+      ? { ...i, _codeSource: "user", _editedBy: currentUserName || null } as EditableItem
+      : i,
+    ));
+    const product = await getProductByCode(trimmed);
+    if (!product?.description) return;
+    setItems((prev) => prev.map((i) => i._key === key
+      ? { ...i, description: product.description!, uom: product.uom ?? i.uom, _descriptionSource: ["catalog"], _editedBy: null }
+      : i,
+    ));
+  }
+
+  function handleCellKeyDown(
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowIdx: number,
+    colIdx: number,
+  ) {
+    const container = tableRef.current;
+    if (!container) return;
+    function focus(r: number, c: number) {
+      const el = container!.querySelector<HTMLInputElement>(`[data-row="${r}"][data-col="${c}"]`);
+      el?.focus();
+      el?.select();
+    }
+    const mod = e.metaKey || e.ctrlKey;
+    if (e.key === "Tab" && !e.shiftKey) {
+      e.preventDefault();
+      if (colIdx < TOTAL_COLS - 1) focus(rowIdx, colIdx + 1);
+      else if (rowIdx < items.length - 1) focus(rowIdx + 1, 0);
+    } else if (e.key === "Tab" && e.shiftKey) {
+      e.preventDefault();
+      if (colIdx > 0) focus(rowIdx, colIdx - 1);
+      else if (rowIdx > 0) focus(rowIdx - 1, TOTAL_COLS - 1);
+    } else if (mod && e.key === "ArrowRight") {
+      e.preventDefault();
+      if (colIdx < TOTAL_COLS - 1) focus(rowIdx, colIdx + 1);
+      else if (rowIdx < items.length - 1) focus(rowIdx + 1, 0);
+    } else if (mod && e.key === "ArrowLeft") {
+      e.preventDefault();
+      if (colIdx > 0) focus(rowIdx, colIdx - 1);
+      else if (rowIdx > 0) focus(rowIdx - 1, TOTAL_COLS - 1);
+    } else if (mod && e.key === "ArrowDown") {
+      e.preventDefault();
+      focus(rowIdx + 1, colIdx);
+    } else if (mod && e.key === "ArrowUp") {
+      e.preventDefault();
+      if (rowIdx > 0) focus(rowIdx - 1, colIdx);
+    }
+  }
+
   function updateItem(key: string, patch: Partial<EditableItem>) {
     setItems((prev) => {
       const next = prev.map((i) => {
@@ -228,6 +344,53 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
   function toggleAll(included: boolean) {
     setItems((prev) => {
       const next = prev.map((i) => ({ ...i, included }));
+      if (!amountOverride) setAmount(sumItems(next));
+      return next;
+    });
+  }
+
+  function handleSetLabelChange(key: string, newLabel: string) {
+    setItems((prev) => {
+      // If newLabel matches an existing group, join it; otherwise create/rename
+      const existing = prev.find((x) => x._key !== key && x.setGroupLabel === newLabel && newLabel);
+      const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
+      const next = prev.map((x) =>
+        x._key === key
+          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1" })
+          : x,
+      );
+      if (!amountOverride) setAmount(sumItems(next));
+      return next;
+    });
+  }
+
+  function handleSetQtyChange(groupId: string, newQty: string) {
+    setItems((prev) => {
+      const next = prev.map((x) =>
+        x.setGroupId === groupId ? calcItemTotal({ ...x, setQty: newQty }) : x,
+      );
+      if (!amountOverride) setAmount(sumItems(next));
+      return next;
+    });
+  }
+
+  function handleGroupLabelEdit(groupId: string, newLabel: string) {
+    setItems((prev) => {
+      const next = prev.map((x) =>
+        x.setGroupId === groupId ? { ...x, setGroupLabel: newLabel, setGroupId: newLabel ? `g-${newLabel}` : "" } : x,
+      );
+      if (!amountOverride) setAmount(sumItems(next));
+      return next;
+    });
+  }
+
+  function removeGroup(groupId: string) {
+    setItems((prev) => {
+      const next = prev.map((x) =>
+        x.setGroupId === groupId
+          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "" })
+          : x,
+      );
       if (!amountOverride) setAmount(sumItems(next));
       return next;
     });
@@ -273,6 +436,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
   async function handleSave() {
     if (linkedQuotations.length === 0) { toast.error("Please link at least one quotation"); return; }
     if (!customerPoNo.trim()) { toast.error("Customer PO number is required"); return; }
+    if (!deliveryAddress.trim()) { toast.error("Delivery address is required"); return; }
     if (!salesPersonName) { toast.error("Sales person is required"); return; }
     setSaving(true);
     try {
@@ -283,15 +447,27 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
         customerOrgMemberId: primary.customerOrgMemberId ?? undefined,
         quotationLinks:  linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo })),
         items:           items.length > 0
-          ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, ...rest }) => rest)
+          ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, ...rest }) => ({
+              ...rest,
+              setGroupId:    rest.setGroupId    || undefined,
+              setGroupLabel: rest.setGroupLabel || undefined,
+              setQty:        rest.setQty        || undefined,
+              _codeSource:         rest._codeSource        || undefined,
+              _descriptionSource:  rest._descriptionSource || undefined,
+              _unitPriceSource:    rest._unitPriceSource   || undefined,
+              _qtySource:          rest._qtySource         || undefined,
+              _editedBy:           rest._editedBy          || undefined,
+            }))
           : undefined,
         amount,
         currency,
         documentKey:     pdfKey,
         salesPersonName: salesPersonName || undefined,
+        associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
         notes:           notes || undefined,
         receivedDate:    receivedDate ? new Date(receivedDate) : undefined,
         deliveryDate:    deliveryDate ? new Date(deliveryDate) : undefined,
+        deliveryAddress: deliveryAddress.trim() || undefined,
         status,
       });
       toast.success("Customer PO recorded");
@@ -324,7 +500,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
         }
       />
 
-      <div className="space-y-5 max-w-3xl">
+      <div className="space-y-5 w-full">
 
         {/* ── 1. Quotations (required, multiple) ── */}
         <div className="border border-border rounded-xl p-4">
@@ -364,7 +540,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
                     <p className="text-sm font-medium leading-none">{primaryCustomer.customerName}</p>
                   )}
                   {primaryCustomer.customerOrg && (
-                    <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                    <p className="text-[11px] md:text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
                       <BuildingIcon className="w-3 h-3" /> {primaryCustomer.customerOrg}
                     </p>
                   )}
@@ -435,19 +611,19 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
                               </span>
                             )}
                             {qt.grandTotal && (
-                              <span className="text-[11px] text-muted-foreground ml-auto tabular-nums">
+                              <span className="text-[11px] md:text-[11px] text-muted-foreground ml-auto tabular-nums">
                                 {parseFloat(qt.grandTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
                               </span>
                             )}
                           </div>
-                          {custName && <div className="text-[11px] text-muted-foreground mt-0.5">{custName}</div>}
+                          {custName && <div className="text-[11px] md:text-[11px] text-muted-foreground mt-0.5">{custName}</div>}
                         </button>
                       );
                     })}
                   </div>
                 )}
                 </div>
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-[11px] md:text-[11px] text-muted-foreground">
                   Only finalized quotations appear. Customer and items auto-fill on selection.
                 </p>
               </div>
@@ -465,75 +641,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
           </div>
         </div>
 
-        {/* ── 2. Items (from quotations, editable) ── */}
-        {items.length > 0 && (
-          <div className="border border-border rounded-xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold">Items</h2>
-              <span className="text-[11px] text-muted-foreground">
-                {items.filter((i) => i.included).length} of {items.length} selected · edit qty/price to match customer PO
-              </span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border text-muted-foreground">
-                    <th className="pb-2 pr-2 w-6">
-                      <input
-                        type="checkbox"
-                        className="rounded"
-                        checked={items.every((i) => i.included)}
-                        ref={(el) => { if (el) el.indeterminate = items.some((i) => i.included) && !items.every((i) => i.included); }}
-                        onChange={(e) => toggleAll(e.target.checked)}
-                        title="Select all / none"
-                      />
-                    </th>
-                    <th className="text-left pb-2 pr-2 w-6">#</th>
-                    <th className="text-left pb-2 pr-2 w-20">Code</th>
-                    <th className="text-left pb-2 pr-2">Description</th>
-                    <th className="text-right pb-2 pr-2 w-20">Qty</th>
-                    <th className="text-left pb-2 pr-2 w-12">OUM</th>
-                    <th className="text-right pb-2 pr-2 w-24">Unit Price</th>
-                    <th className="text-right pb-2 w-24">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {linkedQuotations.length > 1
-                    ? quotationGroups.map((group) => (
-                        group.items.length === 0 ? null : (
-                          <>
-                            <tr key={`grp-${group.quotation.id}`}>
-                              <td colSpan={8} className="pt-3 pb-1 text-[10px] font-medium text-muted-foreground">
-                                from {group.quotation.quotationNo}
-                              </td>
-                            </tr>
-                            {group.items.map((item) => (
-                              <ItemRow key={item._key} item={item} updateItem={updateItem} />
-                            ))}
-                          </>
-                        )
-                      ))
-                    : items.map((item) => (
-                        <ItemRow key={item._key} item={item} updateItem={updateItem} />
-                      ))
-                  }
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={7} className="pt-3 pr-2 text-right text-[11px] text-muted-foreground font-medium">
-                      Total ({items.filter((i) => i.included).length} items)
-                    </td>
-                    <td className="pt-3 text-right tabular-nums font-bold">
-                      {parseFloat(computedTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ── 3. PO details ── */}
+        {/* ── 2. PO details ── */}
         <div className="border border-border rounded-xl p-4 space-y-4">
           <h2 className="text-sm font-semibold">PO details</h2>
           <div className="space-y-1.5">
@@ -543,7 +651,7 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
                 type="button"
                 disabled={cashSaleLoading}
                 onClick={handleCashSale}
-                className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 border border-dashed border-emerald-400 dark:border-emerald-600 rounded px-2 py-0.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-1 text-[11px] md:text-[11px] text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 border border-dashed border-emerald-400 dark:border-emerald-600 rounded px-2 py-0.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {cashSaleLoading
                   ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
@@ -607,18 +715,110 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
                 className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Sales person <span className="text-destructive">*</span></Label>
-              <select
-                value={salesPersonName}
-                onChange={(e) => setSalesPersonName(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-2.5 text-sm"
-              >
-                <option value="">— Select sales person —</option>
-                {members.map((m) => (
-                  <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
-                ))}
-              </select>
+            <div className="col-span-2 space-y-1.5">
+              <Label className="text-xs">Delivery address <span className="text-destructive">*</span></Label>
+              <Textarea
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                placeholder={"Organization name\nFull address"}
+                rows={2}
+                className="text-sm resize-none"
+              />
+            </div>
+            <div className="col-span-2 space-y-3">
+              {/* Sales person */}
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Label className="text-xs">Sales person <span className="text-destructive">*</span></Label>
+                  {salesPersonInherited && (
+                    salesPersonName === salesPersonInherited
+                      ? <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3 shrink-0" />from quotation</span>
+                      : <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-3 h-3 shrink-0" />{currentUserName || "user"} edited CPO</span>
+                  )}
+                </div>
+                <Select value={salesPersonName} onValueChange={setSalesPersonName}>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="Select member" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">— None —</SelectItem>
+                    {members.map((m) => (
+                      <SelectItem key={m.userId} value={m.name ?? m.email ?? m.userId}>
+                        {m.name ?? m.email}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {/* Associate / external — tag-input */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-muted-foreground">
+                  Associate / external <span className="font-normal opacity-60">(optional)</span>
+                </label>
+                <div
+                  className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
+                  onClick={() => tagInputRef.current?.focus()}
+                >
+                  {associateSalesPersons.map((a) => (
+                    <span key={a.id} className="inline-flex items-center gap-1 text-xs bg-secondary text-secondary-foreground rounded px-2 py-0.5 shrink-0">
+                      {a.name}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id)); }}
+                        className="text-secondary-foreground/60 hover:text-secondary-foreground"
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    ref={tagInputRef}
+                    type="text"
+                    value={externalPersonInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val.includes(",")) {
+                        const parts = val.split(",");
+                        const toAdd = parts.slice(0, -1).map(p => p.trim()).filter(Boolean);
+                        if (toAdd.length) {
+                          const t = Date.now();
+                          setAssociateSalesPersons((prev) => [...prev, ...toAdd.map((name, i) => ({ id: `ext-${t}-${i}`, name }))]);
+                        }
+                        setExternalPersonInput(parts[parts.length - 1].trimStart());
+                      } else {
+                        setExternalPersonInput(val);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (!externalPersonInput.trim()) return;
+                        const names = externalPersonInput.split(",").map(p => p.trim()).filter(Boolean);
+                        const t = Date.now();
+                        setAssociateSalesPersons((prev) => [...prev, ...names.map((name, i) => ({ id: `ext-${t}-${i}`, name }))]);
+                        setExternalPersonInput("");
+                      }
+                    }}
+                    placeholder={associateSalesPersons.length === 0 ? "Type a name, press Enter or comma to add…" : ""}
+                    className="flex-1 min-w-32 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+                  />
+                </div>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const m = members.find((x) => x.userId === e.target.value);
+                    if (!m) return;
+                    if (associateSalesPersons.some((a) => a.id === m.userId)) return;
+                    setAssociateSalesPersons((prev) => [...prev, { id: m.userId, name: m.name ?? m.email ?? m.userId }]);
+                  }}
+                  className="h-8 rounded-md border border-dashed border-border bg-background px-2.5 text-xs text-muted-foreground"
+                >
+                  <option value="">Add team member…</option>
+                  {members.filter((m) => !associateSalesPersons.some((a) => a.id === m.userId)).map((m) => (
+                    <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Status</Label>
@@ -635,6 +835,171 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
             </div>
           </div>
         </div>
+
+        {/* ── 3. Items (from quotations, editable) ── */}
+        {items.length > 0 && (
+          <div className="border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold">Items</h2>
+              <span className="text-[11px] md:text-[11px] text-muted-foreground">
+                {items.filter((i) => i.included).length} of {items.length} selected · edit qty/price to match customer PO
+              </span>
+            </div>
+            <div className="overflow-x-auto" ref={tableRef}>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground">
+                    <th className="pb-2 pr-2 w-6">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={items.every((i) => i.included)}
+                        ref={(el) => { if (el) el.indeterminate = items.some((i) => i.included) && !items.every((i) => i.included); }}
+                        onChange={(e) => toggleAll(e.target.checked)}
+                        title="Select all / none"
+                      />
+                    </th>
+                    <th className="text-left pb-2 pr-2 w-6">#</th>
+                    <th className="text-left pb-2 pr-2 w-20">Code</th>
+                    <th className="text-left pb-2 pr-2">Description</th>
+                    <th className="text-right pb-2 pr-2 w-20">Qty</th>
+                    <th className="text-right pb-2 pr-2 w-20">Total Qty</th>
+                    <th className="text-left pb-2 pr-2 w-12">UOM</th>
+                    <th className="text-right pb-2 pr-2 w-24">Unit Price</th>
+                    <th className="text-right pb-2 w-24">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const rows: React.ReactNode[] = [];
+                    const seenGroupIds = new Set<string>();
+                    let rowIdx = 0;
+
+                    // Build ordered list of group IDs preserving first-appearance order
+                    const groupOrder: string[] = [];
+                    for (const it of items) {
+                      if (it.setGroupId && !seenGroupIds.has(it.setGroupId)) {
+                        seenGroupIds.add(it.setGroupId);
+                        groupOrder.push(it.setGroupId);
+                      }
+                    }
+
+                    const renderRow = (item: EditableItem, inSet: boolean) => (
+                      <ItemRow
+                        key={item._key}
+                        item={item}
+                        rowIdx={rowIdx++}
+                        inSet={inSet}
+                        updateItem={updateItem}
+                        onSetLabelChange={handleSetLabelChange}
+                        onCellKeyDown={handleCellKeyDown}
+                        onCodeBlur={handleProductCodeBlur}
+                        currentUserName={currentUserName}
+                      />
+                    );
+
+                    // Quotation source label (only when multiple quotations)
+                    const renderQuotationHeader = (qtNo: string) => (
+                      <tr key={`qt-${qtNo}`}>
+                        <td colSpan={9} className="pt-3 pb-1 text-[10px] font-medium text-muted-foreground">
+                          from {qtNo}
+                        </td>
+                      </tr>
+                    );
+
+                    // Render set group header row (editable label, editable qty, removable)
+                    const renderGroupHeader = (gid: string) => {
+                      const gItems     = items.filter((i) => i.setGroupId === gid && i.included);
+                      const first      = items.find((i) => i.setGroupId === gid)!;
+                      const groupTotal = gItems.reduce((s, i) => s + (parseFloat(i.totalPrice) || 0), 0);
+                      return (
+                        <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                          <td colSpan={5} className="py-1.5 pr-2">
+                            <div className="flex items-center gap-2 pl-6">
+                              <input
+                                value={first.setGroupLabel}
+                                onChange={(e) => handleGroupLabelEdit(gid, e.target.value)}
+                                className="h-6 flex-1 min-w-0 border border-blue-200 rounded px-2 text-[11px] md:text-[11px] font-semibold text-blue-700 dark:text-blue-300 bg-background"
+                              />
+                              <span className="text-[10px] text-muted-foreground">×</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={first.setQty || "1"}
+                                onChange={(e) => handleSetQtyChange(gid, e.target.value)}
+                                className="h-6 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
+                              />
+                              <span className="text-[10px] text-muted-foreground">sets</span>
+                              <button
+                                type="button"
+                                onClick={() => removeGroup(gid)}
+                                className="ml-1 text-muted-foreground hover:text-destructive transition-colors"
+                                title="Remove grouping (keeps items)"
+                              >
+                                <XIcon className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </td>
+                          <td colSpan={2} className="py-1.5 pr-2 text-right tabular-nums text-[10px] text-muted-foreground">
+                            {(() => {
+                              const setQty = parseFloat(first.setQty || "1") || 1;
+                              return (groupTotal / setQty).toLocaleString("en-MY", { minimumFractionDigits: 2 });
+                            })()}
+                            <div className="text-[9px] text-muted-foreground/60">/set</div>
+                          </td>
+                          <td colSpan={2} className="py-1.5 text-right text-[10px] font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
+                            {groupTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      );
+                    };
+
+                    if (linkedQuotations.length > 1) {
+                      // Multi-quotation: show quotation headers, then render with set grouping per quotation
+                      for (const group of quotationGroups) {
+                        if (group.items.length === 0) continue;
+                        rows.push(renderQuotationHeader(group.quotation.quotationNo));
+
+                        const qtGroupIds: string[] = [];
+                        const seen = new Set<string>();
+                        for (const it of group.items) {
+                          if (it.setGroupId && !seen.has(it.setGroupId)) {
+                            seen.add(it.setGroupId);
+                            qtGroupIds.push(it.setGroupId);
+                          }
+                        }
+                        for (const gid of qtGroupIds) {
+                          rows.push(renderGroupHeader(gid));
+                          group.items.filter((i) => i.setGroupId === gid).forEach((i) => rows.push(renderRow(i, true)));
+                        }
+                        group.items.filter((i) => !i.setGroupId).forEach((i) => rows.push(renderRow(i, false)));
+                      }
+                    } else {
+                      // Single quotation: render set groups first, then standalone
+                      for (const gid of groupOrder) {
+                        rows.push(renderGroupHeader(gid));
+                        items.filter((i) => i.setGroupId === gid).forEach((i) => rows.push(renderRow(i, true)));
+                      }
+                      items.filter((i) => !i.setGroupId).forEach((i) => rows.push(renderRow(i, false)));
+                    }
+
+                    return rows;
+                  })()}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={8} className="pt-3 pr-2 text-right text-[11px] md:text-[11px] text-muted-foreground font-medium">
+                      Total ({items.filter((i) => i.included).length} items)
+                    </td>
+                    <td className="pt-3 text-right tabular-nums font-bold">
+                      {parseFloat(computedTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* ── 4. Attach document ── */}
         <div className="border border-border rounded-xl p-4">
@@ -689,13 +1054,30 @@ export function CreateCustomerPoClient({ members }: { members: OrgMember[] }) {
 
 function ItemRow({
   item,
+  rowIdx,
+  inSet,
   updateItem,
+  onSetLabelChange,
+  onCellKeyDown,
+  onCodeBlur,
+  currentUserName,
 }: {
   item: EditableItem;
+  rowIdx: number;
+  inSet: boolean;
   updateItem: (key: string, patch: Partial<EditableItem>) => void;
+  onSetLabelChange: (key: string, newLabel: string) => void;
+  onCellKeyDown: (e: React.KeyboardEvent<HTMLInputElement>, row: number, col: number) => void;
+  onCodeBlur: (key: string, code: string, prevCode: string) => void;
+  currentUserName: string;
 }) {
+  const codeOnFocus = useRef("");
   return (
-    <tr className={cn("border-b border-border/40 last:border-0 transition-opacity", !item.included && "opacity-40")}>
+    <tr className={cn(
+      "border-b border-border/40 last:border-0 transition-opacity",
+      !item.included && "opacity-40",
+      inSet && "bg-blue-50/20 dark:bg-blue-900/5",
+    )}>
       <td className="py-1.5 pr-2">
         <input
           type="checkbox"
@@ -705,28 +1087,140 @@ function ItemRow({
         />
       </td>
       <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
-      <td className="py-1.5 pr-2 font-mono text-muted-foreground truncate max-w-20">{item.productCode || "—"}</td>
-      <td className="py-1.5 pr-2 text-[11px]">{item.description || "—"}</td>
       <td className="py-1.5 pr-2">
         <Input
-          type="number" min="0" step="any"
-          value={item.qty}
-          disabled={!item.included}
-          onChange={(e) => updateItem(item._key, { qty: e.target.value })}
-          className="h-7 text-xs text-right tabular-nums w-20 ml-auto"
+          data-row={rowIdx}
+          data-col={0}
+          value={item.productCode || ""}
+          onChange={(e) => updateItem(item._key, { productCode: e.target.value } as Partial<EditableItem>)}
+          onFocus={(e) => { codeOnFocus.current = e.target.value; }}
+          onBlur={(e) => onCodeBlur(item._key, e.target.value, codeOnFocus.current)}
+          onKeyDown={(e) => onCellKeyDown(e, rowIdx, 0)}
+          placeholder="—"
+          className="h-7 text-[11px] md:text-[11px] font-mono"
+        />
+        {item._codeSource === "quote" && (
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+            <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+          </span>
+        )}
+        {item._codeSource === "user" && (
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+            <PencilIcon className="w-3 h-3 shrink-0" />
+            {currentUserName || "user"} edited CPO
+          </span>
+        )}
+      </td>
+      <td className="py-1.5 pr-2">
+        <div className="space-y-0.5">
+          <Input
+            data-row={rowIdx}
+            data-col={1}
+            value={item.description || ""}
+            onChange={(e) => {
+              const prev = item._descriptionSource ?? [];
+              const next: typeof prev = [...prev.filter(s => s !== "catalog" && s !== "quote" && s !== "user"), "user"];
+              updateItem(item._key, { description: e.target.value, _descriptionSource: next, _editedBy: currentUserName || null } as Partial<EditableItem>);
+            }}
+            onKeyDown={(e) => onCellKeyDown(e, rowIdx, 1)}
+            placeholder="—"
+            className="h-7 text-[11px] md:text-[11px]"
+          />
+          {(item._descriptionSource ?? []).includes("quote") && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+              <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+            </span>
+          )}
+          {(item._descriptionSource ?? []).includes("catalog") && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+              <DatabaseIcon className="w-3 h-3 shrink-0" />from product table
+            </span>
+          )}
+          {(item._descriptionSource ?? []).includes("user") && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+              <PencilIcon className="w-3 h-3 shrink-0" />
+              {item._editedBy || currentUserName || "user"} edited CPO
+            </span>
+          )}
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] text-muted-foreground">Set:</span>
+            <input
+              value={item.setGroupLabel}
+              onChange={(e) => onSetLabelChange(item._key, e.target.value)}
+              placeholder="(none)"
+              className="h-5 w-72 border border-border rounded px-1 text-[9px] bg-background text-muted-foreground"
+            />
+          </div>
+        </div>
+      </td>
+      <td className="py-1.5 pr-2">
+        <div className="space-y-0.5">
+          <Input
+            data-row={rowIdx}
+            data-col={2}
+            type="number" min="0" step="any"
+            value={item.qty}
+            disabled={!item.included}
+            onChange={(e) => updateItem(item._key, { qty: e.target.value, _qtySource: "user", _editedBy: currentUserName || null } as Partial<EditableItem>)}
+            onKeyDown={(e) => onCellKeyDown(e, rowIdx, 2)}
+            className="h-7 text-[11px] md:text-[11px] text-right tabular-nums w-20 ml-auto"
+          />
+          {inSet && <div className="text-[9px] text-muted-foreground text-right">/set</div>}
+          {item._qtySource === "quote" && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+              <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+            </span>
+          )}
+          {item._qtySource === "user" && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+              <PencilIcon className="w-3 h-3 shrink-0" />
+              {currentUserName || "user"} edited CPO
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="py-1.5 pr-2 text-right tabular-nums text-[11px] md:text-[11px]">
+        {item.included ? (() => {
+          const q = parseFloat(item.qty || "0") || 0;
+          const s = item.setGroupId ? (parseFloat(item.setQty || "1") || 1) : 1;
+          return (q * s).toLocaleString("en-MY", { maximumFractionDigits: 4 });
+        })() : "—"}
+      </td>
+      <td className="py-1.5 pr-2">
+        <Input
+          data-row={rowIdx}
+          data-col={3}
+          value={item.uom || ""}
+          onChange={(e) => updateItem(item._key, { uom: e.target.value })}
+          onKeyDown={(e) => onCellKeyDown(e, rowIdx, 3)}
+          placeholder="unit"
+          className="h-7 text-[11px] md:text-[11px] w-16"
         />
       </td>
-      <td className="py-1.5 pr-2 text-muted-foreground">{item.uom || "—"}</td>
       <td className="py-1.5 pr-2">
         <Input
+          data-row={rowIdx}
+          data-col={4}
           type="number" min="0" step="any"
           value={item.unitPrice}
           disabled={!item.included}
-          onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })}
-          className="h-7 text-xs text-right tabular-nums w-24 ml-auto"
+          onChange={(e) => updateItem(item._key, { unitPrice: e.target.value, _unitPriceSource: "user", _editedBy: currentUserName || null } as Partial<EditableItem>)}
+          onKeyDown={(e) => onCellKeyDown(e, rowIdx, 4)}
+          className="h-7 text-[11px] md:text-[11px] text-right tabular-nums w-24 ml-auto"
         />
+        {item._unitPriceSource === "quote" && (
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+            <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+          </span>
+        )}
+        {item._unitPriceSource === "user" && (
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+            <PencilIcon className="w-3 h-3 shrink-0" />
+            {currentUserName || "user"} edited CPO
+          </span>
+        )}
       </td>
-      <td className="py-1.5 text-right tabular-nums font-medium">
+      <td className="py-1.5 text-right tabular-nums font-medium text-[11px] md:text-[11px]">
         {item.included
           ? parseFloat(item.totalPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })
           : "—"}

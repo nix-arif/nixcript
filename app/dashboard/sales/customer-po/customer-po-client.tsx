@@ -22,6 +22,7 @@ import {
   UserIcon,
   BuildingIcon,
   LayoutListIcon,
+  PackageIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -43,7 +44,7 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
-export function CustomerPoClient({ initialPos }: { initialPos: CustomerPo[] }) {
+export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialPos: CustomerPo[]; canCreateSo?: boolean }) {
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
   const [search, setSearch] = useState("");
@@ -148,11 +149,15 @@ export function CustomerPoClient({ initialPos }: { initialPos: CustomerPo[] }) {
                           QT: <Highlight text={p.quotationNo} query={search} />
                         </span>
                       )}
-                      {p.salesOrderNo && (
+                      {p.salesOrderNo ? (
                         <span className="text-[10px] bg-muted/50 text-muted-foreground rounded px-1.5 py-0.5 font-mono">
                           SO: <Highlight text={p.salesOrderNo} query={search} />
                         </span>
-                      )}
+                      ) : p.status !== "cancelled" && p.status !== "fulfilled" ? (
+                        <span className="text-[10px] bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded px-1.5 py-0.5 font-medium">
+                          Pending SO
+                        </span>
+                      ) : null}
                       <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 ml-auto tabular-nums">
                         {fmtDate(p.receivedDate ?? p.createdAt)}
                       </span>
@@ -177,6 +182,15 @@ export function CustomerPoClient({ initialPos }: { initialPos: CustomerPo[] }) {
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {canCreateSo && !p.salesOrderId && p.status !== "cancelled" && p.status !== "fulfilled" && (
+                      <Button
+                        variant="ghost" size="icon" className="w-7 h-7 text-amber-600 dark:text-amber-400 hover:text-amber-700"
+                        title="Create Sales Order"
+                        onClick={() => router.push(`/dashboard/sales/order/create?cpoId=${p.id}`)}
+                      >
+                        <PackageIcon className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost" size="icon" className="w-7 h-7"
                       onClick={() => router.push(`/dashboard/sales/customer-po/${p.id}/edit`)}

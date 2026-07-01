@@ -83,6 +83,14 @@ export type CpoItemInput = {
   discountPct: string;
   totalPrice: string;
   lineType: string;
+  setGroupId?: string;
+  setGroupLabel?: string;
+  setQty?: string;
+  _codeSource?: "quote" | "user" | null;
+  _descriptionSource?: Array<"quote" | "catalog" | "user"> | null;
+  _unitPriceSource?: "quote" | "user" | null;
+  _qtySource?: "quote" | "user" | null;
+  _editedBy?: string | null;
 };
 
 export interface CreateCustomerPoInput {
@@ -99,9 +107,11 @@ export interface CreateCustomerPoInput {
   currency?: string;
   documentKey?: string;
   salesPersonName?: string;
+  associateSalesPersons?: { id: string; name: string }[];
   notes?: string;
   receivedDate?: Date;
   deliveryDate?: Date;
+  deliveryAddress?: string;
   status?: string;
 }
 
@@ -183,7 +193,10 @@ export type CustomerPoForSoCreate = {
   currency: string;
   items: CpoItemInput[] | null;
   deliveryDate: Date | null;
+  deliveryAddress: string | null;
   salesPersonName: string | null;
+  associateSalesPersons: { id: string; name: string }[] | null;
+  notes: string | null;
 };
 
 export async function getCustomerPoForSoCreate(id: string): Promise<CustomerPoForSoCreate | null> {
@@ -202,7 +215,10 @@ export async function getCustomerPoForSoCreate(id: string): Promise<CustomerPoFo
       currency: customerPurchaseOrder.currency,
       items: customerPurchaseOrder.items,
       deliveryDate: customerPurchaseOrder.deliveryDate,
+      deliveryAddress: customerPurchaseOrder.deliveryAddress,
       salesPersonName: customerPurchaseOrder.salesPersonName,
+      associateSalesPersons: customerPurchaseOrder.associateSalesPersons,
+      notes: customerPurchaseOrder.notes,
     })
     .from(customerPurchaseOrder)
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
@@ -285,8 +301,10 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
       documentKey: input.documentKey ?? null,
       notes: input.notes ?? null,
       salesPersonName: input.salesPersonName ?? null,
+      associateSalesPersons: input.associateSalesPersons && input.associateSalesPersons.length > 0 ? input.associateSalesPersons : null,
       receivedDate: input.receivedDate ?? null,
       deliveryDate: input.deliveryDate ?? null,
+      deliveryAddress: input.deliveryAddress ?? null,
       status: input.status ?? "received",
       createdBy: userId,
     })
@@ -351,9 +369,13 @@ export async function updateCustomerPo(input: UpdateCustomerPoInput): Promise<Cu
       currency: input.currency ?? existing.currency,
       documentKey: input.documentKey !== undefined ? input.documentKey : existing.documentKey,
       salesPersonName: input.salesPersonName !== undefined ? (input.salesPersonName ?? null) : existing.salesPersonName,
+      associateSalesPersons: input.associateSalesPersons !== undefined
+        ? (input.associateSalesPersons && input.associateSalesPersons.length > 0 ? input.associateSalesPersons : null)
+        : existing.associateSalesPersons,
       notes: input.notes ?? null,
       receivedDate: input.receivedDate ?? null,
       deliveryDate: input.deliveryDate !== undefined ? (input.deliveryDate ?? null) : existing.deliveryDate,
+      deliveryAddress: input.deliveryAddress !== undefined ? (input.deliveryAddress ?? null) : existing.deliveryAddress,
       status: input.status ?? existing.status,
     })
     .where(eq(customerPurchaseOrder.id, input.id))

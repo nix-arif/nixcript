@@ -222,7 +222,7 @@ export async function getProductByCode(code: string): Promise<{ description: str
   const [row] = await db
     .select({ description: product.description, uom: product.uom })
     .from(product)
-    .where(and(inArray(product.organizationId, ownerOrgIds), eq(product.productCode, code.trim())))
+    .where(and(inArray(product.organizationId, ownerOrgIds), ilike(product.productCode, code.trim())))
     .limit(1);
   return row ?? null;
 }

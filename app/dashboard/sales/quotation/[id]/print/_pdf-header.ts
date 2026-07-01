@@ -440,7 +440,7 @@ export function drawInfoSection(opts: InfoSectionOptions): number {
     ["Quotation No", quotationNo],
     ["Date",         fmtD(createdAt)],
     ["Valid Until",  fmtD(validUntil)],
-    ...(title           ? [["Subject",      title]]           as [string,string][] : []),
+    ...(title ? [["Subject", title]] as [string,string][] : []),
   ];
 
   let ry = startY - 21;

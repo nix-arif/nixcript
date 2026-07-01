@@ -1023,6 +1023,7 @@ export const quotation = pgTable(
     // Sales metadata
     salesPersonId: text("sales_person_id").references(() => user.id),
     salesPersonName: text("sales_person_name"),
+    associateSalesPersons: json("associate_sales_persons").$type<{ id: string; name: string }[]>(),
     preparedById: text("prepared_by_id").references(() => user.id),
     preparedByName: text("prepared_by_name"),
     validUntil: timestamp("valid_until"),
@@ -1441,6 +1442,13 @@ export const salesOrder = pgTable(
     originalSoId: text("original_so_id").references((): AnyPgColumn => salesOrder.id),
     originalSoNo: text("original_so_no"),
 
+    // Urgent PO-pending authorization — only relevant when soType = 'urgent'
+    urgentAuthType: text("urgent_auth_type"),        // 'verbal' | 'email' | 'loi' | 'internal'
+    urgentAuthBy: text("urgent_auth_by"),            // customer contact who gave approval
+    urgentAuthDate: text("urgent_auth_date"),        // ISO date string of authorization
+    urgentPoExpectedBy: text("urgent_po_expected_by"), // ISO date string — CPO deadline
+    urgentAuthNotes: text("urgent_auth_notes"),      // free-text notes / reference
+
     // Stock reservation — set by warehouse after SO is confirmed
     stockReservationStatus: text("stock_reservation_status"), // null | 'reserved' | 'insufficient'
     stockReservedAt: timestamp("stock_reserved_at"),
@@ -1489,8 +1497,14 @@ export const salesOrderItem = pgTable(
     sourceQuotationId: text("source_quotation_id"),
     sourceCustomerPoId: text("source_customer_po_id"),
     sourceCustomerPoNo: text("source_customer_po_no"),
-    descriptionSource: text("description_source"),
+    descriptionSource: json("description_source").$type<Array<"quote" | "catalog" | "user" | "cpo" | "so">>(),
+    codeSource: json("code_source").$type<Array<"cpo" | "quotation" | "user" | "so">>(),
+    qtySource: json("qty_source").$type<Array<"cpo" | "quotation" | "user" | "so">>(),
+    uomSource: text("uom_source"),
+    unitPriceSource: text("unit_price_source"),
+    discountSource: text("discount_source"),
     editedBy: text("edited_by"),
+    soEditedBy: text("so_edited_by"),
     isAdditional: boolean("is_additional").notNull().default(false),
     prExcluded: boolean("pr_excluded").notNull().default(false),
 
@@ -1991,6 +2005,9 @@ export const customerPurchaseOrder = pgTable(
       discountPct: string;
       totalPrice: string;
       lineType: string;
+      setGroupId?: string;
+      setGroupLabel?: string;
+      setQty?: string;
     }[]>(),
 
     amount: text("amount").notNull().default("0"),
@@ -1999,9 +2016,11 @@ export const customerPurchaseOrder = pgTable(
     // Scanned / PDF copy of customer's PO (R2 private)
     documentKey: text("document_key"),
     salesPersonName: text("sales_person_name"),
+    associateSalesPersons: json("associate_sales_persons").$type<{ id: string; name: string }[]>(),
     notes: text("notes"),
     receivedDate: timestamp("received_date"),
     deliveryDate: timestamp("delivery_date"),
+    deliveryAddress: text("delivery_address"),
     status: text("status").notNull().default("received"), // received | acknowledged | fulfilled | cancelled
 
     createdBy: text("created_by").notNull().references(() => user.id),

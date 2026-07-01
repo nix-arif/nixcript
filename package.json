@@ -9,9 +9,14 @@
     "lint": "eslint",
     "db-prod:push": "drizzle-kit push",
     "db-dev:push": "dotenv -e .env.local -- drizzle-kit push",
+    "db-dev:migrate": "tsx db/apply-pending-migrations.ts",
     "audit:permissions": "tsx scripts/audit-permissions.ts",
     "audit:roles": "tsx scripts/audit-roles.ts",
-    "test:clear-so": "dotenv -e .env.local -- tsx scripts/clear-test-docs.ts"
+    "test:seed": "dotenv -e .env.local -- tsx scripts/seed-test-env.ts",
+    "test:clear-so": "dotenv -e .env.local -- tsx scripts/clear-test-docs.ts",
+    "test:e2e": "dotenv -e .env.local -- playwright test",
+    "test:e2e:ui": "dotenv -e .env.local -- playwright test --ui",
+    "test:e2e:debug": "dotenv -e .env.local -- playwright test --debug"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",
@@ -50,6 +55,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
