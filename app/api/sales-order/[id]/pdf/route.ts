@@ -2,6 +2,7 @@ import { getSalesOrderForPrint } from "@/server/sales-order";
 import { generateSalesOrderPdf } from "@/app/dashboard/sales/order/[id]/print/generate-so-pdf";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { requirePermission } from "@/lib/auth/require-permission";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -21,7 +22,18 @@ export async function GET(_req: Request, { params }: Props) {
   }
 
   if (!data) return new Response("Not Found", { status: 404 });
-  if (data.order.status !== "confirmed" && data.order.status !== "fulfilled")
+
+  const allowedStatuses = ["confirmed", "fulfilled"];
+  // Approvers may download a preview PDF while the SO is awaiting approval
+  if (data.order.status === "submitted") {
+    try {
+      await requirePermission("sales-order:approve");
+      allowedStatuses.push("submitted");
+    } catch {
+      // not an approver — fall through to the status check below
+    }
+  }
+  if (!allowedStatuses.includes(data.order.status))
     return new Response("PDF is only available for confirmed sales orders", { status: 403 });
 
   let bytes: Uint8Array;

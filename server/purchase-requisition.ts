@@ -129,6 +129,9 @@ export interface PrItemInput {
   cpoNo?: string | null;
   customerName?: string | null;
   customerOrganization?: string | null;
+  setGroupId?: string | null;
+  setGroupLabel?: string | null;
+  setQty?: string | null;
 }
 
 export interface CreatePrInput {
@@ -333,6 +336,9 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
         cpoNo: i.cpoNo ?? null,
         customerName: i.customerName ?? null,
         customerOrganization: i.customerOrganization ?? null,
+        setGroupId: i.setGroupId ?? null,
+        setGroupLabel: i.setGroupLabel ?? null,
+        setQty: i.setQty ?? null,
       })),
     );
   }
@@ -390,6 +396,9 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
         cpoNo: i.cpoNo ?? null,
         customerName: i.customerName ?? null,
         customerOrganization: i.customerOrganization ?? null,
+        setGroupId: i.setGroupId ?? null,
+        setGroupLabel: i.setGroupLabel ?? null,
+        setQty: i.setQty ?? null,
       })),
     );
   }
@@ -540,6 +549,9 @@ export async function getSoItemsForPr(soId: string) {
         isAdditional: salesOrderItem.isAdditional,
         editedBy: salesOrderItem.editedBy,
         prExcluded: salesOrderItem.prExcluded,
+        setGroupId: salesOrderItem.setGroupId,
+        setGroupLabel: salesOrderItem.setGroupLabel,
+        setQty: salesOrderItem.setQty,
       })
       .from(salesOrderItem)
       .where(eq(salesOrderItem.salesOrderId, soId))
@@ -633,6 +645,9 @@ export async function getSoItemsForPr(soId: string) {
         customerOrganization: cpoMatch?.customerOrganization  ?? null,
         isAdditional:         i.isAdditional ?? false,
         editedBy:             i.editedBy ?? null,
+        setGroupId:           i.setGroupId ?? null,
+        setGroupLabel:        i.setGroupLabel ?? null,
+        setQty:               i.setQty ?? null,
       };
     }),
   };

@@ -675,11 +675,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     if (val.length < 2) { setQtResults([]); return; }
     if (qtTimer.current) clearTimeout(qtTimer.current);
     qtTimer.current = setTimeout(async () => {
-      const res = await searchQuotationsByNo(val);
+      const res = await searchQuotationsByNo(val, soType === "urgent");
       setQtResults(res);
       setQtHighlight(-1);
     }, 300);
-  }, []);
+  }, [soType]);
 
   function handleQtKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!qtResults.length) return;
@@ -797,6 +797,44 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
 
   function removeLinkedQuotation(id: string) {
     setLinkedQuotations((prev) => prev.filter((q) => q.id !== id));
+  }
+
+  // ── Set / group helpers ─────────────────────────────────────────────────────
+
+  function handleSetLabelChange(key: string, newLabel: string) {
+    setItems((prev) => {
+      const existing = prev.find((x) => x._key !== key && x.setGroupLabel === newLabel && newLabel);
+      const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
+      return prev.map((x) =>
+        x._key === key
+          ? calcLine({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1" })
+          : x,
+      );
+    });
+  }
+
+  function handleGroupLabelEdit(groupId: string, newLabel: string) {
+    setItems((prev) =>
+      prev.map((x) =>
+        x.setGroupId === groupId ? { ...x, setGroupLabel: newLabel, setGroupId: newLabel ? `g-${newLabel}` : "" } : x,
+      ),
+    );
+  }
+
+  function handleSetQtyChange(groupId: string, newQty: string) {
+    setItems((prev) =>
+      prev.map((x) => (x.setGroupId === groupId ? { ...x, setQty: newQty } : x)),
+    );
+  }
+
+  function removeGroup(groupId: string) {
+    setItems((prev) =>
+      prev.map((x) =>
+        x.setGroupId === groupId
+          ? calcLine({ ...x, setGroupId: "", setGroupLabel: "", setQty: "" })
+          : x,
+      ),
+    );
   }
 
   // ── Customer search ─────────────────────────────────────────────────────────
@@ -2083,27 +2121,63 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   }
                   if (item.setGroupId && items.findIndex((i) => i.setGroupId === item.setGroupId) === rowIdx) {
                     const groupItems = items.filter((i) => i.setGroupId === item.setGroupId);
-                    const groupTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
                     const setQtyNum = parseFloat(item.setQty || "1") || 1;
-                    const perSetPrice = groupTotal / setQtyNum;
-                    rows.push(
-                      <tr key={`grp-${item.setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
-                        <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{item.setGroupLabel || "Set"}</span>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
-                              × {item.setQty || "1"} sets
-                            </span>
-                            {soType !== "proforma" && groupTotal > 0 && (
-                              <>
-                                <span className={`text-[10px] tabular-nums ${color?.text ?? "text-muted-foreground"}`}>1 set: {fmt(perSetPrice)}</span>
-                                <span className={`ml-auto text-[11px] font-semibold ${color?.text ?? "text-foreground"} tabular-nums`}>{fmt(groupTotal)}</span>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>,
-                    );
+                    const perSetTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
+                    const groupTotal = perSetTotal * setQtyNum;
+                    if (soType === "urgent") {
+                      rows.push(
+                        <tr key={`grp-${item.setGroupId}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                          <td colSpan={5} className="py-1.5 pr-2">
+                            <div className="flex items-center gap-2 pl-4">
+                              <input
+                                value={item.setGroupLabel}
+                                onChange={(e) => handleGroupLabelEdit(item.setGroupId, e.target.value)}
+                                className="h-6 flex-1 min-w-0 bg-transparent border border-transparent hover:border-blue-200 focus:border-blue-300 focus:bg-background rounded px-1 text-[13px] font-bold text-blue-700 dark:text-blue-300 outline-none transition-colors"
+                                placeholder="Set name…"
+                              />
+                              <span className="text-[10px] text-muted-foreground">×</span>
+                              <input
+                                type="number" min="1"
+                                value={item.setQty || "1"}
+                                onChange={(e) => handleSetQtyChange(item.setGroupId, e.target.value)}
+                                className="h-6 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
+                              />
+                              <span className="text-[10px] text-muted-foreground">sets</span>
+                              <button type="button" onClick={() => removeGroup(item.setGroupId)} className="text-muted-foreground hover:text-destructive transition-colors">
+                                <XIcon className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </td>
+                          <td colSpan={2} className="py-1.5 pr-2 text-right tabular-nums text-[10px] text-muted-foreground">
+                            {perSetTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                            <div className="text-[9px] text-muted-foreground/60">/set</div>
+                          </td>
+                          <td colSpan={colCount - 7} className="py-1.5 text-right text-[10px] font-semibold text-blue-700 dark:text-blue-300 tabular-nums pr-2">
+                            {groupTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>,
+                      );
+                    } else {
+                      const perSetPrice = perSetTotal / setQtyNum;
+                      rows.push(
+                        <tr key={`grp-${item.setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
+                          <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{item.setGroupLabel || "Set"}</span>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
+                                × {item.setQty || "1"} sets
+                              </span>
+                              {soType !== "proforma" && perSetTotal > 0 && (
+                                <>
+                                  <span className={`text-[10px] tabular-nums ${color?.text ?? "text-muted-foreground"}`}>1 set: {fmt(perSetPrice)}</span>
+                                  <span className={`ml-auto text-[11px] font-semibold ${color?.text ?? "text-foreground"} tabular-nums`}>{fmt(groupTotal)}</span>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>,
+                      );
+                    }
                   }
                   const sourceQt = item.sourceQuotationId
                     ? linkedQuotations.find((q) => q.id === item.sourceQuotationId)
@@ -2215,6 +2289,17 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
                           <PencilIcon className="w-3 h-3 shrink-0" />{item._soEditedBy || currentUserName || "user"} edited SO
                         </span>
+                      )}
+                      {soType === "urgent" && (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className="text-[9px] text-muted-foreground">Set:</span>
+                          <input
+                            value={item.setGroupLabel}
+                            onChange={(e) => handleSetLabelChange(item._key, e.target.value)}
+                            placeholder="(none)"
+                            className="h-5 w-36 border border-border rounded px-1 text-[9px] bg-background text-muted-foreground"
+                          />
+                        </div>
                       )}
                       {linkedCpos.length > 0 && (
                         <div className="mt-1">

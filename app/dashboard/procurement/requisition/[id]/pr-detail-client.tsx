@@ -23,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon, SendIcon, CheckIcon, XIcon, PlusIcon, LinkIcon, ImageIcon,
-  DatabaseIcon, ShoppingCartIcon,
+  DatabaseIcon, ShoppingCartIcon, LayersIcon,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
@@ -175,6 +175,9 @@ interface EditLine extends PrItemInput {
   _descriptionSource?: "so" | "catalog" | "user" | null;
   _isAdditional?: boolean;
   _editedBy?: string | null;
+  _setGroupId?: string | null;
+  _setGroupLabel?: string | null;
+  _setQty?: string | null;
 }
 
 function calcTotal(item: EditLine): number {
@@ -202,6 +205,9 @@ function toEditLine(item: PrWithItems["items"][number]): EditLine {
     _descriptionSource: item.descriptionSource as "so" | "catalog" | "user" | null,
     _isAdditional: item.isAdditional ?? false,
     _editedBy: item.editedBy ?? null,
+    _setGroupId: (item as any).setGroupId ?? null,
+    _setGroupLabel: (item as any).setGroupLabel ?? null,
+    _setQty: (item as any).setQty ?? null,
   };
 }
 
@@ -317,6 +323,9 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
           cpoNo: l._cpoNo ?? null,
           customerName: l._customerName ?? null,
           customerOrganization: l._customerOrganization ?? null,
+          setGroupId: l._setGroupId ?? null,
+          setGroupLabel: l._setGroupLabel ?? null,
+          setQty: l._setQty ?? null,
         })),
       });
       toast.success("Requisition updated");
@@ -467,247 +476,194 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
 
       {/* Items table */}
       <div className="rounded-xl border border-border bg-background overflow-hidden">
-        <div className="px-5 py-3 border-b border-border bg-muted/20">
-          <h2 className="text-sm font-semibold">Items ({pr.items.length})</h2>
+        <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
+          <h2 className="text-sm font-semibold">Items</h2>
+          <span className="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{pr.items.length}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-border bg-muted/30 text-muted-foreground">
-                <th className="text-left px-3 py-2 font-medium w-8">#</th>
-                <th className="text-left px-3 py-2 font-medium w-12">Image</th>
-                <th className="text-left px-3 py-2 font-medium w-28">Code</th>
-                <th className="text-left px-3 py-2 font-medium">Description</th>
-                <th className="text-left px-3 py-2 font-medium w-16">Qty</th>
-                <th className="text-left px-3 py-2 font-medium w-16">UOM</th>
-                <th className="text-left px-3 py-2 font-medium w-20">Currency</th>
-                <th className="text-right px-3 py-2 font-medium w-28">Est. Unit Cost</th>
-                <th className="text-right px-3 py-2 font-medium w-24">Total</th>
-                <th className="text-left px-3 py-2 font-medium w-36">Preferred Supplier</th>
+              <tr className="bg-muted/40 border-y border-border/60 text-muted-foreground">
+                <th className="text-left py-1.5 pl-3 pr-3 w-8 text-[10px] tracking-wider font-medium uppercase">#</th>
+                <th className="text-left py-1.5 pr-3 w-12 text-[10px] tracking-wider font-medium uppercase">Image</th>
+                <th className="text-left py-1.5 pr-3 w-28 text-[10px] tracking-wider font-medium uppercase">Code</th>
+                <th className="text-left py-1.5 pr-3 text-[10px] tracking-wider font-medium uppercase">Description</th>
+                <th className="text-left py-1.5 pr-3 w-16 text-[10px] tracking-wider font-medium uppercase">Qty</th>
+                <th className="text-left py-1.5 pr-3 w-16 text-[10px] tracking-wider font-medium uppercase">UOM</th>
+                <th className="text-left py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Currency</th>
+                <th className="text-right py-1.5 pr-3 w-28 text-[10px] tracking-wider font-medium uppercase">Est. Unit Cost</th>
+                <th className="text-right py-1.5 pr-3 w-24 text-[10px] tracking-wider font-medium uppercase">Total</th>
+                <th className="text-left py-1.5 pr-3 w-36 text-[10px] tracking-wider font-medium uppercase">Preferred Supplier</th>
                 {editing && <th className="w-8" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {editing
-                ? lines.map((line) => (
-                    <tr key={line._key} className="group">
-                      <td className="px-3 py-2 text-muted-foreground">{line.rowNo}</td>
-                      <td className="px-3 py-2">
+              {(() => {
+                const COL_COUNT = editing ? 11 : 10;
+                const sourceItems = editing ? lines : pr.items;
+                const getGroupId = (x: typeof sourceItems[0]) => editing ? (x as EditLine)._setGroupId : (x as any).setGroupId;
+                const getGroupLabel = (x: typeof sourceItems[0]) => editing ? (x as EditLine)._setGroupLabel : (x as any).setGroupLabel;
+                const getGroupQty = (x: typeof sourceItems[0]) => editing ? (x as EditLine)._setQty : (x as any).setQty;
+
+                const seenGroupIds = new Set<string>();
+                const groupOrder: string[] = [];
+                for (const item of sourceItems) {
+                  const gid = getGroupId(item);
+                  if (gid && !seenGroupIds.has(gid)) { seenGroupIds.add(gid); groupOrder.push(gid); }
+                }
+
+                const renderEditRow = (line: EditLine) => (
+                  <tr key={line._key} className="group align-top hover:bg-muted/20 transition-colors">
+                    <td className="px-3 py-2 text-muted-foreground">{line.rowNo}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-col gap-0.5 items-start">
+                        <ItemImageThumb imageUrl={line._imageUrl ?? null} productCode={line.productCode} />
+                        {line._imageUrl ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                            <ImageIcon className="w-3 h-3 shrink-0" />uploaded
+                          </span>
+                        ) : line.productCode ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                            <DatabaseIcon className="w-3 h-3 shrink-0" />from catalog
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input value={line.productCode ?? ""} onChange={(e) => setLine(line._key, { productCode: e.target.value })} onBlur={(e) => handleProductCodeBlur(line._key, e.target.value)} className="h-7 text-xs" placeholder="Code" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {(line._cpoNo || line._customerName || line._customerOrganization) && (
+                        <div className="flex flex-wrap gap-1 mb-1">
+                          {line._cpoNo && <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">{line._cpoNo}</span>}
+                          {line._customerOrganization && <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">{line._customerOrganization}</span>}
+                          {line._customerName && <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">{line._customerName}</span>}
+                        </div>
+                      )}
+                      <Input value={line.description ?? ""} onChange={(e) => setLine(line._key, { description: e.target.value, _descriptionSource: "user" })} className="h-7 text-xs" placeholder="Description" />
+                      {line._descriptionSource === "catalog" && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"><DatabaseIcon className="w-3 h-3 shrink-0" />auto-filled from catalog</span>}
+                      {line._descriptionSource === "so" && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><ShoppingCartIcon className="w-3 h-3 shrink-0" />from sales order</span>}
+                      {line._descriptionSource === "user" && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-3 h-3 shrink-0" />{currentUserName} edited</span>}
+                      {line._isAdditional && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800"><PlusIcon className="w-3 h-3 shrink-0" />additional row</span>}
+                      {line._editedBy && line._descriptionSource === "so" && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-3 h-3 shrink-0" />{line._editedBy} edited</span>}
+                    </td>
+                    <td className="px-2 py-1.5"><Input type="number" value={line.qty ?? "1"} onChange={(e) => setLine(line._key, { qty: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="px-2 py-1.5"><Input value={line.uom ?? ""} onChange={(e) => setLine(line._key, { uom: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="px-2 py-1.5">
+                      <select value={line.currency ?? "MYR"} onChange={(e) => setLine(line._key, { currency: e.target.value })} className="h-7 w-full rounded-md border border-border bg-background px-1.5 text-xs">
+                        {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1.5"><Input type="number" value={line.estimatedUnitCost ?? "0"} onChange={(e) => setLine(line._key, { estimatedUnitCost: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="px-3 py-2 text-right tabular-nums font-medium">
+                      <span className="text-[10px] text-muted-foreground mr-0.5">{line.currency ?? "MYR"}</span>
+                      {calcTotal(line).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-2 py-1.5"><SupplierCell value={line._supplierName ?? ""} onSelect={(id, name) => setLine(line._key, { _supplierId: id, _supplierName: name })} onClear={() => setLine(line._key, { _supplierId: undefined, _supplierName: undefined })} /></td>
+                    <td className="px-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => removeLine(line._key)} className="text-muted-foreground hover:text-destructive"><TrashIcon className="w-3.5 h-3.5" /></button>
+                    </td>
+                  </tr>
+                );
+
+                const renderReadRow = (item: PrWithItems["items"][number]) => {
+                  const total = (parseFloat(item.qty ?? "1") || 1) * (parseFloat(item.estimatedUnitCost ?? "0") || 0);
+                  return (
+                    <tr key={item.id} className="hover:bg-muted/20 transition-colors">
+                      <td className="px-3 py-2.5 text-muted-foreground">{item.rowNo}</td>
+                      <td className="px-3 py-2.5">
                         <div className="flex flex-col gap-0.5 items-start">
-                          <ItemImageThumb imageUrl={line._imageUrl ?? null} productCode={line.productCode} />
-                          {line._imageUrl ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                              <ImageIcon className="w-3 h-3 shrink-0" />
-                              uploaded
-                            </span>
-                          ) : line.productCode ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                              <DatabaseIcon className="w-3 h-3 shrink-0" />
-                              from catalog
-                            </span>
+                          <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
+                          {item.imageUrl ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><ImageIcon className="w-3 h-3 shrink-0" />uploaded</span>
+                          ) : item.productCode ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60"><DatabaseIcon className="w-3 h-3 shrink-0" />from catalog</span>
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-2 py-1.5">
-                        <Input
-                          value={line.productCode ?? ""}
-                          onChange={(e) => setLine(line._key, { productCode: e.target.value })}
-                          onBlur={(e) => handleProductCodeBlur(line._key, e.target.value)}
-                          className="h-7 text-xs"
-                          placeholder="Code"
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        {(line._cpoNo || line._customerName || line._customerOrganization) && (
+                      <td className="px-3 py-2.5 font-mono text-muted-foreground">{item.productCode || "—"}</td>
+                      <td className="px-3 py-2.5">
+                        {(item.cpoNo || item.customerName || item.customerOrganization) && (
                           <div className="flex flex-wrap gap-1 mb-1">
-                            {line._cpoNo && (
-                              <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
-                                {line._cpoNo}
-                              </span>
-                            )}
-                            {line._customerOrganization && (
-                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                                {line._customerOrganization}
-                              </span>
-                            )}
-                            {line._customerName && (
-                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                                {line._customerName}
-                              </span>
-                            )}
+                            {item.cpoNo && <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">{item.cpoNo}</span>}
+                            {item.customerOrganization && <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">{item.customerOrganization}</span>}
+                            {item.customerName && <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">{item.customerName}</span>}
                           </div>
                         )}
-                        <Input
-                          value={line.description ?? ""}
-                          onChange={(e) => setLine(line._key, { description: e.target.value, _descriptionSource: "user" })}
-                          className="h-7 text-xs"
-                          placeholder="Description"
-                        />
-                        {line._descriptionSource === "catalog" && (
-                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
-                            <DatabaseIcon className="w-3 h-3 shrink-0" />
-                            auto-filled from catalog
-                          </span>
-                        )}
-                        {line._descriptionSource === "so" && (
-                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-                            <ShoppingCartIcon className="w-3 h-3 shrink-0" />
-                            from sales order
-                          </span>
-                        )}
-                        {line._descriptionSource === "user" && (
-                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                            <PencilIcon className="w-3 h-3 shrink-0" />
-                            {currentUserName} edited
-                          </span>
-                        )}
-                        {line._isAdditional && (
-                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
-                            <PlusIcon className="w-3 h-3 shrink-0" />
-                            additional row
-                          </span>
-                        )}
-                        {line._editedBy && line._descriptionSource === "so" && (
-                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                            <PencilIcon className="w-3 h-3 shrink-0" />
-                            {line._editedBy} edited
-                          </span>
-                        )}
+                        <span>{item.description || "—"}</span>
+                        {item.descriptionSource === "catalog" && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"><DatabaseIcon className="w-3 h-3 shrink-0" />auto-filled from catalog</span>}
+                        {item.descriptionSource === "so" && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><ShoppingCartIcon className="w-3 h-3 shrink-0" />from sales order</span>}
+                        {item.descriptionSource === "user" && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-3 h-3 shrink-0" />{pr.requestedByName ?? "user"} edited</span>}
+                        {item.isAdditional && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800"><PlusIcon className="w-3 h-3 shrink-0" />additional row</span>}
+                        {item.editedBy && item.descriptionSource === "so" && <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-3 h-3 shrink-0" />{item.editedBy} edited</span>}
                       </td>
-                      <td className="px-2 py-1.5">
-                        <Input type="number" value={line.qty ?? "1"} onChange={(e) => setLine(line._key, { qty: e.target.value })} className="h-7 text-xs" />
+                      <td className="px-3 py-2.5 tabular-nums">{item.qty}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground">{item.uom || "—"}</td>
+                      <td className="px-3 py-2.5 text-xs font-medium">{item.currency ?? "MYR"}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">{parseFloat(item.estimatedUnitCost ?? "0").toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-medium">
+                        <span className="text-[10px] text-muted-foreground mr-0.5">{item.currency ?? "MYR"}</span>
+                        {total.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="px-2 py-1.5">
-                        <Input value={line.uom ?? ""} onChange={(e) => setLine(line._key, { uom: e.target.value })} className="h-7 text-xs" />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <select
-                          value={line.currency ?? "MYR"}
-                          onChange={(e) => setLine(line._key, { currency: e.target.value })}
-                          className="h-7 w-full rounded-md border border-border bg-background px-1.5 text-xs"
-                        >
-                          {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <Input type="number" value={line.estimatedUnitCost ?? "0"} onChange={(e) => setLine(line._key, { estimatedUnitCost: e.target.value })} className="h-7 text-xs" />
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">
-                        <span className="text-[10px] text-muted-foreground mr-0.5">{line.currency ?? "MYR"}</span>
-                        {calcTotal(line).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <SupplierCell
-                          value={line._supplierName ?? ""}
-                          onSelect={(id, name) => setLine(line._key, { _supplierId: id, _supplierName: name })}
-                          onClear={() => setLine(line._key, { _supplierId: undefined, _supplierName: undefined })}
-                        />
-                      </td>
-                      <td className="px-2 py-1.5 opacity-0 group-hover:opacity-100">
-                        <button onClick={() => removeLine(line._key)} className="text-muted-foreground hover:text-destructive">
-                          <TrashIcon className="w-3.5 h-3.5" />
-                        </button>
+                      <td className="px-3 py-2.5">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs">{item.preferredSupplierName || "—"}</span>
+                          {item.purchaseOrderNo && <span className="text-[10px] text-green-600 dark:text-green-400 font-medium">PO: {item.purchaseOrderNo}</span>}
+                        </div>
                       </td>
                     </tr>
-                  ))
-                : pr.items.map((item) => {
-                    const total = (parseFloat(item.qty ?? "1") || 1) * (parseFloat(item.estimatedUnitCost ?? "0") || 0);
-                    const poLink = item.purchaseOrderNo;
-                    return (
-                      <tr key={item.id} className="hover:bg-muted/20">
-                        <td className="px-3 py-2.5 text-muted-foreground">{item.rowNo}</td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex flex-col gap-0.5 items-start">
-                            <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
-                            {item.imageUrl ? (
-                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                                <ImageIcon className="w-3 h-3 shrink-0" />
-                                uploaded
-                              </span>
-                            ) : item.productCode ? (
-                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                                <DatabaseIcon className="w-3 h-3 shrink-0" />
-                                from catalog
-                              </span>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono">{item.productCode || "—"}</td>
-                        <td className="px-3 py-2.5">
-                          {(item.cpoNo || item.customerName || item.customerOrganization) && (
-                            <div className="flex flex-wrap gap-1 mb-1">
-                              {item.cpoNo && (
-                                <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
-                                  {item.cpoNo}
-                                </span>
-                              )}
-                              {item.customerOrganization && (
-                                <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                                  {item.customerOrganization}
-                                </span>
-                              )}
-                              {item.customerName && (
-                                <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                                  {item.customerName}
-                                </span>
-                              )}
-                            </div>
+                  );
+                };
+
+                const renderGroupHeader = (gid: string) => {
+                  const first = sourceItems.find((x) => getGroupId(x) === gid)!;
+                  const label = getGroupLabel(first) ?? "";
+                  const qty = getGroupQty(first) ?? "1";
+                  return (
+                    <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                      <td colSpan={COL_COUNT} className="px-3 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          {editing ? (
+                            <>
+                              <input
+                                value={label}
+                                onChange={(e) => { const v = e.target.value; setLines((prev) => prev.map((l) => l._setGroupId === gid ? { ...l, _setGroupLabel: v } : l)); }}
+                                placeholder="Set name"
+                                className="h-6 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 font-medium text-blue-700 dark:text-blue-300 w-40"
+                              />
+                              <span className="text-[10px] text-muted-foreground">×</span>
+                              <input
+                                type="number" min="1" value={qty}
+                                onChange={(e) => { const v = e.target.value; setLines((prev) => prev.map((l) => l._setGroupId === gid ? { ...l, _setQty: v } : l)); }}
+                                className="h-6 w-14 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 text-right"
+                              />
+                              <span className="text-[10px] text-muted-foreground">sets</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300">{label || "Set"}</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border font-mono text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-700 bg-white/40 dark:bg-black/20">× {qty} sets</span>
+                            </>
                           )}
-                          <span>{item.description || "—"}</span>
-                          {item.descriptionSource === "catalog" && (
-                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
-                              <DatabaseIcon className="w-3 h-3 shrink-0" />
-                              auto-filled from catalog
-                            </span>
-                          )}
-                          {item.descriptionSource === "so" && (
-                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-                              <ShoppingCartIcon className="w-3 h-3 shrink-0" />
-                              from sales order
-                            </span>
-                          )}
-                          {item.descriptionSource === "user" && (
-                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                              <PencilIcon className="w-3 h-3 shrink-0" />
-                              {pr.requestedByName ?? "user"} edited
-                            </span>
-                          )}
-                          {item.isAdditional && (
-                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
-                              <PlusIcon className="w-3 h-3 shrink-0" />
-                              additional row
-                            </span>
-                          )}
-                          {item.editedBy && item.descriptionSource === "so" && (
-                            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                              <PencilIcon className="w-3 h-3 shrink-0" />
-                              {item.editedBy} edited
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5 tabular-nums">{item.qty}</td>
-                        <td className="px-3 py-2.5 text-muted-foreground">{item.uom || "—"}</td>
-                        <td className="px-3 py-2.5 text-xs font-medium">{item.currency ?? "MYR"}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">
-                          {parseFloat(item.estimatedUnitCost ?? "0").toLocaleString("en-MY", { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums font-medium">
-                          <span className="text-[10px] text-muted-foreground mr-0.5">{item.currency ?? "MYR"}</span>
-                          {total.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs">{item.preferredSupplierName || "—"}</span>
-                            {poLink && (
-                              <span className="text-[10px] text-green-600 dark:text-green-400 font-medium">
-                                PO: {poLink}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                };
+
+                const rows: React.ReactNode[] = [];
+                for (const gid of groupOrder) {
+                  rows.push(renderGroupHeader(gid));
+                  sourceItems.filter((x) => getGroupId(x) === gid).forEach((x) =>
+                    rows.push(editing ? renderEditRow(x as EditLine) : renderReadRow(x as PrWithItems["items"][number]))
+                  );
+                }
+                sourceItems.filter((x) => !getGroupId(x)).forEach((x) =>
+                  rows.push(editing ? renderEditRow(x as EditLine) : renderReadRow(x as PrWithItems["items"][number]))
+                );
+                return rows;
+              })()}
             </tbody>
           </table>
         </div>

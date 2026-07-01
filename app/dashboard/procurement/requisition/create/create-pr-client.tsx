@@ -24,7 +24,7 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon, ChevronDownIcon, ImageIcon, UploadIcon, DatabaseIcon, ShoppingCartIcon, PencilIcon, BanIcon, Loader2Icon, FlaskConicalIcon } from "lucide-react";
+import { ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon, ChevronDownIcon, ImageIcon, UploadIcon, DatabaseIcon, ShoppingCartIcon, PencilIcon, BanIcon, Loader2Icon, FlaskConicalIcon, LayersIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
 
@@ -210,6 +210,9 @@ interface LineItem extends PrItemInput {
   _isAdditional?: boolean;
   _editedBy?: string | null;
   _soItemId?: string | null;
+  _setGroupId?: string | null;
+  _setGroupLabel?: string | null;
+  _setQty?: string | null;
 }
 
 const newLine = (rowNo: number): LineItem => ({
@@ -367,6 +370,9 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props)
         _isAdditional:      i.isAdditional ?? false,
         _editedBy:          i.editedBy ?? null,
         _soItemId:          i.soItemId ?? null,
+        _setGroupId:        i.setGroupId ?? null,
+        _setGroupLabel:     i.setGroupLabel ?? null,
+        _setQty:            i.setQty ?? null,
       })));
       if (result.items.length > 0) toast.success(`Imported ${result.items.length} items from ${result.soNo}`);
     } catch {
@@ -490,6 +496,9 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props)
           cpoNo: l._cpoNo ?? null,
           customerName: l._customerName ?? null,
           customerOrganization: l._customerOrganization ?? null,
+          setGroupId: l._setGroupId ?? null,
+          setGroupLabel: l._setGroupLabel ?? null,
+          setQty: l._setQty ?? null,
         })),
       });
       committedRef.current = true;
@@ -659,172 +668,215 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props)
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-border bg-muted/30 text-muted-foreground">
-                <th className="text-left px-3 py-2 font-medium w-8">#</th>
-                <th className="text-left px-3 py-2 font-medium w-12">Image</th>
-                <th className="text-left px-3 py-2 font-medium w-28">Code</th>
-                <th className="text-left px-3 py-2 font-medium">Description</th>
-                <th className="text-left px-3 py-2 font-medium w-28">Qty</th>
-                <th className="text-left px-3 py-2 font-medium w-16">UOM</th>
-                <th className="text-left px-3 py-2 font-medium w-20">Currency</th>
-                <th className="text-left px-3 py-2 font-medium w-28">Est. Unit Cost</th>
-                <th className="text-left px-3 py-2 font-medium w-24">Total</th>
-                <th className="text-left px-3 py-2 font-medium w-40">Preferred Supplier</th>
+              <tr className="bg-muted/40 border-y border-border/60 text-muted-foreground">
+                <th className="text-left py-1.5 pl-3 pr-3 w-8 text-[10px] tracking-wider font-medium uppercase">#</th>
+                <th className="text-left py-1.5 pr-3 w-12 text-[10px] tracking-wider font-medium uppercase">Image</th>
+                <th className="text-left py-1.5 pr-3 w-28 text-[10px] tracking-wider font-medium uppercase">Code</th>
+                <th className="text-left py-1.5 pr-3 text-[10px] tracking-wider font-medium uppercase">Description</th>
+                <th className="text-left py-1.5 pr-3 w-28 text-[10px] tracking-wider font-medium uppercase">Qty</th>
+                <th className="text-left py-1.5 pr-3 w-16 text-[10px] tracking-wider font-medium uppercase">UOM</th>
+                <th className="text-left py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Currency</th>
+                <th className="text-left py-1.5 pr-3 w-28 text-[10px] tracking-wider font-medium uppercase">Est. Unit Cost</th>
+                <th className="text-right py-1.5 pr-3 w-24 text-[10px] tracking-wider font-medium uppercase">Total</th>
+                <th className="text-left py-1.5 pr-3 w-40 text-[10px] tracking-wider font-medium uppercase">Preferred Supplier</th>
                 <th className="w-8" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {lines.map((line) => (
-                <tr key={line._key} className="group align-top">
-                  <td className="px-3 py-2.5 text-muted-foreground">{line.rowNo}</td>
-                  <td className="px-2 py-1.5">
-                    <div className="flex flex-col gap-0.5 items-start">
-                      {line._imageUploading ? (
-                        <div className="w-9 h-9 flex items-center justify-center rounded border border-border">
-                          <span className="text-[10px] text-muted-foreground animate-pulse">…</span>
-                        </div>
-                      ) : (
-                        <ProductImageCell
-                          productCode={line.productCode ?? ""}
-                          overrideUrl={line._imagePresignedUrl ?? undefined}
-                          onReplace={() => triggerImageUpload(line._key)}
-                        />
-                      )}
-                      {!line._imageUploading && (
-                        line._imagePresignedUrl ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                            <UploadIcon className="w-3 h-3 shrink-0" />
-                            uploaded
-                          </span>
-                        ) : line.productCode ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                            <DatabaseIcon className="w-3 h-3 shrink-0" />
-                            from catalog
-                          </span>
-                        ) : null
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <Input
-                      value={line.productCode ?? ""}
-                      onChange={(e) => setLine(line._key, { productCode: e.target.value })}
-                      onBlur={(e) => handleProductCodeBlur(line._key, e.target.value)}
-                      className="h-7 text-xs"
-                      placeholder="Code"
-                    />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    {/* CPO + Customer badges */}
-                    {(line._cpoNo || line._customerName || line._customerOrganization) && (
-                      <div className="flex flex-wrap gap-1 mb-1">
-                        {line._cpoNo && (
-                          <span className={cn(
-                            "inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border",
-                            "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
-                          )}>
-                            {line._cpoNo}
-                          </span>
+              {(() => {
+                const COL_COUNT = 11;
+                const seenGroupIds = new Set<string>();
+                const groupOrder: string[] = [];
+                for (const l of lines) {
+                  if (l._setGroupId && !seenGroupIds.has(l._setGroupId)) {
+                    seenGroupIds.add(l._setGroupId);
+                    groupOrder.push(l._setGroupId);
+                  }
+                }
+
+                const renderLineRow = (line: LineItem) => (
+                  <tr key={line._key} className="group align-top hover:bg-muted/20 transition-colors">
+                    <td className="px-3 py-2.5 text-muted-foreground">{line.rowNo}</td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex flex-col gap-0.5 items-start">
+                        {line._imageUploading ? (
+                          <div className="w-9 h-9 flex items-center justify-center rounded border border-border">
+                            <span className="text-[10px] text-muted-foreground animate-pulse">…</span>
+                          </div>
+                        ) : (
+                          <ProductImageCell
+                            productCode={line.productCode ?? ""}
+                            overrideUrl={line._imagePresignedUrl ?? undefined}
+                            onReplace={() => triggerImageUpload(line._key)}
+                          />
                         )}
-                        {line._customerOrganization && (
-                          <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                            {line._customerOrganization}
-                          </span>
-                        )}
-                        {line._customerName && (
-                          <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                            {line._customerName}
-                          </span>
+                        {!line._imageUploading && (
+                          line._imagePresignedUrl ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                              <UploadIcon className="w-3 h-3 shrink-0" />uploaded
+                            </span>
+                          ) : line.productCode ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                              <DatabaseIcon className="w-3 h-3 shrink-0" />from catalog
+                            </span>
+                          ) : null
                         )}
                       </div>
-                    )}
-                    <Input
-                      value={line.description ?? ""}
-                      onChange={(e) => setLine(line._key, { description: e.target.value, _descriptionSource: "user" })}
-                      className="h-7 text-xs"
-                      placeholder="Description"
-                    />
-                    {line._descriptionSource === "catalog" && (
-                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
-                        <DatabaseIcon className="w-3 h-3 shrink-0" />
-                        auto-filled from catalog
-                      </span>
-                    )}
-                    {line._descriptionSource === "so" && (
-                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-                        <ShoppingCartIcon className="w-3 h-3 shrink-0" />
-                        from sales order
-                      </span>
-                    )}
-                    {line._descriptionSource === "user" && (
-                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                        <PencilIcon className="w-3 h-3 shrink-0" />
-                        {currentUserName} edited
-                      </span>
-                    )}
-                    {line._isAdditional && (
-                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
-                        <PlusIcon className="w-3 h-3 shrink-0" />
-                        additional row
-                      </span>
-                    )}
-                    {line._editedBy && line._descriptionSource === "so" && (
-                      <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                        <PencilIcon className="w-3 h-3 shrink-0" />
-                        {line._editedBy} edited
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <Input type="number" value={line.qty ?? "1"} onChange={(e) => setLine(line._key, { qty: e.target.value })} className="h-7 text-xs text-center" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <Input value={line.uom ?? ""} onChange={(e) => setLine(line._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="UOM" />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <select
-                      value={line.currency ?? "MYR"}
-                      onChange={(e) => setLine(line._key, { currency: e.target.value })}
-                      className="h-7 w-full rounded-md border border-border bg-background px-1.5 text-xs"
-                    >
-                      {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <Input type="number" value={line.estimatedUnitCost ?? "0"} onChange={(e) => setLine(line._key, { estimatedUnitCost: e.target.value })} className="h-7 text-xs" />
-                  </td>
-                  <td className="px-3 py-2.5 tabular-nums font-medium">
-                    <span className="text-[10px] text-muted-foreground mr-0.5">{line.currency ?? "MYR"}</span>
-                    {parseFloat(calcTotal(line)).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <SupplierCell
-                      value={line._supplierName ?? ""}
-                      onSelect={(id, name) => setLine(line._key, { _supplierId: id, _supplierName: name })}
-                      onClear={() => setLine(line._key, { _supplierId: undefined, _supplierName: undefined })}
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="flex items-center gap-1">
-                      {line._soItemId && (
-                        <button
-                          title="Exclude from all future PRs"
-                          disabled={togglingExclude === line._key}
-                          onClick={() => handleExcludeFromPr(line._key, line._soItemId!)}
-                          className="text-muted-foreground hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                        >
-                          {togglingExclude === line._key
-                            ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" />
-                            : <BanIcon className="w-3.5 h-3.5" />}
-                        </button>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input
+                        value={line.productCode ?? ""}
+                        onChange={(e) => setLine(line._key, { productCode: e.target.value })}
+                        onBlur={(e) => handleProductCodeBlur(line._key, e.target.value)}
+                        className="h-7 text-xs"
+                        placeholder="Code"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {(line._cpoNo || line._customerName || line._customerOrganization) && (
+                        <div className="flex flex-wrap gap-1 mb-1">
+                          {line._cpoNo && (
+                            <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                              {line._cpoNo}
+                            </span>
+                          )}
+                          {line._customerOrganization && (
+                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                              {line._customerOrganization}
+                            </span>
+                          )}
+                          {line._customerName && (
+                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                              {line._customerName}
+                            </span>
+                          )}
+                        </div>
                       )}
-                      <button onClick={() => removeLine(line._key)} className="text-muted-foreground hover:text-destructive">
-                        <TrashIcon className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                      <Input
+                        value={line.description ?? ""}
+                        onChange={(e) => setLine(line._key, { description: e.target.value, _descriptionSource: "user" })}
+                        className="h-7 text-xs"
+                        placeholder="Description"
+                      />
+                      {line._descriptionSource === "catalog" && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                          <DatabaseIcon className="w-3 h-3 shrink-0" />auto-filled from catalog
+                        </span>
+                      )}
+                      {line._descriptionSource === "so" && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                          <ShoppingCartIcon className="w-3 h-3 shrink-0" />from sales order
+                        </span>
+                      )}
+                      {line._descriptionSource === "user" && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                          <PencilIcon className="w-3 h-3 shrink-0" />{currentUserName} edited
+                        </span>
+                      )}
+                      {line._isAdditional && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                          <PlusIcon className="w-3 h-3 shrink-0" />additional row
+                        </span>
+                      )}
+                      {line._editedBy && line._descriptionSource === "so" && (
+                        <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                          <PencilIcon className="w-3 h-3 shrink-0" />{line._editedBy} edited
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input type="number" value={line.qty ?? "1"} onChange={(e) => setLine(line._key, { qty: e.target.value })} className="h-7 text-xs text-center" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input value={line.uom ?? ""} onChange={(e) => setLine(line._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="UOM" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <select
+                        value={line.currency ?? "MYR"}
+                        onChange={(e) => setLine(line._key, { currency: e.target.value })}
+                        className="h-7 w-full rounded-md border border-border bg-background px-1.5 text-xs"
+                      >
+                        {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input type="number" value={line.estimatedUnitCost ?? "0"} onChange={(e) => setLine(line._key, { estimatedUnitCost: e.target.value })} className="h-7 text-xs" />
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-medium">
+                      <span className="text-[10px] text-muted-foreground mr-0.5">{line.currency ?? "MYR"}</span>
+                      {parseFloat(calcTotal(line)).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <SupplierCell
+                        value={line._supplierName ?? ""}
+                        onSelect={(id, name) => setLine(line._key, { _supplierId: id, _supplierName: name })}
+                        onClear={() => setLine(line._key, { _supplierId: undefined, _supplierName: undefined })}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-1">
+                        {line._soItemId && (
+                          <button
+                            title="Exclude from all future PRs"
+                            disabled={togglingExclude === line._key}
+                            onClick={() => handleExcludeFromPr(line._key, line._soItemId!)}
+                            className="text-muted-foreground hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                          >
+                            {togglingExclude === line._key
+                              ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" />
+                              : <BanIcon className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        <button onClick={() => removeLine(line._key)} className="text-muted-foreground hover:text-destructive">
+                          <TrashIcon className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+
+                const rows: React.ReactNode[] = [];
+
+                for (const gid of groupOrder) {
+                  const groupLines = lines.filter((l) => l._setGroupId === gid);
+                  const first = groupLines[0];
+                  rows.push(
+                    <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                      <td colSpan={COL_COUNT} className="px-3 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <input
+                            value={first._setGroupLabel ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setLines((prev) => prev.map((l) => l._setGroupId === gid ? { ...l, _setGroupLabel: v } : l));
+                            }}
+                            placeholder="Set name"
+                            className="h-6 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 font-medium text-blue-700 dark:text-blue-300 w-40"
+                          />
+                          <span className="text-[10px] text-muted-foreground">×</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={first._setQty ?? "1"}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setLines((prev) => prev.map((l) => l._setGroupId === gid ? { ...l, _setQty: v } : l));
+                            }}
+                            className="h-6 w-14 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 text-right"
+                          />
+                          <span className="text-[10px] text-muted-foreground">sets</span>
+                        </div>
+                      </td>
+                    </tr>,
+                  );
+                  groupLines.forEach((l) => rows.push(renderLineRow(l)));
+                }
+
+                lines.filter((l) => !l._setGroupId).forEach((l) => rows.push(renderLineRow(l)));
+
+                return rows;
+              })()}
             </tbody>
           </table>
         </div>

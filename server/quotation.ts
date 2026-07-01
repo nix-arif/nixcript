@@ -802,17 +802,18 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
       and(
         eq(quotation.organizationId, orgId),
         sql`REGEXP_REPLACE(${quotation.quotationNo}, '^.*-', '') ILIKE ${'%' + query + '%'}`,
-        includeDummy ? undefined : eq(quotation.isDummy, 0),
+        includeDummy ? sql`1=1` : eq(quotation.isDummy, 0),
         eq(quotation.status, "final"),
       ),
     )
     .orderBy(asc(quotation.isDummy), desc(quotation.createdAt))
     .limit(10);
 
-  if (rows.length === 0) return rows.map((r) => ({ ...r, cpoCount: 0 }));
+  const filteredRows = includeDummy ? rows : rows.filter((r) => r.isDummy !== 1);
+  if (filteredRows.length === 0) return filteredRows.map((r) => ({ ...r, cpoCount: 0 }));
 
   // Count existing CPOs per quotation so the UI can show "2 CPOs already"
-  const qtIds = rows.map((r) => r.id);
+  const qtIds = filteredRows.map((r) => r.id);
   const cpoCounts = await db
     .select({ quotationId: customerPurchaseOrder.quotationId, cnt: count() })
     .from(customerPurchaseOrder)
@@ -822,7 +823,7 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
   const cpoCountMap: Record<string, number> = {};
   for (const c of cpoCounts) if (c.quotationId) cpoCountMap[c.quotationId] = c.cnt;
 
-  return rows.map((r) => ({ ...r, cpoCount: cpoCountMap[r.id] ?? 0 }));
+  return filteredRows.map((r) => ({ ...r, cpoCount: cpoCountMap[r.id] ?? 0 }));
 }
 
 // ── Fetch quotation with items for SO pre-fill ───────────────────────────

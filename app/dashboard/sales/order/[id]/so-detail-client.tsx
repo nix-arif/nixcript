@@ -9,7 +9,7 @@ import {
   approveSalesOrder,
   rejectSalesOrder,
   recallSalesOrder,
-  toggleSoItemPrExcluded,
+  toggleSoItemApprovalRejected,
   type SalesOrderWithItems,
 } from "@/server/sales-order";
 import {
@@ -26,7 +26,7 @@ import {
   UserIcon, BuildingIcon, CalendarIcon, MapPinIcon,
   FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon, SendIcon, ClockIcon,
   PrinterIcon, ShoppingCartIcon, WarehouseIcon, AlertTriangleIcon, CheckCircle2Icon,
-  Loader2Icon, TruckIcon, LinkIcon, PlusIcon, DatabaseIcon, BanIcon,
+  Loader2Icon, TruckIcon, LinkIcon, PlusIcon, DatabaseIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -83,10 +83,23 @@ export function SalesOrderDetailClient({
   const [insight, setInsight] = useState<StockCheckResult | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [stockStatus, setStockStatus] = useState<string | null>(order.stockReservationStatus ?? null);
-  const [prExcludedItems, setPrExcludedItems] = useState<Set<string>>(
-    () => new Set(order.items.filter((i) => (i as any).prExcluded).map((i) => i.id)),
+  const [approvalRejectedItems, setApprovalRejectedItems] = useState<Set<string>>(
+    () => new Set(order.items.filter((i) => (i as any).approvalRejected).map((i) => i.id)),
   );
-  const [togglingPrExclude, setTogglingPrExclude] = useState<string | null>(null);
+  const [approvalRejectionMeta, setApprovalRejectionMeta] = useState<Record<string, { byName: string | null; at: Date | null }>>(
+    () => Object.fromEntries(
+      order.items
+        .filter((i) => (i as any).approvalRejected)
+        .map((i) => [
+          i.id,
+          {
+            byName: (i as any).approvalRejectedByName ?? null,
+            at: (i as any).approvalRejectedAt ? new Date((i as any).approvalRejectedAt) : null,
+          },
+        ]),
+    ),
+  );
+  const [togglingApprovalReject, setTogglingApprovalReject] = useState<string | null>(null);
 
   // Sync with server-refreshed prop
   useEffect(() => {
@@ -216,21 +229,28 @@ export function SalesOrderDetailClient({
     }
   }
 
-  async function handleTogglePrExclude(itemId: string) {
-    const nowExcluded = !prExcludedItems.has(itemId);
-    setTogglingPrExclude(itemId);
+  async function handleToggleApprovalReject(itemId: string) {
+    const nowRejected = !approvalRejectedItems.has(itemId);
+    setTogglingApprovalReject(itemId);
     try {
-      await toggleSoItemPrExcluded(itemId, nowExcluded);
-      setPrExcludedItems((prev) => {
+      const result = await toggleSoItemApprovalRejected(itemId, nowRejected);
+      setApprovalRejectedItems((prev) => {
         const next = new Set(prev);
-        if (nowExcluded) next.add(itemId); else next.delete(itemId);
+        if (nowRejected) next.add(itemId); else next.delete(itemId);
         return next;
       });
-      toast.success(nowExcluded ? "Item excluded from PR" : "Item included in PR");
+      setApprovalRejectionMeta((prev) => {
+        if (!nowRejected) {
+          const { [itemId]: _, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [itemId]: { byName: result.rejectedByName, at: result.rejectedAt } };
+      });
+      toast.success(nowRejected ? "Item marked for rejection" : "Item rejection cleared");
     } catch (e: any) {
       toast.error(e.message);
     } finally {
-      setTogglingPrExclude(null);
+      setTogglingApprovalReject(null);
     }
   }
 
@@ -330,31 +350,32 @@ export function SalesOrderDetailClient({
           </section>
 
           {/* Items */}
-          <section className="border border-border rounded-xl p-4">
-            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Items <span className="font-normal">({order.items.length})</span>
-            </h2>
+          <section className="border border-border rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 pt-4 pb-3">
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Items</h2>
+              <span className="text-[10px] font-medium tabular-nums px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{order.items.length}</span>
+            </div>
             {order.items.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No items</p>
+              <p className="text-sm text-muted-foreground px-4 pb-4">No items</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="border-b border-border text-muted-foreground">
-                      <th className="text-left align-bottom pb-2 pr-3 w-6 uppercase">#</th>
-                      <th className="text-left align-bottom pb-2 pr-3 w-20 uppercase">Code</th>
-                      <th className="text-left align-bottom pb-2 pr-3 uppercase">Description</th>
-                      <th className="text-right align-bottom pb-2 pr-3 w-12 uppercase">Qty</th>
-                      <th className="text-center align-bottom pb-2 pr-3 w-16 uppercase">Total qty</th>
-                      <th className="text-left align-bottom pb-2 pr-3 w-12 uppercase">UOM</th>
+                    <tr className="bg-muted/50 border-y border-border/60 text-muted-foreground">
+                      <th className="text-left align-middle py-1.5 pl-4 pr-3 w-6 text-[10px] tracking-wider font-medium uppercase">#</th>
+                      <th className="text-left align-middle py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Code</th>
+                      <th className="text-left align-middle py-1.5 pr-3 text-[10px] tracking-wider font-medium uppercase">Description</th>
+                      <th className="text-right align-middle py-1.5 pr-3 w-12 text-[10px] tracking-wider font-medium uppercase">Qty</th>
+                      <th className="text-center align-middle py-1.5 pr-3 w-16 text-[10px] tracking-wider font-medium uppercase">Total qty</th>
+                      <th className="text-left align-middle py-1.5 pr-3 w-12 text-[10px] tracking-wider font-medium uppercase">UOM</th>
                       {(status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 && (
-                        <th className="text-right align-bottom pb-2 pr-3 w-20 uppercase">Delivered</th>
+                        <th className="text-right align-middle py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Delivered</th>
                       )}
-                      <th className="text-right align-bottom pb-2 pr-3 w-24 uppercase">Unit price</th>
-                      <th className="text-right align-bottom pb-2 pr-3 w-14 uppercase">Disc%</th>
-                      <th className="text-right align-bottom pb-2 w-24 uppercase">Total</th>
+                      <th className="text-right align-middle py-1.5 pr-3 w-24 text-[10px] tracking-wider font-medium uppercase">Unit price</th>
+                      <th className="text-right align-middle py-1.5 pr-3 w-14 text-[10px] tracking-wider font-medium uppercase">Disc%</th>
+                      <th className="text-right align-middle py-1.5 pr-4 w-24 text-[10px] tracking-wider font-medium uppercase">Total</th>
                       {can("sales-order:update") && status === "confirmed" && (
-                        <th className="pb-2 w-8" />
+                        <th className="py-1.5 w-8" />
                       )}
                     </tr>
                   </thead>
@@ -383,7 +404,7 @@ export function SalesOrderDetailClient({
                       );
                       const colCount = 9
                         + ((status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 ? 1 : 0)
-                        + (can("sales-order:update") && status === "confirmed" ? 1 : 0);
+                        + (can("sales-order:approve") && status === "submitted" ? 1 : 0);
 
                       let lastCpoId: string | undefined = undefined;
                       const shownLooseHeaderForCpo = new Set<string>();
@@ -401,7 +422,7 @@ export function SalesOrderDetailClient({
                             : null;
                           rows.push(
                             <tr key={`cpo-section-${(item as any).sourceCustomerPoId ?? "none"}-${idx}`}>
-                              <td colSpan={colCount} className={`pt-4 pb-1 ${idx === 0 ? "pt-1" : ""}`}>
+                              <td colSpan={colCount} className={`pt-4 pb-1 pl-4 ${idx === 0 ? "pt-1" : ""}`}>
                                 <div className={`flex items-center gap-2 border-t border-border/60 pt-2 ${idx === 0 ? "border-t-0 pt-0" : ""}`}>
                                   {cpoInfo ? (
                                     <>
@@ -429,8 +450,8 @@ export function SalesOrderDetailClient({
                             shownLooseHeaderForCpo.add(cpoKey);
                             rows.push(
                               <tr key={`loose-hdr-${cpoKey}`} className="bg-muted/40 border-b border-border/40">
-                                <td colSpan={colCount} className="px-2 py-1.5">
-                                  <span className="text-[11px] font-bold tracking-tight text-muted-foreground">other items</span>
+                                <td colSpan={colCount} className="pl-4 pr-4 py-1.5">
+                                  <span className="text-[10px] font-semibold tracking-wider uppercase text-muted-foreground">other items</span>
                                 </td>
                               </tr>,
                             );
@@ -445,7 +466,7 @@ export function SalesOrderDetailClient({
                           const perSetPrice = groupTotal / setQtyNum;
                           rows.push(
                             <tr key={`grp-${(item as any).setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
-                              <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
+                              <td colSpan={colCount} className={`pl-4 pr-4 py-1.5 ${color?.border ?? ""}`}>
                                 <div className="flex items-center gap-2">
                                   <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{(item as any).setGroupLabel || "Set"}</span>
                                   <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
@@ -463,10 +484,12 @@ export function SalesOrderDetailClient({
                           );
                         }
 
+                        const isApprovalRejected = approvalRejectedItems.has(item.id);
+                        const arCls = isApprovalRejected ? "line-through" : "";
                         rows.push(
-                          <tr key={item.id} className={cn("border-b border-border/40 last:border-0", prExcludedItems.has(item.id) && "opacity-50", color ? color.row : "bg-background", isAdditional ? "text-red-500 dark:text-red-400" : "")}>
-                            <td className={`py-2 pr-3 align-top ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.rowNo}</td>
-                            <td className="py-2 pr-3 align-top">
+                          <tr key={item.id} className={cn("border-b border-border/40 last:border-0 transition-colors hover:brightness-[0.97] dark:hover:brightness-110", isApprovalRejected && "opacity-50", color ? color.row : "bg-background", isAdditional ? "text-red-500 dark:text-red-400" : "")}>
+                            <td className={`py-2 pl-4 pr-3 align-top ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.rowNo}</td>
+                            <td className={`py-2 pr-3 align-top ${arCls}`}>
                               <div className={`font-mono ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.productCode || "—"}</div>
                               {((item as any).codeSource ?? []).includes("quotation") && (
                                 <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
@@ -490,14 +513,24 @@ export function SalesOrderDetailClient({
                               )}
                             </td>
                             <td className="py-2 pr-3">
-                              <div className="flex flex-col gap-1">
+                              {/* Rejected tag sits outside the line-through wrapper so it is never struck through */}
+                              {isApprovalRejected && (() => {
+                                const meta = approvalRejectionMeta[item.id];
+                                const byName = meta?.byName ?? null;
+                                const at = meta?.at ? new Date(meta.at).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : null;
+                                return (
+                                  <div className="mb-1">
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
+                                      <XIcon className="w-3 h-3 shrink-0" />
+                                      rejected{byName ? ` by ${byName}` : ""}
+                                      {at ? ` · ${at}` : ""}
+                                    </span>
+                                  </div>
+                                );
+                              })()}
+                              <div className={cn("flex flex-col gap-1", arCls)}>
                                 <span>{item.description || "—"}</span>
                                 <div className="flex items-center gap-1 flex-wrap">
-                                  {prExcludedItems.has(item.id) && (
-                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
-                                      <BanIcon className="w-3 h-3 shrink-0" /> no PR
-                                    </span>
-                                  )}
                                   {isAdditional && (
                                     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
                                       <PlusIcon className="w-3 h-3 shrink-0" /> additional row
@@ -550,17 +583,17 @@ export function SalesOrderDetailClient({
                                 </span>
                               )}
                             </td>
-                            <td className={`py-2 pr-3 align-top text-center tabular-nums font-mono ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
+                            <td className={`py-2 pr-3 align-top text-center tabular-nums font-mono ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
                               {(() => { const s = parseFloat((item as any).setQty || "0") || 1; const q = parseFloat(item.qty || "0"); return s > 1 ? (q * s).toLocaleString("en-MY") : q.toLocaleString("en-MY"); })()}
                             </td>
-                            <td className={`py-2 pr-3 align-top ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</td>
+                            <td className={`py-2 pr-3 align-top ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</td>
                             {(status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 && (() => {
                               const delivered = itemDeliveredQtys[item.id] ?? 0;
                               const total = parseFloat(item.qty ?? "0");
                               const pct = total > 0 ? Math.min(100, (delivered / total) * 100) : 0;
                               const full = delivered >= total;
                               return (
-                                <td className="py-2 pr-3 align-top text-right tabular-nums">
+                                <td className={`py-2 pr-3 align-top text-right tabular-nums ${arCls}`}>
                                   <span className={cn("text-[11px] font-medium", full ? "text-green-600 dark:text-green-400" : delivered > 0 ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground")}>
                                     {delivered > 0 ? `${delivered}/${item.qty}` : "—"}
                                   </span>
@@ -572,7 +605,7 @@ export function SalesOrderDetailClient({
                                 </td>
                               );
                             })()}
-                            <td className="py-2 pr-3 align-top">
+                            <td className={`py-2 pr-3 align-top ${arCls}`}>
                               <div className="text-right tabular-nums">{fmt(item.unitPrice)}</div>
                               {((item as any).unitPriceSource ?? []).includes("quotation") && (
                                 <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
@@ -595,24 +628,24 @@ export function SalesOrderDetailClient({
                                 </span>
                               )}
                             </td>
-                            <td className={`py-2 pr-3 align-top text-right tabular-nums ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.discountPct || "0"}%</td>
-                            <td className="py-2 align-top text-right tabular-nums font-medium">{fmt(item.totalPrice)}</td>
-                            {can("sales-order:update") && status === "confirmed" && (
+                            <td className={`py-2 pr-3 align-top text-right tabular-nums ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.discountPct || "0"}%</td>
+                            <td className={`py-2 pr-4 align-top text-right tabular-nums font-medium ${arCls}`}>{fmt(item.totalPrice)}</td>
+                            {can("sales-order:approve") && status === "submitted" && (
                               <td className="py-2 pl-2 align-top">
                                 <button
-                                  title={prExcludedItems.has(item.id) ? "Include in PR" : "Exclude from PR"}
-                                  disabled={togglingPrExclude === item.id}
-                                  onClick={() => handleTogglePrExclude(item.id)}
+                                  title={isApprovalRejected ? "Clear rejection" : "Reject this item"}
+                                  disabled={togglingApprovalReject === item.id}
+                                  onClick={() => handleToggleApprovalReject(item.id)}
                                   className={cn(
                                     "flex items-center justify-center w-6 h-6 rounded transition-colors",
-                                    prExcludedItems.has(item.id)
+                                    isApprovalRejected
                                       ? "text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100"
                                       : "text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20",
                                   )}
                                 >
-                                  {togglingPrExclude === item.id
+                                  {togglingApprovalReject === item.id
                                     ? <Loader2Icon className="w-3 h-3 animate-spin" />
-                                    : <BanIcon className="w-3 h-3" />}
+                                    : <XIcon className="w-3 h-3" />}
                                 </button>
                               </td>
                             )}
@@ -666,6 +699,17 @@ export function SalesOrderDetailClient({
                 >
                   <SendIcon className="w-3.5 h-3.5" />
                   {actioning === "submit" ? "Submitting…" : "Submit for approval"}
+                </Button>
+              )}
+              {/* Manager: download PDF preview for submitted SO */}
+              {status === "submitted" && can("sales-order:approve") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full gap-1.5 h-8 text-xs"
+                  onClick={() => window.open(`/api/sales-order/${order.id}/pdf`, "_blank")}
+                >
+                  <PrinterIcon className="w-3.5 h-3.5" /> Download PDF
                 </Button>
               )}
               {/* Manager: approve submitted */}

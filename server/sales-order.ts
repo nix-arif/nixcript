@@ -340,21 +340,12 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
     ),
   ];
 
-  const [items, users, cpoRows] = await Promise.all([
+  const [items, cpoRows] = await Promise.all([
     db
       .select()
       .from(salesOrderItem)
       .where(eq(salesOrderItem.salesOrderId, id))
       .orderBy(asc(salesOrderItem.rowNo)),
-    db
-      .select({ id: user.id, name: user.name })
-      .from(user)
-      .where(
-        inArray(
-          user.id,
-          [so.createdBy, so.submittedBy, so.approvedBy].filter((x): x is string => !!x),
-        ),
-      ),
     cpoIds.length > 0
       ? db
           .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot, deliveryDate: customerPurchaseOrder.deliveryDate, salesPersonName: customerPurchaseOrder.salesPersonName })
@@ -362,6 +353,12 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
           .where(inArray(customerPurchaseOrder.id, cpoIds))
       : Promise.resolve([]),
   ]);
+
+  const rejectorIds = items.map((i) => i.approvalRejectedBy).filter((x): x is string => !!x);
+  const userIds = [...new Set([so.createdBy, so.submittedBy, so.approvedBy, ...rejectorIds].filter((x): x is string => !!x))];
+  const users = userIds.length > 0
+    ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds))
+    : [];
 
   const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
   const cpoMap = new Map(cpoRows.map((c) => [c.id, c]));
@@ -386,7 +383,7 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
     createdByName: nameOf(so.createdBy),
     submittedByName: nameOf(so.submittedBy ?? null),
     approvedByName: nameOf(so.approvedBy ?? null),
-    items,
+    items: items.map((i) => ({ ...i, approvalRejectedByName: nameOf(i.approvalRejectedBy) })),
     cpoCustomers,
   };
 }
@@ -1067,4 +1064,38 @@ export async function toggleSoItemPrExcluded(itemId: string, excluded: boolean):
 
   revalidatePath(`/dashboard/sales/order/${item.salesOrderId}`);
   revalidatePath("/dashboard/procurement/requisition");
+}
+
+export async function toggleSoItemApprovalRejected(itemId: string, rejected: boolean): Promise<{ rejectedByName: string | null; rejectedAt: Date | null }> {
+  const { orgId, userId } = await requireAccess("sales-order:approve");
+
+  const [item] = await db
+    .select({ id: salesOrderItem.id, salesOrderId: salesOrderItem.salesOrderId })
+    .from(salesOrderItem)
+    .where(eq(salesOrderItem.id, itemId));
+  if (!item) throw new Error("Item not found");
+
+  const [so] = await db
+    .select({ id: salesOrder.id, status: salesOrder.status })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, item.salesOrderId), eq(salesOrder.organizationId, orgId)));
+  if (!so) throw new Error("Not authorised");
+  if (so.status !== "submitted") throw new Error("Can only reject items on a submitted order");
+
+  const now = rejected ? new Date() : null;
+  const by  = rejected ? userId : null;
+
+  await db
+    .update(salesOrderItem)
+    .set({ approvalRejected: rejected, approvalRejectedBy: by, approvalRejectedAt: now })
+    .where(eq(salesOrderItem.id, itemId));
+
+  let rejectedByName: string | null = null;
+  if (rejected && userId) {
+    const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
+    rejectedByName = u?.name ?? null;
+  }
+
+  revalidatePath(`/dashboard/sales/order/${item.salesOrderId}`);
+  return { rejectedByName, rejectedAt: now };
 }
