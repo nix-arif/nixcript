@@ -1,6 +1,6 @@
 import { requirePermission } from "@/lib/auth/require-permission";
 import { getQuotationDetail } from "@/server/quotation";
-import { getCustomers } from "@/server/customer";
+import { getCustomer } from "@/server/customer";
 import { getOrgMembersForQuotation } from "@/server/quotation";
 import { getDocumentCategories } from "@/server/document-category";
 import { notFound, redirect } from "next/navigation";
@@ -14,9 +14,8 @@ export default async function EditQuotationPage({ params }: Props) {
   await requirePermission("quotation:update");
   const { id } = await params;
 
-  const [data, customers, members, categories] = await Promise.all([
+  const [data, members, categories] = await Promise.all([
     getQuotationDetail(id),
-    getCustomers(),
     getOrgMembersForQuotation().catch(() => []),
     getDocumentCategories().catch(() => []),
   ]);
@@ -24,5 +23,9 @@ export default async function EditQuotationPage({ params }: Props) {
   if (!data) notFound();
   if (data.quotation.status !== "draft") redirect(`/dashboard/sales/quotation/${id}`);
 
-  return <EditQuotationClient data={data} customers={customers} members={members} categories={categories} />;
+  const initialCustomer = data.quotation.customerId
+    ? await getCustomer(data.quotation.customerId).catch(() => null)
+    : null;
+
+  return <EditQuotationClient data={data} initialCustomer={initialCustomer} members={members} categories={categories} />;
 }

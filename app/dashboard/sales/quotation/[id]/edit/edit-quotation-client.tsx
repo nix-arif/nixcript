@@ -112,25 +112,23 @@ function OptionToggle({
 
 interface Props {
   data: Data;
-  customers: Customer[];
+  initialCustomer: Customer | null;
   members: Member[];
   categories: DocumentCategoryRow[];
 }
 
-export function EditQuotationClient({ data, customers, members, categories }: Props) {
+export function EditQuotationClient({ data, initialCustomer, members, categories }: Props) {
   const router = useRouter();
   const { quotation: q, items: existingItems } = data;
 
   // ── Header state ────────────────────────────────────────────────────────
   const [title, setTitle] = useState(q.title ?? "Loose Items");
-  const [customerId, setCustomerId] = useState(q.customerId ?? "");
-  // Restore the previously selected company by matching the snapshot's organizationName
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(() => initialCustomer ?? null);
+  const customerId = selectedCustomer?.id ?? q.customerId ?? "";
   const [customerOrgMemberId, setCustomerOrgMemberId] = useState(() => {
-    if (!q.customerId) return "";
-    const cust = customers.find((c) => c.id === q.customerId);
+    const cust = initialCustomer;
     if (!cust) return "";
-    const snapshotOrg = (q.customerSnapshot as { organizationName?: string } | null)
-      ?.organizationName;
+    const snapshotOrg = (q.customerSnapshot as { organizationName?: string } | null)?.organizationName;
     if (snapshotOrg) {
       const match = cust.memberships.find((co) => co.orgName === snapshotOrg);
       if (match) return match.id;
@@ -138,11 +136,12 @@ export function EditQuotationClient({ data, customers, members, categories }: Pr
     return cust.memberships.find((co) => co.isPrimary)?.id ?? cust.memberships[0]?.id ?? "";
   });
   const [customerSearch, setCustomerSearch] = useState(() => {
-    if (!q.customerId) return "";
-    const cust = customers.find((c) => c.id === q.customerId);
-    return cust ? [cust.title, cust.name].filter(Boolean).join(" ") : "";
+    if (!initialCustomer) return "";
+    return [initialCustomer.title, initialCustomer.name].filter(Boolean).join(" ");
   });
   const [customerOpen, setCustomerOpen] = useState(false);
+  const [custResults, setCustResults] = useState<Customer[]>([]);
+  const custSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const customerBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spInputRef = useRef<HTMLInputElement>(null);
   const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>(() => {
@@ -584,8 +583,8 @@ export function EditQuotationClient({ data, customers, members, categories }: Pr
         {/* Left column */}
         <div className="space-y-4">
           {/* Card 1: Customer */}
-          <div className="bg-background border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+          <div className="bg-background border border-border rounded-xl">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border rounded-t-xl">
               <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Customer<span className="text-destructive ml-0.5 normal-case">*</span>
               </div>
@@ -620,26 +619,26 @@ export function EditQuotationClient({ data, customers, members, categories }: Pr
               <div>
                 {(() => {
                   const trimmed = customerSearch.trim();
-                  const filtered = trimmed.length >= 3
-                    ? customers.filter((c) => {
-                        const full = [c.title, c.name].filter(Boolean).join(" ").toLowerCase();
-                        const t = trimmed.toLowerCase();
-                        return full.includes(t) || (c.email ?? "").toLowerCase().includes(t) || (c.contactNo ?? "").toLowerCase().includes(t);
-                      })
-                    : [];
-                  const selectedLabel = customerId
-                    ? [customers.find((c) => c.id === customerId)?.title, customers.find((c) => c.id === customerId)?.name].filter(Boolean).join(" ")
+                  const selectedLabel = selectedCustomer
+                    ? [selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")
                     : "";
                   return (
                     <div className="relative">
                       <Input
                         className="h-9 text-sm"
-                        placeholder={selectedLabel || "Type 3+ characters to search…"}
+                        placeholder={selectedLabel || "Type to search by name, contact, or hospital…"}
                         value={customerSearch}
                         onChange={(e) => {
-                          setCustomerSearch(e.target.value);
+                          const val = e.target.value;
+                          setCustomerSearch(val);
                           setCustomerOpen(true);
-                          if (!e.target.value) { setCustomerId(""); setCustomerOrgMemberId(""); }
+                          if (!val) { setSelectedCustomer(null); setCustomerOrgMemberId(""); setCustResults([]); return; }
+                          if (custSearchTimer.current) clearTimeout(custSearchTimer.current);
+                          custSearchTimer.current = setTimeout(async () => {
+                            if (val.trim().length < 2) { setCustResults([]); return; }
+                            const res = await getCustomers(val.trim());
+                            setCustResults(res.slice(0, 8));
+                          }, 300);
                         }}
                         onFocus={() => setCustomerOpen(true)}
                         onBlur={() => {
@@ -648,12 +647,12 @@ export function EditQuotationClient({ data, customers, members, categories }: Pr
                       />
                       {customerOpen && (
                         <div className="absolute z-50 w-full mt-1 bg-background border border-border rounded-md shadow-md max-h-52 overflow-y-auto">
-                          {trimmed.length < 3 ? (
-                            <div className="px-3 py-2 text-xs text-muted-foreground">Type at least 3 characters to search</div>
-                          ) : filtered.length === 0 ? (
+                          {trimmed.length < 2 ? (
+                            <div className="px-3 py-2 text-xs text-muted-foreground">Type to search customers…</div>
+                          ) : custResults.length === 0 ? (
                             <div className="px-3 py-2 text-xs text-muted-foreground">No customers found</div>
                           ) : (
-                            filtered.map((c) => (
+                            custResults.map((c) => (
                               <button
                                 key={c.id}
                                 type="button"
@@ -662,14 +661,16 @@ export function EditQuotationClient({ data, customers, members, categories }: Pr
                                   e.preventDefault();
                                   if (customerBlurTimer.current) clearTimeout(customerBlurTimer.current);
                                   const label = [c.title, c.name].filter(Boolean).join(" ");
-                                  setCustomerId(c.id);
+                                  setSelectedCustomer(c);
                                   setCustomerSearch(label);
                                   setCustomerOpen(false);
+                                  setCustResults([]);
                                   const primary = c.memberships.find((co) => co.isPrimary) ?? c.memberships[0];
                                   setCustomerOrgMemberId(primary?.id ?? "");
                                 }}
                               >
-                                {[c.title, c.name].filter(Boolean).join(" ")}
+                                <span>{[c.title, c.name].filter(Boolean).join(" ")}</span>
+                                {(c.memberships.find(m => m.isPrimary) ?? c.memberships[0])?.orgName && <span className="ml-2 text-xs text-muted-foreground">{(c.memberships.find(m => m.isPrimary) ?? c.memberships[0])?.orgName}</span>}
                                 {c.contactNo && <span className="ml-2 text-xs text-muted-foreground">{c.contactNo}</span>}
                               </button>
                             ))
@@ -683,7 +684,6 @@ export function EditQuotationClient({ data, customers, members, categories }: Pr
 
               {/* Hospital / organization selector */}
               {(() => {
-                const selectedCustomer = customers.find((c) => c.id === customerId);
                 if (!selectedCustomer || selectedCustomer.memberships.length === 0) return null;
                 const selectedCompany =
                   selectedCustomer.memberships.find((co) => co.id === customerOrgMemberId) ??

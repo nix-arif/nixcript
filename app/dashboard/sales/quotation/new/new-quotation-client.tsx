@@ -122,7 +122,6 @@ const STATUS_BADGE: Record<
 };
 
 interface Props {
-  customers: Customer[];
   members: Member[];
   quotationNo: string;
   currentUserId: string;
@@ -133,7 +132,6 @@ interface Props {
 }
 
 export function NewQuotationClient({
-  customers,
   members,
   quotationNo,
   currentUserId,
@@ -149,10 +147,13 @@ export function NewQuotationClient({
   const [mode, setMode] = useState<"single" | "comparison">("single");
   const [title, setTitle] = useState("Loose Items");
   const [sets, setSets] = useState(1);
-  const [customerId, setCustomerId] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const customerId = selectedCustomer?.id ?? "";
   const [customerOrgMemberId, setCustomerCompanyId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerOpen, setCustomerOpen] = useState(false);
+  const [custResults, setCustResults] = useState<Customer[]>([]);
+  const custSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const customerBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spInputRef = useRef<HTMLInputElement>(null);
   const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>([]);
@@ -496,7 +497,6 @@ export function NewQuotationClient({
     }
   };
 
-  const selectedCustomer = customers.find((c) => c.id === customerId);
   const selectedCompany =
     selectedCustomer?.memberships.find((co) => co.id === customerOrgMemberId) ??
     selectedCustomer?.memberships.find((co) => co.isPrimary) ??
@@ -677,8 +677,8 @@ export function NewQuotationClient({
           </div>
 
           {/* Card 1: Customer */}
-          <div className="bg-background border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+          <div className="bg-background border border-border rounded-xl">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border rounded-t-xl">
               <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Customer<span className="text-destructive ml-0.5 normal-case">*</span>
               </div>
@@ -687,26 +687,26 @@ export function NewQuotationClient({
               <div>
                 {(() => {
                   const trimmed = customerSearch.trim();
-                  const filtered = trimmed.length >= 3
-                    ? customers.filter((c) => {
-                        const full = [c.title, c.name].filter(Boolean).join(" ").toLowerCase();
-                        const t = trimmed.toLowerCase();
-                        return full.includes(t) || (c.email ?? "").toLowerCase().includes(t) || (c.contactNo ?? "").toLowerCase().includes(t);
-                      })
-                    : [];
-                  const selectedLabel = customerId
-                    ? [customers.find((c) => c.id === customerId)?.title, customers.find((c) => c.id === customerId)?.name].filter(Boolean).join(" ")
+                  const selectedLabel = selectedCustomer
+                    ? [selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")
                     : "";
                   return (
                     <div className="relative">
                       <Input
                         className="h-9 text-sm"
-                        placeholder={selectedLabel || "Type 3+ characters to search…"}
+                        placeholder={selectedLabel || "Type to search by name, contact, or hospital…"}
                         value={customerSearch}
                         onChange={(e) => {
-                          setCustomerSearch(e.target.value);
+                          const val = e.target.value;
+                          setCustomerSearch(val);
                           setCustomerOpen(true);
-                          if (!e.target.value) { setCustomerId(""); setCustomerCompanyId(""); }
+                          if (!val) { setSelectedCustomer(null); setCustomerCompanyId(""); setCustResults([]); return; }
+                          if (custSearchTimer.current) clearTimeout(custSearchTimer.current);
+                          custSearchTimer.current = setTimeout(async () => {
+                            if (val.trim().length < 2) { setCustResults([]); return; }
+                            const res = await getCustomers(val.trim());
+                            setCustResults(res.slice(0, 8));
+                          }, 300);
                         }}
                         onFocus={() => setCustomerOpen(true)}
                         onBlur={() => {
@@ -715,12 +715,12 @@ export function NewQuotationClient({
                       />
                       {customerOpen && (
                         <div className="absolute z-50 w-full mt-1 bg-background border border-border rounded-md shadow-md max-h-52 overflow-y-auto">
-                          {trimmed.length < 3 ? (
-                            <div className="px-3 py-2 text-xs text-muted-foreground">Type at least 3 characters to search</div>
-                          ) : filtered.length === 0 ? (
+                          {trimmed.length < 2 ? (
+                            <div className="px-3 py-2 text-xs text-muted-foreground">Type to search customers…</div>
+                          ) : custResults.length === 0 ? (
                             <div className="px-3 py-2 text-xs text-muted-foreground">No customers found</div>
                           ) : (
-                            filtered.map((c) => (
+                            custResults.map((c) => (
                               <button
                                 key={c.id}
                                 type="button"
@@ -729,14 +729,16 @@ export function NewQuotationClient({
                                   e.preventDefault();
                                   if (customerBlurTimer.current) clearTimeout(customerBlurTimer.current);
                                   const label = [c.title, c.name].filter(Boolean).join(" ");
-                                  setCustomerId(c.id);
+                                  setSelectedCustomer(c);
                                   setCustomerSearch(label);
                                   setCustomerOpen(false);
+                                  setCustResults([]);
                                   const primary = c.memberships.find((co) => co.isPrimary) ?? c.memberships[0];
                                   setCustomerCompanyId(primary?.id ?? "");
                                 }}
                               >
-                                {[c.title, c.name].filter(Boolean).join(" ")}
+                                <span>{[c.title, c.name].filter(Boolean).join(" ")}</span>
+                                {(c.memberships.find(m => m.isPrimary) ?? c.memberships[0])?.orgName && <span className="ml-2 text-xs text-muted-foreground">{(c.memberships.find(m => m.isPrimary) ?? c.memberships[0])?.orgName}</span>}
                                 {c.contactNo && <span className="ml-2 text-xs text-muted-foreground">{c.contactNo}</span>}
                               </button>
                             ))

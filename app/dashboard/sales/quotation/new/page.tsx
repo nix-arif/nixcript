@@ -1,5 +1,4 @@
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getCustomers } from "@/server/customer";
 import {
   getOrgMembersForQuotation,
   peekNextQuotationNo,
@@ -16,8 +15,7 @@ export default async function NewQuotationPage() {
   const session = await auth.api.getSession({ headers: await headers() });
   const orgId = session?.session.activeOrganizationId ?? "";
 
-  const [customers, members, quotationNo, ownerOrgs, categories] = await Promise.all([
-    getCustomers().catch((e) => { console.error("[new-quotation] getCustomers failed:", e); throw e; }),
+  const [members, quotationNo, ownerOrgs, categories] = await Promise.all([
     getOrgMembersForQuotation().catch(() => []),
     peekNextQuotationNo(orgId).catch((e) => { console.error("[new-quotation] peekNextQuotationNo failed:", e); throw e; }),
     getOwnerOrganizations().catch((e) => { console.error("[new-quotation] getOwnerOrganizations failed:", e); throw e; }),
@@ -26,7 +24,6 @@ export default async function NewQuotationPage() {
 
   return (
     <NewQuotationClient
-      customers={customers}
       members={members}
       quotationNo={quotationNo}
       currentUserId={session?.user.id ?? ""}

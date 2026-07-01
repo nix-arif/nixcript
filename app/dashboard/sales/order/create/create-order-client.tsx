@@ -186,7 +186,7 @@ function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown, onBlur: onCodeBlur
         }}
         onFocus={() => { codeOnFocus.current = q; }}
         onBlur={() => { setTimeout(() => setOpen(false), 150); onCodeBlur?.(item._key, q, codeOnFocus.current); }}
-        className="h-7 text-xs"
+        className="h-7 text-[11px] md:text-[11px] font-mono"
         placeholder="Code…"
       />
       {open && (
@@ -267,12 +267,12 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   const originalSoDropdownRef = useRef<HTMLDivElement>(null);
 
   // Header
-  const [salesPerson, setSalesPerson] = useState("");
-  const [salesPersonInherited, setSalesPersonInherited] = useState("");
-  const [associateSalesPersons, setAssociateSalesPersons] = useState<{ id: string; name: string; sourceCpoNo?: string }[]>([]);
-  const [externalPersonInput, setExternalPersonInput] = useState<Record<string, string>>({});
-  const getExtInput = (key: string) => externalPersonInput[key] ?? "";
-  const setExtInput = (key: string, val: string) => setExternalPersonInput((prev) => ({ ...prev, [key]: val }));
+  const spInputRef = useRef<HTMLInputElement>(null);
+  const [spInput, setSpInput] = useState("");
+  const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>([]);
+  const [cpoSalesPersons, setCpoSalesPersons] = useState<Record<string, { id: string; name: string; isExt: boolean }[]>>({});
+  const [cpoSpInputs, setCpoSpInputs] = useState<Record<string, string>>({});
+  const cpoSpInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [deliveryDate, setDeliveryDate] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [deliveryDateInherited, setDeliveryDateInherited] = useState("");
@@ -399,25 +399,21 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       setDeliveryAddress(addr);
       setDeliveryAddressInherited(addr);
     }
-    // Main sales person from first CPO
-    if (first.salesPersonName) {
-      setSalesPerson(first.salesPersonName);
-      setSalesPersonInherited(first.salesPersonName);
-    }
-    // Merge ALL sales persons from all CPOs into associates with source tags:
-    // - salesPersonName from CPOs 2+ (if different from main) tagged with their CPO
-    // - all associateSalesPersons from every CPO tagged with their CPO
-    const seenNames = new Set<string>([first.salesPersonName ?? ""].filter(Boolean));
-    const extraMainPersons = initialCpos.slice(1)
-      .filter((c) => c.salesPersonName && !seenNames.has(c.salesPersonName))
-      .map((c) => { seenNames.add(c.salesPersonName!); return { id: `sp-${c.salesPersonName}`, name: c.salesPersonName!, sourceCpoNo: c.customerPoNo }; });
-    const allAssociates = [
-      ...extraMainPersons,
-      ...initialCpos.flatMap((c) => (c.associateSalesPersons ?? []).map((a) => ({ ...a, sourceCpoNo: c.customerPoNo }))),
-    ];
-    const seen = new Set<string>();
-    const uniqueAssociates = allAssociates.filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
-    if (uniqueAssociates.length > 0) setAssociateSalesPersons(uniqueAssociates);
+    // Build per-CPO sales person arrays
+    const initSpMap: Record<string, { id: string; name: string; isExt: boolean }[]> = {};
+    initialCpos.forEach((c) => {
+      const list: { id: string; name: string; isExt: boolean }[] = [];
+      if (c.salesPersonName) {
+        const m = members.find(x => (x.name ?? x.email)?.toLowerCase() === c.salesPersonName!.toLowerCase());
+        list.push({ id: m?.userId ?? `sp-${c.salesPersonName}`, name: c.salesPersonName, isExt: !m });
+      }
+      ((c.associateSalesPersons ?? []) as { id: string; name: string }[]).forEach((a) => {
+        const m = members.find(x => x.userId === a.id);
+        list.push({ id: a.id, name: a.name, isExt: !m });
+      });
+      initSpMap[c.id] = list;
+    });
+    if (Object.keys(initSpMap).length > 0) setCpoSalesPersons(initSpMap);
     // Inherit notes from first CPO if set
     if (first.notes) setNotes(first.notes);
     if (first.customerId) {
@@ -593,28 +589,19 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           setDeliveryAddress(addr);
           setDeliveryAddressInherited(addr);
         }
-        if (!salesPerson && data.salesPersonName) {
-          setSalesPerson(data.salesPersonName);
-          setSalesPersonInherited(data.salesPersonName);
-        } else if (salesPerson && data.salesPersonName && data.salesPersonName !== salesPerson) {
-          setAssociateSalesPersons((prev) => {
-            const id = `sp-${data.salesPersonName}`;
-            if (prev.some((a) => a.id === id)) return prev;
-            return [...prev, { id, name: data.salesPersonName!, sourceCpoNo: data.customerPoNo }];
-          });
-        }
         if (!notes && data.notes) setNotes(data.notes);
       }
-      // Inherit CPO associate persons for ALL CPOs (not just first)
-      if (data.associateSalesPersons && data.associateSalesPersons.length > 0) {
-        setAssociateSalesPersons((prev) => {
-          const existingIds = new Set(prev.map((a) => a.id));
-          const toAdd = data.associateSalesPersons!
-            .filter((a) => !existingIds.has(a.id))
-            .map((a) => ({ ...a, sourceCpoNo: data.customerPoNo }));
-          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-        });
+      // Build sales persons list for this CPO
+      const spList: { id: string; name: string; isExt: boolean }[] = [];
+      if (data.salesPersonName) {
+        const m = members.find(x => (x.name ?? x.email)?.toLowerCase() === data.salesPersonName!.toLowerCase());
+        spList.push({ id: m?.userId ?? `sp-${data.salesPersonName}`, name: data.salesPersonName, isExt: !m });
       }
+      ((data.associateSalesPersons ?? []) as { id: string; name: string }[]).forEach((a) => {
+        const m = members.find(x => x.userId === a.id);
+        spList.push({ id: a.id, name: a.name, isExt: !m });
+      });
+      setCpoSalesPersons((prev) => ({ ...prev, [data.id]: spList }));
 
       // Auto-fill customer from first CPO
       if (linkedCpos.length === 0 && data.customerId && !selectedCustomer) {
@@ -653,6 +640,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   }
 
   function removeCpo(id: string) {
+    setCpoSalesPersons((prev) => { const next = { ...prev }; delete next[id]; return next; });
     setLinkedCpos((prev) => {
       const next = prev.filter((c) => c.id !== id);
       if (next.length === 0) {
@@ -1005,16 +993,14 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
     if (linkedCpos.length > 0) {
       for (const cpo of linkedCpos) {
-        const hasExternal = associateSalesPersons.some((a) => a.sourceCpoNo === cpo.customerPoNo);
-        if (!cpo.salesPersonName && !hasExternal) {
-          toast.error(`Sales person or external person required for ${cpo.customerPoNo}`);
+        if (!cpoSalesPersons[cpo.id]?.length) {
+          toast.error(`Sales person required for ${cpo.customerPoNo}`);
           return null;
         }
       }
     } else {
-      const hasExternal = associateSalesPersons.some((a) => !a.sourceCpoNo);
-      if (!salesPerson && !hasExternal) {
-        toast.error("Sales person or external person is required");
+      if (salesPersons.length === 0) {
+        toast.error("Sales person is required");
         return null;
       }
     }
@@ -1035,26 +1021,28 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       customerId: primaryCustomerId,
       customerOrgMemberId: selectedCustomer ? custOrgMemberId : undefined,
       customerPoLinks: linkedCpos.length > 0
-        ? linkedCpos.map((c) => ({
-            customerPoId: c.id,
-            customerPoNo: c.customerPoNo,
-            salesPersonName: c.salesPersonName ?? null,
-            externalPersons: associateSalesPersons
-              .filter((a) => a.sourceCpoNo === c.customerPoNo)
-              .map(({ id, name }) => ({ id, name })),
-          }))
+        ? linkedCpos.map((c) => {
+            const sp = cpoSalesPersons[c.id] ?? [];
+            return {
+              customerPoId: c.id,
+              customerPoNo: c.customerPoNo,
+              salesPersonName: sp[0]?.name ?? null,
+              externalPersons: sp.slice(1).map(({ id, name }) => ({ id, name })),
+            };
+          })
         : undefined,
       linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
-      salesPersonName: (linkedCpos[0]?.salesPersonName || salesPerson) || undefined,
+      salesPersonName: linkedCpos.length > 0
+        ? (cpoSalesPersons[linkedCpos[0]?.id]?.[0]?.name || undefined)
+        : (salesPersons[0]?.name || undefined),
       associateSalesPersons: (() => {
-        const seen = new Set<string>();
-        const all = [
-          ...linkedCpos.slice(1)
-            .filter((c) => c.salesPersonName)
-            .map((c) => ({ id: `sp-${c.salesPersonName}`, name: c.salesPersonName! })),
-          ...associateSalesPersons.map(({ sourceCpoNo: _s, ...rest }) => rest),
-        ].filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
-        return all.length > 0 ? all : undefined;
+        if (linkedCpos.length > 0) {
+          const seen = new Set<string>();
+          const all = linkedCpos.flatMap((c) => (cpoSalesPersons[c.id] ?? []).slice(1).map(({ id, name }) => ({ id, name })))
+            .filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
+          return all.length > 0 ? all : undefined;
+        }
+        return salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined;
       })(),
       deliveryDate: (() => {
         const d = linkedCpos[0]?.deliveryDate || deliveryDate;
@@ -1766,39 +1754,73 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       <span className="text-[11px] text-muted-foreground italic">Cash sale</span>
                     </td>
                     <td className="py-2 pr-3 align-top">
-                      <div className="space-y-1">
-                        <select
-                          value={salesPerson}
-                          onChange={(e) => setSalesPerson(e.target.value)}
-                          className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-                        >
-                          <option value="">— Select —</option>
-                          {members.map((m) => (
-                            <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
+                      <div
+                        className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
+                        onClick={() => spInputRef.current?.focus()}
+                      >
+                        {salesPersons.map((s) => (
+                          <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
+                            {s.name}
+                            {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setSalesPersons((prev) => prev.filter((x) => x.id !== s.id)); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
+                          </span>
+                        ))}
+                        <select value="" onClick={(e) => e.stopPropagation()} onChange={(e) => {
+                          const m = members.find((x) => x.userId === e.target.value);
+                          if (!m) return;
+                          const mName = (m.name ?? m.email).toLowerCase();
+                          if (salesPersons.some((s) => s.id === m.userId || s.name.toLowerCase() === mName)) return;
+                          setSalesPersons((prev) => [...prev, { id: m.userId, name: m.name ?? m.email, isExt: false }]);
+                        }} className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
+                          <option value="">+ member</option>
+                          {members.filter((m) => !salesPersons.some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
+                            <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
                           ))}
                         </select>
-                        <div className="flex flex-wrap items-center gap-1 min-h-7 w-full rounded-md border border-input bg-background px-2 py-0.5 focus-within:ring-1 focus-within:ring-ring">
-                          {associateSalesPersons.filter((a) => !a.sourceCpoNo).map((a) => (
-                            <span key={a.id} className="inline-flex items-center gap-0.5 text-[10px] bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-1.5 py-0.5 shrink-0">
-                              {a.name}
-                              <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>
-                              <button type="button" onClick={() => setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id))} className="opacity-60 hover:opacity-100 ml-0.5"><XIcon className="w-2 h-2" /></button>
-                            </span>
-                          ))}
-                          <input
-                            value={getExtInput("__cash__")}
-                            onChange={(e) => setExtInput("__cash__", e.target.value)}
-                            placeholder="Add external…"
-                            className="flex-1 min-w-16 bg-transparent text-[11px] outline-none placeholder:text-muted-foreground"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && getExtInput("__cash__").trim()) {
-                                setAssociateSalesPersons((prev) => [...prev, { id: `ext-${Date.now()}`, name: getExtInput("__cash__").trim() }]);
-                                setExtInput("__cash__", "");
-                                e.preventDefault();
+                        <input
+                          ref={spInputRef}
+                          type="text"
+                          value={spInput}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val.includes(",")) {
+                              const parts = val.split(",");
+                              const toAdd = parts.slice(0, -1).map((p) => p.trim()).filter(Boolean);
+                              if (toAdd.length) {
+                                const memberNames = new Set(members.map((m) => (m.name ?? m.email).toLowerCase()));
+                                const blocked = toAdd.filter((n) => memberNames.has(n.toLowerCase()));
+                                if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); }
+                                const t = Date.now();
+                                setSalesPersons((prev) => {
+                                  const existing = new Set(prev.map((s) => s.name.toLowerCase()));
+                                  const unique = toAdd.filter((n) => !existing.has(n.toLowerCase()) && !memberNames.has(n.toLowerCase()));
+                                  return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                                });
                               }
-                            }}
-                          />
-                        </div>
+                              setSpInput(parts[parts.length - 1].trimStart());
+                            } else { setSpInput(val); }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Backspace" && !spInput && salesPersons.length > 0) { setSalesPersons((prev) => prev.slice(0, -1)); return; }
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              if (!spInput.trim()) return;
+                              const names = spInput.split(",").map((p) => p.trim()).filter(Boolean);
+                              const memberNames = new Set(members.map((m) => (m.name ?? m.email).toLowerCase()));
+                              const blocked = names.filter((n) => memberNames.has(n.toLowerCase()));
+                              if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); return; }
+                              const t = Date.now();
+                              setSalesPersons((prev) => {
+                                const existing = new Set(prev.map((s) => s.name.toLowerCase()));
+                                const unique = names.filter((n) => !existing.has(n.toLowerCase()));
+                                return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                              });
+                              setSpInput("");
+                            }
+                          }}
+                          placeholder={salesPersons.length === 0 ? "Type a name… (Enter or , to add)" : ""}
+                          className="flex-1 min-w-24 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+                        />
                       </div>
                     </td>
                     <td className="py-2 pr-3 align-top">
@@ -1837,36 +1859,76 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         <td className="py-2 pr-3 align-top">
                           <div className="space-y-1">
                             {cpo._salesPersonInherited && (spSame ? tagFrom : tagEdited)}
-                            <select
-                              value={cpo.salesPersonName ?? ""}
-                              onChange={(e) => updateLinkedCpo(cpo.id, { salesPersonName: e.target.value || null })}
-                              className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+                            <div
+                              className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
+                              onClick={() => cpoSpInputRefs.current[cpo.id]?.focus()}
                             >
-                              <option value="">— Select —</option>
-                              {members.map((m) => (
-                                <option key={m.userId} value={m.name ?? m.email}>{m.name ?? m.email}</option>
-                              ))}
-                            </select>
-                            <div className="flex flex-wrap items-center gap-1 min-h-7 w-full rounded-md border border-input bg-background px-2 py-0.5 focus-within:ring-1 focus-within:ring-ring">
-                              {associateSalesPersons.filter((a) => a.sourceCpoNo === cpo.customerPoNo).map((a) => (
-                                <span key={a.id} className="inline-flex items-center gap-0.5 text-[10px] bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-1.5 py-0.5 shrink-0">
-                                  {a.name}
-                                  <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>
-                                  <button type="button" onClick={() => setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id))} className="opacity-60 hover:opacity-100 ml-0.5"><XIcon className="w-2 h-2" /></button>
+                              {(cpoSalesPersons[cpo.id] ?? []).map((s) => (
+                                <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
+                                  {s.name}
+                                  {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); setCpoSalesPersons((prev) => ({ ...prev, [cpo.id]: (prev[cpo.id] ?? []).filter((x) => x.id !== s.id) })); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
                                 </span>
                               ))}
+                              <select value="" onClick={(e) => e.stopPropagation()} onChange={(e) => {
+                                const m = members.find((x) => x.userId === e.target.value);
+                                if (!m) return;
+                                const mName = (m.name ?? m.email).toLowerCase();
+                                if ((cpoSalesPersons[cpo.id] ?? []).some((s) => s.id === m.userId || s.name.toLowerCase() === mName)) return;
+                                setCpoSalesPersons((prev) => ({ ...prev, [cpo.id]: [...(prev[cpo.id] ?? []), { id: m.userId, name: m.name ?? m.email, isExt: false }] }));
+                              }} className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
+                                <option value="">+ member</option>
+                                {members.filter((m) => !(cpoSalesPersons[cpo.id] ?? []).some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
+                                  <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                                ))}
+                              </select>
                               <input
-                                value={getExtInput(cpo.id)}
-                                onChange={(e) => setExtInput(cpo.id, e.target.value)}
-                                placeholder="Add external…"
-                                className="flex-1 min-w-16 bg-transparent text-[11px] outline-none placeholder:text-muted-foreground"
+                                ref={(el) => { cpoSpInputRefs.current[cpo.id] = el; }}
+                                type="text"
+                                value={cpoSpInputs[cpo.id] ?? ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (val.includes(",")) {
+                                    const parts = val.split(",");
+                                    const toAdd = parts.slice(0, -1).map((p) => p.trim()).filter(Boolean);
+                                    if (toAdd.length) {
+                                      const memberNames = new Set(members.map((m) => (m.name ?? m.email).toLowerCase()));
+                                      const blocked = toAdd.filter((n) => memberNames.has(n.toLowerCase()));
+                                      if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); }
+                                      const t = Date.now();
+                                      setCpoSalesPersons((prev) => {
+                                        const cur = prev[cpo.id] ?? [];
+                                        const existing = new Set(cur.map((s) => s.name.toLowerCase()));
+                                        const unique = toAdd.filter((n) => !existing.has(n.toLowerCase()) && !memberNames.has(n.toLowerCase()));
+                                        return unique.length ? { ...prev, [cpo.id]: [...cur, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] } : prev;
+                                      });
+                                    }
+                                    setCpoSpInputs((prev) => ({ ...prev, [cpo.id]: parts[parts.length - 1].trimStart() }));
+                                  } else { setCpoSpInputs((prev) => ({ ...prev, [cpo.id]: val })); }
+                                }}
                                 onKeyDown={(e) => {
-                                  if (e.key === "Enter" && getExtInput(cpo.id).trim()) {
-                                    setAssociateSalesPersons((prev) => [...prev, { id: `ext-${Date.now()}`, name: getExtInput(cpo.id).trim(), sourceCpoNo: cpo.customerPoNo }]);
-                                    setExtInput(cpo.id, "");
+                                  const cur = cpoSpInputs[cpo.id] ?? "";
+                                  if (e.key === "Backspace" && !cur && (cpoSalesPersons[cpo.id] ?? []).length > 0) {
+                                    setCpoSalesPersons((prev) => ({ ...prev, [cpo.id]: (prev[cpo.id] ?? []).slice(0, -1) })); return;
+                                  }
+                                  if (e.key === "Enter") {
                                     e.preventDefault();
+                                    if (!cur.trim()) return;
+                                    const names = cur.split(",").map((p) => p.trim()).filter(Boolean);
+                                    const memberNames = new Set(members.map((m) => (m.name ?? m.email).toLowerCase()));
+                                    const blocked = names.filter((n) => memberNames.has(n.toLowerCase()));
+                                    if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); return; }
+                                    const t = Date.now();
+                                    setCpoSalesPersons((prev) => {
+                                      const existing = new Set((prev[cpo.id] ?? []).map((s) => s.name.toLowerCase()));
+                                      const unique = names.filter((n) => !existing.has(n.toLowerCase()));
+                                      return unique.length ? { ...prev, [cpo.id]: [...(prev[cpo.id] ?? []), ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] } : prev;
+                                    });
+                                    setCpoSpInputs((prev) => ({ ...prev, [cpo.id]: "" }));
                                   }
                                 }}
+                                placeholder={(cpoSalesPersons[cpo.id] ?? []).length === 0 ? "Type a name… (Enter or , to add)" : ""}
+                                className="flex-1 min-w-24 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
                               />
                             </div>
                           </div>
@@ -1922,7 +1984,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           <div ref={tableScrollRef} className="overflow-x-auto overflow-y-auto max-h-[55vh]">
             <table className="w-full text-xs" ref={tableRef}>
               <thead className="sticky top-0 z-10 bg-background">
-                <tr className="border-b border-border text-muted-foreground">
+                <tr className="border-b border-border text-muted-foreground tracking-wider">
                   <th className="text-left align-bottom pb-2 pr-2 w-8 uppercase">#</th>
                   <th className="text-left align-bottom pb-2 pr-2 w-24 uppercase">Code</th>
                   <th className="text-left align-bottom pb-2 pr-2 uppercase">Description</th>
@@ -2062,7 +2124,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     data-key={item._key}
                     className={`border-b border-border/50 last:border-0 ${isDragging ? "" : "transition-colors"} ${dragOverKey === item._key ? "border-t-2 border-t-primary" : ""} ${color ? color.row : "bg-background"} ${isDragging && dragKey.current === item._key ? "outline outline-2 outline-primary/40 outline-offset-[-1px]" : ""} ${item._isAdditional ? "text-red-500 dark:text-red-400" : ""}`}
                   >
-                    <td className={`py-1.5 pr-2 align-top pt-2.5 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"} ${color?.border ?? ""}`}>{item.rowNo}</td>
+                    <td className={`py-1.5 pr-2 align-top ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"} ${color?.border ?? ""}`}><div className="h-7 flex items-center">{item.rowNo}</div></td>
                     <td className="py-1.5 pr-2 align-top">
                       <ProductCell
                         item={item}
@@ -2092,7 +2154,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           _soEditedBy: currentUserName || "user",
                         })}
                         onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)}
-                        className="h-7 text-xs"
+                        className="h-7 text-[11px] md:text-[11px]"
                       />
                       {item._isAdditional && (
                         <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
@@ -2159,29 +2221,29 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           _soEditedBy: currentUserName || "user",
                         })}
                         onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)}
-                        className="h-7 text-xs text-right"
+                        className="h-7 text-[11px] md:text-[11px] text-right tabular-nums"
                       />
                       <Tag src={item._qtySource} />
                     </td>
                     {soType !== "proforma" && (
                       <td className="py-1.5 pr-2 align-top">
-                        <div className={`h-7 flex items-center justify-center font-mono tabular-nums text-xs ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
+                        <div className={`h-7 flex items-center justify-center font-mono tabular-nums text-[11px] ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
                           {(() => { const s = parseFloat(item.setQty || "0") || 1; const q = parseFloat(item.qty || "0"); return s > 1 ? (q * s).toLocaleString("en-MY") : q.toLocaleString("en-MY"); })()}
                         </div>
                       </td>
                     )}
                     <td className="py-1.5 pr-2 align-top">
-                      <div className={`h-7 flex items-center text-xs px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</div>
+                      <div className={`h-7 flex items-center text-[11px] px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</div>
                     </td>
                     {soType !== "proforma" && (
                       <td className="py-1.5 pr-2 align-top">
-                        <div className={`h-7 flex items-center justify-end text-xs font-mono tabular-nums px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-foreground"}`}>{fmt(parseFloat(item.unitPrice ?? "0"))}</div>
+                        <div className={`h-7 flex items-center justify-end text-[11px] font-mono tabular-nums px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-foreground"}`}>{fmt(parseFloat(item.unitPrice ?? "0"))}</div>
                         <Tag src={item._unitPriceSource} />
                       </td>
                     )}
                     {soType !== "proforma" && (
                       <td className="py-1.5 pr-2 align-top">
-                        <div className={`h-7 flex items-center justify-end font-mono tabular-nums text-xs ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
+                        <div className={`h-7 flex items-center justify-end font-mono tabular-nums text-[11px] ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
                           {(() => { const s = parseFloat(item.setQty || "0") || 1; const q = parseFloat(item.qty || "0"); const u = parseFloat(item.unitPrice || "0"); return fmt(q * s * u); })()}
                         </div>
                       </td>

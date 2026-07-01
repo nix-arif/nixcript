@@ -12,13 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
@@ -62,6 +56,13 @@ function calcItemTotal(item: EditableItem): EditableItem {
   return { ...item, totalPrice: (gross - (gross * dPct) / 100).toFixed(2) };
 }
 
+const STATUS_COLORS: Record<string, string> = {
+  received:     "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800",
+  acknowledged: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",
+  fulfilled:    "bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800",
+  cancelled:    "bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800",
+};
+
 function sumItems(items: EditableItem[]): string {
   return items
     .filter((i) => i.included)
@@ -81,7 +82,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   const [qtLoading,        setQtLoading]        = useState(false);
   const qtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
-  const tagInputRef = useRef<HTMLInputElement>(null);
+  const spInputRef = useRef<HTMLInputElement>(null);
 
   // ── Items ──────────────────────────────────────────────────────────────────
   const [items, setItems] = useState<EditableItem[]>([]);
@@ -96,10 +97,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   const [receivedDate,   setReceivedDate]   = useState(new Date().toISOString().split("T")[0]);
   const [deliveryDate,    setDeliveryDate]    = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
-  const [salesPersonName,        setSalesPersonName]        = useState("");
-  const [salesPersonInherited,   setSalesPersonInherited]   = useState("");
-  const [associateSalesPersons,  setAssociateSalesPersons]  = useState<{ id: string; name: string }[]>([]);
-  const [externalPersonInput,    setExternalPersonInput]    = useState("");
+  const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>([]);
+  const [spInput,      setSpInput]      = useState("");
   const [status,         setStatus]         = useState("received");
   const [notes,          setNotes]          = useState("");
 
@@ -193,15 +192,21 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       };
 
       setLinkedQuotations((prev) => {
-        if (!salesPersonName && qt.salesPersonName) {
-          setSalesPersonName(qt.salesPersonName);
-          setSalesPersonInherited(qt.salesPersonName);
-        }
-        if (qt.associateSalesPersons?.length) {
-          setAssociateSalesPersons((prevAssoc) => {
-            const existingNames = new Set(prevAssoc.map(p => p.name));
-            const toAdd = qt.associateSalesPersons!.filter(p => !existingNames.has(p.name));
-            return toAdd.length ? [...prevAssoc, ...toAdd] : prevAssoc;
+        if (qt.salesPersonName) {
+          setSalesPersons((prevSps) => {
+            const existing = new Set(prevSps.map(s => s.name.toLowerCase()));
+            const toAdd: { id: string; name: string; isExt: boolean }[] = [];
+            if (!existing.has(qt.salesPersonName!.toLowerCase())) {
+              const m = members.find(x => (x.name ?? x.email).toLowerCase() === qt.salesPersonName!.toLowerCase());
+              toAdd.push({ id: m?.userId ?? `mem-${qt.salesPersonName}`, name: qt.salesPersonName!, isExt: !m });
+            }
+            (qt.associateSalesPersons ?? []).forEach((a) => {
+              if (!existing.has(a.name.toLowerCase())) {
+                const m = members.find(x => x.userId === a.id);
+                toAdd.push({ id: a.id, name: a.name, isExt: !m });
+              }
+            });
+            return toAdd.length ? [...prevSps, ...toAdd] : prevSps;
           });
         }
         if (prev.length === 0) {
@@ -284,7 +289,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       : i,
     ));
     const product = await getProductByCode(trimmed);
-    if (!product?.description) return;
+    if (!product) {
+      setItems((prev) => prev.map((i) => i._key === key
+        ? { ...i, description: "N/A", _descriptionSource: ["user"], _editedBy: currentUserName || null } as EditableItem
+        : i,
+      ));
+      return;
+    }
+    if (!product.description) return;
     setItems((prev) => prev.map((i) => i._key === key
       ? { ...i, description: product.description!, uom: product.uom ?? i.uom, _descriptionSource: ["catalog"], _editedBy: null }
       : i,
@@ -437,7 +449,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     if (linkedQuotations.length === 0) { toast.error("Please link at least one quotation"); return; }
     if (!customerPoNo.trim()) { toast.error("Customer PO number is required"); return; }
     if (!deliveryAddress.trim()) { toast.error("Delivery address is required"); return; }
-    if (!salesPersonName) { toast.error("Sales person is required"); return; }
+    if (salesPersons.length === 0) { toast.error("Sales person is required"); return; }
     setSaving(true);
     try {
       const primary = linkedQuotations[0];
@@ -462,8 +474,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         amount,
         currency,
         documentKey:     pdfKey,
-        salesPersonName: salesPersonName || undefined,
-        associateSalesPersons: associateSalesPersons.length > 0 ? associateSalesPersons : undefined,
+        salesPersonName: salesPersons[0]?.name || undefined,
+        associateSalesPersons: salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined,
         notes:           notes || undefined,
         receivedDate:    receivedDate ? new Date(receivedDate) : undefined,
         deliveryDate:    deliveryDate ? new Date(deliveryDate) : undefined,
@@ -494,9 +506,21 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         title="Record Customer PO"
         description="Record a purchase order received from a customer"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/sales/customer-po")} className="gap-2">
-            <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
-          </Button>
+          <div className="flex items-center gap-2">
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className={cn("h-9 rounded-md border px-3 text-sm font-medium cursor-pointer", STATUS_COLORS[status])}
+            >
+              <option value="received">Received</option>
+              <option value="acknowledged">Acknowledged</option>
+              <option value="fulfilled">Fulfilled</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/sales/customer-po")} className="gap-2">
+              <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+            </Button>
+          </div>
         }
       />
 
@@ -725,113 +749,97 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                 className="text-sm resize-none"
               />
             </div>
-            <div className="col-span-2 space-y-3">
-              {/* Sales person */}
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5">
-                  <Label className="text-xs">Sales person <span className="text-destructive">*</span></Label>
-                  {salesPersonInherited && (
-                    salesPersonName === salesPersonInherited
-                      ? <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-3 h-3 shrink-0" />from quotation</span>
-                      : <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-3 h-3 shrink-0" />{currentUserName || "user"} edited CPO</span>
-                  )}
-                </div>
-                <Select value={salesPersonName} onValueChange={setSalesPersonName}>
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue placeholder="Select member" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none">— None —</SelectItem>
-                    {members.map((m) => (
-                      <SelectItem key={m.userId} value={m.name ?? m.email ?? m.userId}>
-                        {m.name ?? m.email}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {/* Associate / external — tag-input */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-muted-foreground">
-                  Associate / external <span className="font-normal opacity-60">(optional)</span>
-                </label>
-                <div
-                  className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
-                  onClick={() => tagInputRef.current?.focus()}
-                >
-                  {associateSalesPersons.map((a) => (
-                    <span key={a.id} className="inline-flex items-center gap-1 text-xs bg-secondary text-secondary-foreground rounded px-2 py-0.5 shrink-0">
-                      {a.name}
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setAssociateSalesPersons((prev) => prev.filter((x) => x.id !== a.id)); }}
-                        className="text-secondary-foreground/60 hover:text-secondary-foreground"
-                      >
-                        <XIcon className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    ref={tagInputRef}
-                    type="text"
-                    value={externalPersonInput}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val.includes(",")) {
-                        const parts = val.split(",");
-                        const toAdd = parts.slice(0, -1).map(p => p.trim()).filter(Boolean);
-                        if (toAdd.length) {
-                          const t = Date.now();
-                          setAssociateSalesPersons((prev) => [...prev, ...toAdd.map((name, i) => ({ id: `ext-${t}-${i}`, name }))]);
-                        }
-                        setExternalPersonInput(parts[parts.length - 1].trimStart());
-                      } else {
-                        setExternalPersonInput(val);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        if (!externalPersonInput.trim()) return;
-                        const names = externalPersonInput.split(",").map(p => p.trim()).filter(Boolean);
-                        const t = Date.now();
-                        setAssociateSalesPersons((prev) => [...prev, ...names.map((name, i) => ({ id: `ext-${t}-${i}`, name }))]);
-                        setExternalPersonInput("");
-                      }
-                    }}
-                    placeholder={associateSalesPersons.length === 0 ? "Type a name, press Enter or comma to add…" : ""}
-                    className="flex-1 min-w-32 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
-                  />
-                </div>
+            <div className="col-span-2 space-y-1.5">
+              <label className="block text-xs font-medium text-muted-foreground">
+                Sales person <span className="text-destructive">*</span>
+              </label>
+              <div
+                className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
+                onClick={() => spInputRef.current?.focus()}
+              >
+                {salesPersons.map((s) => (
+                  <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
+                    {s.name}
+                    {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
+                    <button type="button" onClick={(e) => { e.stopPropagation(); setSalesPersons(prev => prev.filter(x => x.id !== s.id)); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5">
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
                 <select
                   value=""
+                  onClick={(e) => e.stopPropagation()}
                   onChange={(e) => {
                     const m = members.find((x) => x.userId === e.target.value);
                     if (!m) return;
-                    if (associateSalesPersons.some((a) => a.id === m.userId)) return;
-                    setAssociateSalesPersons((prev) => [...prev, { id: m.userId, name: m.name ?? m.email ?? m.userId }]);
+                    const mName = (m.name ?? m.email).toLowerCase();
+                    if (salesPersons.some((s) => s.id === m.userId || s.name.toLowerCase() === mName)) return;
+                    setSalesPersons((prev) => [...prev, { id: m.userId, name: m.name ?? m.email, isExt: false }]);
                   }}
-                  className="h-8 rounded-md border border-dashed border-border bg-background px-2.5 text-xs text-muted-foreground"
+                  className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer"
                 >
-                  <option value="">Add team member…</option>
-                  {members.filter((m) => !associateSalesPersons.some((a) => a.id === m.userId)).map((m) => (
+                  <option value="">+ member</option>
+                  {members.filter((m) => !salesPersons.some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
                     <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
                   ))}
                 </select>
+                <input
+                  ref={spInputRef}
+                  type="text"
+                  value={spInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val.includes(",")) {
+                      const parts = val.split(",");
+                      const names = parts.slice(0, -1).map(p => p.trim()).filter(Boolean);
+                      const memberNames = new Set(members.map(m => (m.name ?? m.email).toLowerCase()));
+                      const blocked = names.filter(n => memberNames.has(n.toLowerCase()));
+                      if (blocked.length) {
+                        toast.error(`"${blocked.join('", "')}" is a member — select from the member list`);
+                        setSpInput(parts[parts.length - 1].trimStart());
+                        return;
+                      }
+                      if (names.length) {
+                        const t = Date.now();
+                        setSalesPersons(prev => {
+                          const existing = new Set(prev.map(s => s.name.toLowerCase()));
+                          const unique = names.filter(n => !existing.has(n.toLowerCase()));
+                          return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                        });
+                      }
+                      setSpInput(parts[parts.length - 1].trimStart());
+                    } else {
+                      setSpInput(val);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Backspace" && !spInput && salesPersons.length > 0) {
+                      setSalesPersons(prev => prev.slice(0, -1));
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (!spInput.trim()) return;
+                      const names = spInput.split(",").map(p => p.trim()).filter(Boolean);
+                      const memberNames = new Set(members.map(m => (m.name ?? m.email).toLowerCase()));
+                      const blocked = names.filter(n => memberNames.has(n.toLowerCase()));
+                      if (blocked.length) {
+                        toast.error(`"${blocked.join('", "')}" is a member — select from the member list`);
+                        return;
+                      }
+                      const t = Date.now();
+                      setSalesPersons(prev => {
+                        const existing = new Set(prev.map(s => s.name.toLowerCase()));
+                        const unique = names.filter(n => !existing.has(n.toLowerCase()));
+                        return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                      });
+                      setSpInput("");
+                    }
+                  }}
+                  placeholder={salesPersons.length === 0 ? "Type a name… (Enter or , to add)" : ""}
+                  className="flex-1 min-w-24 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+                />
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Status</Label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
-              >
-                <option value="received">Received</option>
-                <option value="acknowledged">Acknowledged</option>
-                <option value="fulfilled">Fulfilled</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
             </div>
           </div>
         </div>
@@ -848,7 +856,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
             <div className="overflow-x-auto" ref={tableRef}>
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-border text-muted-foreground">
+                  <tr className="border-b border-border text-muted-foreground text-xs uppercase tracking-wider align-bottom">
                     <th className="pb-2 pr-2 w-6">
                       <input
                         type="checkbox"
@@ -1074,19 +1082,23 @@ function ItemRow({
   const codeOnFocus = useRef("");
   return (
     <tr className={cn(
-      "border-b border-border/40 last:border-0 transition-opacity",
+      "border-b border-border/40 last:border-0 transition-opacity [&>td]:align-top",
       !item.included && "opacity-40",
       inSet && "bg-blue-50/20 dark:bg-blue-900/5",
     )}>
       <td className="py-1.5 pr-2">
-        <input
-          type="checkbox"
-          className="rounded"
-          checked={item.included}
-          onChange={(e) => updateItem(item._key, { included: e.target.checked })}
-        />
+        <div className="h-7 flex items-center">
+          <input
+            type="checkbox"
+            className="rounded"
+            checked={item.included}
+            onChange={(e) => updateItem(item._key, { included: e.target.checked })}
+          />
+        </div>
       </td>
-      <td className="py-1.5 pr-2 text-muted-foreground">{item.rowNo}</td>
+      <td className="py-1.5 pr-2 text-muted-foreground">
+        <div className="h-7 flex items-center">{item.rowNo}</div>
+      </td>
       <td className="py-1.5 pr-2">
         <Input
           data-row={rowIdx}
@@ -1180,11 +1192,13 @@ function ItemRow({
         </div>
       </td>
       <td className="py-1.5 pr-2 text-right tabular-nums text-[11px] md:text-[11px]">
-        {item.included ? (() => {
-          const q = parseFloat(item.qty || "0") || 0;
-          const s = item.setGroupId ? (parseFloat(item.setQty || "1") || 1) : 1;
-          return (q * s).toLocaleString("en-MY", { maximumFractionDigits: 4 });
-        })() : "—"}
+        <div className="h-7 flex items-center justify-end">
+          {item.included ? (() => {
+            const q = parseFloat(item.qty || "0") || 0;
+            const s = item.setGroupId ? (parseFloat(item.setQty || "1") || 1) : 1;
+            return (q * s).toLocaleString("en-MY", { maximumFractionDigits: 4 });
+          })() : "—"}
+        </div>
       </td>
       <td className="py-1.5 pr-2">
         <Input
@@ -1221,9 +1235,11 @@ function ItemRow({
         )}
       </td>
       <td className="py-1.5 text-right tabular-nums font-medium text-[11px] md:text-[11px]">
-        {item.included
-          ? parseFloat(item.totalPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })
-          : "—"}
+        <div className="h-7 flex items-center justify-end">
+          {item.included
+            ? parseFloat(item.totalPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })
+            : "—"}
+        </div>
       </td>
     </tr>
   );
