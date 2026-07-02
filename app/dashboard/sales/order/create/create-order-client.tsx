@@ -684,7 +684,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     if (val.length < 2) { setQtResults([]); return; }
     if (qtTimer.current) clearTimeout(qtTimer.current);
     qtTimer.current = setTimeout(async () => {
-      const res = await searchQuotationsByNo(val, soType === "urgent");
+      const res = await searchQuotationsByNo(val, soType !== "standard");
       setQtResults(res);
       setQtHighlight(-1);
     }, 300);
@@ -727,13 +727,13 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         customerSnapshot: qt.customerSnapshot ?? null,
         salesPersonName: qt.salesPersonName ?? null,
       }]);
-      // Auto-fill per-quotation sales person for urgent SO
-      if (soType === "urgent" && qt.salesPersonName && !qtSalesPersons[qt.id]?.length) {
+      // Auto-fill per-quotation sales person for urgent/proforma SO
+      if (soType !== "standard" && qt.salesPersonName && !qtSalesPersons[qt.id]?.length) {
         const m = members.find((x) => (x.name ?? x.email)?.toLowerCase() === qt.salesPersonName!.toLowerCase());
         setQtSalesPersons((prev) => ({ ...prev, [qt.id]: [{ id: m?.userId ?? `sp-${qt.salesPersonName}`, name: qt.salesPersonName!, isExt: !m }] }));
       }
-      // Auto-populate delivery address from customerSnapshot for urgent SO
-      if (soType === "urgent") {
+      // Auto-populate delivery address from customerSnapshot for urgent/proforma SO
+      if (soType !== "standard") {
         const snap = qt.customerSnapshot as { organizationName?: string; organizationAddress?: string } | null;
         const autoAddr = [snap?.organizationName, snap?.organizationAddress].filter(Boolean).join("\n");
         if (autoAddr) setQtDeliveryAddresses((prev) => ({ ...prev, [qt.id]: autoAddr }));
@@ -1057,7 +1057,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   // ── Save ────────────────────────────────────────────────────────────────────
 
   async function buildAndCreate() {
-    if ((soType === "standard" || soType === "urgent") && linkedQuotations.length === 0) {
+    if (linkedQuotations.length === 0) {
       toast.error("Please link at least one quotation");
       return null;
     }
@@ -1082,7 +1082,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           return null;
         }
       }
-    } else if (soType === "urgent" && linkedQuotations.length > 0) {
+    } else if (soType !== "standard" && linkedQuotations.length > 0) {
       for (const qt of linkedQuotations) {
         if (!qtSalesPersons[qt.id]?.length) {
           toast.error(`Sales person required for ${qt.quotationNo}`);
@@ -1123,7 +1123,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           })
         : undefined,
       linkedQuotations: linkedQuotations.length > 0
-        ? (soType === "urgent"
+        ? (soType !== "standard"
             ? linkedQuotations.map((qt) => ({
                 ...qt,
                 salesPersonName: qtSalesPersons[qt.id]?.[0]?.name ?? qt.salesPersonName ?? null,
@@ -1134,7 +1134,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         : undefined,
       salesPersonName: linkedCpos.length > 0
         ? (cpoSalesPersons[linkedCpos[0]?.id]?.[0]?.name || undefined)
-        : soType === "urgent" && linkedQuotations.length > 0
+        : soType !== "standard" && linkedQuotations.length > 0
           ? (qtSalesPersons[linkedQuotations[0]?.id]?.[0]?.name || undefined)
           : (salesPersons[0]?.name || undefined),
       associateSalesPersons: (() => {
@@ -1147,14 +1147,14 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         return salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined;
       })(),
       deliveryDate: (() => {
-        if (soType === "urgent" && linkedQuotations.length > 0) {
+        if (soType !== "standard" && linkedQuotations.length > 0) {
           const d = qtDeliveryDates[linkedQuotations[0].id];
           return d ? new Date(d) : undefined;
         }
         const d = linkedCpos[0]?.deliveryDate || deliveryDate;
         return d ? new Date(d) : undefined;
       })(),
-      deliveryAddress: soType === "urgent" && linkedQuotations.length > 0
+      deliveryAddress: soType !== "standard" && linkedQuotations.length > 0
         ? (qtDeliveryAddresses[linkedQuotations[0].id] || undefined)
         : ((linkedCpos[0]?.deliveryAddress || deliveryAddress) || undefined),
       notes: notes || undefined,
@@ -1261,25 +1261,37 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         {/* ── 0. Order type ── */}
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Order type</h2>
-          <div className="flex gap-2">
-            {(["standard", "proforma", "urgent"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setSoType(t)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                  soType === t
-                    ? t === "proforma"
-                      ? "bg-violet-600 text-white border-violet-600"
-                      : t === "urgent"
-                        ? "bg-amber-500 text-white border-amber-500"
-                        : "bg-foreground text-background border-foreground"
-                    : "border-border text-muted-foreground hover:border-foreground/40"
-                }`}
-              >
-                {t === "standard" ? "Standard" : t === "proforma" ? "Pro-forma" : "Urgent"}
-              </button>
-            ))}
+          <div className="flex flex-wrap gap-2 items-center">
+            {(["standard", "proforma", "urgent"] as const).map((t) => {
+              const blockedByCpo = linkedCpos.length > 0 && (t === "urgent" || t === "proforma");
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  disabled={blockedByCpo}
+                  onClick={() => {
+                    if (blockedByCpo) { toast.error("Remove linked CPOs before switching to this order type"); return; }
+                    setSoType(t);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                    blockedByCpo
+                      ? "border-border text-muted-foreground/40 cursor-not-allowed opacity-50"
+                      : soType === t
+                        ? t === "proforma"
+                          ? "bg-violet-600 text-white border-violet-600"
+                          : t === "urgent"
+                            ? "bg-amber-500 text-white border-amber-500"
+                            : "bg-foreground text-background border-foreground"
+                        : "border-border text-muted-foreground hover:border-foreground/40"
+                  }`}
+                >
+                  {t === "standard" ? "Standard" : t === "proforma" ? "Pro-forma" : "Urgent"}
+                </button>
+              );
+            })}
+            {linkedCpos.length > 0 && (
+              <span className="text-[10px] text-muted-foreground">Pro-forma and Urgent require no CPO</span>
+            )}
           </div>
           {soType === "urgent" && (
             <div className="mt-3 space-y-3">
@@ -1848,15 +1860,15 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-muted-foreground">
-                  <th className="text-left pb-2 pr-3 w-40 font-medium">{soType === "urgent" ? "Quotation" : "CPO / Type"}</th>
+                  <th className="text-left pb-2 pr-3 w-40 font-medium">{soType !== "standard" ? "Quotation" : "CPO / Type"}</th>
                   <th className="text-left pb-2 pr-3 font-medium">Sales person</th>
                   <th className="text-left pb-2 pr-3 w-36 font-medium">Due delivery</th>
                   <th className="text-left pb-2 font-medium">Delivery address</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
-                {soType === "urgent" && linkedCpos.length === 0 && linkedQuotations.length > 0 ? (
-                  // Urgent SO: per-quotation rows (sales person only; delivery date/address are order-level below)
+                {soType !== "standard" && linkedCpos.length === 0 && linkedQuotations.length > 0 ? (
+                  // Urgent/proforma SO: per-quotation rows
                   linkedQuotations.map((qt) => {
                     const snap = qt.customerSnapshot;
                     const custDisplay = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
@@ -1867,7 +1879,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       <tr key={qtId}>
                         <td className="py-2 pr-3 align-top">
                           <div className="flex flex-wrap items-center gap-1">
-                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">CPO To Follow</span>
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">{soType === "urgent" ? "CPO To Follow" : "Pro-forma"}</span>
                             <span className="text-[11px] font-mono font-semibold">{qt.quotationNo}</span>
                           </div>
                           {custDisplay && <div className="text-[10px] text-muted-foreground mt-0.5">{custDisplay}{orgName ? ` · ${orgName}` : ""}</div>}
@@ -2211,7 +2223,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   <th className="text-left align-bottom pb-2 pr-2 w-14 uppercase">UOM</th>
                   {soType !== "proforma" && <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Unit price</th>}
                   {soType !== "proforma" && <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Total unit price</th>}
-                  {soType !== "urgent" && linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
+                  {soType === "standard" && linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
                     <th className="text-left align-bottom pb-2 pr-2 w-28 uppercase">Customer</th>
                   )}
                   <th className="w-14" />
@@ -2219,7 +2231,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               </thead>
               <tbody>
                 {(() => {
-                  const hasQuotationCustomers = soType !== "urgent" && linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
+                  const hasQuotationCustomers = soType === "standard" && linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
                   const colCount = 5 + (soType !== "proforma" ? 3 : 0) + (hasQuotationCustomers ? 1 : 0) + 1;
                   // Build color index map: each unique groupId or cpoId gets a rotating palette entry
                   // Avoid: green/emerald (from-CPO tag), amber/yellow (edited tag), blue/sky (CPO badge)
@@ -2237,9 +2249,9 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     for (let i = 0; i < key.length; i++) { h = Math.imul(31, h) + key.charCodeAt(i) | 0; }
                     return Math.abs(h) % COLOR_PALETTE.length;
                   };
-                  // For urgent SO: palette by first-appearance order of linkedQuotations (avoids hash collisions)
+                  // For urgent/proforma SO: palette by first-appearance order of linkedQuotations (avoids hash collisions)
                   const getColor = (it: LineItem) => {
-                    if (soType === "urgent") {
+                    if (soType !== "standard") {
                       const qtId = it.sourceQuotationId || null;
                       if (!qtId) return null;
                       const idx = linkedQuotations.findIndex((q) => q.id === qtId);
@@ -2248,8 +2260,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     const key = it.setGroupId || it.sourceCustomerPoId || it.sourceQuotationId;
                     return key ? COLOR_PALETTE[stableColorIdx(key)] : null;
                   };
-                  // For urgent SO: sort by quotation (first-appearance order), then by setGroupId within each quotation
-                  const renderItems = soType === "urgent" ? (() => {
+                  // For urgent/proforma SO: sort by quotation (first-appearance order), then by setGroupId within each quotation
+                  const renderItems = soType !== "standard" ? (() => {
                     const seenQtIds = new Set<string>();
                     const qtOrder: string[] = [];
                     for (const it of items) {
@@ -2275,8 +2287,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   return renderItems.flatMap((item, rowIdx) => {
                   const rows: React.JSX.Element[] = [];
                   const color = getColor(item);
-                  // Urgent SO: customer/org section header when linked quotation changes
-                  if (soType === "urgent" && item.sourceQuotationId !== lastQtId) {
+                  // Urgent/proforma SO: customer/org section header when linked quotation changes
+                  if (soType !== "standard" && item.sourceQuotationId !== lastQtId) {
                     lastQtId = item.sourceQuotationId;
                     const qt = linkedQuotations.find((q) => q.id === item.sourceQuotationId);
                     const snap = qt?.customerSnapshot;
@@ -2287,7 +2299,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         <tr key={`qt-section-${item.sourceQuotationId ?? "none"}-${rowIdx}`}>
                           <td colSpan={colCount} className={rowIdx === 0 ? "pb-1" : "pt-4 pb-1"}>
                             <div className={`flex items-center gap-2 ${rowIdx > 0 ? "border-t border-border/60 pt-2" : ""}`}>
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">CPO To Follow</span>
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">{soType === "urgent" ? "CPO To Follow" : "Pro-forma"}</span>
                               <span className="text-[10px] font-semibold text-foreground">{custDisplayName}</span>
                               {orgName && <span className="text-[10px] text-muted-foreground">{orgName}</span>}
                             </div>
@@ -2321,10 +2333,10 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     );
                   }
                   if (!item.setGroupId) {
-                    const cpoKey = soType === "urgent"
+                    const cpoKey = soType !== "standard"
                       ? (item.sourceQuotationId ?? "__global__")
                       : (item.sourceCustomerPoId ?? "__global__");
-                    const sectionHasGroups = soType === "urgent"
+                    const sectionHasGroups = soType !== "standard"
                       ? renderItems.some((i) => i.setGroupId && (i.sourceQuotationId ?? "__none__") === (item.sourceQuotationId ?? "__none__"))
                       : renderItems.some((i) => i.setGroupId && (linkedCpos.length > 1 ? i.sourceCustomerPoId === item.sourceCustomerPoId : true));
                     if (sectionHasGroups && !shownLooseHeaderForCpo.has(cpoKey)) {

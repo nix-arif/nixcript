@@ -394,8 +394,8 @@ export function SalesOrderDetailClient({
                         for (let i = 0; i < key.length; i++) { h = Math.imul(31, h) + key.charCodeAt(i) | 0; }
                         return Math.abs(h) % COLOR_PALETTE.length;
                       };
-                      // For urgent SO: palette by first-appearance order of quotation IDs (avoids hash collisions)
-                      const urgentQtOrder = order.soType === "urgent" ? (() => {
+                      // For urgent/proforma SO: palette by first-appearance order of quotation IDs (avoids hash collisions)
+                      const urgentQtOrder = order.soType !== "standard" ? (() => {
                         const seen: string[] = [];
                         const lqs = (order.linkedQuotations as { id: string }[] | null) ?? [];
                         for (const q of lqs) { if (!seen.includes(q.id)) seen.push(q.id); }
@@ -403,7 +403,7 @@ export function SalesOrderDetailClient({
                         return seen;
                       })() : null;
                       const getColor = (item: typeof order.items[0]) => {
-                        if (order.soType === "urgent" && urgentQtOrder) {
+                        if (order.soType !== "standard" && urgentQtOrder) {
                           const qtId = (item as any).sourceQuotationId || null;
                           if (!qtId) return null;
                           const idx = urgentQtOrder.indexOf(qtId);
@@ -421,11 +421,12 @@ export function SalesOrderDetailClient({
                         + (can("sales-order:approve") && status === "submitted" ? 1 : 0);
 
                       const isUrgent = order.soType === "urgent";
+                      const isNonStandard = order.soType !== "standard";
                       const orderLinkedQuotations = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null; salesPersonName?: string | null }[] | null) ?? [];
                       let lastCpoId: string | undefined = undefined;
                       let lastQtId: string | undefined = undefined;
                       const shownLooseHeaderForCpo = new Set<string>();
-                      const renderItems = isUrgent ? (() => {
+                      const renderItems = isNonStandard ? (() => {
                         const seenQtIds = new Set<string>();
                         const qtOrder: string[] = [];
                         for (const it of order.items) {
@@ -450,8 +451,8 @@ export function SalesOrderDetailClient({
                         const color = getColor(item);
                         const isAdditional = (item as any).isAdditional;
 
-                        // Urgent SO: customer/org section header when linked quotation changes
-                        if (isUrgent && (item as any).sourceQuotationId !== lastQtId) {
+                        // Urgent/proforma SO: customer/org section header when linked quotation changes
+                        if (isNonStandard && (item as any).sourceQuotationId !== lastQtId) {
                           lastQtId = (item as any).sourceQuotationId;
                           const qt = orderLinkedQuotations.find((q) => q.id === (item as any).sourceQuotationId);
                           const snap = qt?.customerSnapshot;
@@ -473,7 +474,7 @@ export function SalesOrderDetailClient({
                                         {matchingCpo.customerPoNo}
                                       </span>
                                     ) : (
-                                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">CPO To Follow</span>
+                                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">{isUrgent ? "CPO To Follow" : "Pro-forma"}</span>
                                     )}
                                     <span className="text-[10px] font-semibold text-foreground">{custDisplayName}</span>
                                     {orgName && <span className="text-[10px] text-muted-foreground">{orgName}</span>}
@@ -485,7 +486,7 @@ export function SalesOrderDetailClient({
                         }
 
                         // CPO section header (standard SO with multiple CPOs)
-                        if (!isUrgent && distinctCpos.size > 1 && (item as any).sourceCustomerPoId !== lastCpoId) {
+                        if (!isNonStandard && distinctCpos.size > 1 && (item as any).sourceCustomerPoId !== lastCpoId) {
                           lastCpoId = (item as any).sourceCustomerPoId;
                           const cpoInfo = order.cpoCustomers.find((c) => c.customerPoId === (item as any).sourceCustomerPoId);
                           const cpoCustomer = cpoInfo?.customerSnapshot
@@ -513,10 +514,10 @@ export function SalesOrderDetailClient({
 
                         // Other items header (ungrouped items when sets also exist)
                         if (!(item as any).setGroupId) {
-                          const cpoKey = isUrgent
+                          const cpoKey = isNonStandard
                             ? ((item as any).sourceQuotationId ?? "__global__")
                             : ((item as any).sourceCustomerPoId ?? "__global__");
-                          const sectionHasGroups = isUrgent
+                          const sectionHasGroups = isNonStandard
                             ? renderItems.some((i) => (i as any).setGroupId && ((i as any).sourceQuotationId ?? "__none__") === ((item as any).sourceQuotationId ?? "__none__"))
                             : renderItems.some((i) => (i as any).setGroupId && (distinctCpos.size > 1 ? (i as any).sourceCustomerPoId === (item as any).sourceCustomerPoId : true));
                           if (sectionHasGroups && !shownLooseHeaderForCpo.has(cpoKey)) {
@@ -1233,8 +1234,8 @@ export function SalesOrderDetailClient({
             {(() => {
               const associates = (order.associateSalesPersons as { id: string; name: string }[] | null) ?? [];
 
-              // Urgent SO — always show per-quotation rows (with or without CPOs)
-              if (order.soType === "urgent") {
+              // Urgent/proforma SO — always show per-quotation rows (with or without CPOs)
+              if (order.soType !== "standard") {
                 const orderLqs = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null; salesPersonName?: string | null }[] | null) ?? [];
                 if (orderLqs.length > 0) {
                   const rows = orderLqs.map((qt) => {
@@ -1337,9 +1338,9 @@ export function SalesOrderDetailClient({
               );
             })()}
 
-            {/* Due delivery date — per-quotation for urgent SO, per-CPO when linked, else order-level */}
+            {/* Due delivery date — per-quotation for urgent/proforma SO, per-CPO when linked, else order-level */}
             {(() => {
-              if (order.soType === "urgent") {
+              if (order.soType !== "standard") {
                 const orderLqs = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null; deliveryDate?: string | null }[] | null) ?? [];
                 if (orderLqs.length > 0) {
                   const rows = orderLqs.map((qt) => {
@@ -1401,9 +1402,9 @@ export function SalesOrderDetailClient({
               return null;
             })()}
 
-            {/* Delivery address — per-quotation for urgent SO, per-CPO when linked, else order-level */}
+            {/* Delivery address — per-quotation for urgent/proforma SO, per-CPO when linked, else order-level */}
             {(() => {
-              if (order.soType === "urgent") {
+              if (order.soType !== "standard") {
                 const orderLqs = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string; organizationAddress?: string } | null; deliveryAddress?: string | null }[] | null) ?? [];
                 if (orderLqs.length > 0) {
                   const rows = orderLqs.map((qt) => {

@@ -286,6 +286,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
 
   // ── Urgent auth fields ───────────────────────────────────────────────────────
   const isUrgent = order.soType === "urgent";
+  const isNonStandard = order.soType !== "standard";
   const [urgentAuthType, setUrgentAuthType] = useState<"verbal" | "email" | "loi" | "internal">(
     ((order as any).urgentAuthType as "verbal" | "email" | "loi" | "internal") ?? "verbal",
   );
@@ -1425,8 +1426,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     for (let i = 0; i < key.length; i++) { h = Math.imul(31, h) + key.charCodeAt(i) | 0; }
                     return Math.abs(h) % COLOR_PALETTE.length;
                   };
-                  // For urgent SO: palette by first-appearance order of quotation IDs (avoids hash collisions)
-                  const urgentQtOrder = isUrgent ? (() => {
+                  // For urgent/proforma SO: palette by first-appearance order of quotation IDs (avoids hash collisions)
+                  const urgentQtOrder = isNonStandard ? (() => {
                     const seen: string[] = [];
                     const lqs = (order.linkedQuotations as { id: string }[] | null) ?? [];
                     for (const q of lqs) { if (!seen.includes(q.id)) seen.push(q.id); }
@@ -1434,7 +1435,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     return seen;
                   })() : null;
                   const getColor = (it: LineItem) => {
-                    if (isUrgent && urgentQtOrder) {
+                    if (isNonStandard && urgentQtOrder) {
                       const qtId = (it as any).sourceQuotationId || null;
                       if (!qtId) return null;
                       const idx = urgentQtOrder.indexOf(qtId);
@@ -1443,8 +1444,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     const key = it.setGroupId || it.sourceCustomerPoId || (it as any).sourceQuotationId;
                     return key ? COLOR_PALETTE[stableColorIdx(key)] : null;
                   };
-                  // For urgent SO: sort by quotation (first-appearance order), then by setGroupId within each quotation
-                  const renderItems = isUrgent ? (() => {
+                  // For urgent/proforma SO: sort by quotation (first-appearance order), then by setGroupId within each quotation
+                  const renderItems = isNonStandard ? (() => {
                     const seenQtIds = new Set<string>();
                     const qtOrder: string[] = [];
                     for (const it of items) {
@@ -1477,8 +1478,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                   const cpoCustomerName = sourceCpo?.customerSnapshot
                     ? [sourceCpo.customerSnapshot.title, sourceCpo.customerSnapshot.name].filter(Boolean).join(" ")
                     : null;
-                  // Urgent SO: customer/org section header when linked quotation changes
-                  if (isUrgent && item.sourceQuotationId !== lastQtId) {
+                  // Urgent/proforma SO: customer/org section header when linked quotation changes
+                  if (isNonStandard && item.sourceQuotationId !== lastQtId) {
                     lastQtId = item.sourceQuotationId;
                     const qt = orderLinkedQuotations.find((q) => q.id === item.sourceQuotationId);
                     const snap = qt?.customerSnapshot;
@@ -1500,7 +1501,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                                   {matchingCpo.customerPoNo}
                                 </span>
                               ) : (
-                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">CPO To Follow</span>
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">{isUrgent ? "CPO To Follow" : "Pro-forma"}</span>
                               )}
                               <span className="text-[10px] font-semibold text-foreground">{custDisplayName}</span>
                               {orgName && <span className="text-[10px] text-muted-foreground">{orgName}</span>}
@@ -1534,10 +1535,10 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     );
                   }
                   if (!item.setGroupId) {
-                    const cpoKey = isUrgent
+                    const cpoKey = isNonStandard
                       ? (item.sourceQuotationId ?? "__global__")
                       : (item.sourceCustomerPoId ?? "__global__");
-                    const sectionHasGroups = isUrgent
+                    const sectionHasGroups = isNonStandard
                       ? renderItems.some((i) => i.setGroupId && (i.sourceQuotationId ?? "__none__") === (item.sourceQuotationId ?? "__none__"))
                       : renderItems.some((i) => i.setGroupId && (linkedCpos.length > 1 ? i.sourceCustomerPoId === item.sourceCustomerPoId : true));
                     if (sectionHasGroups && !shownLooseHeaderForCpo.has(cpoKey)) {
@@ -1638,7 +1639,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           <PencilIcon className="w-3 h-3 shrink-0" />{item._soEditedBy || currentUserName || "user"} edited SO
                         </span>
                       )}
-                      {isUrgent && (
+                      {isNonStandard && (
                         <div className="flex items-center gap-1 mt-0.5">
                           <span className="text-[9px] text-muted-foreground">Set:</span>
                           <input
