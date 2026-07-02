@@ -881,6 +881,32 @@ export async function getQuotationForSO(id: string) {
     .where(eq(quotationItem.quotationId, id))
     .orderBy(asc(quotationItem.sortOrder));
 
+  // If quotation items have no set groups, inherit group assignments from the most recent CPO
+  // that was created from this quotation (groups are often defined at CPO level, not quotation level)
+  const hasUngrouppedItems = items.some((i) => !i.setGroupId);
+  if (hasUngrouppedItems) {
+    const [cpoRow] = await db
+      .select({ items: customerPurchaseOrder.items })
+      .from(customerPurchaseOrder)
+      .where(and(
+        inArray(customerPurchaseOrder.organizationId, ownerOrgIds),
+        eq(customerPurchaseOrder.quotationId, id),
+      ))
+      .orderBy(desc(customerPurchaseOrder.createdAt))
+      .limit(1);
+
+    const cpoItems = cpoRow?.items;
+    if (cpoItems && cpoItems.length === items.length) {
+      const enriched = items.map((qtItem, idx) => {
+        if (qtItem.setGroupId) return qtItem;
+        const cpoItem = cpoItems[idx];
+        if (!cpoItem?.setGroupId) return qtItem;
+        return { ...qtItem, setGroupId: cpoItem.setGroupId, setGroupLabel: cpoItem.setGroupLabel ?? null, setQty: cpoItem.setQty ?? null };
+      });
+      return { ...q, items: enriched };
+    }
+  }
+
   return { ...q, items };
 }
 

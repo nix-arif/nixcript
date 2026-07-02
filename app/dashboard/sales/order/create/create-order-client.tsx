@@ -56,7 +56,11 @@ type LinkedQuotation = {
     title?: string;
     name: string;
     organizationName?: string;
+    organizationAddress?: string;
   } | null;
+  salesPersonName?: string | null;
+  deliveryDate?: string | null;
+  deliveryAddress?: string | null;
   _fromCpoId?: string; // auto-linked from a CPO
 };
 
@@ -272,6 +276,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>([]);
   const [cpoSalesPersons, setCpoSalesPersons] = useState<Record<string, { id: string; name: string; isExt: boolean }[]>>({});
   const [cpoSpInputs, setCpoSpInputs] = useState<Record<string, string>>({});
+  const [qtSalesPersons, setQtSalesPersons] = useState<Record<string, { id: string; name: string; isExt: boolean }[]>>({});
+  const [qtSpInputs, setQtSpInputs] = useState<Record<string, string>>({});
+  const qtSpInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [qtDeliveryDates, setQtDeliveryDates] = useState<Record<string, string>>({});
+  const [qtDeliveryAddresses, setQtDeliveryAddresses] = useState<Record<string, string>>({});
   const cpoSpInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [deliveryDate, setDeliveryDate] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
@@ -716,7 +725,19 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         quotationNo: qt.quotationNo,
         customerId: qt.customerId ?? null,
         customerSnapshot: qt.customerSnapshot ?? null,
+        salesPersonName: qt.salesPersonName ?? null,
       }]);
+      // Auto-fill per-quotation sales person for urgent SO
+      if (soType === "urgent" && qt.salesPersonName && !qtSalesPersons[qt.id]?.length) {
+        const m = members.find((x) => (x.name ?? x.email)?.toLowerCase() === qt.salesPersonName!.toLowerCase());
+        setQtSalesPersons((prev) => ({ ...prev, [qt.id]: [{ id: m?.userId ?? `sp-${qt.salesPersonName}`, name: qt.salesPersonName!, isExt: !m }] }));
+      }
+      // Auto-populate delivery address from customerSnapshot for urgent SO
+      if (soType === "urgent") {
+        const snap = qt.customerSnapshot as { organizationName?: string; organizationAddress?: string } | null;
+        const autoAddr = [snap?.organizationName, snap?.organizationAddress].filter(Boolean).join("\n");
+        if (autoAddr) setQtDeliveryAddresses((prev) => ({ ...prev, [qt.id]: autoAddr }));
+      }
 
       // Append items (renumber after existing), tag with source quotation
       const newItems = qt.items.map((item) =>
@@ -787,6 +808,18 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           } as unknown as Customer);
           if (snap.organizationName) setCustOrgMemberId("__snap__");
         }
+      }
+
+      // Auto-fill sales person from quotation when no CPO is linked (urgent / proforma)
+      if (isFirst && linkedCpos.length === 0 && salesPersons.length === 0 && qt.salesPersonName) {
+        const spList: typeof salesPersons = [];
+        const m = members.find((x) => (x.name ?? x.email)?.toLowerCase() === qt.salesPersonName!.toLowerCase());
+        spList.push({ id: m?.userId ?? `sp-${qt.salesPersonName}`, name: qt.salesPersonName, isExt: !m });
+        ((qt.associateSalesPersons ?? []) as { id: string; name: string }[]).forEach((a) => {
+          const am = members.find((x) => x.userId === a.id);
+          spList.push({ id: a.id, name: a.name, isExt: !am });
+        });
+        setSalesPersons(spList);
       }
     } catch {
       toast.error("Failed to load quotation");
@@ -1049,6 +1082,13 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           return null;
         }
       }
+    } else if (soType === "urgent" && linkedQuotations.length > 0) {
+      for (const qt of linkedQuotations) {
+        if (!qtSalesPersons[qt.id]?.length) {
+          toast.error(`Sales person required for ${qt.quotationNo}`);
+          return null;
+        }
+      }
     } else {
       if (salesPersons.length === 0) {
         toast.error("Sales person is required");
@@ -1082,10 +1122,21 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
             };
           })
         : undefined,
-      linkedQuotations: linkedQuotations.length > 0 ? linkedQuotations : undefined,
+      linkedQuotations: linkedQuotations.length > 0
+        ? (soType === "urgent"
+            ? linkedQuotations.map((qt) => ({
+                ...qt,
+                salesPersonName: qtSalesPersons[qt.id]?.[0]?.name ?? qt.salesPersonName ?? null,
+                deliveryDate: qtDeliveryDates[qt.id] ?? null,
+                deliveryAddress: qtDeliveryAddresses[qt.id] ?? null,
+              }))
+            : linkedQuotations)
+        : undefined,
       salesPersonName: linkedCpos.length > 0
         ? (cpoSalesPersons[linkedCpos[0]?.id]?.[0]?.name || undefined)
-        : (salesPersons[0]?.name || undefined),
+        : soType === "urgent" && linkedQuotations.length > 0
+          ? (qtSalesPersons[linkedQuotations[0]?.id]?.[0]?.name || undefined)
+          : (salesPersons[0]?.name || undefined),
       associateSalesPersons: (() => {
         if (linkedCpos.length > 0) {
           const seen = new Set<string>();
@@ -1096,10 +1147,16 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         return salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined;
       })(),
       deliveryDate: (() => {
+        if (soType === "urgent" && linkedQuotations.length > 0) {
+          const d = qtDeliveryDates[linkedQuotations[0].id];
+          return d ? new Date(d) : undefined;
+        }
         const d = linkedCpos[0]?.deliveryDate || deliveryDate;
         return d ? new Date(d) : undefined;
       })(),
-      deliveryAddress: (linkedCpos[0]?.deliveryAddress || deliveryAddress) || undefined,
+      deliveryAddress: soType === "urgent" && linkedQuotations.length > 0
+        ? (qtDeliveryAddresses[linkedQuotations[0].id] || undefined)
+        : ((linkedCpos[0]?.deliveryAddress || deliveryAddress) || undefined),
       notes: notes || undefined,
       subtotal: subtotal.toFixed(2),
       overallDiscountPct: overallDiscPct,
@@ -1786,19 +1843,130 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         <section className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">Order details</h2>
 
-          {/* Per-CPO (or cash sale) delivery table */}
+          {/* Per-quotation (urgent) or per-CPO (standard) delivery table */}
           <div className="overflow-x-auto mb-3">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-muted-foreground">
-                  <th className="text-left pb-2 pr-3 w-32 font-medium">CPO / Type</th>
+                  <th className="text-left pb-2 pr-3 w-40 font-medium">{soType === "urgent" ? "Quotation" : "CPO / Type"}</th>
                   <th className="text-left pb-2 pr-3 font-medium">Sales person</th>
                   <th className="text-left pb-2 pr-3 w-36 font-medium">Due delivery</th>
                   <th className="text-left pb-2 font-medium">Delivery address</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
-                {linkedCpos.length === 0 ? (
+                {soType === "urgent" && linkedCpos.length === 0 && linkedQuotations.length > 0 ? (
+                  // Urgent SO: per-quotation rows (sales person only; delivery date/address are order-level below)
+                  linkedQuotations.map((qt) => {
+                    const snap = qt.customerSnapshot;
+                    const custDisplay = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                    const orgName = (snap as any)?.organizationName ?? null;
+                    const qtId = qt.id;
+                    const qtSpList = qtSalesPersons[qtId] ?? [];
+                    return (
+                      <tr key={qtId}>
+                        <td className="py-2 pr-3 align-top">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">CPO To Follow</span>
+                            <span className="text-[11px] font-mono font-semibold">{qt.quotationNo}</span>
+                          </div>
+                          {custDisplay && <div className="text-[10px] text-muted-foreground mt-0.5">{custDisplay}{orgName ? ` · ${orgName}` : ""}</div>}
+                        </td>
+                        <td className="py-2 pr-3 align-top">
+                          <div
+                            className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
+                            onClick={() => qtSpInputRefs.current[qtId]?.focus()}
+                          >
+                            {qtSpList.map((s) => (
+                              <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
+                                {s.name}
+                                {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
+                                <button type="button" onClick={(e) => { e.stopPropagation(); setQtSalesPersons((prev) => ({ ...prev, [qtId]: (prev[qtId] ?? []).filter((x) => x.id !== s.id) })); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
+                              </span>
+                            ))}
+                            <select value="" onClick={(e) => e.stopPropagation()} onChange={(e) => {
+                              const m = members.find((x) => x.userId === e.target.value);
+                              if (!m) return;
+                              const mName = (m.name ?? m.email).toLowerCase();
+                              if (qtSpList.some((s) => s.id === m.userId || s.name.toLowerCase() === mName)) return;
+                              setQtSalesPersons((prev) => ({ ...prev, [qtId]: [...(prev[qtId] ?? []), { id: m.userId, name: m.name ?? m.email, isExt: false }] }));
+                            }} className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
+                              <option value="">+ member</option>
+                              {members.filter((m) => !qtSpList.some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
+                                <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                              ))}
+                            </select>
+                            <input
+                              ref={(el) => { qtSpInputRefs.current[qtId] = el; }}
+                              type="text"
+                              value={qtSpInputs[qtId] ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val.includes(",")) {
+                                  const parts = val.split(",");
+                                  const toAdd = parts.slice(0, -1).map((p) => p.trim()).filter(Boolean);
+                                  if (toAdd.length) {
+                                    const memberNames = new Set(members.map((m) => (m.name ?? m.email).toLowerCase()));
+                                    const blocked = toAdd.filter((n) => memberNames.has(n.toLowerCase()));
+                                    if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member`); }
+                                    const t = Date.now();
+                                    setQtSalesPersons((prev) => {
+                                      const cur = prev[qtId] ?? [];
+                                      const existing = new Set(cur.map((s) => s.name.toLowerCase()));
+                                      const unique = toAdd.filter((n) => !existing.has(n.toLowerCase()) && !memberNames.has(n.toLowerCase()));
+                                      return unique.length ? { ...prev, [qtId]: [...cur, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] } : prev;
+                                    });
+                                  }
+                                  setQtSpInputs((prev) => ({ ...prev, [qtId]: parts[parts.length - 1].trimStart() }));
+                                } else { setQtSpInputs((prev) => ({ ...prev, [qtId]: val })); }
+                              }}
+                              onKeyDown={(e) => {
+                                const cur = qtSpInputs[qtId] ?? "";
+                                if (e.key === "Backspace" && !cur && qtSpList.length > 0) {
+                                  setQtSalesPersons((prev) => ({ ...prev, [qtId]: (prev[qtId] ?? []).slice(0, -1) })); return;
+                                }
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (!cur.trim()) return;
+                                  const names = cur.split(",").map((p) => p.trim()).filter(Boolean);
+                                  const memberNames = new Set(members.map((m) => (m.name ?? m.email).toLowerCase()));
+                                  const blocked = names.filter((n) => memberNames.has(n.toLowerCase()));
+                                  if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member`); return; }
+                                  const t = Date.now();
+                                  setQtSalesPersons((prev) => {
+                                    const existing = new Set((prev[qtId] ?? []).map((s) => s.name.toLowerCase()));
+                                    const unique = names.filter((n) => !existing.has(n.toLowerCase()));
+                                    return unique.length ? { ...prev, [qtId]: [...(prev[qtId] ?? []), ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] } : prev;
+                                  });
+                                  setQtSpInputs((prev) => ({ ...prev, [qtId]: "" }));
+                                }
+                              }}
+                              placeholder={qtSpList.length === 0 ? "Type a name… (Enter or , to add)" : ""}
+                              className="flex-1 min-w-24 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+                            />
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3 align-top">
+                          <input
+                            type="date"
+                            value={qtDeliveryDates[qtId] ?? ""}
+                            onChange={(e) => setQtDeliveryDates((prev) => ({ ...prev, [qtId]: e.target.value }))}
+                            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          />
+                        </td>
+                        <td className="py-2 align-top">
+                          <Textarea
+                            value={qtDeliveryAddresses[qtId] ?? ""}
+                            onChange={(e) => setQtDeliveryAddresses((prev) => ({ ...prev, [qtId]: e.target.value }))}
+                            placeholder={"Organization name\nFull address"}
+                            rows={2}
+                            className="text-xs resize-none"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : linkedCpos.length === 0 ? (
                   // Cash sale row — uses global state fields
                   <tr>
                     <td className="py-2 pr-3">
@@ -2015,7 +2183,6 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
             </table>
           </div>
 
-
           <div className="mt-3 space-y-1.5">
             <Label className="text-xs">Notes</Label>
             <Textarea
@@ -2044,7 +2211,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   <th className="text-left align-bottom pb-2 pr-2 w-14 uppercase">UOM</th>
                   {soType !== "proforma" && <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Unit price</th>}
                   {soType !== "proforma" && <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Total unit price</th>}
-                  {linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
+                  {soType !== "urgent" && linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
                     <th className="text-left align-bottom pb-2 pr-2 w-28 uppercase">Customer</th>
                   )}
                   <th className="w-14" />
@@ -2052,7 +2219,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               </thead>
               <tbody>
                 {(() => {
-                  const hasQuotationCustomers = linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
+                  const hasQuotationCustomers = soType !== "urgent" && linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
                   const colCount = 5 + (soType !== "proforma" ? 3 : 0) + (hasQuotationCustomers ? 1 : 0) + 1;
                   // Build color index map: each unique groupId or cpoId gets a rotating palette entry
                   // Avoid: green/emerald (from-CPO tag), amber/yellow (edited tag), blue/sky (CPO badge)
@@ -2070,15 +2237,65 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     for (let i = 0; i < key.length; i++) { h = Math.imul(31, h) + key.charCodeAt(i) | 0; }
                     return Math.abs(h) % COLOR_PALETTE.length;
                   };
+                  // For urgent SO: palette by first-appearance order of linkedQuotations (avoids hash collisions)
                   const getColor = (it: LineItem) => {
+                    if (soType === "urgent") {
+                      const qtId = it.sourceQuotationId || null;
+                      if (!qtId) return null;
+                      const idx = linkedQuotations.findIndex((q) => q.id === qtId);
+                      return idx >= 0 ? COLOR_PALETTE[idx % COLOR_PALETTE.length] : null;
+                    }
                     const key = it.setGroupId || it.sourceCustomerPoId || it.sourceQuotationId;
                     return key ? COLOR_PALETTE[stableColorIdx(key)] : null;
                   };
+                  // For urgent SO: sort by quotation (first-appearance order), then by setGroupId within each quotation
+                  const renderItems = soType === "urgent" ? (() => {
+                    const seenQtIds = new Set<string>();
+                    const qtOrder: string[] = [];
+                    for (const it of items) {
+                      const qtId = it.sourceQuotationId || "__none__";
+                      if (!seenQtIds.has(qtId)) { seenQtIds.add(qtId); qtOrder.push(qtId); }
+                    }
+                    return qtOrder.flatMap((qtId) => {
+                      const qtItems = items.filter((i) => (i.sourceQuotationId || "__none__") === qtId);
+                      const seenGids = new Set<string>();
+                      const groupOrder: string[] = [];
+                      for (const it of qtItems) {
+                        if (it.setGroupId && !seenGids.has(it.setGroupId)) { seenGids.add(it.setGroupId); groupOrder.push(it.setGroupId); }
+                      }
+                      return [
+                        ...groupOrder.flatMap((gid) => qtItems.filter((i) => i.setGroupId === gid)),
+                        ...qtItems.filter((i) => !i.setGroupId),
+                      ];
+                    });
+                  })() : items;
                   let lastCpoId: string | undefined = undefined;
+                  let lastQtId: string | undefined = undefined;
                   const shownLooseHeaderForCpo = new Set<string>();
-                  return items.flatMap((item, rowIdx) => {
+                  return renderItems.flatMap((item, rowIdx) => {
                   const rows: React.JSX.Element[] = [];
                   const color = getColor(item);
+                  // Urgent SO: customer/org section header when linked quotation changes
+                  if (soType === "urgent" && item.sourceQuotationId !== lastQtId) {
+                    lastQtId = item.sourceQuotationId;
+                    const qt = linkedQuotations.find((q) => q.id === item.sourceQuotationId);
+                    const snap = qt?.customerSnapshot;
+                    if (snap) {
+                      const custDisplayName = [snap.title, snap.name].filter(Boolean).join(" ");
+                      const orgName = (snap as any).organizationName ?? null;
+                      rows.push(
+                        <tr key={`qt-section-${item.sourceQuotationId ?? "none"}-${rowIdx}`}>
+                          <td colSpan={colCount} className={rowIdx === 0 ? "pb-1" : "pt-4 pb-1"}>
+                            <div className={`flex items-center gap-2 ${rowIdx > 0 ? "border-t border-border/60 pt-2" : ""}`}>
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">CPO To Follow</span>
+                              <span className="text-[10px] font-semibold text-foreground">{custDisplayName}</span>
+                              {orgName && <span className="text-[10px] text-muted-foreground">{orgName}</span>}
+                            </div>
+                          </td>
+                        </tr>,
+                      );
+                    }
+                  }
                   // CPO group header: insert when CPO changes and multiple CPOs are linked
                   if (linkedCpos.length > 1 && item.sourceCustomerPoId !== lastCpoId) {
                     lastCpoId = item.sourceCustomerPoId;
@@ -2104,10 +2321,12 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     );
                   }
                   if (!item.setGroupId) {
-                    const cpoKey = item.sourceCustomerPoId ?? "__global__";
-                    const sectionHasGroups = items.some((i) =>
-                      i.setGroupId && (linkedCpos.length > 1 ? i.sourceCustomerPoId === item.sourceCustomerPoId : true),
-                    );
+                    const cpoKey = soType === "urgent"
+                      ? (item.sourceQuotationId ?? "__global__")
+                      : (item.sourceCustomerPoId ?? "__global__");
+                    const sectionHasGroups = soType === "urgent"
+                      ? renderItems.some((i) => i.setGroupId && (i.sourceQuotationId ?? "__none__") === (item.sourceQuotationId ?? "__none__"))
+                      : renderItems.some((i) => i.setGroupId && (linkedCpos.length > 1 ? i.sourceCustomerPoId === item.sourceCustomerPoId : true));
                     if (sectionHasGroups && !shownLooseHeaderForCpo.has(cpoKey)) {
                       shownLooseHeaderForCpo.add(cpoKey);
                       rows.push(
@@ -2119,65 +2338,30 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       );
                     }
                   }
-                  if (item.setGroupId && items.findIndex((i) => i.setGroupId === item.setGroupId) === rowIdx) {
+                  if (item.setGroupId && renderItems.findIndex((i) => i.setGroupId === item.setGroupId) === rowIdx) {
                     const groupItems = items.filter((i) => i.setGroupId === item.setGroupId);
                     const setQtyNum = parseFloat(item.setQty || "1") || 1;
                     const perSetTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
                     const groupTotal = perSetTotal * setQtyNum;
-                    if (soType === "urgent") {
-                      rows.push(
-                        <tr key={`grp-${item.setGroupId}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
-                          <td colSpan={5} className="py-1.5 pr-2">
-                            <div className="flex items-center gap-2 pl-4">
-                              <input
-                                value={item.setGroupLabel}
-                                onChange={(e) => handleGroupLabelEdit(item.setGroupId, e.target.value)}
-                                className="h-6 flex-1 min-w-0 bg-transparent border border-transparent hover:border-blue-200 focus:border-blue-300 focus:bg-background rounded px-1 text-[13px] font-bold text-blue-700 dark:text-blue-300 outline-none transition-colors"
-                                placeholder="Set name…"
-                              />
-                              <span className="text-[10px] text-muted-foreground">×</span>
-                              <input
-                                type="number" min="1"
-                                value={item.setQty || "1"}
-                                onChange={(e) => handleSetQtyChange(item.setGroupId, e.target.value)}
-                                className="h-6 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
-                              />
-                              <span className="text-[10px] text-muted-foreground">sets</span>
-                              <button type="button" onClick={() => removeGroup(item.setGroupId)} className="text-muted-foreground hover:text-destructive transition-colors">
-                                <XIcon className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </td>
-                          <td colSpan={2} className="py-1.5 pr-2 text-right tabular-nums text-[10px] text-muted-foreground">
-                            {perSetTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
-                            <div className="text-[9px] text-muted-foreground/60">/set</div>
-                          </td>
-                          <td colSpan={colCount - 7} className="py-1.5 text-right text-[10px] font-semibold text-blue-700 dark:text-blue-300 tabular-nums pr-2">
-                            {groupTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
-                          </td>
-                        </tr>,
-                      );
-                    } else {
-                      const perSetPrice = perSetTotal / setQtyNum;
-                      rows.push(
-                        <tr key={`grp-${item.setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
-                          <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
-                            <div className="flex items-center gap-2">
-                              <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{item.setGroupLabel || "Set"}</span>
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
-                                × {item.setQty || "1"} sets
-                              </span>
-                              {soType !== "proforma" && perSetTotal > 0 && (
-                                <>
-                                  <span className={`text-[10px] tabular-nums ${color?.text ?? "text-muted-foreground"}`}>1 set: {fmt(perSetPrice)}</span>
-                                  <span className={`ml-auto text-[11px] font-semibold ${color?.text ?? "text-foreground"} tabular-nums`}>{fmt(groupTotal)}</span>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        </tr>,
-                      );
-                    }
+                    const perSetPrice = perSetTotal / setQtyNum;
+                    rows.push(
+                      <tr key={`grp-${item.setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
+                        <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{item.setGroupLabel || "Set"}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
+                              × {item.setQty || "1"} sets
+                            </span>
+                            {soType !== "proforma" && perSetTotal > 0 && (
+                              <>
+                                <span className={`text-[10px] tabular-nums ${color?.text ?? "text-muted-foreground"}`}>1 set: {fmt(perSetPrice)}</span>
+                                <span className={`ml-auto text-[11px] font-semibold ${color?.text ?? "text-foreground"} tabular-nums`}>{fmt(groupTotal)}</span>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>,
+                    );
                   }
                   const sourceQt = item.sourceQuotationId
                     ? linkedQuotations.find((q) => q.id === item.sourceQuotationId)

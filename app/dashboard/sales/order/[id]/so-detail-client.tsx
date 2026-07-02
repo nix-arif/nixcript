@@ -394,7 +394,21 @@ export function SalesOrderDetailClient({
                         for (let i = 0; i < key.length; i++) { h = Math.imul(31, h) + key.charCodeAt(i) | 0; }
                         return Math.abs(h) % COLOR_PALETTE.length;
                       };
+                      // For urgent SO: palette by first-appearance order of quotation IDs (avoids hash collisions)
+                      const urgentQtOrder = order.soType === "urgent" ? (() => {
+                        const seen: string[] = [];
+                        const lqs = (order.linkedQuotations as { id: string }[] | null) ?? [];
+                        for (const q of lqs) { if (!seen.includes(q.id)) seen.push(q.id); }
+                        for (const it of order.items) { const qid = (it as any).sourceQuotationId; if (qid && !seen.includes(qid)) seen.push(qid); }
+                        return seen;
+                      })() : null;
                       const getColor = (item: typeof order.items[0]) => {
+                        if (order.soType === "urgent" && urgentQtOrder) {
+                          const qtId = (item as any).sourceQuotationId || null;
+                          if (!qtId) return null;
+                          const idx = urgentQtOrder.indexOf(qtId);
+                          return idx >= 0 ? COLOR_PALETTE[idx % COLOR_PALETTE.length] : null;
+                        }
                         const key = (item as any).setGroupId || (item as any).sourceCustomerPoId || (item as any).sourceQuotationId;
                         return key ? COLOR_PALETTE[stableColorIdx(key)] : null;
                       };
@@ -406,15 +420,72 @@ export function SalesOrderDetailClient({
                         + ((status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 ? 1 : 0)
                         + (can("sales-order:approve") && status === "submitted" ? 1 : 0);
 
+                      const isUrgent = order.soType === "urgent";
+                      const orderLinkedQuotations = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null; salesPersonName?: string | null }[] | null) ?? [];
                       let lastCpoId: string | undefined = undefined;
+                      let lastQtId: string | undefined = undefined;
                       const shownLooseHeaderForCpo = new Set<string>();
-                      return order.items.flatMap((item, idx) => {
+                      const renderItems = isUrgent ? (() => {
+                        const seenQtIds = new Set<string>();
+                        const qtOrder: string[] = [];
+                        for (const it of order.items) {
+                          const qtId = (it as any).sourceQuotationId || "__none__";
+                          if (!seenQtIds.has(qtId)) { seenQtIds.add(qtId); qtOrder.push(qtId); }
+                        }
+                        return qtOrder.flatMap((qtId) => {
+                          const qtItems = order.items.filter((i) => ((i as any).sourceQuotationId || "__none__") === qtId);
+                          const seenGids = new Set<string>();
+                          const groupOrder: string[] = [];
+                          for (const it of qtItems) {
+                            if ((it as any).setGroupId && !seenGids.has((it as any).setGroupId)) { seenGids.add((it as any).setGroupId); groupOrder.push((it as any).setGroupId); }
+                          }
+                          return [
+                            ...groupOrder.flatMap((gid) => qtItems.filter((i) => (i as any).setGroupId === gid)),
+                            ...qtItems.filter((i) => !(i as any).setGroupId),
+                          ];
+                        });
+                      })() : order.items;
+                      return renderItems.flatMap((item, idx) => {
                         const rows: React.JSX.Element[] = [];
                         const color = getColor(item);
                         const isAdditional = (item as any).isAdditional;
 
-                        // CPO section header
-                        if (distinctCpos.size > 1 && (item as any).sourceCustomerPoId !== lastCpoId) {
+                        // Urgent SO: customer/org section header when linked quotation changes
+                        if (isUrgent && (item as any).sourceQuotationId !== lastQtId) {
+                          lastQtId = (item as any).sourceQuotationId;
+                          const qt = orderLinkedQuotations.find((q) => q.id === (item as any).sourceQuotationId);
+                          const snap = qt?.customerSnapshot;
+                          if (snap) {
+                            const custDisplayName = [snap.title, snap.name].filter(Boolean).join(" ");
+                            const orgName = (snap as any).organizationName ?? null;
+                            const matchingCpo = order.cpoCustomers.find((cpo) =>
+                              qt && (
+                                (qt.customerId && cpo.customerId === qt.customerId) ||
+                                (!qt.customerId && qt.customerSnapshot?.name && cpo.customerSnapshot?.name === qt.customerSnapshot?.name)
+                              )
+                            );
+                            rows.push(
+                              <tr key={`qt-section-${(item as any).sourceQuotationId ?? "none"}-${idx}`}>
+                                <td colSpan={colCount} className={idx === 0 ? "pb-1" : "pt-4 pb-1"}>
+                                  <div className={`flex items-center gap-2 ${idx > 0 ? "border-t border-border/60 pt-2" : ""}`}>
+                                    {matchingCpo ? (
+                                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono ${color?.text ?? "text-muted-foreground"} ${color?.hdr ?? "bg-muted/50"} border border-current/20`}>
+                                        {matchingCpo.customerPoNo}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">CPO To Follow</span>
+                                    )}
+                                    <span className="text-[10px] font-semibold text-foreground">{custDisplayName}</span>
+                                    {orgName && <span className="text-[10px] text-muted-foreground">{orgName}</span>}
+                                  </div>
+                                </td>
+                              </tr>,
+                            );
+                          }
+                        }
+
+                        // CPO section header (standard SO with multiple CPOs)
+                        if (!isUrgent && distinctCpos.size > 1 && (item as any).sourceCustomerPoId !== lastCpoId) {
                           lastCpoId = (item as any).sourceCustomerPoId;
                           const cpoInfo = order.cpoCustomers.find((c) => c.customerPoId === (item as any).sourceCustomerPoId);
                           const cpoCustomer = cpoInfo?.customerSnapshot
@@ -442,10 +513,12 @@ export function SalesOrderDetailClient({
 
                         // Other items header (ungrouped items when sets also exist)
                         if (!(item as any).setGroupId) {
-                          const cpoKey = (item as any).sourceCustomerPoId ?? "__global__";
-                          const sectionHasGroups = order.items.some((i) =>
-                            (i as any).setGroupId && (distinctCpos.size > 1 ? (i as any).sourceCustomerPoId === (item as any).sourceCustomerPoId : true),
-                          );
+                          const cpoKey = isUrgent
+                            ? ((item as any).sourceQuotationId ?? "__global__")
+                            : ((item as any).sourceCustomerPoId ?? "__global__");
+                          const sectionHasGroups = isUrgent
+                            ? renderItems.some((i) => (i as any).setGroupId && ((i as any).sourceQuotationId ?? "__none__") === ((item as any).sourceQuotationId ?? "__none__"))
+                            : renderItems.some((i) => (i as any).setGroupId && (distinctCpos.size > 1 ? (i as any).sourceCustomerPoId === (item as any).sourceCustomerPoId : true));
                           if (sectionHasGroups && !shownLooseHeaderForCpo.has(cpoKey)) {
                             shownLooseHeaderForCpo.add(cpoKey);
                             rows.push(
@@ -459,7 +532,7 @@ export function SalesOrderDetailClient({
                         }
 
                         // Set group header
-                        if ((item as any).setGroupId && order.items.findIndex((i) => (i as any).setGroupId === (item as any).setGroupId) === idx) {
+                        if ((item as any).setGroupId && renderItems.findIndex((i) => (i as any).setGroupId === (item as any).setGroupId) === idx) {
                           const groupItems = order.items.filter((i) => (i as any).setGroupId === (item as any).setGroupId);
                           const groupTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
                           const setQtyNum = parseFloat((item as any).setQty || "1") || 1;
@@ -1156,9 +1229,55 @@ export function SalesOrderDetailClient({
                 </div>
               </div>
             )}
-            {/* Sales person — per-CPO when CPOs linked, else SO-level */}
+            {/* Sales person — per-quotation for urgent SO (no CPOs yet), per-CPO when CPOs linked, else SO-level */}
             {(() => {
               const associates = (order.associateSalesPersons as { id: string; name: string }[] | null) ?? [];
+
+              // Urgent SO — always show per-quotation rows (with or without CPOs)
+              if (order.soType === "urgent") {
+                const orderLqs = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null; salesPersonName?: string | null }[] | null) ?? [];
+                if (orderLqs.length > 0) {
+                  const rows = orderLqs.map((qt) => {
+                    const matchingCpo = order.cpoCustomers.find((c) =>
+                      (qt.customerId && c.customerId === qt.customerId) ||
+                      (!qt.customerId && qt.customerSnapshot?.name && c.customerSnapshot?.name === qt.customerSnapshot?.name)
+                    );
+                    const effectiveSp = matchingCpo
+                      ? (matchingCpo.soSalesPersonName ?? matchingCpo.salesPersonName ?? null)
+                      : (qt.salesPersonName ?? linkedQuotations.find((q) => q.id === qt.id)?.salesPersonName ?? null);
+                    const externalPersons = matchingCpo?.externalPersons ?? [];
+                    return { qt, effectiveSp, externalPersons };
+                  });
+                  const anyData = rows.some((r) => r.effectiveSp || r.externalPersons.length > 0);
+                  if (!anyData) return null;
+                  return (
+                    <div className="flex items-start gap-2">
+                      <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] text-muted-foreground">Sales person</p>
+                        <div className="space-y-1 mt-0.5">
+                          {rows.map(({ qt, effectiveSp, externalPersons }) => {
+                            if (!effectiveSp && externalPersons.length === 0) return null;
+                            return (
+                              <div key={qt.id} className="flex flex-wrap items-center gap-1">
+                                <span className="text-[10px] font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 shrink-0">
+                                  {qt.quotationNo}
+                                </span>
+                                {effectiveSp && <span className="text-xs">{effectiveSp}</span>}
+                                {externalPersons.map((e) => (
+                                  <span key={e.id} className="inline-flex items-center gap-0.5 text-[10px] bg-muted border border-border rounded px-1.5 py-0.5">
+                                    {e.name}<span className="text-[9px] opacity-60 font-bold ml-0.5">ext</span>
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+              }
 
               if (order.cpoCustomers.length > 0) {
                 // Build effective per-CPO rows:
@@ -1197,7 +1316,7 @@ export function SalesOrderDetailClient({
                 );
               }
 
-              // Cash sale — SO-level
+              // Cash sale or single-quotation urgent SO — SO-level
               const soSp = order.salesPersonName || null;
               if (!soSp && associates.length === 0) return null;
               return (
@@ -1218,70 +1337,149 @@ export function SalesOrderDetailClient({
               );
             })()}
 
-            {/* Due delivery date — per-CPO when linked, else order-level */}
-            {order.cpoCustomers.length > 0 ? (
-              <div className="flex items-start gap-2">
-                <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-[10px] text-muted-foreground mb-1">Due delivery date</p>
-                  <div className="space-y-1">
-                    {order.cpoCustomers.map((c) => (
-                      <div key={c.customerPoId} className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
-                        <span className="text-xs">
-                          {c.deliveryDate ? fmtDate(c.deliveryDate) : <span className="text-muted-foreground">—</span>}
-                        </span>
+            {/* Due delivery date — per-quotation for urgent SO, per-CPO when linked, else order-level */}
+            {(() => {
+              if (order.soType === "urgent") {
+                const orderLqs = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null; deliveryDate?: string | null }[] | null) ?? [];
+                if (orderLqs.length > 0) {
+                  const rows = orderLqs.map((qt) => {
+                    const matchingCpo = order.cpoCustomers.find((c) =>
+                      (qt.customerId && c.customerId === qt.customerId) ||
+                      (!qt.customerId && qt.customerSnapshot?.name && c.customerSnapshot?.name === qt.customerSnapshot?.name)
+                    );
+                    return { qt, deliveryDate: matchingCpo?.deliveryDate ?? (qt.deliveryDate ? new Date(qt.deliveryDate) : null) };
+                  });
+                  const anyDate = rows.some((r) => r.deliveryDate) || !!order.deliveryDate;
+                  if (!anyDate) return null;
+                  return (
+                    <div className="flex items-start gap-2">
+                      <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] text-muted-foreground mb-1">Due delivery date</p>
+                        <div className="space-y-1">
+                          {rows.map(({ qt, deliveryDate }) => (
+                            <div key={qt.id} className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono text-blue-700 dark:text-blue-400 shrink-0">{qt.quotationNo}</span>
+                              <span className="text-xs">
+                                {deliveryDate ? fmtDate(deliveryDate) : order.deliveryDate ? fmtDate(order.deliveryDate) : <span className="text-muted-foreground">—</span>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    ))}
+                    </div>
+                  );
+                }
+              }
+              if (order.cpoCustomers.length > 0) return (
+                <div className="flex items-start gap-2">
+                  <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-muted-foreground mb-1">Due delivery date</p>
+                    <div className="space-y-1">
+                      {order.cpoCustomers.map((c) => (
+                        <div key={c.customerPoId} className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
+                          <span className="text-xs">
+                            {c.deliveryDate ? fmtDate(c.deliveryDate) : <span className="text-muted-foreground">—</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : order.deliveryDate ? (
-              <div className="flex items-start gap-2">
-                <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] text-muted-foreground">Due delivery date</p>
-                  <p className="text-xs">{fmtDate(order.deliveryDate)}</p>
+              );
+              if (order.deliveryDate) return (
+                <div className="flex items-start gap-2">
+                  <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Due delivery date</p>
+                    <p className="text-xs">{fmtDate(order.deliveryDate)}</p>
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              );
+              return null;
+            })()}
 
-            {/* Delivery address — per-CPO when linked, else order-level */}
-            {order.cpoCustomers.length > 0 ? (
-              <div className="flex items-start gap-2">
-                <MapPinIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-[10px] text-muted-foreground mb-1">Delivery address</p>
-                  <div className="space-y-1.5">
-                    {order.cpoCustomers.map((c) => (
-                      <div key={c.customerPoId} className="flex items-start gap-1.5">
-                        <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0 pt-0.5">{c.customerPoNo}</span>
-                        <span className="text-xs leading-snug">
-                          {c.customerSnapshot?.organizationAddress ? (
-                            <>
-                              {c.customerSnapshot.organizationName && (
-                                <span className="block text-[10px] font-medium text-muted-foreground">{c.customerSnapshot.organizationName}</span>
-                              )}
-                              {c.customerSnapshot.organizationAddress}
-                            </>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </span>
+            {/* Delivery address — per-quotation for urgent SO, per-CPO when linked, else order-level */}
+            {(() => {
+              if (order.soType === "urgent") {
+                const orderLqs = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string; organizationAddress?: string } | null; deliveryAddress?: string | null }[] | null) ?? [];
+                if (orderLqs.length > 0) {
+                  const rows = orderLqs.map((qt) => {
+                    const matchingCpo = order.cpoCustomers.find((c) =>
+                      (qt.customerId && c.customerId === qt.customerId) ||
+                      (!qt.customerId && qt.customerSnapshot?.name && c.customerSnapshot?.name === qt.customerSnapshot?.name)
+                    );
+                    const orgName = matchingCpo?.customerSnapshot?.organizationName ?? qt.customerSnapshot?.organizationName ?? null;
+                    const address = matchingCpo?.customerSnapshot?.organizationAddress ?? qt.deliveryAddress ?? qt.customerSnapshot?.organizationAddress ?? null;
+                    return { qt, orgName, address };
+                  });
+                  const anyAddress = rows.some((r) => r.address) || !!order.deliveryAddress;
+                  if (!anyAddress) return null;
+                  return (
+                    <div className="flex items-start gap-2">
+                      <MapPinIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] text-muted-foreground mb-1">Delivery address</p>
+                        <div className="space-y-1.5">
+                          {rows.map(({ qt, orgName, address }) => (
+                            <div key={qt.id} className="flex items-start gap-1.5">
+                              <span className="text-[10px] font-mono text-blue-700 dark:text-blue-400 shrink-0 pt-0.5">{qt.quotationNo}</span>
+                              <span className="text-xs leading-snug">
+                                {address ? (
+                                  <>
+                                    {orgName && <span className="block text-[10px] font-medium text-muted-foreground">{orgName}</span>}
+                                    {address}
+                                  </>
+                                ) : order.deliveryAddress ? order.deliveryAddress : <span className="text-muted-foreground">—</span>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    ))}
+                    </div>
+                  );
+                }
+              }
+              if (order.cpoCustomers.length > 0) return (
+                <div className="flex items-start gap-2">
+                  <MapPinIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-muted-foreground mb-1">Delivery address</p>
+                    <div className="space-y-1.5">
+                      {order.cpoCustomers.map((c) => (
+                        <div key={c.customerPoId} className="flex items-start gap-1.5">
+                          <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0 pt-0.5">{c.customerPoNo}</span>
+                          <span className="text-xs leading-snug">
+                            {c.customerSnapshot?.organizationAddress ? (
+                              <>
+                                {c.customerSnapshot.organizationName && (
+                                  <span className="block text-[10px] font-medium text-muted-foreground">{c.customerSnapshot.organizationName}</span>
+                                )}
+                                {c.customerSnapshot.organizationAddress}
+                              </>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : order.deliveryAddress ? (
-              <div className="flex items-start gap-2">
-                <MapPinIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] text-muted-foreground">Delivery address</p>
-                  <p className="text-xs">{order.deliveryAddress}</p>
+              );
+              if (order.deliveryAddress) return (
+                <div className="flex items-start gap-2">
+                  <MapPinIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Delivery address</p>
+                    <p className="text-xs">{order.deliveryAddress}</p>
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              );
+              return null;
+            })()}
             <div className="flex items-start gap-2">
               <PackageIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
               <div>

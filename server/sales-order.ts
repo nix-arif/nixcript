@@ -191,7 +191,7 @@ export interface CreateSalesOrderInput {
   customerPoLinks?: { customerPoId: string; customerPoNo: string; deliveryDate?: string; salesPersonName?: string | null; externalPersons?: { id: string; name: string }[] }[];
   quotationId?: string;
   quotationNo?: string;
-  linkedQuotations?: { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string; organizationAddress?: string; email?: string; contactNo?: string } | null }[];
+  linkedQuotations?: { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string; organizationAddress?: string; email?: string; contactNo?: string } | null; salesPersonName?: string | null; deliveryDate?: string | null; deliveryAddress?: string | null }[];
   salesPersonId?: string;
   salesPersonName?: string;
   associateSalesPersons?: { id: string; name: string }[];
