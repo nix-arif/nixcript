@@ -540,7 +540,7 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
               </div>
           }
           <div style={{ paddingTop: "2px" }}>
-            <div style={{ fontWeight: "700", fontSize: "14px", color: navy, letterSpacing: "-0.2px" }}>{orgCompanyName ?? orgName}</div>
+            <div style={{ fontWeight: "700", fontSize: "14px", color: "#000", letterSpacing: "-0.2px" }}>{orgCompanyName ?? orgName}</div>
             {orgCompanyAddress && <div style={{ color: "#555", fontSize: "10.5px", marginTop: "3px", maxWidth: "300px", lineHeight: "1.5" }}>{orgCompanyAddress}</div>}
             <div style={{ color: "#888", fontSize: "10px", marginTop: "3px" }}>
               {[orgTaxNo && `Tax Reg: ${orgTaxNo}`, orgPhone].filter(Boolean).join("  ·  ")}
@@ -550,8 +550,8 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
 
         {/* Right — stamp box */}
         <div style={{ border: `2px solid ${navy}`, borderRadius: "4px", padding: "12px 16px", textAlign: "right", minWidth: "160px", flexShrink: 0 }}>
-          <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "2px", color: navy, marginBottom: "6px" }}>Quotation</div>
-          <div style={{ fontFamily: "monospace", fontWeight: "700", fontSize: "15px", color: navy, letterSpacing: "0.5px" }}>{q.quotationNo}</div>
+          <div style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "2px", color: "#000", marginBottom: "6px" }}>Quotation</div>
+          <div style={{ fontFamily: "monospace", fontWeight: "700", fontSize: "15px", color: "#000", letterSpacing: "0.5px" }}>{q.quotationNo}</div>
           <div style={{ width: "100%", height: "1px", background: `${navy}30`, margin: "8px 0" }} />
           <div style={{ fontSize: "10px", color: "#555" }}>
             <div>{fmtDate(q.createdAt)}</div>
@@ -567,7 +567,7 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0", margin: "0 28px", padding: "14px 0" }}>
         {/* Customer */}
         <div>
-          <div style={{ fontSize: "8.5px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.2px", color: navy, marginBottom: "6px" }}>Attention To</div>
+          <div style={{ fontSize: "8.5px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.2px", color: "#000", marginBottom: "6px" }}>Attention To</div>
           {cust ? (
             <div style={{ lineHeight: "1.65" }}>
               <div style={{ fontWeight: "700", fontSize: "13px" }}>{[cust.title, cust.name].filter(Boolean).join(" ")}</div>
@@ -602,7 +602,7 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
         <thead>
           <tr style={{ borderBottom: `2px solid ${navy}` }}>
             {["#", "Code", "Description / MDA", "Qty", "UOM", "Unit Price", "Disc%", ...(showTP ? ["Total"] : [])].map(h => (
-              <th key={h} style={{ padding: "8px 10px", color: navy, fontWeight: "700", textAlign: ["Unit Price","Total"].includes(h) ? "right" : h === "#" ? "center" : "left", fontSize: "9px", textTransform: "uppercase", letterSpacing: "0.8px", background: "white" }}>{h}</th>
+              <th key={h} style={{ padding: "8px 10px", color: "#000", fontWeight: "700", textAlign: ["Unit Price","Total"].includes(h) ? "right" : h === "#" ? "center" : "left", fontSize: "9px", textTransform: "uppercase", letterSpacing: "0.8px", background: "white" }}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -630,7 +630,7 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", padding: "16px 28px", borderTop: `1px solid #eee` }}>
         {bank ? (
           <div style={{ fontSize: "11px" }}>
-            <div style={{ fontSize: "8.5px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.2px", color: navy, marginBottom: "6px" }}>Payment To</div>
+            <div style={{ fontSize: "8.5px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1.2px", color: "#000", marginBottom: "6px" }}>Payment To</div>
             {([["Bank", bank.bankName], ["Branch", (bank as any).branchName], ["Account Name", bank.accountHolder], ["Account No.", bank.accountNo]] as [string,string][]).map(([l, v]) => (
               <div key={l} style={{ marginBottom: "2px", color: "#444" }}>
                 <span style={{ color: "#999", marginRight: "6px", fontSize: "10.5px" }}>{l}:</span>
@@ -655,15 +655,15 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
             </div>
           ))}
           <div style={{ marginTop: "8px", borderTop: `2px solid ${navy}`, paddingTop: "8px", display: "flex", justifyContent: "space-between", gap: "16px" }}>
-            <span style={{ fontWeight: "700", fontSize: "13px", color: navy }}>Grand Total</span>
-            <span style={{ fontWeight: "800", fontSize: "15px", color: navy, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grand)}</span>
+            <span style={{ fontWeight: "700", fontSize: "13px", color: "#000" }}>Grand Total</span>
+            <span style={{ fontWeight: "800", fontSize: "15px", color: "#000", fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grand)}</span>
           </div>
         </div>
       </div>
 
       {q.notes && (
         <div style={{ margin: "0 28px 14px", padding: "10px 14px", background: "#f8f9fc", border: `1px solid ${navy}15`, borderRadius: "4px", fontSize: "11px", color: "#444" }}>
-          <div style={{ fontSize: "8.5px", fontWeight: "700", color: navy, textTransform: "uppercase", letterSpacing: "1px", marginBottom: "4px" }}>Notes</div>
+          <div style={{ fontSize: "8.5px", fontWeight: "700", color: "#000", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "4px" }}>Notes</div>
           {q.notes}
         </div>
       )}
@@ -1220,12 +1220,13 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
 // ── Router — driven by pdfTemplate so preview matches the downloaded PDF ──
 function QuotationPage({ entry }: { entry: GroupItem }) {
   const t = entry.orgPdfTemplate ?? "affirma";
-  if (t === "nexus")  return <TemplateModern  entry={entry} />;
-  if (t === "slate")  return <TemplateBold    entry={entry} />;
-  if (t === "aura")   return <TemplateAffirma entry={entry} />;
-  if (t === "zinc")   return <TemplateModern  entry={entry} />;
-  if (t === "mono")   return <TemplateMono    entry={entry} />;
-  if (t === "ember")  return <TemplateEmber   entry={entry} />;
+  if (t === "nexus")    return <TemplateModern  entry={entry} />;
+  if (t === "slate")    return <TemplateBold    entry={entry} />;
+  if (t === "aura")     return <TemplateAffirma entry={entry} />;
+  if (t === "standard") return <TemplateAffirma entry={entry} />;
+  if (t === "zinc")     return <TemplateModern  entry={entry} />;
+  if (t === "mono")     return <TemplateMono    entry={entry} />;
+  if (t === "ember")    return <TemplateEmber   entry={entry} />;
   return <TemplateAffirma entry={entry} />;
 }
 

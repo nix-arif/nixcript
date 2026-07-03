@@ -236,7 +236,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
   // ── Org name + header style ───────────────────────────────────────────────
   const nameSize   = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string,number>)[data.orgNameSize ?? "medium"] ?? 13;
-  const hLayout    = data.orgHeaderLayout ?? "standard";
+  const hLayout    = "standard";
   const QL_SIZE    = 20; // Aura identity: large centered document title
   const QL_TEXT    = !!(data.orgQuotationLabelUppercase ?? 1) ? "QUOTATION" : "Quotation";
   const attnNameSz = ({ small: 10, medium: 13, large: 16, xlarge: 20 } as Record<string,number>)[data.orgAttentionNameSize ?? "medium"] ?? 13;
@@ -353,6 +353,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       mdaEstablishmentNo: orgMdaEstablishmentNo, taxNo: orgTaxNo,
       nameSize, nameBold: !!(data.orgNameBold ?? 1),
       nameUppercase: !!(data.orgNameUppercase ?? 0),
+      infoColor: C_DARK,
       headerLayout: hLayout, docLabel: "",
       docLabelSize: QL_SIZE, docLabelBold: !!(data.orgQuotationLabelBold ?? 1),
       docLabelAlign: "center",

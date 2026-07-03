@@ -1797,6 +1797,9 @@ export const purchaseRequisition = pgTable(
     // customer_order | replenishment | sample_demo
     samplePurpose: text("sample_purpose"),
     notes: text("notes"),
+    deliveryDate: timestamp("delivery_date"),
+    deliveryAddress: text("delivery_address"),
+    deliveryAddressType: text("delivery_address_type"), // customer | warehouse | custom
     requestedBy: text("requested_by").notNull().references(() => user.id),
     approvedBy: text("approved_by").references(() => user.id),
     approvedAt: timestamp("approved_at"),

@@ -1264,17 +1264,20 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           <div className="flex flex-wrap gap-2 items-center">
             {(["standard", "proforma", "urgent"] as const).map((t) => {
               const blockedByCpo = linkedCpos.length > 0 && (t === "urgent" || t === "proforma");
+              const blockedByQuotation = t === "standard" && linkedQuotations.length > 0 && soType !== "standard";
+              const isBlocked = blockedByCpo || blockedByQuotation;
               return (
                 <button
                   key={t}
                   type="button"
-                  disabled={blockedByCpo}
+                  disabled={isBlocked}
                   onClick={() => {
                     if (blockedByCpo) { toast.error("Remove linked CPOs before switching to this order type"); return; }
+                    if (blockedByQuotation) { toast.error("Remove linked quotations before switching to Standard"); return; }
                     setSoType(t);
                   }}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                    blockedByCpo
+                    isBlocked
                       ? "border-border text-muted-foreground/40 cursor-not-allowed opacity-50"
                       : soType === t
                         ? t === "proforma"
@@ -1291,6 +1294,12 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
             })}
             {linkedCpos.length > 0 && (
               <span className="text-[10px] text-muted-foreground">Pro-forma and Urgent require no CPO</span>
+            )}
+            {soType !== "standard" && linkedQuotations.length > 0 && (
+              <span className="text-[10px] text-muted-foreground">Remove linked quotations to switch to Standard</span>
+            )}
+            {soType === "standard" && linkedCpos.length === 0 && (
+              <span className="text-[10px] text-amber-600 dark:text-amber-400">Standard SO requires at least one CPO to submit</span>
             )}
           </div>
           {soType === "urgent" && (

@@ -434,7 +434,7 @@ function DoForm({ prefill, categories = [] }: { prefill: PrefillData; categories
   const [salesOrderNo] = useState(prefill.salesOrderNo ?? "");
   const [deliveredTo, setDeliveredTo] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState(prefill.deliveryAddress ?? "");
-  const [deliveryDate, setDeliveryDate] = useState(prefill.deliveryDate ?? "");
+  const [deliveryDate, setDeliveryDate] = useState(prefill.deliveryDate || new Date().toISOString().split("T")[0]);
   const [notes, setNotes] = useState("");
   const [categoryIds, setCategoryIds] = useState<string[]>(() =>
     categories.filter((c) => c.isDefault).map((c) => c.id),

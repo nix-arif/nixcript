@@ -121,9 +121,10 @@ export interface CompanyHeaderOptions {
   docLabelSize: number;
   docLabelBold: boolean;
   docLabelAlign?: "left" | "center" | "right"; // default "right"
-  // Optional colour overrides (fall back to accent)
+  // Optional colour overrides (fall back to accent / C_MID)
   nameColor?: Color;       // company name colour
   labelColor?: Color;      // QUOTATION label colour
+  infoColor?: Color;       // address / contact info colour
   // Heights
   logoHMax: number;
   logoWMax: number;
@@ -140,7 +141,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
     companyName, companyAddress, phone, email, website, oldSsmNo, newSsmNo, mdaEstablishmentNo, taxNo,
     nameSize, nameBold, nameUppercase, headerLayout,
     docLabel, docLabelSize, docLabelBold, docLabelAlign = "right",
-    nameColor, labelColor,
+    nameColor, labelColor, infoColor: infoColorOpt,
     logoHMax, logoWMax,
   } = opts;
 
@@ -219,7 +220,7 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
 
   const infoSize = 8.5;
   const infoLH   = 11;
-  const infoColor = C_MID;
+  const infoColor = infoColorOpt ?? C_MID;
 
   // Address (may wrap)
   if (companyAddress) {

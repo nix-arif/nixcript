@@ -12,6 +12,7 @@ import {
   supplier,
   user,
   stockLevel,
+  organizationProfile,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -142,6 +143,9 @@ export interface CreatePrInput {
   notes?: string;
   prType?: "customer_order" | "replenishment" | "sample_demo";
   samplePurpose?: string;
+  deliveryDate?: Date;
+  deliveryAddress?: string;
+  deliveryAddressType?: "customer" | "warehouse" | "custom";
   items: PrItemInput[];
 }
 
@@ -308,6 +312,9 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
     status: "draft",
     prType: input.prType ?? "customer_order",
     samplePurpose: input.samplePurpose ?? null,
+    deliveryDate: input.deliveryDate ?? null,
+    deliveryAddress: input.deliveryAddress ?? null,
+    deliveryAddressType: input.deliveryAddressType ?? null,
     requestedBy: userId,
   }).returning();
 
@@ -665,6 +672,38 @@ export async function searchConfirmedSosForPr(query: string) {
     ))
     .orderBy(desc(salesOrder.createdAt))
     .limit(20);
+}
+
+export async function getOrgDeliveryAddresses(): Promise<{
+  companyAddress: string | null;
+  warehouseAddresses: { label: string; address: string }[];
+}> {
+  const { orgId } = await requireAccess("purchase-requisition:read");
+  const [profile] = await db
+    .select({ companyAddress: organizationProfile.companyAddress, warehouseAddresses: organizationProfile.warehouseAddresses })
+    .from(organizationProfile)
+    .where(eq(organizationProfile.organizationId, orgId));
+  return {
+    companyAddress: profile?.companyAddress ?? null,
+    warehouseAddresses: (profile?.warehouseAddresses as { label: string; address: string }[] | null) ?? [],
+  };
+}
+
+export async function getSoDeliveryInfo(soId: string): Promise<{
+  deliveryAddress: string | null;
+  customerOrganizationAddress: string | null;
+} | null> {
+  const { orgId } = await requireAccess("purchase-requisition:read");
+  const [so] = await db
+    .select({ deliveryAddress: salesOrder.deliveryAddress, customerSnapshot: salesOrder.customerSnapshot })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
+  if (!so) return null;
+  const snap = so.customerSnapshot as { organizationAddress?: string } | null;
+  return {
+    deliveryAddress: so.deliveryAddress ?? null,
+    customerOrganizationAddress: snap?.organizationAddress ?? null,
+  };
 }
 
 export async function getOpenSosForPr() {

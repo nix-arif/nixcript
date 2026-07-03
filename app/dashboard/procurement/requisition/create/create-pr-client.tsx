@@ -7,6 +7,7 @@ import {
   createPurchaseRequisition,
   searchSuppliersForPr,
   getSoItemsForPr,
+  getSoDeliveryInfo,
   searchConfirmedSosForPr,
   getPrItemImageUploadUrl,
   deleteProcurementImages,
@@ -239,9 +240,10 @@ interface Props {
   initialSoId?: string;
   openSos: SoOption[];
   currentUserName: string;
+  orgAddresses: { companyAddress: string | null; warehouseAddresses: { label: string; address: string }[] };
 }
 
-export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props) {
+export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddresses }: Props) {
   const router = useRouter();
   const [lines, setLines]         = useState<LineItem[]>([newLine(1)]);
   const [notes, setNotes]         = useState("");
@@ -252,6 +254,12 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props)
   const [togglingExclude, setTogglingExclude] = useState<string | null>(null);
   const [prType, setPrType]       = useState<"customer_order" | "sample_demo">("customer_order");
   const [samplePurpose, setSamplePurpose] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().split("T")[0]);
+  const [deliveryAddressType, setDeliveryAddressType] = useState<"customer" | "warehouse" | "custom">("warehouse");
+  const [deliveryAddress, setDeliveryAddress] = useState(
+    orgAddresses.warehouseAddresses[0]?.address ?? orgAddresses.companyAddress ?? ""
+  );
+  const [soCustomerAddress, setSoCustomerAddress] = useState<string | null>(null);
 
   const fileInputRef      = useRef<HTMLInputElement>(null);
   const uploadTargetKey   = useRef<string | null>(null);
@@ -375,6 +383,11 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props)
         _setQty:            i.setQty ?? null,
       })));
       if (result.items.length > 0) toast.success(`Imported ${result.items.length} items from ${result.soNo}`);
+      // Fetch SO delivery address for customer address option
+      const deliveryInfo = await getSoDeliveryInfo(soId).catch(() => null);
+      const custAddr = deliveryInfo?.deliveryAddress ?? deliveryInfo?.customerOrganizationAddress ?? null;
+      setSoCustomerAddress(custAddr);
+      if (deliveryAddressType === "customer" && custAddr) setDeliveryAddress(custAddr);
     } catch {
       toast.error("Failed to load SO items");
     } finally {
@@ -478,6 +491,9 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props)
         notes: notes.trim() || undefined,
         prType,
         samplePurpose: prType === "sample_demo" ? (samplePurpose.trim() || undefined) : undefined,
+        deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
+        deliveryAddress: deliveryAddress.trim() || undefined,
+        deliveryAddressType: deliveryAddress.trim() ? deliveryAddressType : undefined,
         items: validLines.map((l) => ({
           rowNo: l.rowNo,
           productId: l.productId,
@@ -907,6 +923,102 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName }: Props)
           rows={3}
           className="text-sm resize-none"
         />
+      </div>
+
+      {/* ── Delivery details ── */}
+      <div className="rounded-xl border border-border bg-background p-5 space-y-4">
+        <h2 className="text-sm font-semibold">Delivery Details</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Delivery date</Label>
+            <Input
+              type="date"
+              value={deliveryDate}
+              onChange={(e) => setDeliveryDate(e.target.value)}
+              className="text-sm"
+            />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">Deliver to</Label>
+          <div className="flex gap-2">
+            {(["warehouse", "customer", "custom"] as const).map((t) => {
+              const disabled = t === "customer" && !soCustomerAddress;
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    if (disabled) return;
+                    setDeliveryAddressType(t);
+                    if (t === "customer") {
+                      setDeliveryAddress(soCustomerAddress ?? "");
+                    } else if (t === "warehouse") {
+                      const first = orgAddresses.warehouseAddresses[0]?.address ?? orgAddresses.companyAddress ?? "";
+                      setDeliveryAddress(first);
+                    } else {
+                      setDeliveryAddress("");
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    disabled
+                      ? "border-border text-muted-foreground/40 cursor-not-allowed opacity-50"
+                      : deliveryAddressType === t
+                        ? "bg-foreground text-background border-foreground"
+                        : "border-border text-muted-foreground hover:border-foreground/40"
+                  }`}
+                >
+                  {t === "warehouse" ? "Warehouse" : t === "customer" ? "Customer" : "Custom"}
+                </button>
+              );
+            })}
+            {!soCustomerAddress && (
+              <span className="text-[10px] text-muted-foreground self-center">Link an SO to enable customer address</span>
+            )}
+          </div>
+
+          {/* Warehouse address picker */}
+          {deliveryAddressType === "warehouse" && (orgAddresses.warehouseAddresses.length > 0 || orgAddresses.companyAddress) && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {orgAddresses.companyAddress && (
+                <button
+                  type="button"
+                  onClick={() => setDeliveryAddress(orgAddresses.companyAddress!)}
+                  className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
+                    deliveryAddress === orgAddresses.companyAddress
+                      ? "bg-primary/10 border-primary text-primary"
+                      : "border-border text-muted-foreground hover:border-foreground/40"
+                  }`}
+                >
+                  HQ
+                </button>
+              )}
+              {orgAddresses.warehouseAddresses.map((w) => (
+                <button
+                  key={w.label}
+                  type="button"
+                  onClick={() => setDeliveryAddress(w.address)}
+                  className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
+                    deliveryAddress === w.address
+                      ? "bg-primary/10 border-primary text-primary"
+                      : "border-border text-muted-foreground hover:border-foreground/40"
+                  }`}
+                >
+                  {w.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <Textarea
+            value={deliveryAddress}
+            onChange={(e) => setDeliveryAddress(e.target.value)}
+            placeholder="Delivery address…"
+            rows={3}
+            className="text-sm resize-none"
+          />
+        </div>
       </div>
 
       <div className="flex justify-end gap-2 pb-6">
