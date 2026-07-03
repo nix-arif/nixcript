@@ -18,7 +18,7 @@ import {
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc, inArray, sql, ilike, count, or } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql, ilike, count, or, not } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -1041,18 +1041,19 @@ export async function getQuotationDetail(id: string) {
     }
   }
 
-  // Merge: live data wins; fall back to snapshot for deleted customers
+  // Merge: personal fields (name, contact) use live data; org fields use snapshot
+  // because the snapshot records which specific org the user chose for this quotation.
   const snapshot = q.customerSnapshot as Record<string, string> | null;
   const mergedCustomerSnapshot = customerData
     ? {
         title: customerData.title ?? snapshot?.title,
         name: customerData.name ?? snapshot?.name ?? "",
-        position: customerData.position ?? snapshot?.position,
-        department: customerData.department ?? snapshot?.department,
         email: customerData.email ?? snapshot?.email,
         contactNo: customerData.contactNo ?? snapshot?.contactNo,
-        organizationName: customerData.organizationName ?? snapshot?.organizationName,
-        organizationAddress: customerData.organizationAddress ?? snapshot?.organizationAddress,
+        organizationName: snapshot?.organizationName ?? customerData.organizationName,
+        organizationAddress: snapshot?.organizationAddress ?? customerData.organizationAddress,
+        position: snapshot?.position ?? customerData.position,
+        department: snapshot?.department ?? customerData.department,
       }
     : snapshot;
 
@@ -1337,12 +1338,12 @@ export async function getQuotationGroupAllDetails(id: string) {
       ? {
           title: customerData.title ?? snapshot?.title,
           name: customerData.name ?? snapshot?.name ?? "",
-          position: customerData.position ?? snapshot?.position,
-          department: customerData.department ?? snapshot?.department,
           email: customerData.email ?? snapshot?.email,
           contactNo: customerData.contactNo ?? snapshot?.contactNo,
-          organizationName: customerData.organizationName ?? snapshot?.organizationName,
-          organizationAddress: customerData.organizationAddress ?? snapshot?.organizationAddress,
+          organizationName: snapshot?.organizationName ?? customerData.organizationName,
+          organizationAddress: snapshot?.organizationAddress ?? customerData.organizationAddress,
+          position: snapshot?.position ?? customerData.position,
+          department: snapshot?.department ?? customerData.department,
         }
       : snapshot;
 
@@ -1758,7 +1759,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
     ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
   const [q] = await db
-    .select({ status: quotation.status, createdAt: quotation.createdAt, sets: quotation.sets })
+    .select({ status: quotation.status, createdAt: quotation.createdAt, sets: quotation.sets, groupId: quotation.groupId, isDummy: quotation.isDummy })
     .from(quotation)
     .where(
       and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)),
@@ -1872,6 +1873,14 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
         };
       }),
     );
+  }
+
+  // Propagate customer to all other quotations in the same comparison group
+  if (q.groupId) {
+    await db
+      .update(quotation)
+      .set({ customerId: input.customerId ?? null, customerSnapshot })
+      .where(and(eq(quotation.groupId, q.groupId), not(eq(quotation.id, id))));
   }
 }
 

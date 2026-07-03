@@ -27,6 +27,7 @@ import {
   AlertCircleIcon,
   AlertTriangleIcon,
   UploadIcon,
+  DownloadIcon,
   FileSpreadsheetIcon,
   ChevronRightIcon,
   ChevronLeftIcon,
@@ -41,6 +42,7 @@ type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 type Member = Awaited<ReturnType<typeof getOrgMembersForQuotation>>[number];
 
 type Step = 1 | 2 | 3 | 4;
+
 
 const fmt = (v: string | number) =>
   Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 });
@@ -306,6 +308,20 @@ export function NewQuotationClient({
     setIsDragging(false);
   };
 
+  const downloadTemplate = () => {
+    const headers = ["No", "Product Code", "Description", "Set Name", "Qty", "UOM", "Unit Price", "Disc %"];
+    const examples = [
+      [1, "CODE-001", "Example Product A", "Set A", 1, "pcs", 100.00, 0],
+      [2, "CODE-002", "Example Product B", "Set A", 2, "pcs", 50.00, 0],
+      [3, "CODE-003", "Example Product C", "not-as-set", 1, "unit", 200.00, 0],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...examples]);
+    ws["!cols"] = [{ wch: 5 }, { wch: 16 }, { wch: 36 }, { wch: 16 }, { wch: 6 }, { wch: 8 }, { wch: 12 }, { wch: 8 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Items");
+    XLSX.writeFile(wb, "quotation-template.xlsx");
+  };
+
   const processFile = (file: File) => {
     setParsing(true);
     setFileName(file.name);
@@ -334,18 +350,56 @@ export function NewQuotationClient({
         };
 
         const rows: SpreadsheetRow[] = normalizedJson
-          .map((row: any, i: number) => ({
-            rowNo: parseRowNo(col(row, "No", "no", "#") || String(i + 1), i + 1),
-            sku: col(row, "SKU", "sku").trim(),
-            productCode: col(row, "Product Code", "product_code", "ProductCode", "Code", "Kode").trim(),
-            description: col(row, "Description", "Desc", "Nama", "Item", "Item Description").trim(),
-            qty: col(row, "Qty", "QTY", "Quantity", "Kuantiti") || "1",
-            uom: col(row, "UOM", "OUM", "Uom", "Oum", "Unit", "Unit of Measure", "unit_of_measure", "Satuan").trim(),
-            unitPrice: col(row, "Unit Price", "unit_price", "UnitPrice", "Price", "Harga").trim(),
-            discountPct: col(row, "Disc %", "Disc", "Discount %", "Discount", "Diskaun").trim(),
-            totalPrice: col(row, "Total Price", "total_price", "TotalPrice", "Total").trim(),
-          }))
+          .map((row: any, i: number) => {
+            const setLabel = col(row, "Set Name", "Set name", "Set", "Group", "Paket").trim();
+            return {
+              rowNo: parseRowNo(col(row, "No", "no", "#") || String(i + 1), i + 1),
+              sku: col(row, "SKU", "sku").trim().toLowerCase(),
+              productCode: col(row, "Product Code", "product_code", "ProductCode", "Code", "Kode").trim(),
+              description: col(row, "Description", "Desc", "Nama", "Item", "Item Description").trim().toLowerCase(),
+              qty: col(row, "Qty", "QTY", "Quantity", "Kuantiti").trim().toLowerCase() || "1",
+              uom: col(row, "UOM", "OUM", "Uom", "Oum", "Unit", "Unit of Measure", "unit_of_measure", "Satuan").trim().toLowerCase(),
+              unitPrice: col(row, "Unit Price", "unit_price", "UnitPrice", "Price", "Harga").trim().toLowerCase(),
+              discountPct: col(row, "Disc %", "Disc", "Discount %", "Discount", "Diskaun").trim().toLowerCase(),
+              totalPrice: col(row, "Total Price", "total_price", "TotalPrice", "Total").trim().toLowerCase(),
+              setGroupLabel: setLabel || undefined,
+              setGroupId: setLabel ? `g-${setLabel}` : undefined,
+              setQty: setLabel ? "1" : undefined,
+            };
+          })
           .filter((r) => r.productCode || r.description);
+
+        // Validate: every row must have a set name
+        for (const r of rows) {
+          if (!r.setGroupLabel) {
+            toast.error(`Row ${r.rowNo} is missing a Set Name — use "not-as-set" for ungrouped items`);
+            setParsing(false);
+            return;
+          }
+        }
+
+        // Validate set name contiguity
+        const seenSets = new Set<string>();
+        let prevSet = "";
+        for (const r of rows) {
+          const label = r.setGroupLabel ?? "";
+          if (label !== prevSet) {
+            if (label && seenSets.has(label)) {
+              toast.error(`Set name "${label}" is out of order — all items in a set must be grouped together in the spreadsheet`);
+              setParsing(false);
+              return;
+            }
+            if (label) seenSets.add(label);
+            prevSet = label;
+          }
+        }
+
+        // Auto-populate title when all rows share a single set name
+        const uniqueSetNames = new Set(rows.map((r) => r.setGroupLabel));
+        if (uniqueSetNames.size === 1) {
+          const [onlyName] = uniqueSetNames;
+          if (onlyName) setTitle(onlyName === "not-as-set" ? "Loose Items" : onlyName);
+        }
 
         setRawRows(rows);
         toast.success(`${rows.length} rows parsed`);
@@ -641,41 +695,6 @@ export function NewQuotationClient({
             </div>
           </div>
 
-          {/* Quotation title */}
-          <div className="bg-background border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 bg-muted/20 border-b border-border">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Quotation title
-              </div>
-            </div>
-            <div className="p-4 space-y-4">
-              <Field label="Title (shown on document)">
-                <Input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Loose Items, Medical Equipment Supply..."
-                  className="h-9 text-sm"
-                />
-              </Field>
-              <Field label="Number of sets">
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="number"
-                    value={sets}
-                    onChange={(e) => setSets(Math.max(1, Number(e.target.value) || 1))}
-                    className="h-9 text-sm w-28"
-                    min="1"
-                  />
-                  {sets > 1 && (
-                    <span className="text-xs text-muted-foreground">
-                      All spreadsheet quantities × {sets} sets
-                    </span>
-                  )}
-                </div>
-              </Field>
-            </div>
-          </div>
-
           {/* Card 1: Customer */}
           <div className="bg-background border border-border rounded-xl">
             <div className="px-4 py-3 bg-muted/20 border-b border-border rounded-t-xl">
@@ -754,8 +773,9 @@ export function NewQuotationClient({
               {selectedCustomer && selectedCustomer.memberships.length >= 1 && (
                 <Field label="Hospital / organization">
                   <Select
+                    key={selectedCustomer.id}
                     onValueChange={setCustomerCompanyId}
-                    value={customerOrgMemberId || (selectedCompany?.id ?? "")}
+                    value={customerOrgMemberId}
                   >
                     <SelectTrigger className="h-9 text-sm">
                       <SelectValue placeholder="Select hospital" />
@@ -1053,6 +1073,30 @@ export function NewQuotationClient({
               </div>
             </div>
             <div className="p-4 space-y-4">
+              <Field label="Title (shown on document)">
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Loose Items, Medical Equipment Supply..."
+                  className="h-9 text-sm"
+                />
+              </Field>
+              <Field label="Number of sets">
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    value={sets}
+                    onChange={(e) => setSets(Math.max(1, Number(e.target.value) || 1))}
+                    className="h-9 text-sm w-28"
+                    min="1"
+                  />
+                  {sets > 1 && (
+                    <span className="text-xs text-muted-foreground">
+                      All spreadsheet quantities × {sets} sets
+                    </span>
+                  )}
+                </div>
+              </Field>
               <label className="block cursor-pointer">
                 <input
                   type="file"
@@ -1122,32 +1166,37 @@ export function NewQuotationClient({
               </label>
 
               <div className="p-3 bg-muted/30 rounded-lg">
-                <div className="text-xs font-medium text-muted-foreground mb-2">
-                  Expected columns
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-medium text-muted-foreground">Expected columns</div>
+                  <button
+                    type="button"
+                    onClick={downloadTemplate}
+                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+                  >
+                    <DownloadIcon className="w-3 h-3" /> Download template
+                  </button>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     "No",
-                    "SKU",
                     "Product Code",
                     "Description",
+                    "Set Name",
                     "Qty",
-                    "OUM",
+                    "UOM",
                     "Unit Price",
                     "Disc %",
-                    "Total Price",
                   ].map((col) => (
                     <span
                       key={col}
-                      className="text-[11px] bg-background border border-border rounded px-2 py-0.5 font-mono"
+                      className={`text-[11px] bg-background border rounded px-2 py-0.5 font-mono ${col === "Set Name" ? "border-blue-400 text-blue-600 dark:text-blue-400" : "border-border"}`}
                     >
                       {col}
                     </span>
                   ))}
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-2">
-                  Product Code is the key field. Other columns override DB
-                  values if filled.
+                  Product Code is the key field. Set Name is required — use <span className="font-mono">not-as-set</span> for ungrouped items.
                 </div>
               </div>
             </div>
@@ -1276,9 +1325,9 @@ export function NewQuotationClient({
                           </td>
 
                           {/* Description + rental + set */}
-                          <td className="px-3 py-1.5 max-w-45">
+                          <td className="px-3 py-1.5 w-120">
                             <div className="space-y-0.5">
-                              <div className="truncate">
+                              <div className="whitespace-normal break-words">
                                 {item.description}
                                 {item.descriptionSource === "sheet" && (
                                   <span className="ml-1 text-[9px] text-blue-500">sheet</span>
@@ -1306,28 +1355,13 @@ export function NewQuotationClient({
                                   </select>
                                 </div>
                               )}
-                              <div className="flex items-center gap-1">
-                                <span className="text-[9px] text-muted-foreground">Set:</span>
-                                <input
-                                  value={item.setGroupLabel ?? ""}
-                                  onChange={(e) => {
-                                    const newLabel = e.target.value;
-                                    setReviewItems((prev) => {
-                                      const existing = prev.find(
-                                        (x, xi) => x.setGroupLabel === newLabel && xi !== idx && newLabel,
-                                      );
-                                      const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
-                                      return prev.map((x, xi) =>
-                                        xi === idx
-                                          ? { ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || "1" }
-                                          : x,
-                                      );
-                                    });
-                                  }}
-                                  placeholder="(none)"
-                                  className="h-5 w-24 border border-border rounded px-1 text-[9px] bg-background text-muted-foreground"
-                                />
-                              </div>
+                              {item.setGroupLabel && (
+                                <div>
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                                    {item.setGroupLabel}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </td>
 
@@ -1342,19 +1376,8 @@ export function NewQuotationClient({
                           </td>
 
                           {/* UOM */}
-                          <td className="px-3 py-1.5">
-                            <div className="flex items-center gap-0.5">
-                              <input
-                                type="text"
-                                value={item.uom ?? ""}
-                                onChange={(e) => updateItemField(idx, { uom: e.target.value })}
-                                className="w-14 h-6 border border-input rounded px-1.5 text-xs bg-background"
-                                placeholder="—"
-                              />
-                              {item.uomSource === "sheet" && (
-                                <span className="text-[9px] text-blue-500">s</span>
-                              )}
-                            </div>
+                          <td className="px-3 py-1.5 w-14 text-center text-xs text-muted-foreground">
+                            {item.uom || "—"}
                           </td>
 
                           {/* Unit price */}
@@ -1422,6 +1445,14 @@ export function NewQuotationClient({
                                 className="h-5 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
                               />
                               <span className="text-[10px] text-muted-foreground">sets</span>
+                              {Number(first.setQty || 1) > 1 && (
+                                <>
+                                  <span className="text-[10px] text-muted-foreground">·</span>
+                                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                                    {fmt(String(groupTotal / Number(first.setQty || 1)))} / set
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </td>
                           <td colSpan={4} />

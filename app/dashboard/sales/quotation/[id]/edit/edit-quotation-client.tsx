@@ -49,6 +49,7 @@ type EditItem = UpdateQuotationInput["items"][number] & {
   setQty: string;
 };
 
+
 function Field({
   label,
   children,
@@ -396,7 +397,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         </td>
 
         {/* Description + rental sub-row + set assignment */}
-        <td className="px-2 py-1.5 min-w-40">
+        <td className="px-2 py-1.5 w-120">
           <div className="space-y-1">
             <div className="flex items-center gap-1">
               <input
@@ -434,30 +435,13 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                 </select>
               </div>
             )}
-            {/* Set assignment */}
-            <div className="flex items-center gap-1 pl-0.5">
-              <LayersIcon className="w-3 h-3 text-muted-foreground" />
-              <input
-                value={item.setGroupLabel}
-                onChange={(e) => {
-                  const newLabel = e.target.value;
-                  setItems((prev) => {
-                    // Find or create a group ID for this label
-                    const existing = prev.find(
-                      (x) => x.setGroupLabel === newLabel && x._key !== item._key && newLabel,
-                    );
-                    const gid = existing?.setGroupId || (newLabel ? nanoid() : "");
-                    return prev.map((x) =>
-                      x._key === item._key
-                        ? { ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || "1" }
-                        : x,
-                    );
-                  });
-                }}
-                placeholder="Set name (optional)"
-                className="h-6 flex-1 border border-border rounded px-2 text-[10px] bg-background outline-none focus:ring-1 focus:ring-ring text-muted-foreground"
-              />
-            </div>
+            {item.setGroupLabel && (
+              <div>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                  {item.setGroupLabel}
+                </span>
+              </div>
+            )}
           </div>
         </td>
 
@@ -479,13 +463,8 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         </td>
 
         {/* UOM */}
-        <td className="px-2 py-1.5 w-16">
-          <input
-            value={item.uom ?? ""}
-            onChange={(e) => updateItem(item._key, "uom", e.target.value)}
-            placeholder="UOM"
-            className="w-full h-7 border border-input rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-ring"
-          />
+        <td className="px-2 py-1.5 w-14 text-center text-xs text-muted-foreground">
+          {item.uom || "—"}
         </td>
 
         {/* Unit price */}
@@ -693,8 +672,9 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                   <>
                     <Field label="Hospital / organization">
                       <Select
+                        key={selectedCustomer.id}
                         onValueChange={setCustomerOrgMemberId}
-                        value={customerOrgMemberId || (selectedCompany?.id ?? "")}
+                        value={customerOrgMemberId}
                       >
                         <SelectTrigger className="h-9 text-sm">
                           <SelectValue placeholder="Select hospital" />
@@ -1017,20 +997,9 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                           <td colSpan={3} className="px-3 py-1.5">
                             <div className="flex items-center gap-2">
                               <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                              <input
-                                value={groupLabel}
-                                onChange={(e) =>
-                                  setItems((prev) =>
-                                    prev.map((it) =>
-                                      it.setGroupId === gid
-                                        ? { ...it, setGroupLabel: e.target.value }
-                                        : it,
-                                    ),
-                                  )
-                                }
-                                placeholder="Set name"
-                                className="h-6 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 font-medium text-blue-700 dark:text-blue-300 w-40"
-                              />
+                              <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                                {groupLabel}
+                              </span>
                               <span className="text-[10px] text-muted-foreground">×</span>
                               <input
                                 type="number"
@@ -1040,6 +1009,14 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                                 className="h-6 w-14 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 text-right"
                               />
                               <span className="text-[10px] text-muted-foreground">sets</span>
+                              {Number(setQtyVal) > 1 && (
+                                <>
+                                  <span className="text-[10px] text-muted-foreground">·</span>
+                                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                                    {(groupTotal / Number(setQtyVal)).toLocaleString("en-MY", { minimumFractionDigits: 2 })} / set
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </td>
                           <td colSpan={4} />

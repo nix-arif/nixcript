@@ -565,19 +565,21 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   // ── Build render entries (set headers interleaved with items) ────────────
   const SET_HDR_H = 18;
   type RenderEntry =
-    | { kind: "setHeader"; label: string; qty: number; setTotal: number; rowH: number }
+    | { kind: "setHeader"; label: string; qty: number; setTotal: number; pricePerSet: number; rowH: number }
     | { kind: "item"; rowIdx: number; rowH: number };
   const renderItems: RenderEntry[] = [];
   {
+    const uniqueSetIds = new Set(rowInfos.map(r => r.item.setGroupId).filter(Boolean));
+    const showSetHeaders = uniqueSetIds.size > 1;
     const seenGroups = new Set<string>();
     for (let i = 0; i < rowInfos.length; i++) {
       const it = rowInfos[i].item;
-      if (it.setGroupId && !seenGroups.has(it.setGroupId)) {
+      if (showSetHeaders && it.setGroupId && !seenGroups.has(it.setGroupId)) {
         seenGroups.add(it.setGroupId);
         const setTotal = rowInfos
           .filter(r => r.item.setGroupId === it.setGroupId)
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
-        renderItems.push({ kind: "setHeader", label: it.setGroupLabel ?? "Set", qty: Number(it.setQty ?? 1), setTotal, rowH: SET_HDR_H });
+        const qty = Number(it.setQty ?? 1); renderItems.push({ kind: "setHeader", label: it.setGroupLabel ?? "Set", qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
       }
       renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
     }
@@ -748,16 +750,25 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       if (entry.kind === "setHeader") {
         const hdrY  = curY - SET_HDR_H;
         const textY = hdrY + (SET_HDR_H - FS_BODY) / 2;
-        page.drawRectangle({ x: ML, y: hdrY, width: CW, height: SET_HDR_H, color: rgb(0.90, 0.93, 0.97) });
+        page.drawRectangle({ x: ML, y: hdrY, width: CW, height: SET_HDR_H, color: accentColor });
+        page.drawLine({ start: { x: ML,     y: curY  }, end: { x: W - MR, y: curY  }, thickness: 0.8, color: C_BORDER });
+        page.drawLine({ start: { x: ML,     y: hdrY  }, end: { x: W - MR, y: hdrY  }, thickness: 0.8, color: C_BORDER });
+        page.drawLine({ start: { x: ML,     y: hdrY  }, end: { x: ML,     y: curY  }, thickness: 0.8, color: C_BORDER });
+        page.drawLine({ start: { x: W - MR, y: hdrY  }, end: { x: W - MR, y: curY  }, thickness: 0.8, color: C_BORDER });
         const labelW = fontB.widthOfTextAtSize(entry.label.toUpperCase(), FS_BODY);
         page.drawText(entry.label.toUpperCase(), { x: ML + TABLE_PAD, y: textY, size: FS_BODY, font: fontB, color: C_BLACK });
-        page.drawText(`  x  ${entry.qty} ${entry.qty === 1 ? "SET" : "SETS"}`, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_BODY, font: fontR, color: C_FAINT });
+        const qtyText = `  x  ${entry.qty} ${entry.qty === 1 ? "SET" : "SETS"}`;
+        page.drawText(qtyText, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_BODY, font: fontR, color: C_BLACK });
+        if (showTP && entry.qty > 1) {
+          const qtyTextW = fontR.widthOfTextAtSize(qtyText, FS_BODY);
+          const ppsStr = `  ·  RM ${entry.pricePerSet.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / set`;
+          page.drawText(ppsStr, { x: ML + TABLE_PAD + labelW + qtyTextW, y: textY, size: FS_BODY, font: fontR, color: C_BLACK });
+        }
         if (showTP) {
-          const totStr = `RM ${entry.setTotal.toFixed(2)}`;
+          const totStr = `RM ${entry.setTotal.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           const totW = fontB.widthOfTextAtSize(totStr, FS_BODY);
           page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totW, y: textY, size: FS_BODY, font: fontB, color: C_BLACK });
         }
-        hLine(page, hdrY, ML, W - MR, C_BLACK, 0.5);
         curY = hdrY;
         continue;
       }
