@@ -14,6 +14,7 @@ import {
   product,
   organization,
   organizationProfile,
+  profile,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -271,7 +272,7 @@ export async function getOrgMembersForQuotation() {
     .where(eq(member.organizationId, orgId))
     .orderBy(user.name);
 
-  return rows;
+  return rows.map((r) => ({ ...r, name: r.name?.toLowerCase() ?? r.name }));
 }
 
 // ── Match spreadsheet rows to product DB ──────────────────────────────────
@@ -303,9 +304,11 @@ export type ReviewItem = SpreadsheetRow & {
   mdaValidity?: string;
   hasCert: boolean;
   hasPrice: boolean;
-  descriptionSource: "db" | "sheet";
-  priceSource: "db" | "sheet";
+  descriptionSource: "db" | "sheet" | "user";
+  priceSource: "db" | "sheet" | "user";
   uomSource: "db" | "sheet";
+  discountSource?: "user";
+  setQtySource?: "user";
   discountPct: string;
   discountAmt: string;
   computedTotal: string;
@@ -482,6 +485,8 @@ function buildItemRows(quotationId: string, items: ReviewItem[]) {
       descriptionSource: item.descriptionSource,
       priceSource: item.priceSource,
       uomSource: item.uomSource,
+      discountSource: item.discountSource ?? null,
+      setQtySource: item.setQtySource ?? null,
       lineType: item.lineType ?? "sell",
       rentalDuration: item.rentalDuration ?? null,
       rentalUnit: item.rentalUnit ?? null,
@@ -527,10 +532,10 @@ export async function createQuotation(input: CreateQuotationInput) {
     customerId: input.customerId,
     customerSnapshot,
     salesPersonId: input.salesPersonId,
-    salesPersonName: input.salesPersonName,
+    salesPersonName: input.salesPersonName?.toLowerCase() ?? null,
     associateSalesPersons: input.associateSalesPersons ?? null,
     preparedById: userId,
-    preparedByName: me?.name ?? "",
+    preparedByName: me?.name?.toLowerCase() ?? "",
     notes: input.notes,
     deliveryTerm: input.deliveryTerm ?? null,
     paymentTerm: input.paymentTerm ?? null,
@@ -563,17 +568,17 @@ export async function createQuotation(input: CreateQuotationInput) {
   };
 
   if (input.mode === "single") {
-    const quotationNo = await generateQuotationNo(orgId);
     const baseDate = new Date();
     const validUntil = new Date(baseDate);
     validUntil.setDate(validUntil.getDate() + validDaysNum);
 
+    const qId = nanoid();
     const [q] = await db
       .insert(quotation)
       .values({
-        id: nanoid(),
+        id: qId,
         organizationId: orgId,
-        quotationNo,
+        quotationNo: `PENDING-${qId}`,
         isDummy: 0,
         validUntil,
         ...sharedValues,
@@ -599,29 +604,64 @@ export async function createQuotation(input: CreateQuotationInput) {
 
   const originalDate = new Date();
 
+  // Pre-generate ascending random markups for each dummy org
+  const dummyOrgIds = targetOrgs.filter((o) => o.id !== primaryOrgId).map((o) => o.id);
+  let markupMin = 5;
+  const orgMarkupMap = new Map<string, number>();
+  for (const orgId of dummyOrgIds) {
+    const markupMax = Math.min(markupMin + 15, 50);
+    const markupPct = Math.floor(Math.random() * (markupMax - markupMin + 1)) + markupMin;
+    orgMarkupMap.set(orgId, markupPct);
+    markupMin = markupPct + 3;
+  }
+
   for (const org of targetOrgs) {
-    const quotationNo = await generateQuotationNo(org.id);
     const isDummy = org.id !== primaryOrgId ? 1 : 0;
-    const dummyDate = isDummy ? randomWeekdaysBack(originalDate, 1, 5) : undefined;
+    const dummyDate = isDummy ? randomWeekdaysBack(new Date(), 1, 14) : undefined;
     const qDate = dummyDate ?? originalDate;
     const validUntil = new Date(qDate);
     validUntil.setDate(validUntil.getDate() + validDaysNum);
 
+    const markupFactor = isDummy ? 1 + (orgMarkupMap.get(org.id) ?? 0) / 100 : 1;
+
+    // Compute per-quotation totals (dummy totals differ due to markup)
+    let qSubtotal = 0;
+    const markedUpItems = input.items.map((item) => {
+      const qty = Number(item.qty ?? 1);
+      const rawPrice = Number(item.unitPrice ?? 0);
+      const markedPrice = Math.ceil(rawPrice * markupFactor);
+      const disc = Number(item.discountPct ?? 0) / 100;
+      qSubtotal += qty * markedPrice * (1 - disc);
+      return { ...item, unitPrice: markedPrice.toFixed(2) };
+    });
+    qSubtotal = qSubtotal * setsCount;
+    const qOverallDiscAmt = overallDiscPct > 0
+      ? qSubtotal * (overallDiscPct / 100)
+      : Number(input.overallDiscountAmt ?? 0) * markupFactor;
+    const qAfterDiscount = qSubtotal - qOverallDiscAmt;
+    const qSstAmt = qAfterDiscount * (Number(input.sstPct ?? 0) / 100);
+    const qGrandTotal = qAfterDiscount + qSstAmt;
+
+    const qId = nanoid();
     const [q] = await db
       .insert(quotation)
       .values({
-        id: nanoid(),
+        id: qId,
         organizationId: org.id,
-        quotationNo,
+        quotationNo: `PENDING-${qId}`,
         groupId,
         isDummy,
         ...(dummyDate ? { createdAt: dummyDate } : {}),
         validUntil,
         ...sharedValues,
+        subtotal: qSubtotal.toFixed(2),
+        overallDiscountAmt: qOverallDiscAmt.toFixed(2),
+        sst: qSstAmt.toFixed(2),
+        grandTotal: qGrandTotal.toFixed(2),
       })
       .returning();
 
-    await db.insert(quotationItem).values(buildItemRows(q.id, input.items));
+    await db.insert(quotationItem).values(buildItemRows(q.id, markedUpItems as any));
 
     if (isDummy === 0) originalQuotation = q;
   }
@@ -666,6 +706,7 @@ export async function getQuotationsList() {
       orgName: organization.name,
       revisionNo: quotation.revisionNo,
       originalQuotationId: quotation.originalQuotationId,
+      govBatchId: quotation.govBatchId,
     })
     .from(quotation)
     .innerJoin(organization, eq(organization.id, quotation.organizationId))
@@ -687,6 +728,7 @@ export async function getQuotationsList() {
     const allFinal = members.every((m) => m.status === "final");
     return {
       groupId: header.groupId,
+      govBatchId: header.govBatchId ?? null,
       mode: header.mode,
       primaryId: header.id,
       customerSnapshot: header.customerSnapshot,
@@ -1153,8 +1195,24 @@ export async function getQuotationDetail(id: string) {
       .orderBy(asc(quotation.isDummy));
   }
 
+  let salesPersonPhone: string | null = null;
+  if (q.salesPersonId) {
+    const [spProfile] = await db
+      .select({ phoneNumbers: profile.phoneNumbers })
+      .from(profile)
+      .where(eq(profile.userId, q.salesPersonId))
+      .limit(1);
+    salesPersonPhone = spProfile?.phoneNumbers?.[0] ?? null;
+  }
+
   return {
-    quotation: { ...q, customerSnapshot: mergedCustomerSnapshot },
+    quotation: {
+      ...q,
+      customerSnapshot: mergedCustomerSnapshot,
+      salesPersonName: q.salesPersonName?.toLowerCase() ?? null,
+      preparedByName: q.preparedByName?.toLowerCase() ?? null,
+      salesPersonPhone,
+    },
     orgName: orgRow?.name ?? "",
     orgLogoUrl,
     orgBrandColor: orgRow?.brandColor ?? null,
@@ -1315,6 +1373,13 @@ export async function getQuotationGroupAllDetails(id: string) {
     if (cust) customerData = cust as Record<string, string | null>;
   }
 
+  // 5b. Creator names for all quotations in the group
+  const creatorIds = [...new Set(allQuotations.map((q) => q.createdBy).filter(Boolean) as string[])];
+  const creatorRows = creatorIds.length
+    ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds))
+    : [];
+  const creatorMap = new Map(creatorRows.map((u) => [u.id, u.name]));
+
   const r2Public = process.env.R2_PUBLIC_URL ?? "";
   const orgMap = new Map(orgRows.map((o) => [o.id, o]));
 
@@ -1348,7 +1413,12 @@ export async function getQuotationGroupAllDetails(id: string) {
       : snapshot;
 
     return {
-      quotation: { ...q, customerSnapshot: mergedCustomerSnapshot },
+      quotation: {
+        ...q,
+        customerSnapshot: mergedCustomerSnapshot,
+        salesPersonName: q.salesPersonName?.toLowerCase() ?? null,
+        preparedByName: q.preparedByName?.toLowerCase() ?? null,
+      },
       orgName: orgRow?.name ?? "",
       orgLogoUrl,
       orgBrandColor: orgRow?.brandColor ?? null,
@@ -1393,6 +1463,7 @@ export async function getQuotationGroupAllDetails(id: string) {
       orgLampiran13Url: null,
       items: allItems.filter((item) => item.quotationId === q.id),
       siblings,
+      createdByName: q.createdBy ? (creatorMap.get(q.createdBy)?.toLowerCase() ?? null) : null,
     };
   });
 }
@@ -1604,10 +1675,7 @@ export async function getQuotationGroupForPrint(id: string) {
 
 // ── Finalize quotation (draft → final) ────────────────────────────────────
 // markups: { [quotationId]: markupPct } — applied to unit prices of dummy quotations
-export async function finalizeQuotation(
-  id: string,
-  markups?: Record<string, number>,
-) {
+export async function finalizeQuotation(id: string) {
   const { orgId, userId } = await requireAccess("quotation:update");
   const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
   const ownerOrgIds =
@@ -1624,59 +1692,18 @@ export async function finalizeQuotation(
   if (!q) throw new Error("Quotation not found");
   if (q.status !== "draft") throw new Error("Already finalized");
 
-  // Apply markups to dummy quotations
-  if (q.groupId && markups) {
-    for (const [qId, markupPct] of Object.entries(markups)) {
-      if (!markupPct || markupPct <= 0) continue;
-      const factor = 1 + markupPct / 100;
+  // Assign real sequential quotation numbers to drafts that still hold placeholder IDs.
+  // Revisions already have proper numbers (e.g. BMS-QT-2026-0003-R1), so skip those.
+  const toFinalize = await db
+    .select({ id: quotation.id, organizationId: quotation.organizationId, quotationNo: quotation.quotationNo })
+    .from(quotation)
+    .where(q.groupId ? eq(quotation.groupId, q.groupId) : eq(quotation.id, id))
+    .orderBy(asc(quotation.isDummy));
 
-      const [qRecord] = await db
-        .select()
-        .from(quotation)
-        .where(eq(quotation.id, qId))
-        .limit(1);
-      if (!qRecord || qRecord.isDummy === 0) continue;
-
-      const qItems = await db
-        .select()
-        .from(quotationItem)
-        .where(eq(quotationItem.quotationId, qId));
-
-      let newSubtotal = 0;
-      for (const item of qItems) {
-        const newUnitPrice =
-          Math.round(Number(item.unitPrice) * factor * 100) / 100;
-        const qty = Number(item.qty ?? 1);
-        const disc = Number(item.discountPct ?? 0);
-        const newLineTotal = qty * newUnitPrice * (1 - disc / 100);
-        const discAmt = (qty * newUnitPrice * disc) / 100;
-
-        await db
-          .update(quotationItem)
-          .set({
-            unitPrice: newUnitPrice.toFixed(2),
-            totalPrice: newLineTotal.toFixed(2),
-            discountAmt: discAmt.toFixed(2),
-          })
-          .where(eq(quotationItem.id, item.id));
-
-        newSubtotal += newLineTotal;
-      }
-
-      const overallDisc = Number(qRecord.overallDiscountPct ?? 0);
-      const newAfterDisc = newSubtotal * (1 - overallDisc / 100);
-      const newSst = newAfterDisc * (Number(qRecord.sstPct ?? 0) / 100);
-      const newGrandTotal = newAfterDisc + newSst;
-
-      await db
-        .update(quotation)
-        .set({
-          subtotal: newSubtotal.toFixed(2),
-          overallDiscountAmt: ((newSubtotal * overallDisc) / 100).toFixed(2),
-          sst: newSst.toFixed(2),
-          grandTotal: newGrandTotal.toFixed(2),
-        })
-        .where(eq(quotation.id, qId));
+  for (const qItem of toFinalize) {
+    if (qItem.quotationNo.startsWith("PENDING-")) {
+      const newNo = await generateQuotationNo(qItem.organizationId);
+      await db.update(quotation).set({ quotationNo: newNo }).where(eq(quotation.id, qItem.id));
     }
   }
 
@@ -1740,9 +1767,11 @@ export type UpdateQuotationInput = {
     mdaValidity?: string | null;
     hasCert?: boolean;
     hasPrice?: boolean;
-    descriptionSource?: "db" | "sheet";
-    priceSource?: "db" | "sheet";
+    descriptionSource?: "db" | "sheet" | "user";
+    priceSource?: "db" | "sheet" | "user";
     uomSource?: "db" | "sheet";
+    discountSource?: "user" | null;
+    setQtySource?: "user" | null;
     lineType?: "sell" | "rent";
     rentalDuration?: string | null;
     rentalUnit?: string | null;
@@ -1776,7 +1805,15 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
 
   // Recalculate totals — set items use setQty multiplier; global sets multiplies all
   const setsCount = Math.max(1, input.sets ?? Number(q.sets ?? 1));
-  const perSetSubtotal = input.items.reduce((s, item) => s + calcItemTotal(item), 0);
+  const perSetSubtotal = input.items.reduce((s, item) => s + calcItemTotal({
+    qty: item.qty,
+    unitPrice: item.unitPrice,
+    discountPct: item.discountPct,
+    lineType: item.lineType,
+    rentalDuration: item.rentalDuration ?? undefined,
+    setGroupId: item.setGroupId ?? undefined,
+    setQty: item.setQty ?? undefined,
+  }), 0);
   const subtotal = perSetSubtotal * setsCount;
 
   const overallDiscPct = Number(input.overallDiscountPct ?? 0);
@@ -1799,7 +1836,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       customerId: input.customerId ?? null,
       customerSnapshot,
       salesPersonId: input.salesPersonId ?? null,
-      salesPersonName: input.salesPersonName ?? null,
+      salesPersonName: input.salesPersonName?.toLowerCase() ?? null,
       associateSalesPersons: input.associateSalesPersons ?? null,
       validUntil,
       notes: input.notes ?? null,
@@ -1839,7 +1876,15 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
         const qty = Number(item.qty ?? 1);
         const price = Number(item.unitPrice ?? 0);
         const disc = Number(item.discountPct ?? 0) / 100;
-        const total = calcItemTotal(item);
+        const total = calcItemTotal({
+          qty: item.qty,
+          unitPrice: item.unitPrice,
+          discountPct: item.discountPct,
+          lineType: item.lineType,
+          rentalDuration: item.rentalDuration ?? undefined,
+          setGroupId: item.setGroupId ?? undefined,
+          setQty: item.setQty ?? undefined,
+        });
         return {
           id: nanoid(),
           quotationId: id,
@@ -1864,6 +1909,8 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
           descriptionSource: item.descriptionSource ?? "sheet",
           priceSource: item.priceSource ?? "sheet",
           uomSource: item.uomSource ?? "sheet",
+          discountSource: item.discountSource ?? null,
+          setQtySource: item.setQtySource ?? null,
           lineType: item.lineType ?? "sell",
           rentalDuration: item.rentalDuration ?? null,
           rentalUnit: item.rentalUnit ?? null,
@@ -1875,12 +1922,114 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
     );
   }
 
-  // Propagate customer to all other quotations in the same comparison group
+  // Propagate customer + items to all other quotations in the same comparison group
   if (q.groupId) {
     await db
       .update(quotation)
       .set({ customerId: input.customerId ?? null, customerSnapshot })
       .where(and(eq(quotation.groupId, q.groupId), not(eq(quotation.id, id))));
+
+    // Sync item structure (qty, description, set groups, etc.) to each dummy while
+    // preserving the dummy's own unit prices.
+    const siblings = await db
+      .select({ id: quotation.id, sets: quotation.sets, overallDiscountPct: quotation.overallDiscountPct, overallDiscountAmt: quotation.overallDiscountAmt, sstPct: quotation.sstPct })
+      .from(quotation)
+      .where(and(eq(quotation.groupId, q.groupId), not(eq(quotation.id, id))));
+
+    for (const sibling of siblings) {
+      // Load sibling's existing items to preserve prices (keyed by sortOrder)
+      const siblingItems = await db
+        .select({ sortOrder: quotationItem.sortOrder, unitPrice: quotationItem.unitPrice, discountPct: quotationItem.discountPct })
+        .from(quotationItem)
+        .where(eq(quotationItem.quotationId, sibling.id));
+
+      const priceMap = new Map(siblingItems.map((i) => [i.sortOrder, { unitPrice: i.unitPrice, discountPct: i.discountPct }]));
+
+      await db.delete(quotationItem).where(eq(quotationItem.quotationId, sibling.id));
+
+      if (input.items.length > 0) {
+        const newSiblingItems = input.items.map((item, i) => {
+          const preserved = priceMap.get(i);
+          const unitPrice = preserved?.unitPrice ?? "0";
+          const discountPct = preserved?.discountPct ?? item.discountPct ?? "0";
+          const qty = Number(item.qty ?? 1);
+          const price = Number(unitPrice);
+          const disc = Number(discountPct) / 100;
+          const total = calcItemTotal({
+            qty: item.qty,
+            unitPrice,
+            discountPct,
+            lineType: item.lineType,
+            rentalDuration: item.rentalDuration ?? undefined,
+            setGroupId: item.setGroupId ?? undefined,
+            setQty: item.setQty ?? undefined,
+          });
+          return {
+            id: nanoid(),
+            quotationId: sibling.id,
+            sortOrder: i,
+            rowNo: item.rowNo,
+            sku: item.sku ?? null,
+            productCode: item.productCode ?? null,
+            description: item.description ?? null,
+            qty: String(item.qty),
+            uom: item.uom ?? null,
+            unitPrice,
+            discountPct,
+            discountAmt: (qty * price * disc).toFixed(2),
+            totalPrice: total.toFixed(2),
+            productId: item.productId ?? null,
+            productName: item.productName ?? null,
+            imageKey: item.imageKey ?? null,
+            mdaRegNo: item.mdaRegNo ?? null,
+            mdaValidity: item.mdaValidity ?? null,
+            hasCert: item.hasCert ? 1 : 0,
+            hasPrice: item.hasPrice ? 1 : 0,
+            descriptionSource: item.descriptionSource ?? "sheet",
+            priceSource: item.priceSource ?? "sheet",
+            uomSource: item.uomSource ?? "sheet",
+            discountSource: item.discountSource ?? null,
+            setQtySource: item.setQtySource ?? null,
+            lineType: item.lineType ?? "sell",
+            rentalDuration: item.rentalDuration ?? null,
+            rentalUnit: item.rentalUnit ?? null,
+            setGroupId: item.setGroupId ?? null,
+            setGroupLabel: item.setGroupLabel ?? null,
+            setQty: item.setQty ?? null,
+          };
+        });
+        await db.insert(quotationItem).values(newSiblingItems);
+
+        // Recalculate sibling totals using its own prices + anchor's qty/structure
+        const sibSetsCount = setsCount; // inherit sets count from anchor
+        const sibPerSetSubtotal = newSiblingItems.reduce((s, it) => s + calcItemTotal({
+          qty: it.qty,
+          unitPrice: it.unitPrice,
+          discountPct: it.discountPct,
+          lineType: (it.lineType ?? "sell") as "sell" | "rent",
+          rentalDuration: it.rentalDuration ?? undefined,
+          setGroupId: it.setGroupId ?? undefined,
+          setQty: it.setQty ?? undefined,
+        }), 0);
+        const sibSubtotal = sibPerSetSubtotal * sibSetsCount;
+        const sibOverallDiscPct = Number(sibling.overallDiscountPct ?? 0);
+        const sibOverallDiscAmt = sibOverallDiscPct > 0
+          ? sibSubtotal * (sibOverallDiscPct / 100)
+          : Number(sibling.overallDiscountAmt ?? 0);
+        const sibAfterDiscount = sibSubtotal - sibOverallDiscAmt;
+        const sibSstAmt = sibAfterDiscount * (Number(sibling.sstPct ?? 0) / 100);
+        const sibGrandTotal = sibAfterDiscount + sibSstAmt;
+
+        await db.update(quotation).set({
+          title: input.title ?? "Loose Items",
+          sets: setsCount,
+          subtotal: sibSubtotal.toFixed(2),
+          overallDiscountAmt: sibOverallDiscAmt.toFixed(2),
+          sst: sibSstAmt.toFixed(2),
+          grandTotal: sibGrandTotal.toFixed(2),
+        }).where(eq(quotation.id, sibling.id));
+      }
+    }
   }
 }
 
@@ -1910,6 +2059,7 @@ export type GovFileInput = {
   inclMdaEstablishment: boolean;
   inclLampiran12: boolean;
   inclLampiran13: boolean;
+  markups?: number[]; // ascending markup % per dummy org (index 0 = dummy1, 1 = dummy2, …)
 };
 
 export type GovQuotationEntry = {
@@ -1923,10 +2073,23 @@ export type GovQuotationEntry = {
 export type GovGroupResult = {
   title: string;
   groupId: string;
+  govBatchId: string;
   customerOrgName: string;
   originalId: string;
   quotations: GovQuotationEntry[];
 };
+
+function genMarkups(dummyCount: number): number[] {
+  const out: number[] = [];
+  let min = 5;
+  for (let i = 0; i < dummyCount; i++) {
+    const max = Math.min(min + 15, 50);
+    const pct = Math.floor(Math.random() * (max - min + 1)) + min;
+    out.push(pct);
+    min = pct + 3;
+  }
+  return out;
+}
 
 function buildGovItem(
   raw: GovRawItem,
@@ -2017,7 +2180,7 @@ export async function createGovernmentBatch(
     if (!productMap.has(p.productCode)) productMap.set(p.productCode, p);
   }
 
-  // Batch-lookup customers
+  // Batch-lookup customers with full M2M org data (address lives in customerOrganization)
   const customerIds = [...new Set(files.map((f) => f.customerId).filter(Boolean))];
   const customerRows =
     customerIds.length > 0
@@ -2025,6 +2188,13 @@ export async function createGovernmentBatch(
       : [];
   const customerMap = new Map(customerRows.map((c) => [c.id, c]));
 
+  // Build snapshots that include org address from M2M tables
+  const snapshotMap = new Map<string, Awaited<ReturnType<typeof buildCustomerSnapshot>>>();
+  for (const cid of customerIds) {
+    snapshotMap.set(cid, await buildCustomerSnapshot(cid));
+  }
+
+  const govBatchId = nanoid(); // single ID shared by all quotations in this batch call
   const results: GovGroupResult[] = [];
 
   for (const file of files) {
@@ -2035,18 +2205,7 @@ export async function createGovernmentBatch(
     }, 0);
 
     const cust = customerMap.get(file.customerId);
-    const customerSnapshot = cust
-      ? {
-          name: cust.name,
-          title: cust.title ?? undefined,
-          position: cust.position ?? undefined,
-          department: cust.department ?? undefined,
-          email: cust.email ?? undefined,
-          contactNo: cust.contactNo ?? undefined,
-          organizationName: cust.organizationName ?? undefined,
-          organizationAddress: cust.organizationAddress ?? undefined,
-        }
-      : null;
+    const customerSnapshot = snapshotMap.get(file.customerId) ?? null;
 
     const sharedValues = {
       mode: "comparison" as const,
@@ -2055,7 +2214,7 @@ export async function createGovernmentBatch(
       salesPersonId: null,
       salesPersonName: null,
       preparedById: userId,
-      preparedByName: me?.name ?? "",
+      preparedByName: me?.name?.toLowerCase() ?? "",
       notes: null,
       subtotal: subtotal.toFixed(2),
       overallDiscountPct: "0",
@@ -2095,34 +2254,55 @@ export async function createGovernmentBatch(
       // no match — keep creation order, first = original
     }
 
+    const dummyOrgs = orderedOrgs.filter(o => o.id !== file.originalOrgId);
+    const markups = (file.markups && file.markups.length === dummyOrgs.length)
+      ? file.markups
+      : genMarkups(dummyOrgs.length);
+
     const quotationResults: GovQuotationEntry[] = [];
     let dummyIndex = 1;
 
     for (const org of orderedOrgs) {
       const isOriginal = org.id === file.originalOrgId;
       const isDummy = !isOriginal;
-      const dummyDate = isDummy ? randomWeekdaysBack(originalDate, 1, 5) : undefined;
+      const dummyDate = isDummy ? randomWeekdaysBack(new Date(), 1, 14) : undefined;
       const qDate = dummyDate ?? originalDate;
       const validUntil = new Date(qDate);
       validUntil.setDate(validUntil.getDate() + validDaysNum);
 
-      const quotationNo = await generateQuotationNo(org.id);
+      // Apply ascending markup for dummy orgs so dummy prices > original
+      const markupPct = isDummy ? (markups[dummyIndex - 1] ?? 10) : 0;
+      const markupFactor = 1 + markupPct / 100;
+      let orgSubtotal = 0;
+      const orgItems = reviewItems.map(item => {
+        const qty = Number(item.qty ?? 1);
+        const markedPrice = isDummy
+          ? Math.ceil(Number(item.unitPrice ?? 0) * markupFactor)
+          : Number(item.unitPrice ?? 0);
+        orgSubtotal += qty * markedPrice * (1 - Number(item.discountPct ?? 0) / 100);
+        return isDummy ? { ...item, unitPrice: markedPrice.toFixed(2) } : item;
+      });
 
+      const qId = nanoid();
+      const quotationNo = await generateQuotationNo(org.id);
       const [q] = await db
         .insert(quotation)
         .values({
-          id: nanoid(),
+          id: qId,
           organizationId: org.id,
           quotationNo,
           groupId,
+          govBatchId,
           isDummy: isDummy ? 1 : 0,
           ...(dummyDate ? { createdAt: dummyDate } : {}),
           validUntil,
           ...sharedValues,
+          subtotal: orgSubtotal.toFixed(2),
+          grandTotal: orgSubtotal.toFixed(2),
         })
         .returning();
 
-      await db.insert(quotationItem).values(buildItemRows(q.id, reviewItems));
+      await db.insert(quotationItem).values(buildItemRows(q.id, orgItems as ReviewItem[]));
 
       quotationResults.push({
         id: q.id,
@@ -2138,6 +2318,7 @@ export async function createGovernmentBatch(
     results.push({
       title: file.title,
       groupId,
+      govBatchId,
       customerOrgName: cust?.organizationName ?? "",
       originalId: originalQ.id,
       quotations: quotationResults,
@@ -2148,6 +2329,65 @@ export async function createGovernmentBatch(
 }
 
 // In comparison mode, deletes all quotations in the group together.
+export async function updateQuotationSettings(
+  id: string,
+  input: {
+    overallDiscountPct?: string;
+    overallDiscountAmt?: string;
+    sstPct?: string;
+    showProductCode?: boolean;
+    includeMdaCerts?: boolean;
+    includeCatalogue?: boolean;
+    inclMof?: boolean;
+    inclSsm?: boolean;
+    inclTcc?: boolean;
+    inclBankStatement?: boolean;
+    inclMdaEstablishment?: boolean;
+    inclLampiran12?: boolean;
+    inclLampiran13?: boolean;
+    showItemizeDiscount?: boolean;
+  },
+) {
+  await requireAccess("quotation:update");
+
+  const [q] = await db
+    .select({ status: quotation.status, subtotal: quotation.subtotal })
+    .from(quotation)
+    .where(eq(quotation.id, id))
+    .limit(1);
+
+  if (!q) throw new Error("Quotation not found");
+  if (q.status !== "draft") throw new Error("Cannot edit a finalized quotation");
+
+  const subtotal = Number(q.subtotal ?? 0);
+  const overallDiscPct = Number(input.overallDiscountPct ?? 0);
+  const overallDiscAmt = overallDiscPct > 0
+    ? subtotal * (overallDiscPct / 100)
+    : Number(input.overallDiscountAmt ?? 0);
+  const afterDiscount = subtotal - overallDiscAmt;
+  const sstAmt = afterDiscount * (Number(input.sstPct ?? 0) / 100);
+  const grandTotal = afterDiscount + sstAmt;
+
+  await db.update(quotation).set({
+    overallDiscountPct: input.overallDiscountPct ?? "0",
+    overallDiscountAmt: overallDiscAmt.toFixed(2),
+    sst: sstAmt.toFixed(2),
+    sstPct: input.sstPct ?? "0",
+    grandTotal: grandTotal.toFixed(2),
+    showProductCode: input.showProductCode ? 1 : 0,
+    includeMdaCerts: input.includeMdaCerts ? 1 : 0,
+    includeCatalogue: input.includeCatalogue ? 1 : 0,
+    inclMof: input.inclMof ? 1 : 0,
+    inclSsm: input.inclSsm ? 1 : 0,
+    inclTcc: input.inclTcc ? 1 : 0,
+    inclBankStatement: input.inclBankStatement ? 1 : 0,
+    inclMdaEstablishment: input.inclMdaEstablishment ? 1 : 0,
+    inclLampiran12: input.inclLampiran12 ? 1 : 0,
+    inclLampiran13: input.inclLampiran13 ? 1 : 0,
+    showItemizeDiscount: input.showItemizeDiscount ? 1 : 0,
+  }).where(eq(quotation.id, id));
+}
+
 export async function deleteQuotation(id: string) {
   const { orgId, userId } = await requireAccess("quotation:delete");
   const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
@@ -2171,10 +2411,34 @@ export async function deleteQuotation(id: string) {
   }
 }
 
+// Rebuild a customer snapshot for a revision, preserving the org that was chosen in the
+// original while refreshing live customer fields (name, email, contact).
+async function rebuildSnapshotForRevision(
+  customerId: string | null,
+  existingSnapshot: { organizationName?: string | null } | null,
+) {
+  if (!customerId) return null;
+  const snapshotOrg = existingSnapshot?.organizationName;
+  let customerOrgMemberId: string | null = null;
+  if (snapshotOrg) {
+    const [mem] = await db
+      .select({ id: customerCompany.id })
+      .from(customerCompany)
+      .innerJoin(customerOrganization, eq(customerOrganization.id, customerCompany.customerOrganizationId))
+      .where(and(
+        eq(customerCompany.customerId, customerId),
+        eq(customerOrganization.name, snapshotOrg),
+      ))
+      .limit(1);
+    customerOrgMemberId = mem?.id ?? null;
+  }
+  return buildCustomerSnapshot(customerId, customerOrgMemberId);
+}
+
 export async function reviseQuotation(quotationId: string): Promise<string> {
   const { orgId, userId } = await requireAccess("quotation:create");
 
-  // 1. Load the source quotation
+  // 1. Load the source quotation (must belong to the user's active org)
   const [source] = await db
     .select()
     .from(quotation)
@@ -2183,18 +2447,18 @@ export async function reviseQuotation(quotationId: string): Promise<string> {
   if (!source) throw new Error("Quotation not found");
   if (source.status !== "final") throw new Error("Only finalized quotations can be revised");
 
-  // 2. Determine original — if source is already a revision, point back to the root
+  // 2. Determine root of this quotation's revision chain
   const originalId = source.originalQuotationId ?? quotationId;
 
-  // 3. Get the original's base quotation number
-  const [original] = await db
+  // 3. Base quotation number (strip any existing -Rn suffix from root)
+  const [rootRow] = await db
     .select({ quotationNo: quotation.quotationNo })
     .from(quotation)
     .where(eq(quotation.id, originalId))
     .limit(1);
-  const baseNo = original?.quotationNo ?? source.quotationNo.replace(/-R\d+$/, "");
+  const baseNo = rootRow?.quotationNo ?? source.quotationNo.replace(/-R\d+$/, "");
 
-  // 4. Count all existing revisions (original + all -Rn) to get next revision number
+  // 4. Next revision number — count from the anchor's revision chain (org-scoped)
   const siblings = await db
     .select({ revisionNo: quotation.revisionNo })
     .from(quotation)
@@ -2204,37 +2468,110 @@ export async function reviseQuotation(quotationId: string): Promise<string> {
         or(eq(quotation.id, originalId), eq(quotation.originalQuotationId, originalId))
       )
     );
-  const maxRev = siblings.reduce((m, r) => Math.max(m, r.revisionNo ?? 0), 0);
-  const newRevisionNo = maxRev + 1;
-  const newQuotationNo = `${baseNo}-R${newRevisionNo}`;
+  const newRevisionNo = siblings.reduce((m, r) => Math.max(m, r.revisionNo ?? 0), 0) + 1;
 
-  // 5. Clone items from source
-  const sourceItems = await db
+  const now = new Date();
+
+  // ── Single quotation ──────────────────────────────────────────────────────
+  if (!source.groupId) {
+    const [sourceItems, newCustomerSnapshot] = await Promise.all([
+      db.select().from(quotationItem).where(eq(quotationItem.quotationId, quotationId)),
+      rebuildSnapshotForRevision(
+        source.customerId,
+        source.customerSnapshot as { organizationName?: string } | null,
+      ),
+    ]);
+
+    const newId = nanoid();
+    await db.insert(quotation).values({
+      ...source,
+      id: newId,
+      quotationNo: `${baseNo}-R${newRevisionNo}`,
+      revisionNo: newRevisionNo,
+      originalQuotationId: originalId,
+      groupId: null,
+      status: "draft",
+      createdBy: userId,
+      createdAt: now,
+      updatedAt: now,
+      customerSnapshot: newCustomerSnapshot,
+    });
+
+    if (sourceItems.length > 0) {
+      await db.insert(quotationItem).values(
+        sourceItems.map((item) => ({ ...item, id: nanoid(), quotationId: newId }))
+      );
+    }
+
+    revalidatePath("/dashboard/sales/quotation");
+    return newId;
+  }
+
+  // ── Comparison quotation ──────────────────────────────────────────────────
+  // Load every member of the source group
+  const groupMembers = await db
     .select()
-    .from(quotationItem)
-    .where(eq(quotationItem.quotationId, quotationId));
+    .from(quotation)
+    .where(eq(quotation.groupId, source.groupId))
+    .orderBy(asc(quotation.isDummy));
 
-  // 6. Insert new quotation
-  const newId = nanoid();
-  await db.insert(quotation).values({
-    ...source,
-    id: newId,
-    quotationNo: newQuotationNo,
-    revisionNo: newRevisionNo,
-    originalQuotationId: originalId,
-    status: "draft",
-    createdBy: userId,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
+  // Rebuild snapshot once from the anchor (organizationId === orgId) so all
+  // members in the new revision group get a consistent, fresh snapshot that
+  // preserves the chosen customer org.
+  const anchorMember = groupMembers.find((m) => m.organizationId === orgId) ?? groupMembers[0];
+  const newCustomerSnapshot = await rebuildSnapshotForRevision(
+    anchorMember?.customerId ?? null,
+    (anchorMember?.customerSnapshot as { organizationName?: string } | null) ?? null,
+  );
 
-  // 7. Clone items
-  if (sourceItems.length > 0) {
-    await db.insert(quotationItem).values(
-      sourceItems.map((item) => ({ ...item, id: nanoid(), quotationId: newId }))
-    );
+  // Load all items for the whole group in one query
+  const memberIds = groupMembers.map((m) => m.id);
+  const allItems = memberIds.length > 0
+    ? await db.select().from(quotationItem).where(inArray(quotationItem.quotationId, memberIds))
+    : [];
+
+  // New groupId isolates this revision from the finalized source group
+  const newGroupId = nanoid();
+  let newAnchorId = "";
+
+  for (const member of groupMembers) {
+    const memberRootId = member.originalQuotationId ?? member.id;
+    const memberBaseNo = member.quotationNo.replace(/-R\d+$/, "");
+    const memberNewId = nanoid();
+
+    if (member.organizationId === orgId) newAnchorId = memberNewId;
+
+    // Dummies are backdated 1-3 weekdays from the anchor's date,
+    // but never before their own previous version's date.
+    const memberCreatedAt = member.isDummy
+      ? new Date(Math.max(
+          randomWeekdaysBack(now, 1, 3).getTime(),
+          new Date(member.createdAt).getTime(),
+        ))
+      : now;
+
+    await db.insert(quotation).values({
+      ...member,
+      id: memberNewId,
+      quotationNo: `${memberBaseNo}-R${newRevisionNo}`,
+      revisionNo: newRevisionNo,
+      originalQuotationId: memberRootId,
+      groupId: newGroupId,
+      status: "draft",
+      createdBy: userId,
+      createdAt: memberCreatedAt,
+      updatedAt: now,
+      customerSnapshot: newCustomerSnapshot,
+    });
+
+    const memberItems = allItems.filter((i) => i.quotationId === member.id);
+    if (memberItems.length > 0) {
+      await db.insert(quotationItem).values(
+        memberItems.map((i) => ({ ...i, id: nanoid(), quotationId: memberNewId }))
+      );
+    }
   }
 
   revalidatePath("/dashboard/sales/quotation");
-  return newId;
+  return newAnchorId;
 }

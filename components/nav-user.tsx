@@ -18,14 +18,17 @@ import { authClient } from "@/lib/auth-client";
 import { useAppStore } from "@/lib/store/use-app-store";
 import { ChevronsUpDownIcon, UserCircleIcon, LogOutIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 
 export function NavUser() {
   const { isMobile } = useSidebar();
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
   const { clearPermissions } = useAppStore();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-  if (isPending) {
+  if (!mounted || isPending) {
     return (
       <SidebarMenu>
         <SidebarMenuItem>

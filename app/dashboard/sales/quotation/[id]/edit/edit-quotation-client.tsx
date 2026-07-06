@@ -31,6 +31,8 @@ import {
   CheckIcon,
   LayersIcon,
   XIcon,
+  DatabaseIcon,
+  PencilIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { nanoid } from "nanoid";
@@ -49,6 +51,20 @@ type EditItem = UpdateQuotationInput["items"][number] & {
   setQty: string;
 };
 
+
+function SrcTag({ src, userName }: { src: string | null | undefined; userName?: string | null }) {
+  if (!src) return null;
+  if (src === "db") return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+      <DatabaseIcon className="w-3 h-3 shrink-0" />from product table
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+      <PencilIcon className="w-3 h-3 shrink-0" />{(userName || "user").toLowerCase()} edited
+    </span>
+  );
+}
 
 function Field({
   label,
@@ -116,9 +132,10 @@ interface Props {
   initialCustomer: Customer | null;
   members: Member[];
   categories: DocumentCategoryRow[];
+  currentUserName: string;
 }
 
-export function EditQuotationClient({ data, initialCustomer, members, categories }: Props) {
+export function EditQuotationClient({ data, initialCustomer, members, categories, currentUserName }: Props) {
   const router = useRouter();
   const { quotation: q, items: existingItems } = data;
 
@@ -186,9 +203,11 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
       mdaValidity: it.mdaValidity,
       hasCert: !!it.hasCert,
       hasPrice: !!it.hasPrice,
-      descriptionSource: (it.descriptionSource as "db" | "sheet") ?? "db",
-      priceSource: (it.priceSource as "db" | "sheet") ?? "db",
+      descriptionSource: (it.descriptionSource as "db" | "sheet" | "user") ?? "db",
+      priceSource: (it.priceSource as "db" | "sheet" | "user") ?? "db",
       uomSource: (it.uomSource as "db" | "sheet") ?? "db",
+      discountSource: (it.discountSource as "user" | undefined) ?? undefined,
+      setQtySource: (it.setQtySource as "user" | undefined) ?? undefined,
       lineType: (it.lineType as "sell" | "rent") ?? "sell",
       rentalDuration: it.rentalDuration ?? "",
       rentalUnit: it.rentalUnit ?? "case",
@@ -252,7 +271,14 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
   // ── Item helpers ─────────────────────────────────────────────────────────
   const updateItem = (key: string, field: keyof EditItem, value: string) => {
     setItems((prev) =>
-      prev.map((it) => (it._key === key ? { ...it, [field]: value } : it)),
+      prev.map((it) => {
+        if (it._key !== key) return it;
+        const patch: Partial<EditItem> = { [field]: value };
+        if (field === "unitPrice") patch.priceSource = "user";
+        if (field === "discountPct") patch.discountSource = "user";
+        if (field === "description") patch.descriptionSource = "user";
+        return { ...it, ...patch };
+      }),
     );
   };
 
@@ -291,7 +317,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
   // When setQty changes for one item in a group, sync it to all group members
   const updateSetQty = (groupId: string, value: string) => {
     setItems((prev) =>
-      prev.map((it) => (it.setGroupId === groupId ? { ...it, setQty: value } : it)),
+      prev.map((it) => (it.setGroupId === groupId ? { ...it, setQty: value, setQtySource: "user" as const } : it)),
     );
   };
 
@@ -335,7 +361,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         inclLampiran12,
         inclLampiran13,
         categoryIds,
-        items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, ...it }) => ({
+        items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, discountSource, setQtySource, ...it }) => ({
           ...it,
           lineType,
           rentalDuration: rentalDuration || null,
@@ -343,6 +369,8 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
           setGroupId: setGroupId || null,
           setGroupLabel: setGroupLabel || null,
           setQty: setQty || null,
+          discountSource: discountSource ?? null,
+          setQtySource: setQtySource ?? null,
         })),
       };
       await updateQuotation(q.id, payload);
@@ -368,7 +396,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         )}
       >
         {/* # + type toggle */}
-        <td className="px-3 py-1.5 w-12 text-center">
+        <td className="px-3 py-1.5 w-12 text-center align-top">
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
             <button
@@ -387,7 +415,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         </td>
 
         {/* Product code */}
-        <td className="px-2 py-1.5 w-24">
+        <td className="px-2 py-1.5 w-24 align-top">
           <input
             value={item.productCode ?? ""}
             onChange={(e) => updateItem(item._key, "productCode", e.target.value)}
@@ -397,7 +425,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         </td>
 
         {/* Description + rental sub-row + set assignment */}
-        <td className="px-2 py-1.5 w-120">
+        <td className="px-2 py-1.5 w-120 align-top">
           <div className="space-y-1">
             <div className="flex items-center gap-1">
               <input
@@ -442,11 +470,12 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                 </span>
               </div>
             )}
+            <SrcTag src={item.descriptionSource} userName={currentUserName} />
           </div>
         </td>
 
         {/* Qty — labelled "qty/set" when in a set */}
-        <td className="px-2 py-1.5 w-16">
+        <td className="px-2 py-1.5 w-16 align-top">
           <div className="space-y-0.5">
             <input
               type="number"
@@ -462,13 +491,26 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
           </div>
         </td>
 
+        {/* Total qty */}
+        <td className="px-2 py-1.5 w-16 tabular-nums text-xs align-top">
+          <div className="h-7 flex items-center justify-end">
+            {(() => {
+              const s = Number(item.setQty || 1);
+              const q = Number(item.qty || 0);
+              return s > 1 ? (q * s).toLocaleString("en-MY") : q.toLocaleString("en-MY");
+            })()}
+          </div>
+        </td>
+
         {/* UOM */}
-        <td className="px-2 py-1.5 w-14 text-center text-xs text-muted-foreground">
-          {item.uom || "—"}
+        <td className="px-2 py-1.5 w-14 text-xs text-muted-foreground align-top">
+          <div className="h-7 flex items-center justify-center">
+            {item.uom || "—"}
+          </div>
         </td>
 
         {/* Unit price */}
-        <td className="px-2 py-1.5 w-24">
+        <td className="px-2 py-1.5 w-24 align-top">
           <input
             type="number"
             min="0"
@@ -477,10 +519,11 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
             onChange={(e) => updateItem(item._key, "unitPrice", e.target.value)}
             className="w-full h-7 border border-input rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-ring text-right"
           />
+          <div className="mt-0.5"><SrcTag src={item.priceSource} userName={currentUserName} /></div>
         </td>
 
         {/* Disc% */}
-        <td className="px-2 py-1.5 w-16">
+        <td className="px-2 py-1.5 w-16 align-top">
           <input
             type="number"
             min="0"
@@ -490,21 +533,28 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
             onChange={(e) => updateItem(item._key, "discountPct", e.target.value)}
             className="w-full h-7 border border-input rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-ring text-right"
           />
+          {item.discountSource === "user" && (
+            <div className="mt-0.5"><SrcTag src="user" userName={currentUserName} /></div>
+          )}
         </td>
 
         {/* Total */}
-        <td className="px-3 py-1.5 text-right tabular-nums font-medium w-24">
-          {lineTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+        <td className="px-3 py-1.5 text-right tabular-nums font-medium w-24 align-top">
+          <div className="h-7 flex items-center justify-end">
+            {lineTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+          </div>
         </td>
 
         {/* Delete */}
-        <td className="px-2 py-1.5 w-8">
+        <td className="px-2 py-1.5 w-8 align-top">
+          <div className="h-7 flex items-center justify-center">
           <button
             onClick={() => removeItem(item._key)}
             className="text-muted-foreground hover:text-destructive transition-colors"
           >
             <TrashIcon className="w-3.5 h-3.5" />
           </button>
+          </div>
         </td>
       </tr>
     );
@@ -569,32 +619,6 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
               </div>
             </div>
             <div className="p-4 space-y-4">
-              <Field label="Quotation title">
-                <Input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Loose Items"
-                  className="h-9 text-sm"
-                />
-              </Field>
-
-              <Field label="Number of sets">
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="number"
-                    min="1"
-                    value={sets}
-                    onChange={(e) => setSets(Math.max(1, Number(e.target.value) || 1))}
-                    className="h-9 text-sm w-28"
-                  />
-                  {sets > 1 && (
-                    <span className="text-xs text-muted-foreground">
-                      All item quantities × {sets} sets
-                    </span>
-                  )}
-                </div>
-              </Field>
-
               <div>
                 {(() => {
                   const trimmed = customerSearch.trim();
@@ -739,7 +763,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                 >
                   {salesPersons.map((s) => (
                     <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
-                      {s.name}
+                      {s.name.toLowerCase()}
                       {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
                       <button
                         type="button"
@@ -938,10 +962,27 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
 
           {/* Items card */}
           <div className="bg-background border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-2.5 bg-muted/20 border-b border-border flex items-center justify-between">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                Items · {items.length}
-              </span>
+            <div className="px-4 py-3 bg-muted/20 border-b border-border flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground shrink-0">Items · {items.length}</span>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Quotation title"
+                  className="h-7 flex-1 min-w-0 border border-input rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-ring"
+                />
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] text-muted-foreground">×</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={sets}
+                    onChange={(e) => setSets(Math.max(1, Number(e.target.value) || 1))}
+                    className="h-7 w-14 border border-input rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-ring text-right"
+                  />
+                  <span className="text-[10px] text-muted-foreground">sets</span>
+                </div>
+              </div>
               <Button
                 variant="outline"
                 size="sm"
@@ -952,11 +993,34 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
               </Button>
             </div>
 
+            <div className="px-4 py-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-border/40 bg-muted/5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide shrink-0">Legend</span>
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <span className="text-[8px] font-bold px-1 py-0.5 rounded border bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400">SELL</span>
+                sell item
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <span className="text-[8px] font-bold px-1 py-0.5 rounded border bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-400">RENT</span>
+                rental item
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <ShieldCheckIcon className="w-3.5 h-3.5 text-green-500" />
+                cert available
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <AlertCircleIcon className="w-3.5 h-3.5 text-orange-400" />
+                no cert
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <LayersIcon className="w-3.5 h-3.5 text-blue-500" />
+                set group
+              </span>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-muted/10 border-b border-border">
-                    {["#", "Code", "Description", "Qty", "UOM", "Unit Price", "Disc%", "Total", ""].map((h) => (
+                    {["#", "Code", "Description", "Qty/set", "Total qty", "UOM", "Unit Price", "Disc%", "Total", ""].map((h) => (
                       <th
                         key={h}
                         className={cn(
@@ -983,7 +1047,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                         groupOrder.push(it.setGroupId);
                       }
                     }
-
+                    const hasMultipleSetGroups = groupOrder.length > 1;
                     // Render set groups
                     for (const gid of groupOrder) {
                       const groupItems = items.filter((it) => it.setGroupId === gid);
@@ -994,20 +1058,24 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
 
                       rows.push(
                         <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
-                          <td colSpan={3} className="px-3 py-1.5">
+                          <td colSpan={3} className="px-3 py-1.5 align-top">
                             <div className="flex items-center gap-2">
                               <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                              <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                              <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-300">
                                 {groupLabel}
                               </span>
                               <span className="text-[10px] text-muted-foreground">×</span>
-                              <input
-                                type="number"
-                                min="1"
-                                value={setQtyVal}
-                                onChange={(e) => updateSetQty(gid, e.target.value)}
-                                className="h-6 w-14 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 text-right"
-                              />
+                              {hasMultipleSetGroups ? (
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={setQtyVal}
+                                  onChange={(e) => updateSetQty(gid, e.target.value)}
+                                  className="h-5 w-12 border border-blue-200 dark:border-blue-700 rounded px-1 text-[10px] bg-background outline-none focus:ring-1 focus:ring-blue-400 text-right"
+                                />
+                              ) : (
+                                <span className="text-[10px] tabular-nums text-blue-700 dark:text-blue-300">{setQtyVal}</span>
+                              )}
                               <span className="text-[10px] text-muted-foreground">sets</span>
                               {Number(setQtyVal) > 1 && (
                                 <>
@@ -1018,8 +1086,11 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                                 </>
                               )}
                             </div>
+                            {first.setQtySource === "user" && (
+                              <div className="mt-0.5"><SrcTag src="user" userName={currentUserName} /></div>
+                            )}
                           </td>
-                          <td colSpan={4} />
+                          <td colSpan={5} />
                           <td className="px-3 py-1.5 text-right tabular-nums text-xs font-semibold text-blue-700 dark:text-blue-300">
                             {groupTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
                           </td>
@@ -1039,13 +1110,47 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
 
                     return rows.length > 0 ? rows : (
                       <tr>
-                        <td colSpan={9} className="px-4 py-8 text-center text-xs text-muted-foreground">
+                        <td colSpan={10} className="px-4 py-8 text-center text-xs text-muted-foreground">
                           No items. Click "Add row" to add one.
                         </td>
                       </tr>
                     );
                   })()}
                 </tbody>
+                <tfoot>
+                  {sets > 1 && (
+                    <tr className="border-t border-border">
+                      <td colSpan={9} className="px-3 py-1.5 text-right text-xs text-muted-foreground">Subtotal (1 set)</td>
+                      <td className="px-3 py-1.5 text-right text-xs tabular-nums">{subtotalPerSet.toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  )}
+                  <tr className={sets <= 1 ? "border-t border-border" : ""}>
+                    <td colSpan={9} className="px-3 py-1.5 text-right text-xs text-muted-foreground">
+                      {sets > 1 ? `× ${sets} sets` : "Subtotal"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-xs tabular-nums">{subtotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                  {discAmt > 0 && (
+                    <tr>
+                      <td colSpan={9} className="px-3 py-1 text-right text-xs text-muted-foreground">
+                        {discountType === "pct" ? `Discount (${overallDiscount}%)` : "Special Discount"}
+                      </td>
+                      <td className="px-3 py-1 text-right text-xs tabular-nums text-red-600 dark:text-red-400">
+                        ({discAmt.toLocaleString("en-MY", { minimumFractionDigits: 2 })})
+                      </td>
+                    </tr>
+                  )}
+                  {sstAmt > 0 && (
+                    <tr>
+                      <td colSpan={9} className="px-3 py-1 text-right text-xs text-muted-foreground">SST ({sstPct}%)</td>
+                      <td className="px-3 py-1 text-right text-xs tabular-nums">{sstAmt.toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  )}
+                  <tr className="border-t border-border">
+                    <td colSpan={9} className="px-3 py-2 text-right text-xs font-semibold">Grand Total</td>
+                    <td className="px-3 py-2 text-right text-sm font-bold tabular-nums">{grandTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </div>

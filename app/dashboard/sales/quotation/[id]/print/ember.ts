@@ -256,6 +256,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   type RowInfo = {
     item: typeof items[number];
     descLines: string[];
+    codeLines: string[];
     extraLine: string | null;
     isGreenRow: boolean;
     rowH: number;
@@ -278,11 +279,12 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
-    const codeLineH  = 0;
+    const codeLines   = showCode ? wrap(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2) : [];
+    const codeLineH   = codeLines.length * CODE_LINE_H;
     const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
     const descH = firstParaLineCount * LH + Math.max(0, descLines.length - firstParaLineCount) * CONT_LH;
-    const rowH = Math.max(hasItemDisc ? RH_MIN + 8 : RH_MIN, codeLineH + descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6));
-    return { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount };
+    const rowH = Math.max(hasItemDisc ? RH_MIN + 8 : RH_MIN, Math.max(codeLineH + 6, descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6)));
+    return { item, descLines, codeLines, extraLine, isGreenRow, rowH, firstParaLineCount };
   });
 
   // ── Page availability ─────────────────────────────────────────────────────
@@ -316,7 +318,11 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         const setTotal = rowInfos
           .filter(r => r.item.setGroupId === it.setGroupId)
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
-        const qty = Number(it.setQty ?? 1); renderItems.push({ kind: "setHeader", label: it.setGroupLabel ?? "Set", qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
+        const setQty = Number(it.setQty ?? 1);
+        const displayQty = setQty * sets;
+        const pricePerSet = setQty > 0 ? setTotal / setQty : 0;
+        const _lbl = it.setGroupLabel ?? "Set";
+        renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty: displayQty, setTotal: setTotal * sets, pricePerSet, rowH: SET_HDR_H });
       }
       renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
     }
@@ -475,11 +481,18 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         page.drawText(addrLine, { x: ML, y: cuLY, size: B_FS_DET, font: fontR, color: C_LITE });
       }
 
-      // Right: dates only — sales and prepared by omitted
+      // Right: dates + validity + sales person
       let cuRY = cuTop;
+      const _validDaysE = (q.validUntil && q.createdAt)
+        ? Math.round((new Date(q.validUntil).getTime() - new Date(q.createdAt).getTime()) / (1000 * 60 * 60 * 24))
+        : null;
+      const _spDisplayE = (!q.revisionNo && q.salesPersonName)
+        ? ((q as any).salesPersonPhone ? `${q.salesPersonName} (${(q as any).salesPersonPhone})` : q.salesPersonName)
+        : null;
       const dateRows: [string, string][] = [
         ["Date",        fmtD(q.createdAt)],
-        ["Valid Until", fmtD(q.validUntil)],
+        ["Validity",    _validDaysE !== null ? `${_validDaysE} days` : "—"],
+        ...(_spDisplayE ? [["Sales Person", _spDisplayE]] as [string,string][] : []),
       ];
       for (const [lbl, val] of dateRows) {
         page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY, size: 8, font: fontR, color: C_LITE });
@@ -577,7 +590,8 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
 
       let cuRY2 = cuTop2;
-      for (const [lbl, val] of [["Date", fmtD(q.createdAt)], ["Valid Until", fmtD(q.validUntil)]] as [string,string][]) {
+      const _vdE2 = (q.validUntil && q.createdAt) ? Math.round((new Date(q.validUntil).getTime() - new Date(q.createdAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
+      for (const [lbl, val] of [["Date", fmtD(q.createdAt)], ["Validity", _vdE2 !== null ? `${_vdE2} days` : "—"]] as [string,string][]) {
         page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY2, size: 8, font: fontR, color: C_LITE });
         const vw2 = fontB.widthOfTextAtSize(val, 8);
         page.drawText(val, { x: W - MR - vw2, y: cuRY2, size: 8, font: fontB, color: C_DARK });
@@ -642,7 +656,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
 
       const { rowIdx } = entry;
-      const { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
+      const { item, descLines, codeLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
       const rowY = curY - rowH;
 
       if (itemRowAlt % 2 === 0) {
@@ -668,9 +682,11 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
       let dy = textBaseline;
       if (showCode) {
-        page.drawText(trunc(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2), {
-          x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontR, color: C_DARK,
-        });
+        let cdy = dy;
+        for (const codeLine of codeLines) {
+          page.drawText(codeLine, { x: X_CODE + TABLE_PAD, y: cdy, size: FS_CODE, font: fontR, color: C_DARK });
+          cdy -= CODE_LINE_H;
+        }
       }
 
       for (let li = 0; li < descLines.length; li++) {

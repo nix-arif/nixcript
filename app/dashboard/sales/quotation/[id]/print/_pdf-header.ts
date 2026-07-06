@@ -361,6 +361,8 @@ export interface InfoSectionOptions {
   createdAt: Date | string | null;
   validUntil: Date | string | null;
   salesPersonName: string | null;
+  salesPersonPhone?: string | null;
+  revisionNo?: number;
   preparedByName: string | null;
   title: string | null;
 }
@@ -375,7 +377,7 @@ export function drawInfoSection(opts: InfoSectionOptions): number {
     attentionNameSize, attentionNameBold,
     detailFontSize, detailFontBold, detailAlignment,
     textColor,
-    quotationNo, createdAt, validUntil, salesPersonName, preparedByName, title,
+    quotationNo, createdAt, validUntil, salesPersonName, salesPersonPhone, revisionNo, preparedByName, title,
   } = opts;
 
   const bodyColor  = textColor ?? C_MID;
@@ -437,11 +439,19 @@ export function drawInfoSection(opts: InfoSectionOptions): number {
     x: RIGHT_X, y: startY - 8, size: 7, font: fontB, color: accent,
   });
 
+  const validityDays = (validUntil && createdAt)
+    ? Math.round((new Date(validUntil).getTime() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const isOriginal = (revisionNo ?? 0) === 0;
+  const spDisplay = salesPersonName
+    ? (salesPersonPhone ? `${salesPersonName} (${salesPersonPhone})` : salesPersonName)
+    : null;
   const detailRows: [string, string][] = [
     ["Quotation No", quotationNo],
     ["Date",         fmtD(createdAt)],
-    ["Valid Until",  fmtD(validUntil)],
+    ["Validity",     validityDays !== null ? `${validityDays} days` : "—"],
     ...(title ? [["Subject", title]] as [string,string][] : []),
+    ...(isOriginal && spDisplay ? [["Sales Person", spDisplay]] as [string,string][] : []),
   ];
 
   let ry = startY - 21;
@@ -547,8 +557,9 @@ export function estimateInfoH(opts: {
   title: string | null;
   detailFontSize: number;
   fontR: PDFFont;
+  revisionNo?: number;
 }): number {
-  const { cust, attentionNameSize, salesPersonName, preparedByName, title, detailFontSize } = opts;
+  const { cust, attentionNameSize, salesPersonName, preparedByName, title, detailFontSize, revisionNo } = opts;
 
   let leftH = 8 + attentionNameSize + 4; // label + name
   if (cust) {
@@ -558,8 +569,9 @@ export function estimateInfoH(opts: {
     if (cust.email || cust.contactNo) leftH += 11;
   }
 
+  const isOriginal = (revisionNo ?? 0) === 0;
   let rightH = 8; // label
-  const rows = 3 + (title ? 1 : 0);
+  const rows = 3 + (title ? 1 : 0) + (isOriginal && salesPersonName ? 1 : 0);
   rightH += rows * (detailFontSize + 4);
 
   return Math.max(leftH, rightH) + 6;

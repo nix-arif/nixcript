@@ -273,6 +273,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   type RowInfo = {
     item: typeof items[number];
     descLines: string[];
+    codeLines: string[];
     extraLine: string | null;
     isGreenRow: boolean;
     rowH: number;
@@ -288,12 +289,13 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
-    const codeLineH  = 0;
+    const codeLines  = showCode ? wrap(item.productCode ?? "—", fontB, FS_CODE, C_CODE - TABLE_PAD) : [];
+    const codeLineH  = codeLines.length * CODE_LINE_H;
     const rowH = Math.max(
       RH_MIN,
-      codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 10),
+      Math.max(codeLineH + 6, descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 10)),
     );
-    return { item, descLines, extraLine, isGreenRow, rowH };
+    return { item, descLines, codeLines, extraLine, isGreenRow, rowH };
   });
 
   // ── Height estimates ──────────────────────────────────────────────────────
@@ -320,7 +322,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   } else { leftH += slateInfoLH; }
   leftH += IPAD_B;
 
-  const detailRowCount = 3 + (q.title ? 1 : 0);
+  const detailRowCount = 3 + (q.title ? 1 : 0) + (!(q.revisionNo) && q.salesPersonName ? 1 : 0);
   const rightH = IPAD_T + slateInfoFS + 6 + detailRowCount * slateInfoLH + IPAD_B;
   const INFO_BLOCK = Math.max(leftH, rightH);
 
@@ -354,7 +356,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         const setTotal = rowInfos
           .filter(r => r.item.setGroupId === it.setGroupId)
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
-        const qty = Number(it.setQty ?? 1); renderItems.push({ kind: "setHeader", label: it.setGroupLabel ?? "Set", qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
+        const qty = Number(it.setQty ?? 1); const _lbl = it.setGroupLabel ?? "Set"; renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
       }
       renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
     }
@@ -520,11 +522,18 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         page.drawText("QUOTATION DETAILS", { x: rightX, y: ry, size: slateInfoFS, font: fontB, color: accentT });
         ry -= slateInfoFS + 6;
 
+        const _vdS = (q.validUntil && q.createdAt)
+          ? Math.round((new Date(q.validUntil).getTime() - new Date(q.createdAt).getTime()) / (1000 * 60 * 60 * 24))
+          : null;
+        const _spS = (!q.revisionNo && q.salesPersonName)
+          ? ((q as any).salesPersonPhone ? `${q.salesPersonName} (${(q as any).salesPersonPhone})` : q.salesPersonName)
+          : null;
         const detailRows: [string, string][] = [
           ["Quotation No", q.quotationNo],
           ["Date",         fmtD(q.createdAt)],
-          ["Valid Until",  fmtD(q.validUntil)],
-          ...(q.title           ? [["Subject",     q.title]]           as [string,string][] : []),
+          ["Validity",     _vdS !== null ? `${_vdS} days` : "—"],
+          ...(q.title ? [["Subject", q.title]] as [string,string][] : []),
+          ...(_spS ? [["Sales Person", _spS]] as [string,string][] : []),
         ];
         const rightAlign = (data.orgDetailAlignment ?? "right") === "right";
         const rightEdgeX = INFO_RIGHT_X + 3 + INFO_RIGHT_W - 3 - IPAD_H; // inner right edge of box
@@ -637,7 +646,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         continue;
       }
       const rowIdx = entry.rowIdx;
-      const { item, descLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
+      const { item, descLines, codeLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
       const rowY = curY - rowH;
 
       const textBaseline = curY - 11;
@@ -656,9 +665,11 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
       // Code column or code prefix in description (text colour)
       let dy = textBaseline;
       if (showCode) {
-        page.drawText(trunc(item.productCode ?? "—", fontB, FS_CODE, C_CODE - TABLE_PAD), {
-          x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontB, color: accentT,
-        });
+        let cdy = dy;
+        for (const codeLine of codeLines) {
+          page.drawText(codeLine, { x: X_CODE + TABLE_PAD, y: cdy, size: FS_CODE, font: fontB, color: accentT });
+          cdy -= CODE_LINE_H;
+        }
       }
 
       // Description

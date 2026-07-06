@@ -9,6 +9,15 @@ import { nanoid } from "nanoid";
 import { eq, and, asc, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
+async function requireReadAccess() {
+  const session = await getCachedSession();
+  if (!session?.session?.activeOrganizationId) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  const perms = await getUserPermissions(session.user.id, orgId);
+  if (!hasAccess(perms, "quotation:read")) throw new Error("Forbidden");
+  return { orgId, userId: session.user.id, perms };
+}
+
 async function requireOrgAccess() {
   const session = await getCachedSession();
   if (!session?.session?.activeOrganizationId) throw new Error("Unauthorized");
@@ -30,7 +39,7 @@ async function requireWriteAccess() {
 export type DocumentCategoryRow = typeof documentCategory.$inferSelect;
 
 export async function getDocumentCategories(): Promise<DocumentCategoryRow[]> {
-  const { orgId } = await requireOrgAccess();
+  const { orgId } = await requireReadAccess();
   return db
     .select()
     .from(documentCategory)

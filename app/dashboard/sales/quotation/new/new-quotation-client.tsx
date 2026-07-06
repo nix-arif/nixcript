@@ -7,8 +7,10 @@ import * as XLSX from "xlsx";
 import {
   matchSpreadsheetToProducts,
   createQuotation,
+  updateQuotation,
   type SpreadsheetRow,
   type ReviewItem,
+  type UpdateQuotationInput,
 } from "@/server/quotation";
 import { getCustomers } from "@/server/customer";
 import { getOrgMembersForQuotation } from "@/server/quotation";
@@ -33,6 +35,9 @@ import {
   ChevronLeftIcon,
   XCircleIcon,
   XIcon,
+  PencilIcon,
+  DatabaseIcon,
+  PlusIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
@@ -41,7 +46,7 @@ import { type DocumentCategoryRow } from "@/server/document-category";
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 type Member = Awaited<ReturnType<typeof getOrgMembersForQuotation>>[number];
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3;
 
 
 const fmt = (v: string | number) =>
@@ -123,51 +128,73 @@ const STATUS_BADGE: Record<
   },
 };
 
+export type EditData = {
+  quotationId: string;
+  mode: "single" | "comparison";
+  title: string;
+  sets: number;
+  customer: Customer | null;
+  customerOrgMemberId: string;
+  salesPersons: { id: string; name: string; isExt: boolean }[];
+  validDays: number;
+  notes: string;
+  deliveryTerm: string;
+  paymentTerm: string;
+  returnPolicy: string;
+  warranty: string;
+  categoryIds: string[];
+  items: ReviewItem[];
+};
+
 interface Props {
   members: Member[];
-  quotationNo: string;
   currentUserId: string;
   currentUserName: string;
   ownerOrgs: { id: string; name: string; slug: string }[];
   activeOrgId: string;
   categories?: DocumentCategoryRow[];
+  editData?: EditData;
 }
 
 export function NewQuotationClient({
   members,
-  quotationNo,
   currentUserId,
   currentUserName,
   ownerOrgs,
   activeOrgId,
   categories = [],
+  editData,
 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
 
   // Step 1 state
-  const [mode, setMode] = useState<"single" | "comparison">("single");
-  const [title, setTitle] = useState("Loose Items");
-  const [sets, setSets] = useState(1);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [mode, setMode] = useState<"single" | "comparison">(editData?.mode ?? "single");
+  const [title, setTitle] = useState(
+    (editData?.title ?? "Loose Items").replace(/\s+[Xx]\s+\d+\s+SETS?$/i, "").trim() || "Loose Items"
+  );
+  const [sets, setSets] = useState(editData?.sets ?? 1);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(editData?.customer ?? null);
   const customerId = selectedCustomer?.id ?? "";
-  const [customerOrgMemberId, setCustomerCompanyId] = useState("");
+  const [customerOrgMemberId, setCustomerCompanyId] = useState(editData?.customerOrgMemberId ?? "");
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerOpen, setCustomerOpen] = useState(false);
   const [custResults, setCustResults] = useState<Customer[]>([]);
   const custSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const customerBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spInputRef = useRef<HTMLInputElement>(null);
-  const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>([]);
+  const codeOnFocus = useRef<Map<number, string>>(new Map());
+  const descOnFocus = useRef<Map<number, string>>(new Map());
+  const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>(editData?.salesPersons ?? []);
   const [spInput, setSpInput] = useState("");
-  const [validDays, setValidDays] = useState("90");
-  const [notes, setNotes] = useState("");
-  const [deliveryTerm, setDeliveryTerm] = useState("EX-STOCK SUBJECT PRIOR SALES, OTHERWISE 8 – 12 WEEKS");
-  const [paymentTerm, setPaymentTerm] = useState("30 days");
-  const [returnPolicy, setReturnPolicy] = useState("GOODS ONCE SOLD WILL NOT TAKEN BACK");
-  const [warranty, setWarranty] = useState("5 years against material and manufacturing defects");
+  const [validDays, setValidDays] = useState(String(editData?.validDays ?? 90));
+  const [notes, setNotes] = useState(editData?.notes ?? "");
+  const [deliveryTerm, setDeliveryTerm] = useState(editData?.deliveryTerm ?? "EX-STOCK SUBJECT PRIOR SALES, OTHERWISE 8 – 12 WEEKS");
+  const [paymentTerm, setPaymentTerm] = useState(editData?.paymentTerm ?? "30 days");
+  const [returnPolicy, setReturnPolicy] = useState(editData?.returnPolicy ?? "GOODS ONCE SOLD WILL NOT TAKEN BACK");
+  const [warranty, setWarranty] = useState(editData?.warranty ?? "5 years against material and manufacturing defects");
   const [categoryIds, setCategoryIds] = useState<string[]>(() =>
-    categories.filter((c) => c.isDefault).map((c) => c.id),
+    editData ? editData.categoryIds : categories.filter((c) => c.isDefault).map((c) => c.id),
   );
 
   // Step 2 state
@@ -176,8 +203,9 @@ export function NewQuotationClient({
   const [parsing, setParsing] = useState(false);
 
   // Step 3 state
-  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  const [reviewItems, setReviewItems] = useState<ReviewItem[]>(editData?.items ?? []);
   const [matching, setMatching] = useState(false);
+  const [autoMatching, setAutoMatching] = useState(false);
 
   // Step 4 state
   const [overallDiscount, setOverallDiscount] = useState("0");
@@ -185,10 +213,10 @@ export function NewQuotationClient({
   const [discountType, setDiscountType] = useState<"pct" | "fixed">("pct");
   const [sstPct, setSstPct] = useState("0");
   const [applySST, setApplySST] = useState(false);
-  const [applyItemizeDiscount, setApplyItemizeDiscount] = useState(false);
   const [applyTotalDiscount, setApplyTotalDiscount] = useState(false);
 
   const [isDragging, setIsDragging] = useState(false);
+  const [lookupLoadingIdx, setLookupLoadingIdx] = useState<number | null>(null);
 
   // Step 5 state
   const [includeCatalogue, setIncludeCatalogue] = useState(true);
@@ -207,30 +235,19 @@ export function NewQuotationClient({
   const subtotalPerSet = reviewItems.reduce((s, item) => {
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
-    const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
-    const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
-    return s + qty * setMul * dur * price;
-  }, 0);
-  const subtotalNSets = subtotalPerSet * sets;
-
-  const itemDiscPerSet = reviewItems.reduce((s, item) => {
-    const qty = Number(item.qty ?? 1);
-    const price = Number(item.unitPrice ?? 0);
     const disc = Number(item.discountPct ?? 0) / 100;
     const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
     const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
-    return s + qty * setMul * dur * price * disc;
+    return s + qty * setMul * dur * price * (1 - disc);
   }, 0);
-  const itemDiscTotal = applyItemizeDiscount ? itemDiscPerSet * sets : 0;
+  const subtotalNSets = subtotalPerSet * sets;
 
-  const afterItemDisc = subtotalNSets - itemDiscTotal;
   const overallDiscAmt = applyTotalDiscount
     ? discountType === "pct"
-      ? afterItemDisc * (Number(overallDiscount || 0) / 100)
+      ? subtotalNSets * (Number(overallDiscount || 0) / 100)
       : Number(specialDiscAmt || 0)
     : 0;
-  const totalDisc = itemDiscTotal + overallDiscAmt;
-  const afterAllDisc = subtotalNSets - totalDisc;
+  const afterAllDisc = subtotalNSets - overallDiscAmt;
   const sstAmt = applySST ? afterAllDisc * (Number(sstPct || 8) / 100) : 0;
   const grandTotal = afterAllDisc + sstAmt;
 
@@ -309,14 +326,14 @@ export function NewQuotationClient({
   };
 
   const downloadTemplate = () => {
-    const headers = ["No", "Product Code", "Description", "Set Name", "Qty", "UOM", "Unit Price", "Disc %"];
+    const headers = ["No", "Product Code", "Description", "Set Name", "Qty", "UOM", "Unit Price"];
     const examples = [
-      [1, "CODE-001", "Example Product A", "Set A", 1, "pcs", 100.00, 0],
-      [2, "CODE-002", "Example Product B", "Set A", 2, "pcs", 50.00, 0],
-      [3, "CODE-003", "Example Product C", "not-as-set", 1, "unit", 200.00, 0],
+      [1, "CODE-001", "Example Product A", "Set A", 1, "pcs", 100.00],
+      [2, "CODE-002", "Example Product B", "Set A", 2, "pcs", 50.00],
+      [3, "CODE-003", "Example Product C", "not-as-set", 1, "unit", 200.00],
     ];
     const ws = XLSX.utils.aoa_to_sheet([headers, ...examples]);
-    ws["!cols"] = [{ wch: 5 }, { wch: 16 }, { wch: 36 }, { wch: 16 }, { wch: 6 }, { wch: 8 }, { wch: 12 }, { wch: 8 }];
+    ws["!cols"] = [{ wch: 5 }, { wch: 16 }, { wch: 36 }, { wch: 16 }, { wch: 6 }, { wch: 8 }, { wch: 12 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Items");
     XLSX.writeFile(wb, "quotation-template.xlsx");
@@ -351,7 +368,8 @@ export function NewQuotationClient({
 
         const rows: SpreadsheetRow[] = normalizedJson
           .map((row: any, i: number) => {
-            const setLabel = col(row, "Set Name", "Set name", "Set", "Group", "Paket").trim();
+            const setLabel = col(row, "Set Name", "Set name", "Set", "Group", "Paket")
+              .trim().replace(/\s+/g, " ").toLowerCase();
             return {
               rowNo: parseRowNo(col(row, "No", "no", "#") || String(i + 1), i + 1),
               sku: col(row, "SKU", "sku").trim().toLowerCase(),
@@ -369,13 +387,23 @@ export function NewQuotationClient({
           })
           .filter((r) => r.productCode || r.description);
 
-        // Validate: every row must have a set name
-        for (const r of rows) {
-          if (!r.setGroupLabel) {
-            toast.error(`Row ${r.rowNo} is missing a Set Name — use "not-as-set" for ungrouped items`);
-            setParsing(false);
-            return;
-          }
+        // If every row has no set name, normalize all to "not-as-set"
+        const allEmpty = rows.every((r) => !r.setGroupLabel);
+        if (allEmpty) {
+          rows.forEach((r) => {
+            r.setGroupLabel = "not-as-set";
+            r.setGroupId = "g-not-as-set";
+            r.setQty = "1";
+          });
+        } else {
+          // Mixed: fill empty set names with "not-as-set" so they form their own group
+          rows.forEach((r) => {
+            if (!r.setGroupLabel) {
+              r.setGroupLabel = "not-as-set";
+              r.setGroupId = "g-not-as-set";
+              r.setQty = "1";
+            }
+          });
         }
 
         // Validate set name contiguity
@@ -403,6 +431,13 @@ export function NewQuotationClient({
 
         setRawRows(rows);
         toast.success(`${rows.length} rows parsed`);
+        setAutoMatching(true);
+        matchSpreadsheetToProducts(rows)
+          .then((items) => {
+            setReviewItems(items);
+          })
+          .catch((e: any) => toast.error(e?.message ?? "Failed to match products"))
+          .finally(() => setAutoMatching(false));
       } catch {
         toast.error("Failed to parse spreadsheet");
       } finally {
@@ -426,9 +461,6 @@ export function NewQuotationClient({
     try {
       const items = await matchSpreadsheetToProducts(rawRows);
       setReviewItems(items);
-      // Auto-check itemize discount if any item came with a disc value
-      const hasDiscounts = items.some((i) => Number(i.discountPct) > 0);
-      setApplyItemizeDiscount(hasDiscounts);
       setStep(3);
     } catch (e: any) {
       toast.error(e.message);
@@ -441,10 +473,80 @@ export function NewQuotationClient({
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
     const disc = Number(item.discountPct ?? 0) / 100;
-    const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
     const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
-    return qty * setMul * dur * price * (1 - disc);
+    return qty * dur * price * (1 - disc);
   }
+
+  function rowDisplayTotal(item: ReviewItem, globalSets: number): number {
+    const qty = Number(item.qty ?? 1);
+    const price = Number(item.unitPrice ?? 0);
+    const disc = Number(item.discountPct ?? 0) / 100;
+    const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
+    const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
+    return qty * dur * price * (1 - disc) * setMul * globalSets;
+  }
+
+  const addRow = () => {
+    const maxRowNo = reviewItems.reduce((max, it) => Math.max(max, Number(it.rowNo) || 0), 0);
+    const uniqueGroups = [...new Set(reviewItems.map((it) => it.setGroupId).filter(Boolean))];
+    const singleGroup = uniqueGroups.length === 1
+      ? reviewItems.find((it) => it.setGroupId === uniqueGroups[0])
+      : null;
+    const multiGroup = uniqueGroups.length > 1;
+    const newItem: ReviewItem = {
+      rowNo: String(maxRowNo + 1),
+      qty: "1",
+      unitPrice: "0",
+      discountPct: "0",
+      discountAmt: "0",
+      computedTotal: "0",
+      lineType: "sell",
+      hasPrice: false,
+      hasCert: false,
+      descriptionSource: "user",
+      priceSource: "user",
+      uomSource: "db",
+      status: "no_price_no_cert",
+      ...(singleGroup && {
+        setGroupId: singleGroup.setGroupId,
+        setGroupLabel: singleGroup.setGroupLabel,
+        setQty: singleGroup.setQty,
+      }),
+      ...(multiGroup && {
+        setGroupId: "g-not-as-set",
+        setGroupLabel: "not-as-set",
+        setQty: "1",
+      }),
+    };
+    setReviewItems((prev) => [...prev, newItem]);
+  };
+
+  const removeItem = (i: number) => {
+    setReviewItems((prev) => prev.filter((_, idx) => idx !== i));
+  };
+
+  const CELL_COLS = 4; // code=0, description=1, qty=2, unitPrice=3
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+    row: number,
+    col: number,
+  ) => {
+    if (!e.metaKey && !e.ctrlKey) return;
+    let targetRow = row;
+    let targetCol = col;
+    if (e.key === "ArrowRight") targetCol = col + 1;
+    else if (e.key === "ArrowLeft") targetCol = col - 1;
+    else if (e.key === "ArrowDown") targetRow = row + 1;
+    else if (e.key === "ArrowUp") targetRow = row - 1;
+    else return;
+    if (targetCol < 0 || targetCol >= CELL_COLS) return;
+    if (targetRow < 0 || targetRow >= reviewItems.length) return;
+    e.preventDefault();
+    const el = document.querySelector<HTMLElement>(
+      `[data-row="${targetRow}"][data-col="${targetCol}"]`,
+    );
+    el?.focus();
+  };
 
   const updateItemField = (i: number, patch: Partial<ReviewItem>) => {
     setReviewItems((prev) => {
@@ -463,13 +565,12 @@ export function NewQuotationClient({
     });
   };
 
-  const updateItemDiscount = (i: number, pct: string) => updateItemField(i, { discountPct: pct });
 
   const updateItemPrice = (i: number, price: string) => {
     setReviewItems((prev) => {
       const next = [...prev];
       const item = next[i];
-      const merged = { ...item, unitPrice: price, hasPrice: Number(price) > 0, priceSource: "sheet" as const };
+      const merged = { ...item, unitPrice: price, hasPrice: Number(price) > 0, priceSource: "user" as const };
       const total = reviewItemTotal(merged);
       const qty = Number(merged.qty ?? 1);
       const disc = Number(merged.discountPct ?? 0) / 100;
@@ -486,30 +587,90 @@ export function NewQuotationClient({
     });
   };
 
-  // ── Step 5: create quotation ──────────────────────────────────────────────
+  const handleCodeBlur = async (idx: number, code: string) => {
+    if (!code.trim()) return;
+    const priorCode = codeOnFocus.current.get(idx);
+    if (priorCode !== undefined && priorCode === code.trim()) return;
+    setLookupLoadingIdx(idx);
+    try {
+      const item = reviewItems[idx];
+      const row: SpreadsheetRow = {
+        rowNo: item.rowNo,
+        productCode: code.trim(),
+        description: "",
+        qty: item.qty,
+        uom: "",
+        unitPrice: "",
+        discountPct: item.discountPct,
+        lineType: item.lineType,
+        rentalDuration: item.rentalDuration,
+        rentalUnit: item.rentalUnit,
+        setGroupId: item.setGroupId,
+        setGroupLabel: item.setGroupLabel,
+        setQty: item.setQty,
+      };
+      const [matched] = await matchSpreadsheetToProducts([row]);
+      if (matched?.productId) {
+        setReviewItems((prev) =>
+          prev.map((x, i) => {
+            if (i !== idx) return x;
+            const updated = {
+              ...matched,
+              qty: x.qty,
+              setQty: x.setQty,
+              setGroupId: x.setGroupId,
+              setGroupLabel: x.setGroupLabel,
+              discountPct: x.discountPct,
+              computedTotal: reviewItemTotal(matched).toFixed(2),
+            };
+            return updated;
+          }),
+        );
+      } else {
+        setReviewItems((prev) =>
+          prev.map((x, i) =>
+            i !== idx
+              ? x
+              : {
+                  ...x,
+                  description: "N/A",
+                  descriptionSource: "user" as const,
+                  productId: undefined,
+                  productName: undefined,
+                  status: "not_found" as const,
+                  hasPrice: false,
+                  hasCert: false,
+                },
+          ),
+        );
+      }
+    } catch {
+      // silently ignore network errors
+    } finally {
+      setLookupLoadingIdx(null);
+    }
+  };
+
+  // ── Step 5: create / update quotation ────────────────────────────────────
   const handleCreate = async () => {
     if (!customerId) { toast.error("Please select a customer"); return; }
     if (salesPersons.length === 0) { toast.error("Please add at least one sales person"); return; }
     setCreating(true);
     try {
-      // Recalculate totals with effective discount
       const finalItems = reviewItems.map((item) => {
-        const effectiveDiscPct = applyItemizeDiscount ? Number(item.discountPct ?? 0) : 0;
-        const patched = { ...item, discountPct: String(effectiveDiscPct) };
-        const total = reviewItemTotal(patched);
-        const qty = Number(patched.qty ?? 1);
-        const price = Number(patched.unitPrice ?? 0);
-        const disc = effectiveDiscPct / 100;
+        const total = reviewItemTotal(item);
+        const qty = Number(item.qty ?? 1);
+        const price = Number(item.unitPrice ?? 0);
+        const disc = Number(item.discountPct ?? 0) / 100;
         return {
-          ...patched,
+          ...item,
           discountAmt: (qty * price * disc).toFixed(2),
           computedTotal: total.toFixed(2),
         };
       });
 
-      const q = await createQuotation({
-        mode,
-        title: sets > 1 ? `${title || "Loose Items"} X ${sets} SETS` : (title || "Loose Items"),
+      const sharedInput = {
+        title: title || "Loose Items",
         sets,
         customerId: customerId || undefined,
         customerOrgMemberId: customerOrgMemberId || undefined,
@@ -529,7 +690,7 @@ export function NewQuotationClient({
         includeCatalogue,
         includeMdaCerts,
         showTotalPrice: true,
-        showItemizeDiscount: applyItemizeDiscount,
+        showItemizeDiscount: false,
         showProductCode,
         inclMof,
         inclSsm,
@@ -539,11 +700,18 @@ export function NewQuotationClient({
         inclLampiran12,
         inclLampiran13,
         categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
-      });
+      };
 
-      if (!q) throw new Error("Failed to create quotation");
-      toast.success(`Quotation ${q.quotationNo} created`);
-      router.push(`/dashboard/sales/quotation/${q.id}`);
+      if (editData) {
+        await updateQuotation(editData.quotationId, sharedInput as UpdateQuotationInput);
+        toast.success("Quotation updated");
+        router.push(`/dashboard/sales/quotation/${editData.quotationId}`);
+      } else {
+        const q = await createQuotation({ mode, ...sharedInput });
+        if (!q) throw new Error("Failed to create quotation");
+        toast.success(`Quotation ${q.quotationNo} created`);
+        router.push(`/dashboard/sales/quotation/${q.id}`);
+      }
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -568,11 +736,11 @@ export function NewQuotationClient({
   ).length;
 
   // ── Step indicator ────────────────────────────────────────────────────────
-  const STEPS = ["Setup", "Upload", "Review", "Generate"];
+  const STEPS = ["Setup", "Upload", "Review"];
 
   return (
     <div className="p-6">
-      <PageHeader title="New quotation" description={quotationNo} />
+      <PageHeader title={editData ? "Edit quotation" : "New quotation"} />
 
       {/* Step indicator */}
       <div className="flex items-center mb-6">
@@ -657,14 +825,14 @@ export function NewQuotationClient({
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() => !("disabled" in opt && opt.disabled) && setMode(opt.value)}
-                  disabled={"disabled" in opt && opt.disabled}
+                  onClick={() => !editData && !("disabled" in opt && opt.disabled) && setMode(opt.value)}
+                  disabled={!!editData || ("disabled" in opt && opt.disabled)}
                   className={cn(
                     "p-3 rounded-lg border text-left transition-all",
                     mode === opt.value
                       ? "border-2 border-primary bg-primary/5"
                       : "border border-border hover:border-border",
-                    "disabled" in opt && opt.disabled
+                    (!!editData || ("disabled" in opt && opt.disabled))
                       ? "opacity-40 cursor-not-allowed"
                       : "",
                   )}
@@ -930,7 +1098,7 @@ export function NewQuotationClient({
                 </div>
                 <div className="space-y-0.5">
                   <p className="text-[11px] text-muted-foreground">Quotation no.</p>
-                  <p className="text-sm font-mono">{quotationNo}</p>
+                  <p className="text-sm text-muted-foreground italic">Assigned on finalize</p>
                 </div>
               </div>
             </div>
@@ -1033,31 +1201,13 @@ export function NewQuotationClient({
             </div>
           </div>
 
-          {/* Card 5: Notes */}
-          <div className="bg-background border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 bg-muted/20 border-b border-border">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Notes
-              </div>
-            </div>
-            <div className="p-4">
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="e.g. As per discussion on 12 May 2025..."
-                rows={2}
-                className="text-sm resize-none"
-              />
-            </div>
-          </div>
-
           <div className="flex justify-end">
             <Button onClick={() => {
               if (!customerId) { toast.error("Please select a customer"); return; }
               if (salesPersons.length === 0) { toast.error("Please add at least one sales person"); return; }
               setStep(2);
             }} className="gap-2">
-              Next: Upload spreadsheet <ChevronRightIcon className="w-4 h-4" />
+              {editData && reviewItems.length > 0 ? "Next: Edit items" : "Next: Upload spreadsheet"} <ChevronRightIcon className="w-4 h-4" />
             </Button>
           </div>
         </div>
@@ -1073,30 +1223,19 @@ export function NewQuotationClient({
               </div>
             </div>
             <div className="p-4 space-y-4">
-              <Field label="Title (shown on document)">
-                <Input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Loose Items, Medical Equipment Supply..."
-                  className="h-9 text-sm"
-                />
-              </Field>
-              <Field label="Number of sets">
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="number"
-                    value={sets}
-                    onChange={(e) => setSets(Math.max(1, Number(e.target.value) || 1))}
-                    className="h-9 text-sm w-28"
-                    min="1"
-                  />
-                  {sets > 1 && (
-                    <span className="text-xs text-muted-foreground">
-                      All spreadsheet quantities × {sets} sets
-                    </span>
-                  )}
+              {editData && reviewItems.length > 0 && rawRows.length === 0 && (
+                <div className="flex items-center gap-3 p-3 border border-green-300 bg-green-50 dark:bg-green-900/10 rounded-lg">
+                  <CheckCircleIcon className="w-5 h-5 text-green-600 shrink-0" />
+                  <div>
+                    <div className="text-sm font-medium text-green-700 dark:text-green-400">
+                      {reviewItems.length} items loaded
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Upload a new spreadsheet below to replace all items, or continue to review.
+                    </div>
+                  </div>
                 </div>
-              </Field>
+              )}
               <label className="block cursor-pointer">
                 <input
                   type="file"
@@ -1185,7 +1324,6 @@ export function NewQuotationClient({
                     "Qty",
                     "UOM",
                     "Unit Price",
-                    "Disc %",
                   ].map((col) => (
                     <span
                       key={col}
@@ -1202,39 +1340,65 @@ export function NewQuotationClient({
             </div>
           </div>
 
-          <div className="flex justify-between">
-            <Button
-              variant="outline"
-              onClick={() => setStep(1)}
-              className="gap-2"
-            >
-              <ChevronLeftIcon className="w-4 h-4" /> Back
-            </Button>
-            <Button
-              onClick={handleMatchProducts}
-              disabled={rawRows.length === 0 || matching}
-              className="gap-2"
-            >
-              {matching && (
-                <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+          {(autoMatching || reviewItems.length === 0) && (
+            <div className="flex justify-between">
+              <Button
+                variant="outline"
+                onClick={() => setStep(1)}
+                className="gap-2"
+                disabled={autoMatching}
+              >
+                <ChevronLeftIcon className="w-4 h-4" /> Back
+              </Button>
+              {autoMatching ? (
+                <Button disabled className="gap-2">
+                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  Matching products...
+                </Button>
+              ) : editData && editData.items.length > 0 && rawRows.length === 0 ? (
+                <Button onClick={() => setStep(3)} className="gap-2">
+                  Next: Review <ChevronRightIcon className="w-4 h-4" />
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleMatchProducts}
+                  disabled={rawRows.length === 0 || matching}
+                  className="gap-2"
+                >
+                  {matching && (
+                    <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  )}
+                  Match products <ChevronRightIcon className="w-4 h-4" />
+                </Button>
               )}
-              Match products <ChevronRightIcon className="w-4 h-4" />
-            </Button>
-          </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* ── STEP 3: Review ──────────────────────────────────────────────────── */}
-      {step === 3 && (
+      {/* ── STEP 3: Review — also shows inline in Step 2 after auto-match ────── */}
+      {(step === 3 || (step === 2 && reviewItems.length > 0)) && (
         <div className="space-y-4">
           <div className="bg-background border border-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-muted/20 border-b border-border flex items-center justify-between">
               <div>
-                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Review items
+                <div className="flex items-center gap-2">
+                  <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    {step === 2 ? "Edit items" : "Review items"}
+                  </div>
+                  {step === 2 && (
+                    <span className="text-[10px] bg-primary/10 text-primary rounded px-1.5 py-0.5 font-medium">
+                      editable
+                    </span>
+                  )}
+                  {step === 3 && (
+                    <span className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5 font-medium">
+                      read-only
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">
-                  {reviewItems.length} items{sets > 1 ? ` · ${sets} sets (qty shown per set)` : ""}
+                  {reviewItems.length} items{sets > 1 ? ` · ${sets} sets` : ""}
                 </div>
               </div>
               <div className="flex gap-1.5">
@@ -1260,16 +1424,47 @@ export function NewQuotationClient({
                 )}
               </div>
             </div>
+            <div className="px-4 py-3 border-b border-border flex flex-wrap items-end gap-4">
+              <div className="flex-1 min-w-48 space-y-1">
+                <label className="block text-xs font-medium text-muted-foreground">Title (shown on document)</label>
+                {step === 2 ? (
+                  <Input
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. Loose Items, Medical Equipment Supply..."
+                    className="h-8 text-sm"
+                  />
+                ) : (
+                  <div className="text-sm font-medium">{title || "—"}</div>
+                )}
+              </div>
+              {new Set(reviewItems.map((i) => i.setGroupId).filter(Boolean)).size <= 1 && (
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-muted-foreground">Sets</label>
+                  {step === 2 ? (
+                    <Input
+                      type="number"
+                      value={sets}
+                      onChange={(e) => setSets(Math.max(1, Number(e.target.value) || 1))}
+                      className="h-8 text-sm w-20"
+                      min="1"
+                    />
+                  ) : (
+                    <div className="text-sm font-medium">{sets}</div>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse">
+              <table className="w-full text-xs border-collapse [&_td]:align-top">
                 <thead>
                   <tr className="bg-muted/20">
-                    {["#", "Code", "Description", "Qty", "OUM", "Unit price", "Disc %", "Total", ""].map((h) => (
+                    {["#", "CODE", "DESCRIPTION", "QTY/SET", "TOTAL QTY", "UOM", "UNIT PRICE", "TOTAL", "STATUS"].map((h) => (
                       <th
                         key={h}
                         className={cn(
-                          "px-3 py-2 text-[10px] font-medium text-muted-foreground border-b border-border",
-                          ["Unit price", "Total"].includes(h) ? "text-right" : "text-left",
+                          "px-3 py-2 text-[10px] font-semibold tracking-wide text-muted-foreground border-b border-border",
+                          ["UNIT PRICE", "TOTAL", "TOTAL QTY", "QTY/SET"].includes(h) ? "text-right" : "text-left",
                         )}
                       >
                         {h}
@@ -1279,6 +1474,7 @@ export function NewQuotationClient({
                 </thead>
                 <tbody>
                   {(() => {
+                    const isEditable = step === 2;
                     const seenGroupIds = new Set<string>();
                     const rows: React.ReactNode[] = [];
                     const groupOrder: string[] = [];
@@ -1288,6 +1484,21 @@ export function NewQuotationClient({
                         groupOrder.push(it.setGroupId);
                       }
                     }
+
+                    const renderSourceTag = (source: "db" | "sheet" | "user" | undefined) => {
+                      if (!isEditable) return null;
+                      if (source === "db") return (
+                        <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md mt-0.5 bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                          <DatabaseIcon className="w-2.5 h-2.5 shrink-0" />from product table
+                        </span>
+                      );
+                      if (source === "user" || source === "sheet") return (
+                        <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md mt-0.5 bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                          <PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName} edited
+                        </span>
+                      );
+                      return null;
+                    };
 
                     const renderReviewRow = (item: ReviewItem, idx: number, inSet: boolean) => {
                       const isRent = item.lineType === "rent";
@@ -1300,52 +1511,115 @@ export function NewQuotationClient({
                             inSet && "bg-blue-50/20 dark:bg-blue-900/5",
                           )}
                         >
-                          {/* # + type toggle */}
+                          {/* # + type */}
                           <td className="px-3 py-1.5 w-12">
                             <div className="flex flex-col items-center gap-0.5">
                               <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
-                              <button
-                                type="button"
-                                onClick={() => updateItemField(idx, { lineType: isRent ? "sell" : "rent" })}
-                                className={cn(
-                                  "text-[9px] font-bold px-1.5 py-0.5 rounded border transition-colors",
+                              {isEditable ? (
+                                <button
+                                  type="button"
+                                  aria-label="Toggle sell or rent"
+                                  onClick={() => updateItemField(idx, { lineType: isRent ? "sell" : "rent" })}
+                                  className={cn(
+                                    "text-[9px] font-bold px-1.5 py-0.5 rounded border transition-colors",
+                                    isRent
+                                      ? "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-400"
+                                      : "bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400",
+                                  )}
+                                >
+                                  {isRent ? "RENT" : "SELL"}
+                                </button>
+                              ) : (
+                                <span className={cn(
+                                  "text-[9px] font-bold px-1.5 py-0.5 rounded border",
                                   isRent
                                     ? "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-400"
                                     : "bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400",
-                                )}
-                              >
-                                {isRent ? "RENT" : "SELL"}
-                              </button>
+                                )}>
+                                  {isRent ? "RENT" : "SELL"}
+                                </span>
+                              )}
                             </div>
                           </td>
 
                           {/* Code */}
-                          <td className="px-3 py-1.5 font-mono text-[11px] text-muted-foreground w-24">
-                            {item.productCode ?? "—"}
+                          <td className="px-3 py-1.5 w-28">
+                            {isEditable ? (
+                              <div>
+                                <div className="relative">
+                                  <input
+                                    type="text"
+                                    aria-label="Product code"
+                                    value={item.productCode ?? ""}
+                                    data-row={idx}
+                                    data-col={0}
+                                    onFocus={() => codeOnFocus.current.set(idx, item.productCode?.trim() ?? "")}
+                                    onChange={(e) => {
+                                      updateItemField(idx, { productCode: e.target.value || undefined, productId: undefined });
+                                    }}
+                                    onBlur={(e) => handleCodeBlur(idx, e.target.value)}
+                                    onKeyDown={(e) => handleCellKeyDown(e, idx, 0)}
+                                    placeholder="—"
+                                    className="w-full h-6 border border-input rounded px-1.5 text-xs font-mono bg-background pr-5"
+                                  />
+                                  {lookupLoadingIdx === idx && (
+                                    <span className="absolute right-1 top-1 w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin text-muted-foreground" />
+                                  )}
+                                </div>
+                                {renderSourceTag(item.productCode ? "sheet" : undefined)}
+                              </div>
+                            ) : (
+                              <span className="font-mono text-[11px] text-muted-foreground">
+                                {item.productCode ?? "—"}
+                              </span>
+                            )}
                           </td>
 
-                          {/* Description + rental + set */}
-                          <td className="px-3 py-1.5 w-120">
+                          {/* Description */}
+                          <td className="px-3 py-1.5 min-w-70">
                             <div className="space-y-0.5">
-                              <div className="whitespace-normal break-words">
-                                {item.description}
-                                {item.descriptionSource === "sheet" && (
-                                  <span className="ml-1 text-[9px] text-blue-500">sheet</span>
-                                )}
-                              </div>
-                              {isRent && (
-                                <div className="flex items-center gap-1">
+                              {isEditable ? (
+                                <>
+                                  <input
+                                    type="text"
+                                    aria-label="Description"
+                                    value={item.description ?? ""}
+                                    data-row={idx}
+                                    data-col={1}
+                                    onFocus={() => descOnFocus.current.set(idx, item.description ?? "")}
+                                    onChange={(e) => updateItemField(idx, { description: e.target.value })}
+                                    onBlur={(e) => {
+                                      const prev = descOnFocus.current.get(idx);
+                                      if (prev !== undefined && e.target.value !== prev) {
+                                        updateItemField(idx, { descriptionSource: "user" });
+                                      }
+                                    }}
+                                    onKeyDown={(e) => handleCellKeyDown(e, idx, 1)}
+                                    placeholder="Item description"
+                                    className="w-full h-6 border border-input rounded px-1.5 text-xs bg-background"
+                                  />
+                                  {renderSourceTag(item.descriptionSource)}
+                                </>
+                              ) : (
+                                <div className="whitespace-normal wrap-break-word">
+                                  {item.description || "—"}
+                                </div>
+                              )}
+                              {isEditable && isRent && (
+                                <div className="flex items-center gap-1 mt-0.5">
                                   <span className="text-[10px] text-amber-600 dark:text-amber-400">rental for</span>
                                   <input
                                     type="number"
                                     min="1"
+                                    aria-label="Rental duration"
                                     value={item.rentalDuration ?? ""}
                                     onChange={(e) => updateItemField(idx, { rentalDuration: e.target.value })}
                                     placeholder="0"
                                     className="h-5 w-12 border border-amber-200 rounded px-1 text-[10px] bg-background text-right"
                                   />
                                   <select
-                                    value={item.rentalUnit ?? "case"}
+                                    aria-label="Rental unit"
+                                    value={item.rentalUnit ?? "month"}
                                     onChange={(e) => updateItemField(idx, { rentalUnit: e.target.value })}
                                     className="h-5 border border-amber-200 rounded px-1 text-[10px] bg-background"
                                   >
@@ -1355,24 +1629,36 @@ export function NewQuotationClient({
                                   </select>
                                 </div>
                               )}
-                              {item.setGroupLabel && (
-                                <div>
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                                    {item.setGroupLabel}
-                                  </span>
+                              {!isEditable && isRent && item.rentalDuration && (
+                                <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                                  rental · {item.rentalDuration} {item.rentalUnit}
                                 </div>
                               )}
                             </div>
                           </td>
 
-                          {/* Qty */}
-                          <td className="px-3 py-1.5 w-14">
-                            <div className="space-y-0.5">
-                              <div className="text-center tabular-nums">{item.qty}</div>
-                              {inSet && (
-                                <div className="text-[9px] text-muted-foreground text-center">/set</div>
-                              )}
-                            </div>
+                          {/* Qty/Set */}
+                          <td className="px-3 py-1.5 w-16">
+                            {isEditable ? (
+                              <input
+                                type="number"
+                                min="0"
+                                aria-label="Quantity per set"
+                                data-row={idx}
+                                data-col={2}
+                                value={item.qty ?? "1"}
+                                onChange={(e) => updateItemField(idx, { qty: e.target.value || "1" })}
+                                onKeyDown={(e) => handleCellKeyDown(e, idx, 2)}
+                                className="w-14 h-6 border border-input rounded px-1.5 text-right text-xs bg-background tabular-nums"
+                              />
+                            ) : (
+                              <div className="text-right tabular-nums">{item.qty}</div>
+                            )}
+                          </td>
+
+                          {/* Total Qty */}
+                          <td className="px-3 py-1.5 w-16 text-right tabular-nums">
+                            {Number(item.qty ?? 1) * (item.setGroupId ? Number(item.setQty || 1) : 1) * sets}
                           </td>
 
                           {/* UOM */}
@@ -1382,38 +1668,49 @@ export function NewQuotationClient({
 
                           {/* Unit price */}
                           <td className="px-3 py-1.5 text-right">
-                            <input
-                              type="number"
-                              value={item.unitPrice ?? "0"}
-                              onChange={(e) => updateItemPrice(idx, e.target.value)}
-                              className="w-20 h-6 border border-input rounded px-1.5 text-right text-xs bg-background"
-                            />
-                            {item.priceSource === "sheet" && (
-                              <span className="ml-0.5 text-[9px] text-blue-500">s</span>
+                            {isEditable ? (
+                              <div className="flex flex-col items-end">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  aria-label="Unit price"
+                                  data-row={idx}
+                                  data-col={3}
+                                  value={item.unitPrice ?? "0"}
+                                  onChange={(e) => updateItemPrice(idx, e.target.value)}
+                                  onKeyDown={(e) => handleCellKeyDown(e, idx, 3)}
+                                  className="w-24 h-6 border border-input rounded px-1.5 text-right text-xs bg-background tabular-nums"
+                                />
+                                {renderSourceTag(item.priceSource)}
+                              </div>
+                            ) : (
+                              <span className="tabular-nums">{fmt(item.unitPrice ?? "0")}</span>
                             )}
-                          </td>
-
-                          {/* Disc% */}
-                          <td className="px-3 py-1.5">
-                            <input
-                              type="number"
-                              value={item.discountPct ?? "0"}
-                              onChange={(e) => updateItemDiscount(idx, e.target.value)}
-                              className="w-14 h-6 border border-input rounded px-1.5 text-right text-xs bg-background"
-                              min="0"
-                              max="100"
-                            />
                           </td>
 
                           {/* Total */}
                           <td className="px-3 py-1.5 text-right font-mono tabular-nums">
-                            {fmt(item.computedTotal)}
+                            {fmt(String(rowDisplayTotal(item, sets)))}
                           </td>
 
-                          {/* Status */}
+                          {/* Status + delete */}
                           <td className="px-3 py-1.5">
-                            <div className={cn("flex items-center gap-1", STATUS_BADGE[item.status].className)}>
-                              {STATUS_BADGE[item.status].icon}
+                            <div className="flex items-center gap-2">
+                              <div className={cn("flex items-center gap-1", STATUS_BADGE[item.status].className)}>
+                                {STATUS_BADGE[item.status].icon}
+                                <span className="text-[10px]">{STATUS_BADGE[item.status].label}</span>
+                              </div>
+                              {isEditable && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeItem(idx)}
+                                  className="ml-auto text-muted-foreground hover:text-destructive transition-colors"
+                                  aria-label="Delete row"
+                                >
+                                  <XIcon className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1424,38 +1721,51 @@ export function NewQuotationClient({
                     for (const gid of groupOrder) {
                       const gItems = reviewItems.map((it, idx) => ({ it, idx })).filter(({ it }) => it.setGroupId === gid);
                       const first = gItems[0].it;
-                      const groupTotal = gItems.reduce((s, { it }) => s + Number(it.computedTotal), 0);
+                      const groupTotal = gItems.reduce((s, { it }) => s + rowDisplayTotal(it, sets), 0);
+                      const groupPricePerSet = gItems.reduce((s, { it }) => s + rowDisplayTotal(it, 1), 0);
                       rows.push(
                         <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
                           <td colSpan={3} className="px-3 py-1.5">
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-300">
-                                {first.setGroupLabel || "Set"}
+                              <span className="text-[10px] font-semibold tracking-wide text-blue-700 dark:text-blue-300">
+                                {(first.setGroupLabel || "SET").toUpperCase()}
                               </span>
-                              <span className="text-[10px] text-muted-foreground">×</span>
-                              <input
-                                type="number"
-                                min="1"
-                                value={first.setQty || "1"}
-                                onChange={(e) =>
-                                  setReviewItems((prev) =>
-                                    prev.map((x) => x.setGroupId === gid ? { ...x, setQty: e.target.value } : x),
-                                  )
-                                }
-                                className="h-5 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
-                              />
-                              <span className="text-[10px] text-muted-foreground">sets</span>
-                              {Number(first.setQty || 1) > 1 && (
+                              {groupOrder.length > 1 && (
                                 <>
-                                  <span className="text-[10px] text-muted-foreground">·</span>
-                                  <span className="text-[10px] text-muted-foreground tabular-nums">
-                                    {fmt(String(groupTotal / Number(first.setQty || 1)))} / set
-                                  </span>
+                                  <span className="text-[10px] text-muted-foreground">×</span>
+                                  {isEditable ? (
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      aria-label="Set quantity"
+                                      value={first.setQty || "1"}
+                                      onChange={(e) => {
+                                        const newQty = e.target.value || "1";
+                                        setReviewItems((prev) =>
+                                          prev.map((x) =>
+                                            x.setGroupId !== gid ? x : { ...x, setQty: newQty },
+                                          ),
+                                        );
+                                      }}
+                                      className="h-5 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
+                                    />
+                                  ) : (
+                                    <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-300">
+                                      {first.setQty || "1"}
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-muted-foreground">sets</span>
                                 </>
                               )}
                             </div>
                           </td>
-                          <td colSpan={4} />
+                          <td colSpan={3} />
+                          <td className="px-3 py-1.5 text-right tabular-nums">
+                            <div className="text-[10px] font-mono text-blue-600 dark:text-blue-400">
+                              {fmt(String(groupPricePerSet))}
+                            </div>
+                            <div className="text-[9px] text-muted-foreground">/ set</div>
+                          </td>
                           <td className="px-3 py-1.5 text-right text-[10px] font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
                             {fmt(String(groupTotal))}
                           </td>
@@ -1475,314 +1785,115 @@ export function NewQuotationClient({
                 </tbody>
               </table>
             </div>
+
+            {step === 2 && (
+              <div className="px-4 pt-2">
+                <button
+                  type="button"
+                  onClick={addRow}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-3 py-1.5 w-full justify-center hover:border-foreground/40 transition-colors"
+                >
+                  <PlusIcon className="w-3.5 h-3.5" /> Add row
+                </button>
+              </div>
+            )}
+
+            {/* Overall price summary */}
+            <div className="mt-3 flex justify-end px-4 pb-2">
+              <div className="w-80 space-y-1.5 text-xs">
+                {/* Price/set + sets breakdown */}
+                {sets > 1 && (
+                  <>
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Price / set</span>
+                      <span className="font-mono tabular-nums">{fmt(String(subtotalPerSet))}</span>
+                    </div>
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>× {sets} sets</span>
+                      <span className="font-mono tabular-nums">{fmt(String(subtotalNSets))}</span>
+                    </div>
+                  </>
+                )}
+                {/* Overall discount */}
+                {overallDiscAmt > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Discount</span>
+                    <span className="font-mono tabular-nums text-red-500">− {fmt(String(overallDiscAmt))}</span>
+                  </div>
+                )}
+                {/* Net amount bridge — only when SST follows a discount */}
+                {sstAmt > 0 && overallDiscAmt > 0 && (
+                  <div className="flex justify-between text-muted-foreground border-t border-dashed pt-1.5">
+                    <span>Net amount</span>
+                    <span className="font-mono tabular-nums">{fmt(String(afterAllDisc))}</span>
+                  </div>
+                )}
+                {/* SST */}
+                {sstAmt > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>SST ({sstPct || 8}%)</span>
+                    <span className="font-mono tabular-nums">{fmt(String(sstAmt))}</span>
+                  </div>
+                )}
+                {/* Grand Total */}
+                <div className="flex justify-between items-baseline border-t border-border pt-2">
+                  <div>
+                    <div className="font-semibold text-sm">Grand Total</div>
+                    {sets > 1 && (
+                      <div className="text-[10px] text-muted-foreground">
+                        {fmt(String(grandTotal / sets))} / set
+                      </div>
+                    )}
+                  </div>
+                  <span className="font-mono tabular-nums font-bold text-base">{fmt(String(grandTotal))}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Remarks */}
+          <div className="bg-background border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-muted/20 border-b border-border">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Remarks</div>
+            </div>
+            <div className="p-4">
+              {step === 2 ? (
+                <Textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="e.g. As per discussion on 12 May 2025..."
+                  rows={2}
+                  className="text-sm resize-none"
+                />
+              ) : notes ? (
+                <p className="text-sm whitespace-pre-wrap">{notes}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground italic">No remarks</p>
+              )}
+            </div>
           </div>
 
           <div className="flex justify-between">
             <Button
               variant="outline"
-              onClick={() => setStep(2)}
+              onClick={() => step === 2 ? setStep(1) : setStep(2)}
               className="gap-2"
             >
               <ChevronLeftIcon className="w-4 h-4" /> Back
             </Button>
-            <Button onClick={() => setStep(4)} className="gap-2">
-              Next: Generate <ChevronRightIcon className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ── STEP 4: Generate ────────────────────────────────────────────────── */}
-      {step === 4 && (
-        <div className="space-y-4">
-          {/* Pricing & discount */}
-          <div className="bg-background border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 bg-muted/20 border-b border-border">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Pricing & discount
-              </div>
-            </div>
-            <div className="p-4 space-y-4">
-              {/* Subtotal rows */}
-              <div className="rounded-lg border border-border divide-y divide-border">
-                <div className="flex items-center justify-between px-4 py-2.5 text-sm">
-                  <span className="text-muted-foreground">Subtotal × 1 set</span>
-                  <span className="font-mono font-medium">RM {fmt(subtotalPerSet)}</span>
-                </div>
-                {sets > 1 && (
-                  <div className="flex items-center justify-between px-4 py-2.5 text-sm bg-muted/20">
-                    <span className="text-muted-foreground">Subtotal × {sets} sets</span>
-                    <span className="font-mono font-semibold">RM {fmt(subtotalNSets)}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Three checkboxes: itemize disc, total disc, SST */}
-              <div className="rounded-lg border border-border divide-y divide-border">
-                {/* Itemize discount — only shown when items carry discounts */}
-                {applyItemizeDiscount && (
-                  <div className="flex items-center gap-3 px-4 py-3">
-                    <input
-                      type="checkbox"
-                      id="applyItemDisc"
-                      checked={applyItemizeDiscount}
-                      onChange={(e) => setApplyItemizeDiscount(e.target.checked)}
-                      className="w-4 h-4"
-                    />
-                    <label htmlFor="applyItemDisc" className="text-sm font-medium cursor-pointer flex-1">
-                      Apply itemize discount
-                    </label>
-                    {itemDiscTotal > 0 && (
-                      <span className="text-sm text-red-600 dark:text-red-400 font-mono tabular-nums">
-                        − RM {fmt(itemDiscTotal)}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Total discount */}
-                <div className="flex items-start gap-3 px-4 py-3">
-                  <input
-                    type="checkbox"
-                    id="applyTotalDisc"
-                    checked={applyTotalDiscount}
-                    onChange={(e) => setApplyTotalDiscount(e.target.checked)}
-                    className="w-4 h-4 mt-0.5"
-                  />
-                  <div className="flex-1 space-y-2">
-                    <label htmlFor="applyTotalDisc" className="text-sm font-medium cursor-pointer">
-                      Apply total discount
-                    </label>
-                    {applyTotalDiscount && (
-                      <div className="space-y-2">
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setDiscountType("pct")}
-                            className={`px-3 py-1 text-xs rounded-md border transition-colors ${discountType === "pct" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-foreground"}`}
-                          >
-                            % Percentage
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDiscountType("fixed")}
-                            className={`px-3 py-1 text-xs rounded-md border transition-colors ${discountType === "fixed" ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-foreground"}`}
-                          >
-                            RM Special
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {discountType === "pct" ? (
-                            <>
-                              <Input
-                                type="number"
-                                value={overallDiscount}
-                                onChange={(e) => setOverallDiscount(e.target.value)}
-                                className="h-7 text-sm w-20 text-right"
-                                min="0"
-                                max="100"
-                                placeholder="0"
-                              />
-                              <span className="text-sm text-muted-foreground">%</span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="text-sm text-muted-foreground">RM</span>
-                              <Input
-                                type="number"
-                                value={specialDiscAmt}
-                                onChange={(e) => setSpecialDiscAmt(e.target.value)}
-                                className="h-7 text-sm w-28 text-right"
-                                min="0"
-                                placeholder="0.00"
-                              />
-                            </>
-                          )}
-                          {overallDiscAmt > 0 && (
-                            <span className="text-sm text-red-600 dark:text-red-400 font-mono tabular-nums">
-                              − RM {fmt(overallDiscAmt)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Apply SST */}
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <input
-                    type="checkbox"
-                    id="applySST"
-                    checked={applySST}
-                    onChange={(e) => setApplySST(e.target.checked)}
-                    className="w-4 h-4"
-                  />
-                  <label htmlFor="applySST" className="text-sm font-medium cursor-pointer flex-1">
-                    Apply SST
-                  </label>
-                  {applySST && (
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        value={sstPct || "8"}
-                        onChange={(e) => setSstPct(e.target.value)}
-                        className="h-7 text-sm w-16 text-right"
-                        min="0"
-                      />
-                      <span className="text-sm text-muted-foreground">%</span>
-                      {sstAmt > 0 && (
-                        <span className="text-sm text-muted-foreground font-mono tabular-nums">
-                          + RM {fmt(sstAmt)}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Grand total formula */}
-              <div className="rounded-lg border border-border bg-muted/10 p-4 space-y-2">
-                <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-3">
-                  Grand Total
-                </div>
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm font-mono tabular-nums">
-                  <span className="text-foreground">RM {fmt(subtotalNSets)}</span>
-                  {(applyItemizeDiscount || applyTotalDiscount) && totalDisc > 0 && (
-                    <>
-                      <span className="text-muted-foreground">−</span>
-                      <span className="text-red-600 dark:text-red-400">RM {fmt(totalDisc)}</span>
-                    </>
-                  )}
-                  {applySST && sstAmt > 0 && (
-                    <>
-                      <span className="text-muted-foreground">+</span>
-                      <span className="text-blue-600 dark:text-blue-400">RM {fmt(sstAmt)}</span>
-                    </>
-                  )}
-                  <span className="text-muted-foreground">=</span>
-                  <span className="text-xl font-semibold text-green-600 dark:text-green-400">
-                    RM {fmt(grandTotal)}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-x-2 text-[10px] text-muted-foreground font-sans">
-                  <span>Subtotal × {sets} {sets > 1 ? "sets" : "set"}</span>
-                  {(applyItemizeDiscount || applyTotalDiscount) && totalDisc > 0 && (
-                    <><span>−</span><span>Total disc</span></>
-                  )}
-                  {applySST && sstAmt > 0 && (
-                    <><span>+</span><span>SST</span></>
-                  )}
-                  <span>=</span><span>Grand total</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Generate options */}
-          <div className="bg-background border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 bg-muted/20 border-b border-border">
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Generate quotation
-              </div>
-            </div>
-            <div className="p-4 space-y-4">
-              {/* Summary */}
-              <div className="grid grid-cols-2 gap-3 p-3 bg-muted/30 rounded-lg text-sm">
-                <div>
-                  <span className="text-muted-foreground">Quotation no. </span>
-                  <span className="font-mono font-medium">{quotationNo}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Customer </span>
-                  <span className="font-medium">
-                    {selectedCustomer
-                      ? [selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")
-                      : "—"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Items </span>
-                  <span className="font-medium">{reviewItems.length}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Sets </span>
-                  <span className="font-medium">{sets}</span>
-                </div>
-              </div>
-
-              {/* Options */}
-              <div className="space-y-3">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Display</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { id: "productcode", label: "Product code",   value: showProductCode,  set: setShowProductCode },
-                    { id: "certs",       label: "MDA certificates", value: includeMdaCerts, set: setIncludeMdaCerts },
-                  ].map((opt) => (
-                    <div key={opt.id} className="flex items-center gap-2.5 p-3 border border-border rounded-lg">
-                      <input type="checkbox" id={opt.id} checked={opt.value} onChange={(e) => opt.set(e.target.checked)} className="w-4 h-4" />
-                      <label htmlFor={opt.id} className="text-sm cursor-pointer">{opt.label}</label>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Attached Documents</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { id: "catalogue", label: "Product catalogue",                value: includeCatalogue,     set: setIncludeCatalogue },
-                    { id: "mof",       label: "MOF Certificate",                  value: inclMof,              set: setInclMof },
-                    { id: "ssm",       label: "SSM",                              value: inclSsm,              set: setInclSsm },
-                    { id: "tcc",       label: "TCC (Tax Compliance Certificate)", value: inclTcc,              set: setInclTcc },
-                    { id: "bank",      label: "Bank Statement",                   value: inclBankStatement,    set: setInclBankStatement },
-                    { id: "mda",       label: "MDA Establishment",                value: inclMdaEstablishment, set: setInclMdaEstablishment },
-                    { id: "lamp12",    label: "Lampiran 12",                      value: inclLampiran12,       set: setInclLampiran12 },
-                    { id: "lamp13",    label: "Lampiran 13",                      value: inclLampiran13,       set: setInclLampiran13 },
-                  ].map((opt) => (
-                    <div key={opt.id} className="flex items-center gap-2.5 p-3 border border-border rounded-lg">
-                      <input type="checkbox" id={opt.id} checked={opt.value} onChange={(e) => opt.set(e.target.checked)} className="w-4 h-4" />
-                      <label htmlFor={opt.id} className="text-sm cursor-pointer">{opt.label}</label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Warnings */}
-              {noPriceCount > 0 && (
-                <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-xs text-amber-700 dark:text-amber-400">
-                  <AlertTriangleIcon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  {noPriceCount} item{noPriceCount > 1 ? "s" : ""} have no price — they will show RM 0.00 in the quotation.
-                </div>
-              )}
-              {noCertCount > 0 && (
-                <div className="flex items-start gap-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg text-xs text-orange-700 dark:text-orange-400">
-                  <AlertCircleIcon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  {noCertCount} item{noCertCount > 1 ? "s" : ""} have no MDA certificate — certificate page will be omitted for these items.
-                </div>
-              )}
-
-              <Button
-                onClick={handleCreate}
-                disabled={creating}
-                className="w-full h-11 text-sm gap-2"
-              >
-                {creating && (
-                  <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                )}
-                Create quotation — {quotationNo}
+            {step === 2 ? (
+              <Button onClick={() => setStep(3)} className="gap-2">
+                Next: Review <ChevronRightIcon className="w-4 h-4" />
               </Button>
-            </div>
-          </div>
-
-          <div className="flex justify-start">
-            <Button
-              variant="outline"
-              onClick={() => setStep(3)}
-              className="gap-2"
-            >
-              <ChevronLeftIcon className="w-4 h-4" /> Back
-            </Button>
+            ) : (
+              <Button onClick={handleCreate} disabled={creating} className="gap-2 h-10">
+                {creating && <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />}
+                {editData ? "Save changes" : "Create quotation"}
+              </Button>
+            )}
           </div>
         </div>
       )}
-    </div>
-  );
+
+    </div>  );
 }

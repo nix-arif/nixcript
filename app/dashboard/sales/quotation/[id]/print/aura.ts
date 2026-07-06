@@ -204,6 +204,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   type RowInfo = {
     item:               typeof items[number];
     descLines:          string[];
+    codeLines:          string[];
     extraLine:          string | null;
     isGreenRow:         boolean;
     rowH:               number;
@@ -224,14 +225,15 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
-    const codeLineH  = 0;
+    const codeLines   = showCode ? wrap(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2) : [];
+    const codeLineH   = codeLines.length * CODE_LINE_H;
     const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
     const descH = firstParaLineCount * LH + Math.max(0, descLines.length - firstParaLineCount) * CONT_LH;
     const rowH = Math.max(
       hasItemDisc ? RH_MIN + 8 : RH_MIN,
-      codeLineH + descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
+      Math.max(codeLineH + 6, descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6)),
     );
-    return { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount };
+    return { item, descLines, codeLines, extraLine, isGreenRow, rowH, firstParaLineCount };
   });
 
   // ── Org name + header style ───────────────────────────────────────────────
@@ -256,8 +258,9 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     cust, attentionNameSize: attnNameSz,
     salesPersonName: q.salesPersonName ?? null,
     preparedByName: q.preparedByName ?? null,
-    title: q.title ?? null,
+    title: q.title || null,
     detailFontSize: detailFSz, fontR,
+    revisionNo: q.revisionNo ?? 0,
   }) + 6;
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 2 : 0) + (sstAmt > 0 ? 1 : 0);
@@ -289,7 +292,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         const setTotal = rowInfos
           .filter(r => r.item.setGroupId === it.setGroupId)
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
-        const qty = Number(it.setQty ?? 1); renderItems.push({ kind: "setHeader", label: it.setGroupLabel ?? "Set", qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
+        const qty = Number(it.setQty ?? 1); const _lbl = it.setGroupLabel ?? "Set"; renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
       }
       renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
     }
@@ -385,7 +388,8 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       textColor: C_DARK,
       quotationNo: q.quotationNo, createdAt: q.createdAt,
       validUntil: q.validUntil, salesPersonName: q.salesPersonName ?? null,
-      preparedByName: q.preparedByName ?? null, title: hasBanner ? null : (q.title ?? null),
+      salesPersonPhone: (q as any).salesPersonPhone ?? null, revisionNo: q.revisionNo ?? 0,
+      preparedByName: q.preparedByName ?? null, title: hasBanner ? null : (q.title || null),
     });
     curY -= INFO_BLOCK + DIVIDER_GAP;
     hLine(page, curY);
@@ -396,7 +400,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     if (hasBanner && !isOverflowPage) {
       const bannerY = curY - BANNER_H;
       page.drawRectangle({ x: ML, y: bannerY, width: CW, height: BANNER_H, color: C_LINE });
-      const bannerText = trunc((q.title ?? "Quotation Items").toUpperCase(), fontB, 8.5, CW - 12);
+      const bannerText = trunc((q.title || "Quotation Items").toUpperCase(), fontB, 8.5, CW - 12);
       const bannerTextW = fontB.widthOfTextAtSize(bannerText, 8.5);
       page.drawText(bannerText, {
         x: (W - bannerTextW) / 2, y: bannerY + 6, size: 8.5, font: fontB, color: rgb(0, 0, 0),
@@ -459,7 +463,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         continue;
       }
       const rowIdx = entry.rowIdx;
-      const { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
+      const { item, descLines, codeLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
       const rowY = curY - rowH;
 
       const textBaseline = curY - 11;
@@ -474,9 +478,11 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       // Code column or code prefix
       let dy = textBaseline;
       if (showCode) {
-        page.drawText(trunc(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2), {
-          x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontR, color: C_MID,
-        });
+        let cdy = dy;
+        for (const codeLine of codeLines) {
+          page.drawText(codeLine, { x: X_CODE + TABLE_PAD, y: cdy, size: FS_CODE, font: fontR, color: C_MID });
+          cdy -= CODE_LINE_H;
+        }
       }
 
       // Description + cert line

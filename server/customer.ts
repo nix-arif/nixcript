@@ -150,11 +150,12 @@ export async function getCustomers(search?: string) {
 
 export async function getCustomer(id: string) {
   const { orgId } = await requireAccess("customer:read");
+  const orgIds = await getOwnerOrgIds(orgId);
 
   const [row] = await db
     .select()
     .from(customer)
-    .where(and(eq(customer.id, id), eq(customer.organizationId, orgId)))
+    .where(and(eq(customer.id, id), inArray(customer.organizationId, orgIds)))
     .limit(1);
 
   if (!row) return null;

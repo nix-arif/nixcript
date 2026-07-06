@@ -165,42 +165,28 @@ function OrgPicker({
         <Input
           value={query}
           onChange={(e) => search(e.target.value)}
-          placeholder="Search or type new org name…"
+          placeholder="Search organisations…"
           className="pl-9 h-9 text-sm"
         />
       </div>
-      {(results.length > 0 || (query.trim().length > 1)) && (
+      {(results.length > 0 || query.trim().length > 1) && (
         <div className="absolute z-50 mt-1 w-full bg-background border border-border rounded-md shadow-md overflow-hidden">
           {loading ? (
             <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>
+          ) : results.length > 0 ? (
+            results.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-muted/40 flex items-center gap-2"
+                onClick={() => { onSelect(r); setQuery(""); setResults([]); }}
+              >
+                <BuildingIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="truncate">{r.name}</span>
+              </button>
+            ))
           ) : (
-            <>
-              {results.map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-muted/40 flex items-center gap-2"
-                  onClick={() => { onSelect(r); setQuery(""); setResults([]); }}
-                >
-                  <BuildingIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  <span className="truncate">{r.name}</span>
-                </button>
-              ))}
-              {query.trim().length > 1 && !results.some((r) => r.name.toLowerCase() === query.trim().toLowerCase()) && (
-                <button
-                  type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-muted/40 flex items-center gap-2 border-t border-border text-primary"
-                  onClick={() => {
-                    onSelect({ id: "__new__", name: query.trim() });
-                    setQuery("");
-                    setResults([]);
-                  }}
-                >
-                  <PlusIcon className="w-3.5 h-3.5 shrink-0" />
-                  <span>Create "{query.trim()}"</span>
-                </button>
-              )}
-            </>
+            <div className="px-3 py-2 text-xs text-muted-foreground">No organisations found</div>
           )}
         </div>
       )}
@@ -390,16 +376,7 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
     }
     setSavingMembership(true);
     try {
-      let orgId = newMembershipOrg.id;
-      if (orgId === "__new__") {
-        const { row, existed } = await createCustomerOrganization({
-          name: newMembershipOrg.name,
-          address: newMembershipOrg.address ?? undefined,
-        });
-        if (existed) toast.info(`Using existing organisation "${row.name}"`);
-        orgId = row.id;
-      }
-      await addCustomerOrgMembership(activeCustomer.id, orgId, {
+      await addCustomerOrgMembership(activeCustomer.id, newMembershipOrg.id, {
         position: newMembershipPosition || undefined,
         department: newMembershipDept || undefined,
         isPrimary: activeCustomer.memberships.length === 0,
@@ -1069,9 +1046,9 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
                         </div>
                         <Field label="Organisation name">
                           <OrgPicker
-                            value={m.orgName ? { id: m.orgId ?? "__new__", name: m.orgName } : null}
+                            value={m.orgName ? { id: m.orgId ?? "", name: m.orgName } : null}
                             onSelect={(org) => setLocalMemberships(localMemberships.map((x, j) =>
-                              j === i ? { ...x, orgId: org.id === "__new__" ? null : org.id, orgName: org.name, orgAddress: org.address ?? undefined } : x
+                              j === i ? { ...x, orgId: org.id, orgName: org.name, orgAddress: org.address ?? undefined } : x
                             ))}
                             onClear={() => setLocalMemberships(localMemberships.map((x, j) =>
                               j === i ? { ...x, orgId: null, orgName: "" } : x

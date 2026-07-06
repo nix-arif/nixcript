@@ -8,6 +8,7 @@ import {
   deleteQuotation,
   getQuotationGroupAllDetails,
   reviseQuotation,
+  updateQuotationSettings,
 } from "@/server/quotation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,7 @@ import {
   PrinterIcon,
   PencilIcon,
   LayersIcon,
+  DatabaseIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +39,30 @@ interface Props {
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
+
+const acct = (v: number) =>
+  v < 0
+    ? `(${Math.abs(v).toLocaleString("en-MY", { minimumFractionDigits: 2 })})`
+    : v.toLocaleString("en-MY", { minimumFractionDigits: 2 });
+
+function SrcTag({ src, userName }: { src: string | null | undefined; userName?: string | null }) {
+  if (!src) return null;
+  if (src === "db") return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+      <DatabaseIcon className="w-3 h-3 shrink-0" />from product table
+    </span>
+  );
+  if (src === "sheet") return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+      <PencilIcon className="w-3 h-3 shrink-0" />{(userName || "user").toLowerCase()} edited
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
+      <PencilIcon className="w-3 h-3 shrink-0" />{(userName || "user").toLowerCase()} edited
+    </span>
+  );
+}
 
 const fmtDate = (d: Date | string | null | undefined) => {
   if (!d) return "—";
@@ -60,27 +86,6 @@ const STATUS = {
   },
 };
 
-type MarkupRow = {
-  id: string;
-  quotationNo: string;
-  orgName: string;
-  isDummy: number;
-  grandTotal: string;
-  markupPct: string;
-};
-
-function generateRandomMarkups(siblings: Data["siblings"]): MarkupRow[] {
-  let min = 5;
-  return siblings.map((s) => {
-    if (s.isDummy === 0) {
-      return { ...s, markupPct: "0" };
-    }
-    const max = Math.min(min + 15, 50);
-    const markup = Math.floor(Math.random() * (max - min + 1)) + min;
-    min = markup + 3;
-    return { ...s, markupPct: String(markup) };
-  });
-}
 
 export function QuotationDetailClient({ group, initialId }: Props) {
   const router = useRouter();
@@ -88,14 +93,95 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
   // All data is already loaded — switch is instant, no navigation
   const data = group.find((d) => d.quotation.id === selectedId) ?? group[0];
-  const { quotation: q, orgName, items, siblings } = data;
+  const { quotation: q, orgName, items, siblings, createdByName } = data;
   const cust = q.customerSnapshot as any;
 
   const [finalizing, setFinalizing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [revising, setRevising] = useState(false);
-  const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
-  const [markupRows, setMarkupRows] = useState<MarkupRow[]>([]);
+
+  // Editable settings (drafts only)
+  const [applyTotalDiscount, setApplyTotalDiscount] = useState(
+    Number(q.overallDiscountPct ?? 0) > 0 || Number(q.overallDiscountAmt ?? 0) > 0,
+  );
+  const [discountType, setDiscountType] = useState<"pct" | "fixed">(
+    Number(q.overallDiscountPct ?? 0) > 0 ? "pct" : "fixed",
+  );
+  const [overallDiscount, setOverallDiscount] = useState(q.overallDiscountPct ?? "0");
+  const [specialDiscAmt, setSpecialDiscAmt] = useState(q.overallDiscountAmt ?? "0");
+  const [applySST, setApplySST] = useState(Number(q.sstPct ?? 0) > 0);
+  const [sstPct, setSstPct] = useState(q.sstPct ?? "8");
+  const [showProductCode, setShowProductCode] = useState(!!Number(q.showProductCode));
+  const [includeMdaCerts, setIncludeMdaCerts] = useState(!!Number(q.includeMdaCerts));
+  const [includeCatalogue, setIncludeCatalogue] = useState(!!Number(q.includeCatalogue));
+  const [inclMof, setInclMof] = useState(!!Number(q.inclMof));
+  const [inclSsm, setInclSsm] = useState(!!Number(q.inclSsm));
+  const [inclTcc, setInclTcc] = useState(!!Number(q.inclTcc));
+  const [inclBankStatement, setInclBankStatement] = useState(!!Number(q.inclBankStatement));
+  const [inclMdaEstablishment, setInclMdaEstablishment] = useState(!!Number(q.inclMdaEstablishment));
+  const [inclLampiran12, setInclLampiran12] = useState(!!Number(q.inclLampiran12));
+  const [inclLampiran13, setInclLampiran13] = useState(!!Number(q.inclLampiran13));
+  const [showItemizeDiscount, setShowItemizeDiscount] = useState(!!Number(q.showItemizeDiscount));
+
+  // Re-sync when switching between comparison tabs
+  useEffect(() => {
+    setApplyTotalDiscount(Number(q.overallDiscountPct ?? 0) > 0 || Number(q.overallDiscountAmt ?? 0) > 0);
+    setDiscountType(Number(q.overallDiscountPct ?? 0) > 0 ? "pct" : "fixed");
+    setOverallDiscount(q.overallDiscountPct ?? "0");
+    setSpecialDiscAmt(q.overallDiscountAmt ?? "0");
+    setApplySST(Number(q.sstPct ?? 0) > 0);
+    setSstPct(q.sstPct ?? "8");
+    setShowProductCode(!!Number(q.showProductCode));
+    setIncludeMdaCerts(!!Number(q.includeMdaCerts));
+    setIncludeCatalogue(!!Number(q.includeCatalogue));
+    setInclMof(!!Number(q.inclMof));
+    setInclSsm(!!Number(q.inclSsm));
+    setInclTcc(!!Number(q.inclTcc));
+    setInclBankStatement(!!Number(q.inclBankStatement));
+    setInclMdaEstablishment(!!Number(q.inclMdaEstablishment));
+    setInclLampiran12(!!Number(q.inclLampiran12));
+    setInclLampiran13(!!Number(q.inclLampiran13));
+    setShowItemizeDiscount(!!Number(q.showItemizeDiscount));
+  }, [q.id]);
+
+  const saveSettings = async (patch: Partial<{
+    applyTotalDiscount: boolean; discountType: "pct" | "fixed";
+    overallDiscount: string; specialDiscAmt: string;
+    applySST: boolean; sstPct: string;
+    showProductCode: boolean; includeMdaCerts: boolean; includeCatalogue: boolean;
+    inclMof: boolean; inclSsm: boolean; inclTcc: boolean; inclBankStatement: boolean;
+    inclMdaEstablishment: boolean; inclLampiran12: boolean; inclLampiran13: boolean;
+    showItemizeDiscount: boolean;
+  }> = {}) => {
+    const s = {
+      applyTotalDiscount, discountType, overallDiscount, specialDiscAmt,
+      applySST, sstPct, showProductCode, includeMdaCerts, includeCatalogue,
+      inclMof, inclSsm, inclTcc, inclBankStatement, inclMdaEstablishment,
+      inclLampiran12, inclLampiran13, showItemizeDiscount, ...patch,
+    };
+    const useDisc = s.applyTotalDiscount;
+    try {
+      await updateQuotationSettings(q.id, {
+        overallDiscountPct: useDisc && s.discountType === "pct" ? s.overallDiscount : "0",
+        overallDiscountAmt: useDisc && s.discountType === "fixed" ? s.specialDiscAmt : "0",
+        sstPct: s.applySST ? s.sstPct : "0",
+        showProductCode: s.showProductCode,
+        includeMdaCerts: s.includeMdaCerts,
+        includeCatalogue: s.includeCatalogue,
+        inclMof: s.inclMof,
+        inclSsm: s.inclSsm,
+        inclTcc: s.inclTcc,
+        inclBankStatement: s.inclBankStatement,
+        inclMdaEstablishment: s.inclMdaEstablishment,
+        inclLampiran12: s.inclLampiran12,
+        inclLampiran13: s.inclLampiran13,
+        showItemizeDiscount: s.showItemizeDiscount,
+      });
+      router.refresh();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
 
   // Keep URL in sync without triggering a page reload
   useEffect(() => {
@@ -107,21 +193,15 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   const statusCfg = STATUS[q.status as keyof typeof STATUS] ?? STATUS.draft;
 
   const handleFinalizeClick = () => {
-    if (!isComparison || siblings.length === 0) {
-      if (!confirm("Finalize this quotation? This cannot be undone.")) return;
-      doFinalize({});
-      return;
-    }
-    setMarkupRows(generateRandomMarkups(siblings));
-    setShowFinalizeDialog(true);
+    if (!confirm("Finalize this quotation? This cannot be undone.")) return;
+    doFinalize();
   };
 
-  const doFinalize = async (markups: Record<string, number>) => {
+  const doFinalize = async () => {
     setFinalizing(true);
     try {
-      await finalizeQuotation(q.id, markups);
+      await finalizeQuotation(q.id);
       toast.success("Quotation finalized");
-      setShowFinalizeDialog(false);
       router.refresh();
     } catch (e: any) {
       toast.error(e.message);
@@ -140,25 +220,6 @@ export function QuotationDetailClient({ group, initialId }: Props) {
     }
   };
 
-  const handleConfirmFinalize = () => {
-    const markups: Record<string, number> = {};
-    const dummies = markupRows.filter((r) => r.isDummy > 0);
-    const pcts = dummies.map((r) => parseFloat(r.markupPct) || 0);
-
-    if (pcts.some((p) => p <= 0)) {
-      toast.error("All dummy markups must be greater than 0%");
-      return;
-    }
-    const unique = new Set(pcts);
-    if (unique.size < pcts.length) {
-      toast.error("Each dummy quotation must have a unique markup %");
-      return;
-    }
-    for (const row of dummies) {
-      markups[row.id] = parseFloat(row.markupPct) || 0;
-    }
-    doFinalize(markups);
-  };
 
   const handleDelete = async () => {
     const msg = isComparison
@@ -187,100 +248,6 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
   return (
     <div className="p-6 space-y-4">
-      {/* ── Finalize Dialog ────────────────────────────────────────────────── */}
-      {showFinalizeDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-background border border-border rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-            <div className="px-5 py-4 border-b border-border">
-              <h2 className="text-base font-semibold">
-                Finalize comparison group
-              </h2>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Dummy quotation prices will be inflated by the percentages
-                below. Original quotation prices are unchanged.
-              </p>
-            </div>
-            <div className="p-5 space-y-3">
-              {markupRows.map((row) => {
-                const projected =
-                  Number(row.grandTotal) *
-                  (1 + (parseFloat(row.markupPct) || 0) / 100);
-                return (
-                  <div key={row.id} className="flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">
-                        {row.orgName}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {row.quotationNo}
-                      </div>
-                    </div>
-                    <div className="text-xs text-muted-foreground shrink-0 tabular-nums">
-                      {fmt(row.grandTotal)}
-                    </div>
-                    {row.isDummy === 0 ? (
-                      <div className="w-24 text-[11px] text-center text-muted-foreground bg-muted/30 border border-border rounded-lg px-3 py-2">
-                        Original
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Input
-                            type="number"
-                            min="0.1"
-                            max="100"
-                            step="0.1"
-                            value={row.markupPct}
-                            onChange={(e) =>
-                              setMarkupRows((prev) =>
-                                prev.map((r) =>
-                                  r.id === row.id
-                                    ? { ...r, markupPct: e.target.value }
-                                    : r,
-                                ),
-                              )
-                            }
-                            className="w-20 h-8 text-sm text-right"
-                          />
-                          <span className="text-sm text-muted-foreground">
-                            %
-                          </span>
-                        </div>
-                        <div className="text-xs text-green-600 dark:text-green-400 shrink-0 tabular-nums">
-                          → {fmt(projected)}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="px-5 py-4 border-t border-border flex items-center justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowFinalizeDialog(false)}
-                disabled={finalizing}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleConfirmFinalize}
-                disabled={finalizing}
-                className="gap-1.5"
-              >
-                {finalizing ? (
-                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <CheckIcon className="w-3.5 h-3.5" />
-                )}
-                Confirm &amp; finalize
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4">
@@ -296,7 +263,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-semibold tracking-tight font-mono">
-                {q.quotationNo}
+                {q.quotationNo.startsWith("PENDING-") ? <span className="text-muted-foreground italic text-base">No. pending</span> : q.quotationNo}
               </h1>
               <span
                 className={cn(
@@ -461,7 +428,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                   <BuildingIcon className="w-3 h-3 shrink-0" />
                   <span className="font-medium">{s.orgName}</span>
                   <span className="font-mono text-[10px] opacity-70">
-                    {s.quotationNo}
+                    {s.quotationNo.startsWith("PENDING-") ? "—" : s.quotationNo}
                   </span>
                   <span
                     className={cn(
@@ -492,13 +459,46 @@ export function QuotationDetailClient({ group, initialId }: Props) {
       <div className="grid grid-cols-[1fr_300px] gap-4 items-start">
         {/* ── Left: Items table ─────────────────────────────────────────────── */}
         <div className="bg-background border border-border rounded-xl overflow-hidden">
-          <div className="px-4 py-3 bg-muted/20 border-b border-border flex items-center justify-between">
-            <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Items
+          <div className="px-4 py-3 bg-muted/20 border-b border-border flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground shrink-0">Items</span>
+              {q.title && (
+                <span className="text-xs font-semibold text-foreground truncate">{q.title}</span>
+              )}
+              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800 shrink-0">
+                {sets} {sets === 1 ? "set" : "sets"}
+              </span>
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-xs text-muted-foreground shrink-0">
               {items.length} items
             </div>
+          </div>
+          <div className="px-4 py-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-border/40 bg-muted/5">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wide shrink-0">Legend</span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="text-[8px] font-bold px-1 py-0.5 rounded border bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400">SELL</span>
+              sell item
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="text-[8px] font-bold px-1 py-0.5 rounded border bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-400">RENT</span>
+              rental item
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <ShieldCheckIcon className="w-3.5 h-3.5 text-green-500" />
+              cert available
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <AlertCircleIcon className="w-3.5 h-3.5 text-orange-400" />
+              no cert
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <ImageIcon className="w-3.5 h-3.5 text-blue-400" />
+              has image
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <LayersIcon className="w-3.5 h-3.5 text-blue-500" />
+              set group
+            </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs border-collapse">
@@ -508,19 +508,22 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                     "#",
                     "Code",
                     "Description",
-                    "Qty",
+                    "Qty/set",
+                    "Total qty",
                     "UOM",
-                    "Unit Price",
+                    "Unit Price (RM)",
                     "Disc%",
-                    "Total",
+                    "Total (RM)",
                     "",
                   ].map((h) => (
                     <th
                       key={h}
                       className={cn(
-                        "px-3 py-2 text-[10px] font-medium text-muted-foreground border-b border-border whitespace-nowrap",
-                        ["Unit Price", "Total"].includes(h)
+                        "px-3 py-2 text-[10px] font-medium text-muted-foreground border-b border-border whitespace-nowrap uppercase tracking-wide",
+                        ["Unit Price (RM)", "Total (RM)"].includes(h)
                           ? "text-right"
+                          : ["Qty/set", "Total qty", "UOM"].includes(h)
+                          ? "text-center"
                           : "text-left",
                       )}
                     >
@@ -551,7 +554,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                         )}
                       >
                         {/* # + type badge */}
-                        <td className="px-3 py-2 w-12">
+                        <td className="px-3 py-2 w-12 align-top">
                           <div className="flex flex-col items-center gap-0.5">
                             <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
                             <span className={cn(
@@ -565,15 +568,14 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                           </div>
                         </td>
 
-                        <td className="px-3 py-2 font-mono text-[11px]">
-                          {item.productCode ?? "—"}
+                        <td className="px-3 py-2 font-mono text-[11px] align-top">
+                          <div>{item.productCode ?? "—"}</div>
+                          <SrcTag src={item.productCode ? "sheet" : undefined} userName={createdByName} />
                         </td>
 
-                        <td className="px-3 py-2 max-w-50">
-                          <div className="truncate">{item.description ?? "—"}</div>
-                          {item.descriptionSource === "sheet" && (
-                            <span className="text-[9px] text-blue-500">sheet</span>
-                          )}
+                        <td className="px-3 py-2 min-w-48 align-top">
+                          <div className="whitespace-normal">{item.description ?? "—"}</div>
+                          <SrcTag src={item.descriptionSource} userName={createdByName} />
                           {isRent && item.rentalDuration && (
                             <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
                               rental for {item.rentalDuration} {item.rentalUnit ?? "case"}
@@ -581,35 +583,35 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                           )}
                         </td>
 
-                        <td className="px-3 py-2 tabular-nums">
+                        <td className="px-3 py-2 tabular-nums align-top text-center">
                           <div>{item.qty}</div>
                           {inSet && (
                             <div className="text-[9px] text-muted-foreground">/set</div>
                           )}
                         </td>
 
-                        <td className="px-3 py-2 text-muted-foreground">
+                        <td className="px-3 py-2 tabular-nums align-top text-center">
+                          {(Number(item.qty ?? 1) * Number(item.setQty || 1) * sets).toLocaleString("en-MY")}
+                        </td>
+
+                        <td className="px-3 py-2 text-muted-foreground align-top text-center">
                           {item.uom || "—"}
                         </td>
 
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {`RM ${Number(item.unitPrice ?? 0).toFixed(2)}`}
-                          {item.priceSource === "sheet" && (
-                            <span className="ml-1 text-[9px] text-blue-500">sheet</span>
-                          )}
+                        <td className="px-3 py-2 text-right tabular-nums align-top">
+                          <div>{acct(Number(item.unitPrice ?? 0))}</div>
+                          <SrcTag src={item.priceSource} userName={createdByName} />
                         </td>
 
-                        <td className="px-3 py-2 text-center tabular-nums">
+                        <td className="px-3 py-2 text-center tabular-nums align-top">
                           {Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}
                         </td>
 
-                        <td className="px-3 py-2 text-right tabular-nums font-medium">
-                          {Number(q.showTotalPrice)
-                            ? `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`
-                            : "—"}
+                        <td className="px-3 py-2 text-right tabular-nums font-medium align-top">
+                          {Number(q.showTotalPrice) ? acct(Number(item.totalPrice ?? 0)) : "—"}
                         </td>
 
-                        <td className="px-3 py-2 w-6">
+                        <td className="px-3 py-2 w-6 align-top">
                           <div className="flex items-center gap-1">
                             {item.hasCert ? (
                               <ShieldCheckIcon className="w-3.5 h-3.5 text-green-500" />
@@ -632,20 +634,31 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                     const groupTotal = gItems.reduce((s, it) => s + Number(it.totalPrice ?? 0), 0);
                     rows.push(
                       <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
-                        <td colSpan={3} className="px-3 py-1.5">
-                          <div className="flex items-center gap-2">
+                        <td colSpan={3} className="px-3 py-1.5 align-top">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                             <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
                               {first.setGroupLabel || "Set"}
                             </span>
                             <span className="text-[10px] text-muted-foreground">
-                              × {first.setQty ?? 1} sets
+                              × {Number(first.setQty || 1) * sets} {Number(first.setQty || 1) * sets === 1 ? "set" : "sets"}
                             </span>
+                            {Number(q.showTotalPrice) && Number(first.setQty || 1) > 1 && (
+                              <>
+                                <span className="text-[10px] text-muted-foreground">·</span>
+                                <span className="text-[10px] text-blue-600 dark:text-blue-400 tabular-nums">
+                                  {acct(groupTotal / Number(first.setQty || 1))} / set
+                                </span>
+                              </>
+                            )}
                           </div>
+                          {first.setQtySource === "user" && (
+                            <div className="mt-0.5"><SrcTag src="user" userName={createdByName} /></div>
+                          )}
                         </td>
-                        <td colSpan={4} />
+                        <td colSpan={5} />
                         <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
-                          {Number(q.showTotalPrice) ? `RM ${groupTotal.toFixed(2)}` : "—"}
+                          {Number(q.showTotalPrice) ? acct(groupTotal) : "—"}
                         </td>
                         <td />
                       </tr>,
@@ -661,6 +674,45 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                   return rows;
                 })()}
               </tbody>
+              {Number(q.showTotalPrice) && (
+                <tfoot>
+                  {subtotalPerSet !== null && (
+                    <tr className="border-t border-border">
+                      <td colSpan={8} className="px-3 py-1.5 text-right text-xs text-muted-foreground">Subtotal (1 set)</td>
+                      <td className="px-3 py-1.5 text-right text-xs tabular-nums">{acct(subtotalPerSet)}</td>
+                      <td />
+                    </tr>
+                  )}
+                  <tr className={subtotalPerSet === null ? "border-t border-border" : ""}>
+                    <td colSpan={8} className="px-3 py-1.5 text-right text-xs text-muted-foreground">
+                      {subtotalPerSet !== null ? `× ${sets} sets` : "Subtotal"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-xs tabular-nums">{acct(subtotal)}</td>
+                    <td />
+                  </tr>
+                  {overallDiscAmt > 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-3 py-1 text-right text-xs text-muted-foreground">
+                        {Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount"}
+                      </td>
+                      <td className="px-3 py-1 text-right text-xs tabular-nums text-red-600 dark:text-red-400">({acct(overallDiscAmt)})</td>
+                      <td />
+                    </tr>
+                  )}
+                  {sstAmt > 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-3 py-1 text-right text-xs text-muted-foreground">SST ({q.sstPct}%)</td>
+                      <td className="px-3 py-1 text-right text-xs tabular-nums">{acct(sstAmt)}</td>
+                      <td />
+                    </tr>
+                  )}
+                  <tr className="border-t border-border">
+                    <td colSpan={8} className="px-3 py-2 text-right text-xs font-semibold">Grand Total</td>
+                    <td className="px-3 py-2 text-right text-sm font-bold tabular-nums">{acct(grandTotal)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
@@ -719,14 +771,14 @@ export function QuotationDetailClient({ group, initialId }: Props) {
             </div>
             <div className="p-3 space-y-2 text-xs">
               <Row label="Title" value={q.title ?? "Loose Items"} />
-              <Row label="Sales person" value={q.salesPersonName ?? "—"} />
+              <Row label="Sales person" value={q.salesPersonName?.toLowerCase() ?? "—"} />
               <Row label="Prepared by" value={q.preparedByName ?? "—"} />
               <Row label="Valid until" value={fmtDate(q.validUntil)} />
               <Row label="Created" value={fmtDate(q.createdAt)} />
             </div>
           </div>
 
-          {/* Pricing summary */}
+          {/* Pricing */}
           <div className="bg-background border border-border rounded-xl overflow-hidden">
             <div className="px-3 py-2.5 bg-muted/20 border-b border-border">
               <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -742,20 +794,108 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               ) : (
                 <Row label="Subtotal" value={fmt(subtotal)} mono />
               )}
-              {overallDiscAmt > 0 && (
-                <Row
-                  label={Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount"}
-                  value={`- ${fmt(overallDiscAmt)}`}
-                  className="text-red-600 dark:text-red-400"
-                  mono
-                />
+
+              {isDraft ? (
+                <div className="rounded-lg border border-border divide-y divide-border mt-1">
+                  {/* Total discount toggle */}
+                  <div className="flex items-start gap-2.5 px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      id="det-totalDisc"
+                      checked={applyTotalDiscount}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        setApplyTotalDiscount(v);
+                        saveSettings({ applyTotalDiscount: v });
+                      }}
+                      className="w-3.5 h-3.5 mt-0.5"
+                    />
+                    <div className="flex-1 space-y-2">
+                      <label htmlFor="det-totalDisc" className="font-medium cursor-pointer">Apply discount</label>
+                      {applyTotalDiscount && (
+                        <div className="space-y-1.5">
+                          <div className="flex gap-1">
+                            {(["pct", "fixed"] as const).map((t) => (
+                              <button
+                                key={t}
+                                type="button"
+                                onClick={() => { setDiscountType(t); saveSettings({ discountType: t }); }}
+                                className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${discountType === t ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground"}`}
+                              >
+                                {t === "pct" ? "%" : "RM"}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {discountType === "pct" ? (
+                              <>
+                                <Input
+                                  type="number" value={overallDiscount}
+                                  onChange={(e) => setOverallDiscount(e.target.value)}
+                                  onBlur={() => saveSettings({ overallDiscount })}
+                                  className="h-6 w-16 text-xs text-right" min="0" max="100"
+                                />
+                                <span className="text-muted-foreground">%</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-muted-foreground">RM</span>
+                                <Input
+                                  type="number" value={specialDiscAmt}
+                                  onChange={(e) => setSpecialDiscAmt(e.target.value)}
+                                  onBlur={() => saveSettings({ specialDiscAmt })}
+                                  className="h-6 w-20 text-xs text-right" min="0"
+                                />
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* SST toggle */}
+                  <div className="flex items-center gap-2.5 px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      id="det-sst"
+                      checked={applySST}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        setApplySST(v);
+                        saveSettings({ applySST: v });
+                      }}
+                      className="w-3.5 h-3.5"
+                    />
+                    <label htmlFor="det-sst" className="font-medium cursor-pointer flex-1">Apply SST</label>
+                    {applySST && (
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          type="number" value={sstPct}
+                          onChange={(e) => setSstPct(e.target.value)}
+                          onBlur={() => saveSettings({ sstPct })}
+                          className="h-6 w-12 text-xs text-right" min="0"
+                        />
+                        <span className="text-muted-foreground">%</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {overallDiscAmt > 0 && (
+                    <Row
+                      label={Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount"}
+                      value={`- ${fmt(overallDiscAmt)}`}
+                      className="text-red-600 dark:text-red-400"
+                      mono
+                    />
+                  )}
+                  {overallDiscAmt > 0 && <Row label="After discount" value={fmt(afterDiscount)} mono />}
+                  {sstAmt > 0 && <Row label={`SST (${q.sstPct}%)`} value={fmt(sstAmt)} mono />}
+                </>
               )}
-              {overallDiscAmt > 0 && (
-                <Row label="After discount" value={fmt(afterDiscount)} mono />
-              )}
-              {sstAmt > 0 && (
-                <Row label={`SST (${q.sstPct}%)`} value={fmt(sstAmt)} mono />
-              )}
+
               <div className="pt-2 border-t border-border flex justify-between items-center">
                 <span className="font-medium">Grand total</span>
                 <span className="font-semibold text-base text-green-600 dark:text-green-400 tabular-nums">
@@ -765,7 +905,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
             </div>
           </div>
 
-          {/* Options */}
+          {/* Document options */}
           <div className="bg-background border border-border rounded-xl overflow-hidden">
             <div className="px-3 py-2.5 bg-muted/20 border-b border-border flex items-center gap-2">
               <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground" />
@@ -774,22 +914,59 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               </span>
             </div>
             <div className="p-3 space-y-3 text-xs">
-              <div className="space-y-1.5">
-                <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Display</p>
-                <OptionRow label="Product code"    enabled={!!Number(q.showProductCode)} />
-                <OptionRow label="MDA certificates" enabled={!!Number(q.includeMdaCerts)} />
-              </div>
-              <div className="space-y-1.5">
-                <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Attached Documents</p>
-                <OptionRow label="Product catalogue"                enabled={!!Number(q.includeCatalogue)} />
-                <OptionRow label="MOF Certificate"                  enabled={!!Number(q.inclMof)} />
-                <OptionRow label="SSM"                              enabled={!!Number(q.inclSsm)} />
-                <OptionRow label="TCC (Tax Compliance Certificate)" enabled={!!Number(q.inclTcc)} />
-                <OptionRow label="Bank Statement"                   enabled={!!Number(q.inclBankStatement)} />
-                <OptionRow label="MDA Establishment"                enabled={!!Number(q.inclMdaEstablishment)} />
-                <OptionRow label="Lampiran 12"                      enabled={!!Number(q.inclLampiran12)} />
-                <OptionRow label="Lampiran 13"                      enabled={!!Number(q.inclLampiran13)} />
-              </div>
+              {isDraft ? (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Display</p>
+                    {([
+                      { id: "det-pc",   label: "Product code",     val: showProductCode,  set: setShowProductCode,  key: "showProductCode" as const },
+                      { id: "det-mda",  label: "MDA certificates", val: includeMdaCerts,  set: setIncludeMdaCerts,  key: "includeMdaCerts" as const },
+                    ]).map(({ id, label, val, set, key }) => (
+                      <label key={id} className="flex items-center gap-2 py-1 cursor-pointer">
+                        <input type="checkbox" id={id} checked={val} onChange={(e) => { set(e.target.checked); saveSettings({ [key]: e.target.checked }); }} className="w-3.5 h-3.5" />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Attached Documents</p>
+                    {([
+                      { id: "det-cat",  label: "Product catalogue",                val: includeCatalogue,     set: setIncludeCatalogue,     key: "includeCatalogue" as const },
+                      { id: "det-mof",  label: "MOF Certificate",                  val: inclMof,              set: setInclMof,              key: "inclMof" as const },
+                      { id: "det-ssm",  label: "SSM",                              val: inclSsm,              set: setInclSsm,              key: "inclSsm" as const },
+                      { id: "det-tcc",  label: "TCC (Tax Compliance Certificate)", val: inclTcc,              set: setInclTcc,              key: "inclTcc" as const },
+                      { id: "det-bank", label: "Bank Statement",                   val: inclBankStatement,    set: setInclBankStatement,    key: "inclBankStatement" as const },
+                      { id: "det-mda2", label: "MDA Establishment",                val: inclMdaEstablishment, set: setInclMdaEstablishment, key: "inclMdaEstablishment" as const },
+                      { id: "det-l12",  label: "Lampiran 12",                      val: inclLampiran12,       set: setInclLampiran12,       key: "inclLampiran12" as const },
+                      { id: "det-l13",  label: "Lampiran 13",                      val: inclLampiran13,       set: setInclLampiran13,       key: "inclLampiran13" as const },
+                    ]).map(({ id, label, val, set, key }) => (
+                      <label key={id} className="flex items-center gap-2 py-1 cursor-pointer">
+                        <input type="checkbox" id={id} checked={val} onChange={(e) => { set(e.target.checked); saveSettings({ [key]: e.target.checked }); }} className="w-3.5 h-3.5" />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Display</p>
+                    <OptionRow label="Product code"    enabled={!!Number(q.showProductCode)} />
+                    <OptionRow label="MDA certificates" enabled={!!Number(q.includeMdaCerts)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Attached Documents</p>
+                    <OptionRow label="Product catalogue"                enabled={!!Number(q.includeCatalogue)} />
+                    <OptionRow label="MOF Certificate"                  enabled={!!Number(q.inclMof)} />
+                    <OptionRow label="SSM"                              enabled={!!Number(q.inclSsm)} />
+                    <OptionRow label="TCC (Tax Compliance Certificate)" enabled={!!Number(q.inclTcc)} />
+                    <OptionRow label="Bank Statement"                   enabled={!!Number(q.inclBankStatement)} />
+                    <OptionRow label="MDA Establishment"                enabled={!!Number(q.inclMdaEstablishment)} />
+                    <OptionRow label="Lampiran 12"                      enabled={!!Number(q.inclLampiran12)} />
+                    <OptionRow label="Lampiran 13"                      enabled={!!Number(q.inclLampiran13)} />
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

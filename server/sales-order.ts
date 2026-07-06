@@ -195,6 +195,7 @@ export interface CreateSalesOrderInput {
   salesPersonId?: string;
   salesPersonName?: string;
   associateSalesPersons?: { id: string; name: string }[];
+  sets?: number;
   subtotal?: string;
   overallDiscountPct?: string;
   overallDiscountAmt?: string;
@@ -482,6 +483,7 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
       associateSalesPersons: input.associateSalesPersons ?? null,
+      sets: input.sets ?? 1,
       subtotal: input.subtotal ?? "0",
       overallDiscountPct: input.overallDiscountPct ?? "0",
       overallDiscountAmt: input.overallDiscountAmt ?? "0",
@@ -613,6 +615,7 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
       salesPersonId: input.salesPersonId ?? null,
       salesPersonName: input.salesPersonName ?? null,
       associateSalesPersons: input.associateSalesPersons !== undefined ? (input.associateSalesPersons ?? null) : existing.associateSalesPersons,
+      sets: input.sets ?? existing.sets,
       subtotal: input.subtotal ?? existing.subtotal,
       overallDiscountPct: input.overallDiscountPct ?? existing.overallDiscountPct,
       overallDiscountAmt: input.overallDiscountAmt ?? existing.overallDiscountAmt,

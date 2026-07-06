@@ -182,6 +182,9 @@ export interface PurchaseOrderItemInput {
   currency?: string;
   totalPrice?: string;
   imageKey?: string;
+  setGroupId?: string;
+  setGroupLabel?: string;
+  setQty?: string;
   customerName?: string;
   customerOrganization?: string;
   customerPoNo?: string;
@@ -790,6 +793,9 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
         currency: item.currency ?? "MYR",
         totalPrice: item.totalPrice ?? "0",
         imageKey: item.imageKey ?? null,
+        setGroupId: item.setGroupId ?? null,
+        setGroupLabel: item.setGroupLabel ?? null,
+        setQty: item.setQty ?? null,
         customerName: item.customerName ?? null,
         customerOrganization: item.customerOrganization ?? null,
         customerPoNo: item.customerPoNo ?? null,
@@ -950,6 +956,9 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
         currency: item.currency ?? "MYR",
         totalPrice: item.totalPrice ?? "0",
         imageKey: item.imageKey ?? null,
+        setGroupId: item.setGroupId ?? null,
+        setGroupLabel: item.setGroupLabel ?? null,
+        setQty: item.setQty ?? null,
         customerName: item.customerName ?? null,
         customerOrganization: item.customerOrganization ?? null,
         customerPoNo: item.customerPoNo ?? null,

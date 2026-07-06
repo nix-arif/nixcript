@@ -1064,6 +1064,9 @@ export const quotation = pgTable(
     title: text("title").default("Loose Items"),
     sets: integer("sets").notNull().default(1),
 
+    // Government project batch — links all quotations from one createGovernmentBatch call
+    govBatchId: text("gov_batch_id"),
+
     // Revision tracking
     revisionNo: integer("revision_no").notNull().default(0),
     originalQuotationId: text("original_quotation_id"), // no FK reference to avoid self-ref complexity
@@ -1119,10 +1122,12 @@ export const quotationItem = pgTable(
     hasCert: integer("has_cert").default(0),
     hasPrice: integer("has_price").default(0),
 
-    // Source flags — which columns came from spreadsheet vs DB
-    descriptionSource: text("description_source").default("db"), // db | sheet
-    priceSource: text("price_source").default("db"), // db | sheet
+    // Source flags — which columns came from spreadsheet vs DB vs user edit
+    descriptionSource: text("description_source").default("db"), // db | sheet | user
+    priceSource: text("price_source").default("db"), // db | sheet | user
     uomSource: text("uom_source").default("db"), // db | sheet
+    discountSource: text("discount_source"),  // user (only set when user edits)
+    setQtySource: text("set_qty_source"),     // user (only set when user edits)
 
     // Sell / rent
     lineType: text("line_type").notNull().default("sell"), // sell | rent
@@ -1403,6 +1408,9 @@ export const salesOrder = pgTable(
     salesPersonId: text("sales_person_id").references(() => user.id),
     salesPersonName: text("sales_person_name"),
     associateSalesPersons: json("associate_sales_persons").$type<{ id: string; name: string }[]>(),
+
+    // Set groups
+    sets: integer("sets").notNull().default(1),
 
     // Pricing
     subtotal: text("subtotal").notNull().default("0"),
@@ -1742,6 +1750,10 @@ export const purchaseOrderItem = pgTable(
     totalPrice: text("total_price").default("0"),
 
     imageKey: text("image_key"), // optional R2 key for product image
+
+    setGroupId: text("set_group_id"),
+    setGroupLabel: text("set_group_label"),
+    setQty: text("set_qty"),
 
     customerName: text("customer_name"),
     customerOrganization: text("customer_organization"),
@@ -2126,6 +2138,9 @@ export const deliveryOrderItem = pgTable(
     description: text("description"),
     qty: text("qty").notNull().default("1"),
     uom: text("uom"),
+    setGroupId: text("set_group_id"),
+    setGroupLabel: text("set_group_label"),
+    setQty: text("set_qty"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
@@ -2223,6 +2238,9 @@ export const invoice = pgTable(
 
     // Billing address
     billingAddress: text("billing_address"),
+
+    // Set groups
+    sets: integer("sets").notNull().default(1),
 
     // Selling side — what we bill the customer
     subtotal: text("subtotal").notNull().default("0"),

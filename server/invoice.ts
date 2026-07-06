@@ -226,6 +226,9 @@ export interface CreateInvoiceInput {
   // Billing address
   billingAddress?: string;
 
+  // Set groups
+  sets?: number;
+
   // Pricing
   subtotal?: string;
   overallDiscountPct?: string;
@@ -690,6 +693,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
       salesPersonName: input.salesPersonName ?? null,
       associateSalesPersons: input.associateSalesPersons ?? [],
       billingAddress: input.billingAddress ?? null,
+      sets: input.sets ?? 1,
       subtotal: input.subtotal ?? "0",
       overallDiscountPct: input.overallDiscountPct ?? "0",
       overallDiscountAmt: input.overallDiscountAmt ?? "0",
@@ -789,6 +793,7 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
       caseDate: input.caseDate ?? null,
       mrnNo: input.mrnNo ?? null,
       billingAddress: input.billingAddress ?? null,
+      sets: input.sets ?? existing.sets,
       subtotal: input.subtotal ?? existing.subtotal,
       overallDiscountPct: input.overallDiscountPct ?? existing.overallDiscountPct,
       overallDiscountAmt: input.overallDiscountAmt ?? existing.overallDiscountAmt,
@@ -995,6 +1000,7 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
       salesPersonName: input.salesPersonName ?? null,
       associateSalesPersons: input.associateSalesPersons ?? [],
       billingAddress: input.billingAddress ?? null,
+      sets: input.sets ?? 1,
       subtotal: input.subtotal ?? "0",
       overallDiscountPct: input.overallDiscountPct ?? "0",
       overallDiscountAmt: input.overallDiscountAmt ?? "0",

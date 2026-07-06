@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   getQuotationsList,
@@ -70,9 +71,10 @@ function StatusBadge({ status }: { status: string }) {
 
 interface Props {
   initialGroups: QuotationListGroup[];
+  batchFilter?: string;
 }
 
-export function QuotationListClient({ initialGroups }: Props) {
+export function QuotationListClient({ initialGroups, batchFilter }: Props) {
   const router = useRouter();
   const [groups, setGroups] = useState(initialGroups);
   const [search, setSearch] = useState("");
@@ -84,9 +86,10 @@ export function QuotationListClient({ initialGroups }: Props) {
   const hasDateFilter = dateFrom || dateTo;
 
   // Reset to page 1 when filters change
-  useEffect(() => { setPage(1); }, [search, dateFrom, dateTo]);
+  useEffect(() => { setPage(1); }, [search, dateFrom, dateTo, batchFilter]);
 
   const filtered = groups.filter((g) => {
+    if (batchFilter && g.govBatchId !== batchFilter) return false;
     if (dateFrom || dateTo) {
       const d = toDateStr(g.createdAt);
       if (dateFrom && d < dateFrom) return false;
@@ -104,7 +107,8 @@ export function QuotationListClient({ initialGroups }: Props) {
       cust?.name?.toLowerCase().includes(s) ||
       cust?.organizationName?.toLowerCase().includes(s) ||
       (g.salesPersonName?.toLowerCase().includes(s) ?? false) ||
-      (g.title?.toLowerCase().includes(s) ?? false)
+      (g.title?.toLowerCase().includes(s) ?? false) ||
+      (g.govBatchId?.toLowerCase().includes(s) ?? false)
     );
   });
 
@@ -143,6 +147,21 @@ export function QuotationListClient({ initialGroups }: Props) {
         }
       />
 
+      {/* Batch filter banner */}
+      {batchFilter && (
+        <div className="flex items-center justify-between px-3 py-2 mb-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-xs">
+          <span className="text-blue-700 dark:text-blue-300 font-medium">
+            Filtering by government batch · {filtered.length} group{filtered.length !== 1 ? "s" : ""}
+          </span>
+          <Link
+            href="/dashboard/sales/quotation"
+            className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+          >
+            <XIcon className="w-3 h-3" /> Clear
+          </Link>
+        </div>
+      )}
+
       {/* Search */}
       <div className="flex items-center gap-3 mb-3">
         <div className="relative flex-1">
@@ -150,7 +169,7 @@ export function QuotationListClient({ initialGroups }: Props) {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by quotation no., customer, org, sales person..."
+            placeholder="Search by quotation no., customer, org, sales person, batch ID..."
             className="pl-9 h-9 text-sm"
           />
           {search && (
@@ -240,7 +259,9 @@ export function QuotationListClient({ initialGroups }: Props) {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-medium">
-                          <Highlight text={m.quotationNo} query={search} />
+                          {m.quotationNo.startsWith("PENDING-")
+                            ? <span className="text-muted-foreground italic">Draft</span>
+                            : <Highlight text={m.quotationNo} query={search} />}
                         </span>
                         {(m.revisionNo ?? 0) > 0 && (
                           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
@@ -250,6 +271,15 @@ export function QuotationListClient({ initialGroups }: Props) {
                         <span className="text-[10px] font-medium bg-muted/60 rounded px-1.5 py-0.5 text-muted-foreground tabular-nums">
                           {fmtDate(group.createdAt)}
                         </span>
+                        {group.govBatchId && (
+                          <Link
+                            href={`/dashboard/sales/quotation?batch=${group.govBatchId}`}
+                            className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 hover:bg-violet-200 dark:hover:bg-violet-900/50 transition-colors"
+                            title={`Filter by batch: ${group.govBatchId}`}
+                          >
+                            Gov batch
+                          </Link>
+                        )}
                       </div>
                       {(custName || m.orgName) && (
                         <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
@@ -349,6 +379,15 @@ export function QuotationListClient({ initialGroups }: Props) {
                       <span className="text-[10px] font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded px-1.5 py-0.5 tabular-nums">
                         {fmtDate(group.createdAt)}
                       </span>
+                      {group.govBatchId && (
+                        <Link
+                          href={`/dashboard/sales/quotation?batch=${group.govBatchId}`}
+                          className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 hover:bg-violet-200 dark:hover:bg-violet-900/50 transition-colors"
+                          title={`Filter by batch: ${group.govBatchId}`}
+                        >
+                          Gov batch
+                        </Link>
+                      )}
                     </div>
                     {(group.title || group.salesPersonName || group.preparedByName) && (
                       <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
@@ -421,7 +460,7 @@ export function QuotationListClient({ initialGroups }: Props) {
 
                     <div className="flex-1 min-w-0 flex items-center gap-2">
                       <span className="font-mono text-xs font-medium shrink-0">
-                        {m.quotationNo}
+                        {m.quotationNo.startsWith("PENDING-") ? <span className="text-muted-foreground italic">Draft</span> : m.quotationNo}
                       </span>
                       {(m.revisionNo ?? 0) > 0 && (
                         <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 shrink-0">

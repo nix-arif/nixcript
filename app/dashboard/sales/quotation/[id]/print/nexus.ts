@@ -211,6 +211,7 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
   type RowInfo = {
     item: typeof items[number];
     descLines: string[];
+    codeLines: string[];
     extraLine: string | null;
     isGreenRow: boolean;
     rowH: number;
@@ -226,12 +227,13 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
-    const codeLineH  = 0;
+    const codeLines  = showCode ? wrap(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2) : [];
+    const codeLineH  = codeLines.length * CODE_LINE_H;
     const rowH = Math.max(
       RH_MIN,
-      codeLineH + descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
+      Math.max(codeLineH + 6, descLines.length * LH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6)),
     );
-    return { item, descLines, extraLine, isGreenRow, rowH };
+    return { item, descLines, codeLines, extraLine, isGreenRow, rowH };
   });
 
   // ── Height estimates ──────────────────────────────────────────────────────
@@ -248,8 +250,9 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
     cust, attentionNameSize: attnNameSz,
     salesPersonName: q.salesPersonName ?? null,
     preparedByName: q.preparedByName ?? null,
-    title: q.title ?? null,
+    title: q.title || null,
     detailFontSize: detailFSz, fontR,
+    revisionNo: q.revisionNo ?? 0,
   }) + 10;
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
@@ -282,7 +285,7 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
         const setTotal = rowInfos
           .filter(r => r.item.setGroupId === it.setGroupId)
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
-        const qty = Number(it.setQty ?? 1); renderItems.push({ kind: "setHeader", label: it.setGroupLabel ?? "Set", qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
+        const qty = Number(it.setQty ?? 1); const _lbl = it.setGroupLabel ?? "Set"; renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
       }
       renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
     }
@@ -376,7 +379,8 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
         detailAlignment: (data.orgDetailAlignment ?? "right") as "left" | "right",
         quotationNo: q.quotationNo, createdAt: q.createdAt,
         validUntil: q.validUntil, salesPersonName: q.salesPersonName ?? null,
-        preparedByName: q.preparedByName ?? null, title: q.title ?? null,
+        salesPersonPhone: (q as any).salesPersonPhone ?? null, revisionNo: q.revisionNo ?? 0,
+        preparedByName: q.preparedByName ?? null, title: q.title || null,
       });
       curY -= INFO_BLOCK + DIVIDER_GAP;
       hLine(page, curY);
@@ -397,7 +401,7 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
     const tableTopY = curY;
     if (hasBanner && isFirst) {
       page.drawRectangle({ x: ML, y: curY - BANNER_H, width: CW, height: BANNER_H, color: C_OFF });
-      page.drawText(q.title ?? "Loose Items", {
+      page.drawText(q.title || "Loose Items", {
         x: ML + TABLE_PAD, y: curY - BANNER_H + 6,
         size: 9, font: fontB, color: accentColor,
       });
@@ -457,7 +461,7 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
         continue;
       }
       const rowIdx = entry.rowIdx;
-      const { item, descLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
+      const { item, descLines, codeLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
       const rowY = curY - rowH;
 
       // Left cert-status strip (3px wide)
@@ -480,9 +484,11 @@ export async function generateQuotationNexus(data: Data): Promise<Uint8Array> {
       // Code column or code prefix in description
       let dy = textBaseline;
       if (showCode) {
-        page.drawText(trunc(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2), {
-          x: X_CODE + TABLE_PAD, y: dy, size: FS_CODE, font: fontR, color: C_MID,
-        });
+        let cdy = dy;
+        for (const codeLine of codeLines) {
+          page.drawText(codeLine, { x: X_CODE + TABLE_PAD, y: cdy, size: FS_CODE, font: fontR, color: C_MID });
+          cdy -= CODE_LINE_H;
+        }
       }
 
       // Description + cert line

@@ -186,8 +186,8 @@ const CONTENT_PAD_Y  = 10; // top y-padding below header separator
 const INFO_FS        = 7.5;  // content font size — matches table body
 const INFO_LH        = 10; // line height inside the info box
 
-function estimateMonoInfoBoxH(opts: { cust: any; title: string | null }): number {
-  const { cust, title } = opts;
+function estimateMonoInfoBoxH(opts: { cust: any; title: string | null; hasSalesPerson?: boolean }): number {
+  const { cust, title, hasSalesPerson } = opts;
 
   let leftH = INFO_FS + 4; // name
   if (cust) {
@@ -197,7 +197,7 @@ function estimateMonoInfoBoxH(opts: { cust: any; title: string | null }): number
     if (cust.email || cust.contactNo)     leftH += INFO_LH;
   }
 
-  const rows   = 3 + (title ? 1 : 0);
+  const rows   = 3 + (title ? 1 : 0) + (hasSalesPerson ? 1 : 0);
   const rightH = rows * INFO_LH;
 
   return INFO_BOX_HDR_H + Math.max(leftH, rightH) + INFO_BOX_PAD + 4;
@@ -216,11 +216,14 @@ function drawMonoInfoBox(opts: {
   validUntil: Date | string | null;
   title: string | null;
   accentColor: Color;
+  salesPersonName?: string | null;
+  salesPersonPhone?: string | null;
+  revisionNo?: number;
 }): void {
   const {
     page, startY, boxH, fontR, fontB, cust,
     quotationNo, createdAt, validUntil, title,
-    accentColor,
+    accentColor, salesPersonName, salesPersonPhone, revisionNo,
   } = opts;
 
   const DIVX = ML + CW * 0.5;
@@ -306,11 +309,19 @@ function drawMonoInfoBox(opts: {
   const rightW = W - MR - DIVX - PAD * 2;
   let ry = startY - INFO_BOX_HDR_H - CONTENT_PAD_Y;
 
+  const validityDays = (validUntil && createdAt)
+    ? Math.round((new Date(validUntil).getTime() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const isOriginal = (revisionNo ?? 0) === 0;
+  const spDisplay = salesPersonName
+    ? (salesPersonPhone ? `${salesPersonName} (${salesPersonPhone})` : salesPersonName)
+    : null;
   const detailRows: [string, string][] = [
     ["Quotation No", quotationNo],
     ["Date",         fmtD(createdAt)],
-    ["Valid Until",  fmtD(validUntil)],
+    ["Validity",     validityDays !== null ? `${validityDays} days` : "—"],
     ...(title ? [["Subject", title]] as [string, string][] : []),
+    ...(isOriginal && spDisplay ? [["Sales Person", spDisplay]] as [string, string][] : []),
   ];
 
   const uRows = detailRows.map(([l, v]) => [up(l), up(v)] as [string, string]);
@@ -448,6 +459,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   type RowInfo = {
     item:               typeof items[number];
     descLines:          string[];
+    codeLines:          string[];
     extraLine:          string | null;
     isGreenRow:         boolean;
     rowH:               number;
@@ -468,14 +480,15 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
       : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
-    const codeLineH  = 0;
+    const codeLines   = showCode ? wrap(item.productCode ?? "—", fontR, FS_BODY, C_CODE - TABLE_PAD * 2) : [];
+    const codeLineH   = codeLines.length * CODE_LINE_H;
     const hasItemDisc = showDisc && Number(item.discountPct ?? 0) > 0;
     const descH = firstParaLineCount * LH + Math.max(0, descLines.length - firstParaLineCount) * CONT_LH;
     const rowH = Math.max(
       hasItemDisc ? 22 : RH_MIN,
-      codeLineH + descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6),
+      Math.max(codeLineH + 6, descH + (extraLine ? RH_MIN + MDA_GAP + 2 : 6)),
     );
-    return { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount };
+    return { item, descLines, codeLines, extraLine, isGreenRow, rowH, firstParaLineCount };
   });
 
   // ── Height estimates ──────────────────────────────────────────────────────
@@ -489,7 +502,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   const DIVIDER_GAP   = 10;
   const TABLE_HDR_H   = 20;
-  const INFO_BLOCK    = estimateMonoInfoBoxH({ cust, title: q.title ?? null });
+  const INFO_BLOCK    = estimateMonoInfoBoxH({ cust, title: q.title ?? null, hasSalesPerson: !(q.revisionNo) && !!q.salesPersonName });
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
@@ -559,8 +572,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + (bank ? BANK_BOX_H + 8 : 0) + TERMS_BOX_H + 12 + ACCEPT_H;
 
-  const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - MB - 36;
-  const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 32;
+  const summaryRowsH = (2 + (sets > 1 ? 1 : 0)) * SUMMARY_ROW_H;
+  const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - MB - 36 - summaryRowsH;
+  const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 32 - summaryRowsH;
 
   // ── Build render entries (set headers interleaved with items) ────────────
   const SET_HDR_H = 18;
@@ -579,7 +593,11 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         const setTotal = rowInfos
           .filter(r => r.item.setGroupId === it.setGroupId)
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
-        const qty = Number(it.setQty ?? 1); renderItems.push({ kind: "setHeader", label: it.setGroupLabel ?? "Set", qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
+        const setQty = Number(it.setQty ?? 1);
+        const displayQty = setQty * sets;
+        const pricePerSet = setQty > 0 ? setTotal / setQty : 0;
+        const _lbl = it.setGroupLabel ?? "Set";
+        renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty: displayQty, setTotal: setTotal * sets, pricePerSet, rowH: SET_HDR_H });
       }
       renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
     }
@@ -613,9 +631,8 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     const lastGroup   = pageGroups[pageGroups.length - 1];
     const lastIsFirst = pageGroups.length === 1;
     const lastItemsH  = lastGroup.reduce((s, i) => s + renderItems[i].rowH, 0);
-    const itemStartY  = lastIsFirst ? (P1_ROW_AVAIL + MB + 32) : (PN_ROW_AVAIL + MB + 32);
-    const summaryH    = (2 + (sets > 1 ? 1 : 0)) * SUMMARY_ROW_H;
-    const curYAfterSummary = itemStartY - lastItemsH - summaryH;
+    const itemStartY  = lastIsFirst ? (P1_ROW_AVAIL + MB + 32 + summaryRowsH) : (PN_ROW_AVAIL + MB + 32 + summaryRowsH);
+    const curYAfterSummary = itemStartY - lastItemsH - summaryRowsH;
     const bottomH = 8 + BTM_TABLE_H + (bank ? BANK_BOX_H : 0) + TERMS_BOX_H + 10 + CLOSING_H + NOTES_H;
     if (curYAfterSummary - bottomH < MB + 32) {
       pageGroups.push([]);
@@ -686,6 +703,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         quotationNo: q.quotationNo, createdAt: q.createdAt,
         validUntil: q.validUntil, title: q.title ?? null,
         accentColor,
+        salesPersonName: q.salesPersonName ?? null,
+        salesPersonPhone: (q as any).salesPersonPhone ?? null,
+        revisionNo: q.revisionNo ?? 0,
       });
       curY -= INFO_BLOCK + DIVIDER_GAP + 4;
 
@@ -773,7 +793,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         continue;
       }
       const rowIdx = entry.rowIdx;
-      const { item, descLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
+      const { item, descLines, codeLines, extraLine, isGreenRow, rowH, firstParaLineCount } = rowInfos[rowIdx];
       const rowY = curY - rowH;
       const textBaseline = curY - 11;
 
@@ -799,9 +819,11 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       // Code column or inline code
       let dy = textBaseline;
       if (showCode) {
-        page.drawText(trunc(item.productCode ?? "—", fontR, FS_BODY, C_CODE - TABLE_PAD * 2), {
-          x: X_CODE + TABLE_PAD, y: dy, size: FS_BODY, font: fontR, color: C_BLACK,
-        });
+        let cdy = dy;
+        for (const codeLine of codeLines) {
+          page.drawText(codeLine, { x: X_CODE + TABLE_PAD, y: cdy, size: FS_BODY, font: fontR, color: C_BLACK });
+          cdy -= CODE_LINE_H;
+        }
       }
 
       // Description + cert line — all FS_BODY, all black
@@ -1207,7 +1229,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         // Header — white, all text black, all caps
         catPage.drawText("PRODUCT CATALOGUE", { x: ML, y: H - 22, size: 13, font: fontB, color: C_BLACK });
         if (q.title) {
-          catPage.drawText(trunc((q.title ?? "").toUpperCase(), fontB, 8.5, CW / 2), { x: ML, y: H - 36, size: 8.5, font: fontB, color: C_BLACK });
+          catPage.drawText(trunc(q.title.toUpperCase(), fontB, 8.5, CW / 2), { x: ML, y: H - 36, size: 8.5, font: fontB, color: C_BLACK });
           catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`.toUpperCase(), { x: ML, y: H - 46, size: 7, font: fontR, color: C_BLACK });
         } else {
           catPage.drawText(`${q.quotationNo}  ·  ${fmtD(q.createdAt)}`.toUpperCase(), { x: ML, y: H - 37, size: 8, font: fontR, color: C_BLACK });

@@ -251,6 +251,9 @@ export interface DeliveryOrderItemInput {
   description?: string;
   qty?: string;
   uom?: string;
+  setGroupId?: string;
+  setGroupLabel?: string;
+  setQty?: string;
 }
 
 export interface CreateDeliveryOrderInput {
@@ -642,6 +645,9 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
         description: i.description ?? null,
         qty: i.qty ?? "1",
         uom: i.uom ?? null,
+        setGroupId: i.setGroupId ?? null,
+        setGroupLabel: i.setGroupLabel ?? null,
+        setQty: i.setQty ?? null,
       })),
     );
   }
@@ -741,6 +747,9 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
         description: i.description ?? null,
         qty: i.qty ?? "1",
         uom: i.uom ?? null,
+        setGroupId: i.setGroupId ?? null,
+        setGroupLabel: i.setGroupLabel ?? null,
+        setQty: i.setQty ?? null,
       })),
     );
   }

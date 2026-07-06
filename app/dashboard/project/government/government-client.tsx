@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -17,7 +18,9 @@ import {
   LayersIcon,
   BuildingIcon,
   InfoIcon,
+  ExternalLinkIcon,
 } from "lucide-react";
+import Link from "next/link";
 import { lookupCustomersByName, createCustomer, getCustomers } from "@/server/customer";
 import {
   createGovernmentBatch,
@@ -47,6 +50,7 @@ type ParsedFile = {
   customerStatus: "pending" | "checking" | "found" | "not_found";
   customerId?: string;
   selectedOriginalOrgId: string;
+  markups: number[]; // ascending markup % per dummy org
   parseError?: string;
 };
 
@@ -220,6 +224,70 @@ async function generateAndDownload(
   URL.revokeObjectURL(url);
 }
 
+// ── Template download ─────────────────────────────────────────────────────────
+
+function downloadTemplate() {
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1 — items (sheet name becomes the quotation title)
+  const sheet1 = XLSX.utils.aoa_to_sheet([
+    ["Product Code", "Description", "Qty", "UOM", "Unit Price"],
+    ["ITEM-001", "Sample Item Description", 1, "Unit", 100.00],
+    ["ITEM-002", "Another Item", 2, "Pcs", 50.00],
+  ]);
+  sheet1["!cols"] = [{ wch: 16 }, { wch: 36 }, { wch: 8 }, { wch: 10 }, { wch: 12 }];
+  XLSX.utils.book_append_sheet(wb, sheet1, "PROJECT TITLE");
+
+  // Sheet 2 — customer info (key → value in columns A, B)
+  const sheet2 = XLSX.utils.aoa_to_sheet([
+    ["Customer Name",    "Ahmad bin Ali"],
+    ["Department",       "Procurement Division"],
+    ["Organization",     "Ministry of Finance Malaysia"],
+    ["Address",          "Precinct 2, 62592 Putrajaya"],
+    ["Validity Days",    30],
+    ["Original Company", ""],
+  ]);
+  sheet2["!cols"] = [{ wch: 20 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, sheet2, "Customer Info");
+
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "government-template.xlsx";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── Pricing helpers ───────────────────────────────────────────────────────────
+
+function generateMarkups(dummyCount: number): number[] {
+  const out: number[] = [];
+  let min = 5;
+  for (let i = 0; i < dummyCount; i++) {
+    const max = Math.min(min + 15, 50);
+    const pct = Math.floor(Math.random() * (max - min + 1)) + min;
+    out.push(pct);
+    min = pct + 3;
+  }
+  return out;
+}
+
+function rawSubtotal(items: GovRawItem[]): number {
+  return items.reduce((s, i) => s + (Number(i.qty) || 1) * (Number(i.unitPrice) || 0), 0);
+}
+
+function markedSubtotal(items: GovRawItem[], markupPct: number): number {
+  const f = 1 + markupPct / 100;
+  return items.reduce((s, i) => s + (Number(i.qty) || 1) * Math.ceil((Number(i.unitPrice) || 0) * f), 0);
+}
+
+const fmtRM = (n: number) =>
+  "RM " + n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
@@ -228,6 +296,9 @@ interface Props {
 }
 
 export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const batchIdFromUrl = searchParams.get("batch");
   const [files, setFiles] = useState<ParsedFile[]>([]);
   const [drag, setDrag] = useState(false);
   const [arrangement, setArrangement] = useState<Arrangement>("by_title");
@@ -265,6 +336,7 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
             sheet2: { customerName: "", validityDays: 30 },
             customerStatus: "pending",
             selectedOriginalOrgId: activeOrgId,
+            markups: [],
             parseError: "File must have at least 2 sheets",
           });
           continue;
@@ -279,6 +351,7 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
           activeOrgId,
         );
 
+        const dummyCount = Math.max(0, ownerOrgs.length - 1);
         parsed.push({
           uid: uid(),
           filename: f.name,
@@ -287,6 +360,7 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
           sheet2: sheet2Info,
           customerStatus: "pending",
           selectedOriginalOrgId: resolvedOrgId,
+          markups: generateMarkups(dummyCount),
         });
       } catch (e: any) {
         parsed.push({
@@ -297,6 +371,7 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
           sheet2: { customerName: "", validityDays: 30 },
           customerStatus: "pending",
           selectedOriginalOrgId: activeOrgId,
+          markups: [],
           parseError: e.message ?? "Failed to parse file",
         });
       }
@@ -495,10 +570,16 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
         inclMdaEstablishment,
         inclLampiran12,
         inclLampiran13,
+        markups: f.markups,
       }));
 
       const groups = await createGovernmentBatch(inputs);
       setGeneratedGroups(groups);
+      // Write batch ID to URL immediately so it survives the automatic router
+      // cache invalidation Next.js triggers after a server action completes.
+      if (groups[0]?.govBatchId) {
+        router.replace(`?batch=${groups[0].govBatchId}`);
+      }
 
       const totalPdfs = groups.reduce(
         (s, g) => s + g.quotations.length + (includeMdaCerts ? 1 : 0),
@@ -522,6 +603,7 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
     setFiles([]);
     setGeneratedGroups([]);
     setGenState({ phase: "idle" });
+    router.replace("?");
   };
 
   return (
@@ -584,7 +666,16 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
       {/* Sheet 2 format reminder */}
       {files.length === 0 && (
         <div className="rounded-xl border border-border bg-muted/10 p-4 text-xs text-muted-foreground space-y-2 mb-4">
-          <div className="font-medium text-foreground mb-1">Sheet 2 format (key-value, Column A → Column B)</div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="font-medium text-foreground">Sheet 2 format (key-value, Column A → Column B)</div>
+            <button
+              onClick={downloadTemplate}
+              className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+            >
+              <DownloadIcon className="w-3.5 h-3.5" />
+              Download Template
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-x-8 gap-y-1">
             <span className="text-muted-foreground/70">Customer Name</span><span>Contact person name</span>
             <span className="text-muted-foreground/70">Department</span><span>e.g. Procurement Division</span>
@@ -893,6 +984,70 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
         </div>
       )}
 
+      {/* Pricing summary table */}
+      {files.length > 0 && (
+        <div className="border border-border rounded-xl overflow-hidden mb-4">
+          <div className="px-4 py-2.5 border-b border-border bg-muted/20">
+            <span className="text-xs font-medium text-muted-foreground">Price Summary</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="bg-muted/20">
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b border-border">Title</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b border-border w-40">Customer Org</th>
+                  <th className="px-3 py-2 text-center font-medium text-muted-foreground border-b border-border w-14">Items</th>
+                  {/* Original column */}
+                  {ownerOrgs.length >= 1 && (
+                    <th className="px-3 py-2 text-right font-medium text-muted-foreground border-b border-border w-36">Original</th>
+                  )}
+                  {/* Dummy columns — one per additional org */}
+                  {ownerOrgs.slice(1).map((_, di) => (
+                    <th key={di} className="px-3 py-2 text-right font-medium text-muted-foreground border-b border-border w-40">
+                      Dummy {di + 1}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {files.map((f, i) => {
+                  const orig = f.parseError ? null : rawSubtotal(f.rawItems);
+                  return (
+                    <tr key={f.uid} className={cn(i < files.length - 1 ? "border-b border-border" : "", f.parseError ? "opacity-40" : "")}>
+                      <td className="px-3 py-2 font-medium max-w-48 truncate">
+                        {f.parseError ? <span className="italic text-destructive">{f.parseError}</span> : f.title || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground max-w-40 truncate">
+                        {f.sheet2.organizationName || f.sheet2.customerName || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">{f.rawItems.length}</td>
+                      {ownerOrgs.length >= 1 && (
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {orig !== null ? fmtRM(orig) : "—"}
+                        </td>
+                      )}
+                      {f.markups.map((pct, di) => {
+                        const dummyTotal = orig !== null ? markedSubtotal(f.rawItems, pct) : null;
+                        return (
+                          <td key={di} className="px-3 py-2 text-right tabular-nums">
+                            {dummyTotal !== null ? (
+                              <span>
+                                {fmtRM(dummyTotal)}{" "}
+                                <span className="text-muted-foreground">(+{pct}%)</span>
+                              </span>
+                            ) : "—"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Configuration */}
       {files.length > 0 && (
         <div className="border border-border rounded-xl p-5 mb-4 space-y-5">
@@ -978,6 +1133,33 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch result card — driven by URL param so it survives server-action refresh */}
+      {batchIdFromUrl && (
+        <div className="border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30 rounded-xl p-4 mb-0">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircleIcon className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+                <span className="text-sm font-medium text-green-800 dark:text-green-300">
+                  {generatedGroups.length > 0
+                    ? `Batch generated — ${generatedGroups.length} group${generatedGroups.length !== 1 ? "s" : ""} · ${generatedGroups.reduce((s, g) => s + g.quotations.length, 0)} quotations`
+                    : "Last batch generated"}
+                </span>
+              </div>
+              <p className="text-xs text-green-700/70 dark:text-green-400/60 font-mono ml-6">
+                Batch ID: {batchIdFromUrl}
+              </p>
+            </div>
+            <Link
+              href={`/dashboard/sales/quotation?batch=${batchIdFromUrl}`}
+              className="shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white transition-colors"
+            >
+              <ExternalLinkIcon className="w-3.5 h-3.5" /> View in Quotations
+            </Link>
           </div>
         </div>
       )}
