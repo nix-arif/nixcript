@@ -216,7 +216,7 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
     const descLines  = wrap(`${rentalPrefix}${item.description ?? "—"}`, fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
-      : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
+      : null;
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLines  = showCode ? wrap(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2) : [];
     const codeLineH  = codeLines.length * CODE_LINE_H;

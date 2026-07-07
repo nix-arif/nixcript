@@ -222,23 +222,15 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
   const infoLH   = 11;
   const infoColor = infoColorOpt ?? C_MID;
 
-  // Address (may wrap)
-  if (companyAddress) {
-    const addrLines = wrap(companyAddress, fontR, infoSize, textZoneW);
-    for (const line of addrLines) {
-      page.drawText(line, { x: textX, y: cy, size: infoSize, font: fontR, color: infoColor });
-      cy -= infoLH;
-    }
-  }
-
   if (opts.inlineSsmMdaTaxStar) {
-    // Aura style: SSM * MOF * MDA inline, bold accent *, 7pt
+    // Aura style: SSM * MOF * MDA directly below company name, before address
     const segments: string[] = [];
     if (newSsmNo || oldSsmNo) segments.push(newSsmNo && oldSsmNo ? `SSM No: ${newSsmNo} (${oldSsmNo})` : `SSM No: ${newSsmNo ?? oldSsmNo}`);
     if (opts.mofNo) segments.push(`MOF No: ${opts.mofNo}`);
     if (mdaEstablishmentNo) segments.push(`MDA No: ${mdaEstablishmentNo}`);
+    if (taxNo) segments.push(`Tax No: ${taxNo}`);
     if (segments.length > 0) {
-      const sz   = 7;
+      const sz   = 6;
       const sepW = fontB.widthOfTextAtSize("*", sz);
       const spW  = fontR.widthOfTextAtSize("  ", sz);
       let dx = textX;
@@ -259,6 +251,19 @@ export function drawCompanyHeader(opts: CompanyHeaderOptions): number {
       }
       cy -= 10;
     }
+  }
+
+  // Address (may wrap)
+  if (companyAddress) {
+    const addrLines = wrap(companyAddress, fontR, infoSize, textZoneW);
+    for (const line of addrLines) {
+      page.drawText(line, { x: textX, y: cy, size: infoSize, font: fontR, color: infoColor });
+      cy -= infoLH;
+    }
+  }
+
+  if (opts.inlineSsmMdaTaxStar) {
+    // already rendered above; skip stacked block
   } else if (opts.inlineSsmMdaTax) {
     // Slate layout: SSM · MDA Est · Tax on one line, smaller than address
     const parts: string[] = [];
@@ -444,7 +449,9 @@ export function drawInfoSection(opts: InfoSectionOptions): number {
     : null;
   const isOriginal = (revisionNo ?? 0) === 0;
   const spDisplay = salesPersonName
-    ? (salesPersonPhone ? `${salesPersonName} (${salesPersonPhone})` : salesPersonName)
+    ? (salesPersonPhone
+        ? `${salesPersonName.toUpperCase()} (${salesPersonPhone})`
+        : salesPersonName.toUpperCase())
     : null;
   const detailRows: [string, string][] = [
     ["Quotation No", quotationNo],

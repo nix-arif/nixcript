@@ -148,11 +148,19 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   const readFont = (name: string) => {
     try { return fs.readFileSync(path.join(fontsDir, name)); } catch { return null; }
   };
-  const libR = readFont("Poppins-Regular.ttf");
-  const libB = readFont("Poppins-Bold.ttf");
+  const libL = readFont("nunito.light.ttf");
+  const libR = readFont("nunito.regular.ttf");
+  const libS = readFont("nunito.semibold.ttf");
+  const libB = readFont("nunito.bold.ttf");
+  const fontL = libL
+    ? await pdfDoc.embedFont(libL, { subset: true })
+    : await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontR = libR
     ? await pdfDoc.embedFont(libR, { subset: true })
     : await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontS = libS
+    ? await pdfDoc.embedFont(libS, { subset: true })
+    : await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const fontB = libB
     ? await pdfDoc.embedFont(libB, { subset: true })
     : await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -168,7 +176,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   const tableRowStyle = data.orgTableRowStyle ?? "default";
   const QL_TEXT    = !!(data.orgQuotationLabelUppercase ?? 1) ? "QUOTATION" : "Quotation";
   const QL_SIZE    = ({ small: 5.5, normal: 7, large: 10 } as Record<string,number>)[data.orgQuotationLabelSize ?? "normal"] ?? 7;
-  const QL_FONT    = !!(data.orgQuotationLabelBold ?? 1) ? fontB : fontR;
+  const QL_FONT    = !!(data.orgQuotationLabelBold ?? 1) ? fontS : fontR;
 
   // ── Logo ──────────────────────────────────────────────────────────────────
   let logoImg: PDFImage | null = null;
@@ -186,29 +194,32 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
   // ── Table font sizes ─────────────────────────────────────────────────────
   const tfs     = data.orgTableFontSize ?? "normal";
-  const FS_DESC   = tfs === "small" ? 8    : tfs === "large" ? 11   : 9.5;
-  const FS_DETAIL = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 8.5;
-  const FS_CODE   = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 9;
-  const FS_NUM    = tfs === "small" ? 7.5  : tfs === "large" ? 9.5  : 8.5;
-  const LH        = tfs === "small" ? 10   : tfs === "large" ? 13.5 : 11.5;
-  const CONT_LH   = 8;   // line height for continuation description lines at 6pt
-  const RH_MIN    = tfs === "small" ? 15   : tfs === "large" ? 21   : 17;
+  const FS_DESC   = tfs === "small" ? 7    : tfs === "large" ? 10   : 8.5;
+  const FS_DETAIL = tfs === "small" ? 6.5  : tfs === "large" ? 9    : 7.5;
+  const FS_CODE   = tfs === "small" ? 6.5  : tfs === "large" ? 9    : 8;
+  const FS_NUM    = tfs === "small" ? 6.5  : tfs === "large" ? 8.5  : 7.5;
+  const LH        = tfs === "small" ? 9    : tfs === "large" ? 12   : 10.5;
+  const CONT_LH   = 7.5; // line height for continuation description lines at 6pt
+  const RH_MIN    = tfs === "small" ? 13   : tfs === "large" ? 19   : 15;
   const MDA_GAP   = 3;
 
   // ── Column widths ─────────────────────────────────────────────────────────
+  const showSetHeaders = new Set(items.map(i => i.setGroupId).filter(Boolean)).size > 1;
   const C_NO   = 22;
   const C_CODE = showCode ? 65 : 0;
-  const C_QTY  = 28;
+  const C_QTY  = showSetHeaders ? 38 : 28;
+  const C_TQTY = showSetHeaders ? 48 : 0;
   const C_UOM  = 34;
   const C_UP   = 64;
   const C_DISC = showDisc ? 55 : 0;
   const C_TOT  = showTP ? 68 : 0;
-  const C_DESC = CW - C_NO - C_CODE - C_QTY - C_UOM - C_UP - C_DISC - C_TOT;
+  const C_DESC = CW - C_NO - C_CODE - C_QTY - C_TQTY - C_UOM - C_UP - C_DISC - C_TOT;
   const X_NO   = ML;
   const X_CODE = X_NO   + C_NO;
   const X_DESC = X_CODE + C_CODE;
   const X_QTY  = X_DESC + C_DESC;
-  const X_UOM  = X_QTY  + C_QTY;
+  const X_TQTY = X_QTY  + C_QTY;
+  const X_UOM  = X_TQTY + C_TQTY;
   const X_UP   = X_UOM  + C_UOM;
   const X_DISC = X_UP   + C_UP;
   const X_TOT  = X_DISC + C_DISC;
@@ -232,14 +243,15 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
     orgTaxNo    && `Tax: ${orgTaxNo}`,
     (data as any).orgMofNo && `MOF: ${(data as any).orgMofNo}`,
   ].filter(Boolean) as string[];
-  const coSsmStr = coSsmParts.join("  ·  ");
-  const coMdaStr = orgMdaEstablishmentNo ? `MDA Est.: ${orgMdaEstablishmentNo}` : "";
+  const coSsmStr   = coSsmParts.join("  ·  ");
+  const coSsmLines = coSsmStr ? wrap(coSsmStr, fontL, 6, CO_TEXT_W) : [];
+  const coMdaStr   = orgMdaEstablishmentNo ? `MDA Est.: ${orgMdaEstablishmentNo}` : "";
 
   const coTextH = (nameSize + 4)
     + coAddrLines.length * B_LH
-    + (coContactStr ? B_LH : 0)
-    + (coSsmStr     ? B_LH : 0)
-    + (coMdaStr     ? B_LH : 0);
+    + (coContactStr      ? B_LH : 0)
+    + coSsmLines.length  * B_LH
+    + (coMdaStr          ? B_LH : 0);
   const CO_SECTION_H = Math.max(LOGO_H_MAX, coTextH);
 
   // Customer section height
@@ -277,7 +289,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       : descLines.length;
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
-      : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
+      : null;
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLines   = showCode ? wrap(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2) : [];
     const codeLineH   = codeLines.length * CODE_LINE_H;
@@ -302,14 +314,12 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   const PN_ROW_AVAIL = H - BAND_H - TABLE_HDR_H - MB - 26;
 
   // ── Build render entries (set headers interleaved with items) ────────────
-  const SET_HDR_H = 18;
+  const SET_HDR_H = 16;
   type RenderEntry =
     | { kind: "setHeader"; label: string; qty: number; setTotal: number; pricePerSet: number; rowH: number }
     | { kind: "item"; rowIdx: number; rowH: number };
   const renderItems: RenderEntry[] = [];
   {
-    const uniqueSetIds = new Set(rowInfos.map(r => r.item.setGroupId).filter(Boolean));
-    const showSetHeaders = uniqueSetIds.size > 1;
     const seenGroups = new Set<string>();
     for (let i = 0; i < rowInfos.length; i++) {
       const it = rowInfos[i].item;
@@ -351,22 +361,15 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   }
   pageGroups.push(curGroup);
 
+  let hasOverflowPage = false;
   {
     const lastGroup   = pageGroups[pageGroups.length - 1];
     const lastIsFirst = pageGroups.length === 1;
     const lastAvail   = Math.max(lastIsFirst ? P1_ROW_AVAIL : PN_ROW_AVAIL, RH_MIN * 3);
     const lastItemsH  = lastGroup.reduce((s, i) => s + renderItems[i].rowH, 0);
-    if (lastItemsH + BOTTOM_RESERVE > lastAvail && lastGroup.length > 1) {
-      let fitH = 0, splitAt = 0;
-      for (const idx of lastGroup) {
-        if (fitH + renderItems[idx].rowH + BOTTOM_RESERVE <= lastAvail) { fitH += renderItems[idx].rowH; splitAt++; }
-        else break;
-      }
-      splitAt = Math.max(1, splitAt);
-      if (splitAt < lastGroup.length) {
-        pageGroups[pageGroups.length - 1] = lastGroup.slice(0, splitAt);
-        pageGroups.push(lastGroup.slice(splitAt));
-      }
+    if (lastItemsH + BOTTOM_RESERVE > lastAvail) {
+      pageGroups.push([]);
+      hasOverflowPage = true;
     }
   }
 
@@ -382,12 +385,12 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
     // Footer
     hLine(page, MB + 22);
     page.drawText("Computer generated document. No signature required.", {
-      x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_LITE,
+      x: ML, y: MB + 10, size: 7.5, font: fontL, color: C_LITE,
     });
     const pgText = `${q.quotationNo}  ·  Page ${pi + 1} of ${totalPages}`;
     page.drawText(pgText, {
-      x: W - MR - fontR.widthOfTextAtSize(pgText, 7.5),
-      y: MB + 10, size: 7.5, font: fontR, color: C_LITE,
+      x: W - MR - fontL.widthOfTextAtSize(pgText, 7.5),
+      y: MB + 10, size: 7.5, font: fontL, color: C_LITE,
     });
 
     let curY: number;
@@ -413,24 +416,22 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       });
       cty -= nameSize - 1;
       for (const line of coAddrLines) {
-        page.drawText(line, { x: CO_TEXT_X, y: cty, size: B_FS_DET, font: fontR, color: C_DARK });
+        page.drawText(line, { x: CO_TEXT_X, y: cty, size: B_FS_DET, font: fontL, color: C_DARK });
         cty -= B_LH;
       }
       if (coContactStr) {
-        page.drawText(trunc(coContactStr, fontR, B_FS_DET, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty, size: B_FS_DET, font: fontR, color: C_DARK,
+        page.drawText(trunc(coContactStr, fontL, B_FS_DET, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty, size: B_FS_DET, font: fontL, color: C_DARK,
         });
         cty -= B_LH;
       }
-      if (coSsmStr) {
-        page.drawText(trunc(coSsmStr, fontR, 6, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty, size: 6, font: fontR, color: C_DARK,
-        });
+      for (const line of coSsmLines) {
+        page.drawText(line, { x: CO_TEXT_X, y: cty, size: 6, font: fontL, color: C_DARK });
         cty -= B_LH;
       }
       if (coMdaStr) {
-        page.drawText(trunc(coMdaStr, fontR, 6, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty, size: 6, font: fontR, color: C_DARK,
+        page.drawText(trunc(coMdaStr, fontL, 6, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty, size: 6, font: fontL, color: C_DARK,
         });
       }
 
@@ -460,25 +461,25 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       let cuLY = cuTop;
 
       page.drawText("ATTENTION TO", {
-        x: ML, y: cuLY, size: 7, font: fontB, color: C_LITE,
+        x: ML, y: cuLY, size: 7, font: fontL, color: C_DARK,
       });
       cuLY -= 7 + 4;
 
       if (custName) {
-        page.drawText(trunc(custName, fontB, 10, RIGHT_X - ML - 10), {
-          x: ML, y: cuLY, size: 10, font: fontB, color: C_DARK,
+        page.drawText(trunc(custName, fontB, 9, RIGHT_X - ML - 10), {
+          x: ML, y: cuLY, size: 9, font: fontB, color: C_DARK,
         });
-        cuLY -= 10 + 1;
+        cuLY -= 9 + 2;
       }
       if (cust?.organizationName) {
-        page.drawText(trunc(cust.organizationName, fontR, B_FS_DET, RIGHT_X - ML - 10), {
-          x: ML, y: cuLY, size: B_FS_DET, font: fontR, color: C_MID,
+        page.drawText(trunc(cust.organizationName, fontB, 9, RIGHT_X - ML - 10), {
+          x: ML, y: cuLY, size: 9, font: fontB, color: C_DARK,
         });
         cuLY -= B_LH;
       }
       if (cust?.organizationAddress) {
-        const addrLine = wrap(cust.organizationAddress, fontR, B_FS_DET, RIGHT_X - ML - 10)[0] ?? "";
-        page.drawText(addrLine, { x: ML, y: cuLY, size: B_FS_DET, font: fontR, color: C_LITE });
+        const addrLine = wrap(cust.organizationAddress, fontL, 9, RIGHT_X - ML - 10)[0] ?? "";
+        page.drawText(addrLine, { x: ML, y: cuLY, size: 9, font: fontL, color: C_DARK });
       }
 
       // Right: dates + validity + sales person
@@ -495,9 +496,9 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         ...(_spDisplayE ? [["Sales Person", _spDisplayE]] as [string,string][] : []),
       ];
       for (const [lbl, val] of dateRows) {
-        page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY, size: 8, font: fontR, color: C_LITE });
-        const vw = fontB.widthOfTextAtSize(val, 8);
-        page.drawText(val, { x: W - MR - vw, y: cuRY, size: 8, font: fontB, color: C_DARK });
+        page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY, size: 8, font: fontL, color: C_DARK });
+        const vw = fontS.widthOfTextAtSize(val, 8);
+        page.drawText(val, { x: W - MR - vw, y: cuRY, size: 8, font: fontS, color: C_DARK });
         cuRY -= B_LH + 1;
       }
 
@@ -532,24 +533,22 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       });
       cty2 -= nameSize - 1;
       for (const line of coAddrLines) {
-        page.drawText(line, { x: CO_TEXT_X, y: cty2, size: B_FS_DET, font: fontR, color: C_DARK });
+        page.drawText(line, { x: CO_TEXT_X, y: cty2, size: B_FS_DET, font: fontL, color: C_DARK });
         cty2 -= B_LH;
       }
       if (coContactStr) {
-        page.drawText(trunc(coContactStr, fontR, B_FS_DET, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty2, size: B_FS_DET, font: fontR, color: C_DARK,
+        page.drawText(trunc(coContactStr, fontL, B_FS_DET, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty2, size: B_FS_DET, font: fontL, color: C_DARK,
         });
         cty2 -= B_LH;
       }
-      if (coSsmStr) {
-        page.drawText(trunc(coSsmStr, fontR, 6, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty2, size: 6, font: fontR, color: C_DARK,
-        });
+      for (const line of coSsmLines) {
+        page.drawText(line, { x: CO_TEXT_X, y: cty2, size: 6, font: fontL, color: C_DARK });
         cty2 -= B_LH;
       }
       if (coMdaStr) {
-        page.drawText(trunc(coMdaStr, fontR, 6, CO_TEXT_W), {
-          x: CO_TEXT_X, y: cty2, size: 6, font: fontR, color: C_DARK,
+        page.drawText(trunc(coMdaStr, fontL, 6, CO_TEXT_W), {
+          x: CO_TEXT_X, y: cty2, size: 6, font: fontL, color: C_DARK,
         });
       }
 
@@ -570,31 +569,31 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
       const cuTop2 = H - B_PADT - CO_SECTION_H - B_DASH_H;
       let cuLY2 = cuTop2;
-      page.drawText("ATTENTION TO", { x: ML, y: cuLY2, size: 7, font: fontB, color: C_LITE });
+      page.drawText("ATTENTION TO", { x: ML, y: cuLY2, size: 7, font: fontL, color: C_DARK });
       cuLY2 -= 7 + 4;
       if (custName) {
-        page.drawText(trunc(custName, fontB, 10, RIGHT_X - ML - 10), {
-          x: ML, y: cuLY2, size: 10, font: fontB, color: C_DARK,
+        page.drawText(trunc(custName, fontB, 9, RIGHT_X - ML - 10), {
+          x: ML, y: cuLY2, size: 9, font: fontB, color: C_DARK,
         });
-        cuLY2 -= 10 + 1;
+        cuLY2 -= 9 + 2;
       }
       if (cust?.organizationName) {
-        page.drawText(trunc(cust.organizationName, fontR, B_FS_DET, RIGHT_X - ML - 10), {
-          x: ML, y: cuLY2, size: B_FS_DET, font: fontR, color: C_MID,
+        page.drawText(trunc(cust.organizationName, fontB, 9, RIGHT_X - ML - 10), {
+          x: ML, y: cuLY2, size: 9, font: fontB, color: C_DARK,
         });
         cuLY2 -= B_LH;
       }
       if (cust?.organizationAddress) {
-        const addrLine2 = wrap(cust.organizationAddress, fontR, B_FS_DET, RIGHT_X - ML - 10)[0] ?? "";
-        page.drawText(addrLine2, { x: ML, y: cuLY2, size: B_FS_DET, font: fontR, color: C_LITE });
+        const addrLine2 = wrap(cust.organizationAddress, fontL, 9, RIGHT_X - ML - 10)[0] ?? "";
+        page.drawText(addrLine2, { x: ML, y: cuLY2, size: 9, font: fontL, color: C_DARK });
       }
 
       let cuRY2 = cuTop2;
       const _vdE2 = (q.validUntil && q.createdAt) ? Math.round((new Date(q.validUntil).getTime() - new Date(q.createdAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
       for (const [lbl, val] of [["Date", fmtD(q.createdAt)], ["Validity", _vdE2 !== null ? `${_vdE2} days` : "—"]] as [string,string][]) {
-        page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY2, size: 8, font: fontR, color: C_LITE });
-        const vw2 = fontB.widthOfTextAtSize(val, 8);
-        page.drawText(val, { x: W - MR - vw2, y: cuRY2, size: 8, font: fontB, color: C_DARK });
+        page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY2, size: 8, font: fontL, color: C_DARK });
+        const vw2 = fontS.widthOfTextAtSize(val, 8);
+        page.drawText(val, { x: W - MR - vw2, y: cuRY2, size: 8, font: fontS, color: C_DARK });
         cuRY2 -= B_LH + 1;
       }
 
@@ -602,28 +601,32 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
     }
 
     // ── Table header ────────────────────────────────────────────────────────
+    const isOverflowPage = hasOverflowPage && pi === pageGroups.length - 1;
     const tableTopY = curY;
-    const tHdrY     = curY - TABLE_HDR_H;
-    hLine(page, curY, ML, W - MR, C_LINE, 0.5);
-    const thdrs: { label: string; x: number; w: number }[] = [
-      { label: "No",          x: X_NO,   w: C_NO   },
-      ...(showCode ? [{ label: "Product Code", x: X_CODE, w: C_CODE }] : []),
-      { label: "Description", x: X_DESC, w: C_DESC },
-      { label: "Qty",         x: X_QTY,  w: C_QTY  },
-      { label: "UOM",         x: X_UOM,  w: C_UOM  },
-      { label: "Unit Price",  x: X_UP,   w: C_UP   },
-      ...(showDisc ? [{ label: "Discount", x: X_DISC, w: C_DISC }] : []),
-      ...(showTP   ? [{ label: "Total", x: X_TOT,  w: C_TOT  }] : []),
-    ];
-    for (const col of thdrs) {
-      const tw = fontB.widthOfTextAtSize(col.label.toUpperCase(), 7);
-      page.drawText(col.label.toUpperCase(), {
-        x: col.x + (col.w - tw) / 2, y: tHdrY + 7,
-        size: 7, font: fontB, color: C_DARK,
-      });
+    if (!isOverflowPage) {
+      const tHdrY     = curY - TABLE_HDR_H;
+      hLine(page, curY, ML, W - MR, C_LINE, 0.5);
+      const thdrs: { label: string; x: number; w: number }[] = [
+        { label: "No",          x: X_NO,   w: C_NO   },
+        ...(showCode ? [{ label: "Product Code", x: X_CODE, w: C_CODE }] : []),
+        { label: "Description",                        x: X_DESC,  w: C_DESC  },
+        { label: showSetHeaders ? "Qty/Set" : "Qty",   x: X_QTY,   w: C_QTY   },
+        ...(showSetHeaders ? [{ label: "Total Qty", x: X_TQTY, w: C_TQTY }] : []),
+        { label: "UOM",                                x: X_UOM,   w: C_UOM   },
+        { label: "Unit Price",  x: X_UP,   w: C_UP   },
+        ...(showDisc ? [{ label: "Discount", x: X_DISC, w: C_DISC }] : []),
+        ...(showTP   ? [{ label: "Total", x: X_TOT,  w: C_TOT  }] : []),
+      ];
+      for (const col of thdrs) {
+        const tw = fontS.widthOfTextAtSize(col.label.toUpperCase(), 7);
+        page.drawText(col.label.toUpperCase(), {
+          x: col.x + (col.w - tw) / 2, y: tHdrY + 7,
+          size: 7, font: fontS, color: C_DARK,
+        });
+      }
+      hLine(page, tHdrY, ML, W - MR, accent, 1.5);
+      curY = tHdrY;
     }
-    hLine(page, tHdrY, ML, W - MR, accent, 1.5);
-    curY = tHdrY;
 
     // ── Item rows ────────────────────────────────────────────────────────────
     let itemRowAlt = 0;
@@ -636,14 +639,15 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         const hdrY  = curY - SET_HDR_H;
         const textY = hdrY + (SET_HDR_H - FS_DESC) / 2;
         page.drawRectangle({ x: ML, y: hdrY, width: CW, height: SET_HDR_H, color: rgb(0.90, 0.93, 0.97) });
-        const labelW = fontB.widthOfTextAtSize(entry.label, FS_DESC);
-        page.drawText(entry.label.toUpperCase(), { x: ML + TABLE_PAD, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
+        const labelUpper = entry.label.toUpperCase();
+        const labelW = fontS.widthOfTextAtSize(labelUpper, FS_DESC);
+        page.drawText(labelUpper, { x: ML + TABLE_PAD, y: textY, size: FS_DESC, font: fontS, color: C_DARK });
         const qtyText = `  ×  ${entry.qty} ${entry.qty === 1 ? "set" : "sets"}`;
-        page.drawText(qtyText, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_CODE, font: fontR, color: C_LITE });
+        page.drawText(qtyText, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_CODE, font: fontL, color: C_DARK });
         if (showTP && entry.qty > 1) {
-          const qtyTextW = fontR.widthOfTextAtSize(qtyText, FS_CODE);
+          const qtyTextW = fontL.widthOfTextAtSize(qtyText, FS_CODE);
           const ppsStr = `  ·  RM ${entry.pricePerSet.toFixed(2)} / set`;
-          page.drawText(ppsStr, { x: ML + TABLE_PAD + labelW + qtyTextW, y: textY, size: FS_CODE, font: fontR, color: C_LITE });
+          page.drawText(ppsStr, { x: ML + TABLE_PAD + labelW + qtyTextW, y: textY, size: FS_CODE, font: fontL, color: C_DARK });
         }
         if (showTP) {
           const totStr = `RM ${entry.setTotal.toFixed(2)}`;
@@ -664,20 +668,13 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       }
       itemRowAlt++;
 
-      if (extraLine !== null) {
-        page.drawRectangle({
-          x: ML, y: rowY + 1, width: 3, height: rowH - 2,
-          color: isGreenRow ? C_GREEN : C_AMBER,
-        });
-      }
-
-      const textBaseline = curY - 11;
+      const textBaseline = curY - 10;
 
       // Row number — accent coloured
-      const noW = fontB.widthOfTextAtSize(String(item.rowNo), FS_NUM);
+      const noW = fontS.widthOfTextAtSize(String(item.rowNo), FS_NUM);
       page.drawText(String(item.rowNo), {
         x: X_NO + (C_NO - noW) / 2, y: textBaseline,
-        size: FS_NUM, font: fontB, color: C_DARK,
+        size: FS_NUM, font: fontS, color: C_DARK,
       });
 
       let dy = textBaseline;
@@ -707,6 +704,13 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         x: X_QTY + (C_QTY - qtyW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
       });
 
+      if (showSetHeaders) {
+        const totalQtyVal = Number(item.qty ?? 0) * Number(item.setQty ?? 1);
+        const tqStr = String(totalQtyVal);
+        const tqW = fontR.widthOfTextAtSize(tqStr, FS_DESC);
+        page.drawText(tqStr, { x: X_TQTY + (C_TQTY - tqW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK });
+      }
+
       const uomStr = sanitizeText(item.uom || "—");
       const uomW   = fontR.widthOfTextAtSize(uomStr, FS_CODE);
       page.drawText(uomStr, {
@@ -728,7 +732,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
           page.drawText(amtStr, { x: X_DISC + (C_DISC - amtStrW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK });
           const pctStr  = `(${itemDiscPct}%)`;
           const pctStrW = fontR.widthOfTextAtSize(pctStr, FS_CODE - 1.5);
-          page.drawText(pctStr, { x: X_DISC + (C_DISC - pctStrW) / 2, y: textBaseline - 9, size: FS_CODE - 1.5, font: fontR, color: C_DARK });
+          page.drawText(pctStr, { x: X_DISC + (C_DISC - pctStrW) / 2, y: textBaseline - 8, size: FS_CODE - 1.5, font: fontR, color: C_DARK });
         } else {
           const dash  = "—";
           const dashW = fontR.widthOfTextAtSize(dash, FS_CODE);
@@ -750,11 +754,13 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
     if (tableRowStyle === "rounded") {
       const tableH = tableTopY - curY;
-      const r = 6;
-      page.drawSvgPath(
-        `M ${r},0 L ${CW - r},0 Q ${CW},0 ${CW},${r} L ${CW},${tableH - r} Q ${CW},${tableH} ${CW - r},${tableH} L ${r},${tableH} Q 0,${tableH} 0,${tableH - r} L 0,${r} Q 0,0 ${r},0 Z`,
-        { x: ML, y: tableTopY, borderColor: accent, borderWidth: 1 },
-      );
+      if (tableH > 0) {
+        const r = 6;
+        page.drawSvgPath(
+          `M ${r},0 L ${CW - r},0 Q ${CW},0 ${CW},${r} L ${CW},${tableH - r} Q ${CW},${tableH} ${CW - r},${tableH} L ${r},${tableH} Q 0,${tableH} 0,${tableH - r} L 0,${r} Q 0,0 ${r},0 Z`,
+          { x: ML, y: tableTopY, borderColor: accent, borderWidth: 1 },
+        );
+      }
     }
 
     // ── Last page totals ─────────────────────────────────────────────────────
@@ -811,15 +817,15 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         if (bank.accountHolder) bankParts.push(`account name ${bank.accountHolder}`);
         if (bank.accountNo) bankParts.push(`account number ${bank.accountNo}`);
         const paymentSentence = `Payment can be made to ${bankParts.join(", ")}.`;
-        for (const cl of wrap(paymentSentence, fontR, 8, CW)) {
-          page.drawText(cl, { x: ML, y: curY, size: 8, font: fontR, color: C_LITE });
+        for (const cl of wrap(paymentSentence, fontL, 8, CW)) {
+          page.drawText(cl, { x: ML, y: curY, size: 8, font: fontL, color: C_LITE });
           curY -= 12;
         }
         curY -= 4;
       }
       const closeMsg = "Thank you for the opportunity to present this quotation. We look forward to your valued order. Should you have any enquiries, please do not hesitate to contact us.";
-      for (const cl of wrap(closeMsg, fontR, 8, CW)) {
-        page.drawText(cl, { x: ML, y: curY, size: 8, font: fontR, color: C_LITE });
+      for (const cl of wrap(closeMsg, fontL, 8, CW)) {
+        page.drawText(cl, { x: ML, y: curY, size: 8, font: fontL, color: C_LITE });
         curY -= 12;
       }
 
@@ -832,7 +838,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
           color: C_OFF, borderColor: C_LINE, borderWidth: 0.4,
         });
         page.drawRectangle({ x: ML, y: curY - noteBoxH, width: 3, height: noteBoxH, color: accent });
-        page.drawText("NOTES", { x: ML + 10, y: curY - 12, size: 7.5, font: fontB, color: C_DARK });
+        page.drawText("NOTES", { x: ML + 10, y: curY - 12, size: 7.5, font: fontS, color: C_DARK });
         let ny = curY - 24;
         for (const line of nLines) {
           page.drawText(line, { x: ML + 10, y: ny, size: 9.5, font: fontR, color: C_DARK });
@@ -921,9 +927,9 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
           { label: "Product Details", x: ML + CAT_COL_NO + CAT_COL_IMG, w: CAT_COL_DET },
         ];
         for (const col of colDefs) {
-          const tw = fontB.widthOfTextAtSize(col.label, 7);
+          const tw = fontS.widthOfTextAtSize(col.label, 7);
           catPage.drawText(col.label, {
-            x: col.x + (col.w - tw) / 2, y: colHdrY + 6, size: 7, font: fontB, color: C_DARK,
+            x: col.x + (col.w - tw) / 2, y: colHdrY + 6, size: 7, font: fontS, color: C_DARK,
           });
         }
         catPage.drawRectangle({ x: ML, y: colHdrY, width: CW, height: 1.5, color: accent });
@@ -969,8 +975,8 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
           const detMaxW = CAT_COL_DET - 16;
           let   detY    = rowY + CAT_ROW_H - 16;
           if (showCode && displayCode) {
-            catPage.drawText(trunc(displayCode, fontB, 8, detMaxW), {
-              x: detX, y: detY, size: 8, font: fontB, color: C_DARK,
+            catPage.drawText(trunc(displayCode, fontS, 8, detMaxW), {
+              x: detX, y: detY, size: 8, font: fontS, color: C_DARK,
             });
             detY -= 11;
           }
@@ -1008,11 +1014,11 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
         hLine(catPage, MB + 22);
         catPage.drawText("Product Catalogue  ·  Computer generated document.", {
-          x: ML, y: MB + 10, size: 7.5, font: fontR, color: C_LITE,
+          x: ML, y: MB + 10, size: 7.5, font: fontL, color: C_LITE,
         });
         catPage.drawText(q.quotationNo, {
-          x: W - MR - fontR.widthOfTextAtSize(q.quotationNo, 7.5),
-          y: MB + 10, size: 7.5, font: fontR, color: C_LITE,
+          x: W - MR - fontL.widthOfTextAtSize(q.quotationNo, 7.5),
+          y: MB + 10, size: 7.5, font: fontL, color: C_LITE,
         });
       }
     }

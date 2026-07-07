@@ -422,8 +422,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const LOGO_H_MAX = 51;   // 42 × 1.2
   const LOGO_W_MAX = 130;  // 108 × 1.2
 
-  const showCode  = !!Number(q.showProductCode ?? 1);
-  const showMdaCerts = !!Number(q.includeMdaCerts ?? 1);
+  const showCode       = !!Number(q.showProductCode ?? 1);
+  const showMdaCerts   = !!Number(q.includeMdaCerts ?? 1);
+  const showSetHeaders = new Set(items.map(i => i.setGroupId).filter(Boolean)).size > 1;
   // All body text matches the 7.5pt table header — uniform, no bold
   const FS_BODY   = 7.5;
   const LH        = 10;   // line height for wrapped description
@@ -434,18 +435,20 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   // ── Column widths ─────────────────────────────────────────────────────────
   const C_NO   = 22;
   const C_CODE = showCode ? 65 : 0;
-  const C_QTY  = 28;
+  const C_QTY  = showSetHeaders ? 38 : 28;
+  const C_TQTY = showSetHeaders ? 48 : 0;
   const C_UOM  = 34;
   const C_UP   = 64;
   const C_DISC = showDisc ? 55 : 0;
   const C_TOT  = showTP ? 68 : 0;
-  const C_DESCA = CW - C_NO - C_CODE - C_QTY - C_UOM - C_UP - C_DISC - C_TOT;
+  const C_DESCA = CW - C_NO - C_CODE - C_QTY - C_TQTY - C_UOM - C_UP - C_DISC - C_TOT;
 
   const X_NO   = ML;
   const X_CODE = X_NO   + C_NO;
   const X_DESC = X_CODE + C_CODE;
   const X_QTY  = X_DESC + C_DESCA;
-  const X_UOM  = X_QTY  + C_QTY;
+  const X_TQTY = X_QTY  + C_QTY;
+  const X_UOM  = X_TQTY + C_TQTY;
   const X_UP   = X_UOM  + C_UOM;
   const X_DISC = X_UP   + C_UP;
   const X_TOT  = X_DISC + C_DISC;
@@ -478,7 +481,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       : descLines.length;
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
-      : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
+      : null;
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLines   = showCode ? wrap(item.productCode ?? "—", fontR, FS_BODY, C_CODE - TABLE_PAD * 2) : [];
     const codeLineH   = codeLines.length * CODE_LINE_H;
@@ -583,8 +586,6 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     | { kind: "item"; rowIdx: number; rowH: number };
   const renderItems: RenderEntry[] = [];
   {
-    const uniqueSetIds = new Set(rowInfos.map(r => r.item.setGroupId).filter(Boolean));
-    const showSetHeaders = uniqueSetIds.size > 1;
     const seenGroups = new Set<string>();
     for (let i = 0; i < rowInfos.length; i++) {
       const it = rowInfos[i].item;
@@ -724,14 +725,15 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
     // ── Table header — skipped on dedicated overflow page ────────────────
     const thdrs: { label: string; x: number; w: number }[] = [
-      { label: "No",                          x: X_NO,   w: C_NO   },
-      ...(showCode ? [{ label: "Catalog No", x: X_CODE, w: C_CODE  }] : []),
-      { label: "Name of Product / Service",  x: X_DESC, w: C_DESCA },
-      { label: "Qty",         x: X_QTY,  w: C_QTY  },
-      { label: "UOM",         x: X_UOM,  w: C_UOM  },
-      { label: "Unit Price",  x: X_UP,   w: C_UP   },
-      ...(showDisc ? [{ label: "Discount",    x: X_DISC, w: C_DISC  }] : []),
-      ...(showTP   ? [{ label: "Total",      x: X_TOT,  w: C_TOT   }] : []),
+      { label: "No",                                         x: X_NO,   w: C_NO   },
+      ...(showCode ? [{ label: "Catalog No",                 x: X_CODE, w: C_CODE  }] : []),
+      { label: "Name of Product / Service",                  x: X_DESC, w: C_DESCA },
+      { label: showSetHeaders ? "Qty/Set" : "Qty",           x: X_QTY,  w: C_QTY  },
+      ...(showSetHeaders ? [{ label: "Total Qty",            x: X_TQTY, w: C_TQTY }] : []),
+      { label: "UOM",                                        x: X_UOM,  w: C_UOM  },
+      { label: "Unit Price",                                 x: X_UP,   w: C_UP   },
+      ...(showDisc ? [{ label: "Discount",                   x: X_DISC, w: C_DISC  }] : []),
+      ...(showTP   ? [{ label: "Total",                      x: X_TOT,  w: C_TOT   }] : []),
     ];
     if (!isOverflowPage) {
 
@@ -840,11 +842,21 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         });
       }
 
-      // Qty
+      // Qty / Qty per set
       const qtyW = fontR.widthOfTextAtSize(String(item.qty ?? 0), FS_BODY);
       page.drawText(String(item.qty ?? 0), {
         x: X_QTY + (C_QTY - qtyW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK,
       });
+
+      // Total Qty (qty/set × number of sets)
+      if (showSetHeaders) {
+        const totalQtyVal = Number(item.qty ?? 0) * Number(item.setQty ?? 1);
+        const tqStr = String(totalQtyVal);
+        const tqW   = fontR.widthOfTextAtSize(tqStr, FS_BODY);
+        page.drawText(tqStr, {
+          x: X_TQTY + (C_TQTY - tqW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK,
+        });
+      }
 
       // UOM
       const uom  = item.uom || "—";
@@ -910,7 +922,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       // Qty cols 4-5 merged — centered in X_QTY to X_UP
       const subQtyStr = fmtQty(totalQtyPerSet);
       const subQtyW   = fontR.widthOfTextAtSize(subQtyStr, FS_BODY);
-      page.drawText(subQtyStr, { x: X_QTY + ((C_QTY + C_UOM) - subQtyW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+      page.drawText(subQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) -subQtyW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
       // Amount cols 6-7 — centered in merged area (1-set amount)
       const subStr  = fmtM(subtotalPerSet);
       const subStrW = fontR.widthOfTextAtSize(subStr, FS_BODY);
@@ -928,7 +940,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         page.drawText(`SUBTOTAL × ${sets} SETS`, { x: X_NO + TOT_PAD, y: snsRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
         const snsQtyStr = fmtQty(totalQtyPerSet * sets);
         const snsQtyW   = fontR.widthOfTextAtSize(snsQtyStr, FS_BODY);
-        page.drawText(snsQtyStr, { x: X_QTY + ((C_QTY + C_UOM) - snsQtyW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        page.drawText(snsQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) -snsQtyW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
         const snsStr  = fmtM(subtotal);
         const snsStrW = fontR.widthOfTextAtSize(snsStr, FS_BODY);
         page.drawText(snsStr, { x: X_UP + (amtAreaW - snsStrW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
@@ -948,7 +960,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         if (!isFixedDisc) {
           const odPctStr = `(${q.overallDiscountPct}%)`;
           const odPctW   = fontR.widthOfTextAtSize(odPctStr, FS_BODY);
-          page.drawText(odPctStr, { x: X_QTY + ((C_QTY + C_UOM) - odPctW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+          page.drawText(odPctStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) -odPctW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
         }
         const odStr  = `- ${fmtM(discAmt)}`;
         const odStrW = fontR.widthOfTextAtSize(odStr, FS_BODY);
@@ -973,7 +985,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       // Qty cols 4-5 merged — centered in X_QTY to X_UP
       const gtQtyStr = fmtQty(totalQtyAllSets);
       const gtQtyW   = fontB.widthOfTextAtSize(gtQtyStr, FS_BODY);
-      page.drawText(gtQtyStr, { x: X_QTY + ((C_QTY + C_UOM) - gtQtyW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+      page.drawText(gtQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) -gtQtyW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
       // Amount cols 6-7 merged — centered in merged area
       const gtAmtStr = fmtM(afterDisc);
       const gtAmtW   = fontB.widthOfTextAtSize(gtAmtStr, FS_BODY);

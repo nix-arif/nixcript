@@ -162,25 +162,28 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   }
 
   // ── Table style ──────────────────────────────────────────────────────────
-  const tableRowStyle = data.orgTableRowStyle ?? "default";
-  const showCode      = !!Number(q.showProductCode ?? 1);
-  const showMdaCerts = !!Number(q.includeMdaCerts ?? 1);
+  const tableRowStyle  = data.orgTableRowStyle ?? "default";
+  const showCode       = !!Number(q.showProductCode ?? 1);
+  const showMdaCerts   = !!Number(q.includeMdaCerts ?? 1);
+  const showSetHeaders = new Set(items.map(i => i.setGroupId).filter(Boolean)).size > 1;
 
   // ── Column widths ─────────────────────────────────────────────────────────
   const C_NO   = 22;
   const C_CODE = showCode ? 65 : 0;
-  const C_QTY  = 28;
+  const C_QTY  = showSetHeaders ? 38 : 28;
+  const C_TQTY = showSetHeaders ? 48 : 0;
   const C_UOM  = 34;
   const C_UP   = 64;
   const C_DISC = showDisc ? 55 : 0;
   const C_TOT  = showTP ? 68 : 0;
-  const C_DESC = CW - C_NO - C_CODE - C_QTY - C_UOM - C_UP - C_DISC - C_TOT;
+  const C_DESC = CW - C_NO - C_CODE - C_QTY - C_TQTY - C_UOM - C_UP - C_DISC - C_TOT;
 
   const X_NO   = ML;
   const X_CODE = X_NO   + C_NO;
   const X_DESC = X_CODE + C_CODE;
   const X_QTY  = X_DESC + C_DESC;
-  const X_UOM  = X_QTY  + C_QTY;
+  const X_TQTY = X_QTY  + C_QTY;
+  const X_UOM  = X_TQTY + C_TQTY;
   const X_UP   = X_UOM  + C_UOM;
   const X_DISC = X_UP   + C_UP;
   const X_TOT  = X_DISC + C_DISC;
@@ -223,7 +226,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       : descLines.length;
     const extraLine  = showMdaCerts && item.hasCert && item.mdaRegNo
       ? `MDA: ${item.mdaRegNo}${item.mdaValidity ? ` · Exp: ${fmtD(item.mdaValidity)}` : ""}`
-      : (showMdaCerts && !item.hasCert ? "No MDA certificate" : null);
+      : null;
     const isGreenRow = !!(item.hasCert && item.mdaRegNo);
     const codeLines   = showCode ? wrap(item.productCode ?? "—", fontR, FS_CODE, C_CODE - TABLE_PAD * 2) : [];
     const codeLineH   = codeLines.length * CODE_LINE_H;
@@ -282,8 +285,6 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     | { kind: "item"; rowIdx: number; rowH: number };
   const renderItems: RenderEntry[] = [];
   {
-    const uniqueSetIds = new Set(rowInfos.map(r => r.item.setGroupId).filter(Boolean));
-    const showSetHeaders = uniqueSetIds.size > 1;
     const seenGroups = new Set<string>();
     for (let i = 0; i < rowInfos.length; i++) {
       const it = rowInfos[i].item;
@@ -411,14 +412,15 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
     // ── Table header — skipped on overflow page ──────────────────────────
     const thdrs: { label: string; x: number; w: number; align: "l" | "c" | "r" }[] = [
-      { label: "No",          x: X_NO,   w: C_NO,   align: "c" },
-      ...(showCode ? [{ label: "Code", x: X_CODE, w: C_CODE, align: "l" as const }] : []),
-      { label: "Description", x: X_DESC, w: C_DESC, align: "l" },
-      { label: "Qty",         x: X_QTY,  w: C_QTY,  align: "c" },
-      { label: "UOM",         x: X_UOM,  w: C_UOM,  align: "c" },
-      { label: "Unit Price",  x: X_UP,   w: C_UP,   align: "r" as const },
-      ...(showDisc ? [{ label: "Discount", x: X_DISC, w: C_DISC, align: "c" as const }] : []),
-      ...(showTP   ? [{ label: "Total", x: X_TOT,  w: C_TOT,  align: "r" as const }] : []),
+      { label: "No",                               x: X_NO,   w: C_NO,   align: "c" },
+      ...(showCode ? [{ label: "Code",             x: X_CODE, w: C_CODE, align: "l" as const }] : []),
+      { label: "Description",                      x: X_DESC, w: C_DESC, align: "l" },
+      { label: showSetHeaders ? "Qty/Set" : "Qty", x: X_QTY,  w: C_QTY,  align: "c" },
+      ...(showSetHeaders ? [{ label: "Total Qty",  x: X_TQTY, w: C_TQTY, align: "c" as const }] : []),
+      { label: "UOM",                              x: X_UOM,  w: C_UOM,  align: "c" },
+      { label: "Unit Price",                       x: X_UP,   w: C_UP,   align: "r" as const },
+      ...(showDisc ? [{ label: "Discount",         x: X_DISC, w: C_DISC, align: "c" as const }] : []),
+      ...(showTP   ? [{ label: "Total",            x: X_TOT,  w: C_TOT,  align: "r" as const }] : []),
     ];
 
     if (!isOverflowPage) {
@@ -443,21 +445,26 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       if (entry.kind === "setHeader") {
         const hdrY  = curY - SET_HDR_H;
         const textY = hdrY + (SET_HDR_H - FS_DESC) / 2;
-        page.drawRectangle({ x: ML, y: hdrY, width: CW, height: SET_HDR_H, color: rgb(0.90, 0.93, 0.97) });
-        const labelW = fontB.widthOfTextAtSize(entry.label, FS_DESC);
-        page.drawText(entry.label.toUpperCase(), { x: ML + TABLE_PAD, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
-        const qtyText = `  ×  ${entry.qty} ${entry.qty === 1 ? "set" : "sets"}`;
-        page.drawText(qtyText, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_CODE, font: fontR, color: C_LITE });
-        if (showTP && entry.qty > 1) {
-          const qtyTextW = fontR.widthOfTextAtSize(qtyText, FS_CODE);
-          const ppsStr = `  ·  RM ${entry.pricePerSet.toFixed(2)} / set`;
-          page.drawText(ppsStr, { x: ML + TABLE_PAD + labelW + qtyTextW, y: textY, size: FS_CODE, font: fontR, color: C_LITE });
-        }
+
+        // "SET NAME × N set/sets" inline, pinned to left margin
+        const labelUpper  = entry.label.toUpperCase();
+        const setCountStr = `  ×  ${entry.qty} ${entry.qty === 1 ? "set" : "sets"}`;
+        const labelW      = fontB.widthOfTextAtSize(labelUpper, FS_DESC);
+        page.drawText(labelUpper,  { x: ML + TABLE_PAD,          y: textY, size: FS_DESC, font: fontB, color: C_DARK });
+        page.drawText(setCountStr, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
+
         if (showTP) {
-          const totStr = `RM ${entry.setTotal.toFixed(2)}`;
-          const totW = fontB.widthOfTextAtSize(totStr, FS_DESC);
-          page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totW, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
+          // Unit Price column — price per set
+          const upStr  = `RM ${entry.pricePerSet.toFixed(2)}`;
+          const upStrW = fontB.widthOfTextAtSize(upStr, FS_DESC);
+          page.drawText(upStr, { x: X_UP + (C_UP - upStrW) / 2, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
+
+          // Total column — set total
+          const totStr  = `RM ${entry.setTotal.toFixed(2)}`;
+          const totStrW = fontB.widthOfTextAtSize(totStr, FS_DESC);
+          page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totStrW, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
         }
+
         hLine(page, hdrY, ML, W - MR, accent, 0.5);
         curY = hdrY;
         continue;
@@ -480,7 +487,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       if (showCode) {
         let cdy = dy;
         for (const codeLine of codeLines) {
-          page.drawText(codeLine, { x: X_CODE + TABLE_PAD, y: cdy, size: FS_CODE, font: fontR, color: C_MID });
+          page.drawText(codeLine, { x: X_CODE + TABLE_PAD, y: cdy, size: FS_CODE, font: fontR, color: C_DARK });
           cdy -= CODE_LINE_H;
         }
       }
@@ -495,15 +502,25 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         dy -= MDA_GAP;
         page.drawText(extraLine, {
           x: X_DESC + TABLE_PAD, y: dy,
-          size: FS_DETAIL, font: fontR, color: isGreenRow ? C_GREEN : C_AMBER,
+          size: FS_DETAIL, font: fontR, color: C_DARK,
         });
       }
 
-      // Qty
+      // Qty / Qty per set
       const qtyW = fontR.widthOfTextAtSize(String(item.qty ?? 0), FS_DESC);
       page.drawText(String(item.qty ?? 0), {
         x: X_QTY + (C_QTY - qtyW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
       });
+
+      // Total Qty (qty/set × number of sets)
+      if (showSetHeaders) {
+        const totalQtyVal = Number(item.qty ?? 0) * Number(item.setQty ?? 1);
+        const tqStr = String(totalQtyVal);
+        const tqW   = fontR.widthOfTextAtSize(tqStr, FS_DESC);
+        page.drawText(tqStr, {
+          x: X_TQTY + (C_TQTY - tqW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
+        });
+      }
 
       // UOM
       const uom  = sanitizeText(item.uom || "—");
