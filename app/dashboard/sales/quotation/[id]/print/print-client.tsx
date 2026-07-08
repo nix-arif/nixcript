@@ -708,6 +708,7 @@ function TemplateEmber({ entry }: { entry: GroupItem }) {
   const primary = orgBrandColor ?? "#b45309";
 
   const showTP    = !!Number(q.showTotalPrice);
+  const showCode  = !!Number(q.showProductCode ?? 1);
   const sets      = Number(q.sets ?? 1);
   const subtotal  = Number(q.subtotal  ?? 0);
   const discAmt   = Number(q.overallDiscountAmt ?? 0);
@@ -781,15 +782,15 @@ function TemplateEmber({ entry }: { entry: GroupItem }) {
 
       {/* ── Items — borderless rows ── */}
       <div style={{ margin: "14px 28px 0" }}>
-        <div style={{ display: "grid", gridTemplateColumns: `28px 90px 1fr 44px 48px 80px 44px${showTP ? " 90px" : ""}`, borderBottom: `1.5px solid ${primary}`, paddingBottom: "5px", marginBottom: "2px" }}>
-          {["#", "Code", "Description / MDA", "Qty", "UOM", "Unit Price", "Disc", ...(showTP ? ["Total"] : [])].map((h, i) => (
-            <div key={h} style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.7px", color: primary, textAlign: ["Unit Price","Total","#"].includes(h) ? "right" : "left", paddingRight: i === 1 ? "8px" : "0" }}>{h}</div>
+        <div style={{ display: "grid", gridTemplateColumns: `28px${showCode ? " 90px" : ""} 1fr 44px 48px 80px 44px${showTP ? " 90px" : ""}`, borderBottom: `1.5px solid ${primary}`, paddingBottom: "5px", marginBottom: "2px" }}>
+          {["#", ...(showCode ? ["Code"] : []), "Description / MDA", "Qty", "UOM", "Unit Price", "Disc", ...(showTP ? ["Total"] : [])].map((h, i) => (
+            <div key={h} style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.7px", color: primary, textAlign: ["Unit Price","Total","#"].includes(h) ? "right" : "left", paddingRight: i === 1 && showCode ? "8px" : "0" }}>{h}</div>
           ))}
         </div>
         {items.map((item, i) => (
-          <div key={item.id} style={{ display: "grid", gridTemplateColumns: `28px 90px 1fr 44px 48px 80px 44px${showTP ? " 90px" : ""}`, padding: "6px 0", borderBottom: "1px solid #f0f0f0", alignItems: "start" }}>
+          <div key={item.id} style={{ display: "grid", gridTemplateColumns: `28px${showCode ? " 90px" : ""} 1fr 44px 48px 80px 44px${showTP ? " 90px" : ""}`, padding: "6px 0", borderBottom: "1px solid #f0f0f0", alignItems: "start" }}>
             <div style={{ color: "#ccc", textAlign: "right", paddingRight: "8px", paddingTop: "1px", fontSize: "10px" }}>{item.rowNo}</div>
-            <div style={{ fontFamily: "monospace", fontSize: "10px", color: "#666", paddingRight: "8px", paddingTop: "1px" }}>{item.productCode ?? "—"}</div>
+            {showCode && <div style={{ fontFamily: "monospace", fontSize: "10px", color: "#666", paddingRight: "8px", paddingTop: "1px" }}>{item.productCode ?? "—"}</div>}
             <div>
               <div style={{ fontWeight: "500" }}>{item.description ?? "—"}</div>
               {item.hasCert && item.mdaRegNo && <div style={{ fontSize: "9.5px", color: "#059669", marginTop: "1px" }}>MDA: {item.mdaRegNo}{item.mdaValidity ? ` · Exp: ${fmtDate(item.mdaValidity, true)}` : ""}</div>}
@@ -901,7 +902,8 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
   const cust = q.customerSnapshot as any;
   const primary = orgBrandColor ?? "#000000";
 
-  const showTP  = !!Number(q.showTotalPrice);
+  const showTP   = !!Number(q.showTotalPrice);
+  const showCode = !!Number(q.showProductCode ?? 1);
   const sets    = Number(q.sets ?? 1);
   const subtotal = Number(q.subtotal ?? 0);
   const discAmt  = Number(q.overallDiscountAmt ?? 0);
@@ -998,7 +1000,7 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "10px", border }}>
         <thead>
           <tr style={{ background: primary }}>
-            {["#", "Catalog No", "Name of Product / Service", "Qty", "UOM", "Unit Price", "Disc%", ...(showTP ? ["Total"] : [])].map((h, i) => (
+            {["#", ...(showCode ? ["Catalog No"] : []), "Name of Product / Service", "Qty", "UOM", "Unit Price", "Disc%", ...(showTP ? ["Total"] : [])].map((h, i) => (
               <th
                 key={h}
                 style={{
@@ -1007,7 +1009,7 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
                   fontWeight: "700",
                   textTransform: "uppercase",
                   textAlign: ["Unit Price","Total"].includes(h) ? "right" : h === "#" ? "center" : "left",
-                  borderRight: i < (showTP ? 7 : 6) ? "1px solid #000" : "none",
+                  borderRight: i < (showTP ? (showCode ? 7 : 6) : (showCode ? 6 : 5)) ? "1px solid #000" : "none",
                 }}
               >{h}</th>
             ))}
@@ -1017,7 +1019,7 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
           {items.map((item, i) => (
             <tr key={item.id} style={{ borderBottom: border, color: "#000", textTransform: "uppercase" }}>
               <td style={{ padding: "6px 8px", textAlign: "center", borderRight: border }}>{item.rowNo}</td>
-              <td style={{ padding: "6px 8px", fontFamily: "monospace", borderRight: border, whiteSpace: "nowrap" }}>{item.productCode ?? "—"}</td>
+              {showCode && <td style={{ padding: "6px 8px", fontFamily: "monospace", borderRight: border, whiteSpace: "nowrap" }}>{item.productCode ?? "—"}</td>}
               <td style={{ padding: "6px 8px", borderRight: border }}>
                 <div>{item.description ?? "—"}</div>
                 {item.hasCert && item.mdaRegNo && <div style={{ marginTop: "1px" }}>MDA: {item.mdaRegNo}{item.mdaValidity ? ` · Exp: ${fmtDate(item.mdaValidity, true)}` : ""}</div>}

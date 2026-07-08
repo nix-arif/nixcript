@@ -9,6 +9,7 @@ import {
   createCustomer,
   updateCustomer,
   deleteCustomer,
+  mergeCustomers,
   getCustomers,
   getCustomerOrganizations,
   getCustomerOrganizationWithMembers,
@@ -48,6 +49,7 @@ import {
   BuildingIcon,
   StarIcon,
   UsersIcon,
+  GitMergeIcon,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -214,6 +216,14 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
   const [savingCustomer, setSavingCustomer] = useState(false);
   const [deletingCustomer, setDeletingCustomer] = useState<string | null>(null);
   const [customerPage, setCustomerPage] = useState(1);
+
+  // ── Merge state ─────────────────────────────────────────────────────────────
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeSearch, setMergeSearch] = useState("");
+  const [mergeResults, setMergeResults] = useState<Customer[]>([]);
+  const [mergeSearching, setMergeSearching] = useState(false);
+  const [mergeTarget, setMergeTarget] = useState<Customer | null>(null); // the duplicate to delete
+  const [merging, setMerging] = useState(false);
   const C_PER_PAGE = 10;
 
   // New-customer local memberships (picked orgs)
@@ -364,6 +374,44 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
       toast.error(e.message);
     } finally {
       setDeletingCustomer(null);
+    }
+  };
+
+  const openMerge = () => {
+    setMergeSearch("");
+    setMergeResults([]);
+    setMergeTarget(null);
+    setMergeOpen(true);
+  };
+
+  const searchForMerge = async (q: string) => {
+    setMergeSearch(q);
+    if (!q.trim()) { setMergeResults([]); return; }
+    setMergeSearching(true);
+    try {
+      const res = await getCustomers(q.trim());
+      setMergeResults(res.filter((c) => c.id !== activeCustomer?.id));
+    } catch {
+      setMergeResults([]);
+    } finally {
+      setMergeSearching(false);
+    }
+  };
+
+  const handleMerge = async () => {
+    if (!activeCustomer || !mergeTarget) return;
+    if (!confirm(`Merge "${mergeTarget.name}" into "${activeCustomer.name}"? The duplicate record will be permanently deleted and all its documents re-linked to the primary. This cannot be undone.`)) return;
+    setMerging(true);
+    try {
+      await mergeCustomers(activeCustomer.id, mergeTarget.id);
+      toast.success(`Merged — "${mergeTarget.name}" has been removed`);
+      setMergeOpen(false);
+      closeCustomerSheet();
+      await refreshCustomers(search);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setMerging(false);
     }
   };
 
@@ -953,6 +1001,74 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* ── Merge duplicate ── */}
+              {canEdit && (
+                <div className="pt-6 mt-4 border-t border-border">
+                  {!mergeOpen ? (
+                    <Button variant="outline" size="sm" className="text-xs gap-1.5 text-muted-foreground" onClick={openMerge}>
+                      <GitMergeIcon className="w-3.5 h-3.5" />
+                      Merge duplicate
+                    </Button>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Merge duplicate into this record</p>
+                        <button onClick={() => setMergeOpen(false)} className="text-muted-foreground hover:text-foreground"><XIcon className="w-3.5 h-3.5" /></button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Search for the duplicate contact. All their quotations, orders, and invoices will be re-linked to <span className="font-medium text-foreground">{[activeCustomer?.title, activeCustomer?.name].filter(Boolean).join(" ")}</span>, then the duplicate will be deleted.</p>
+                      <div className="relative">
+                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                        <Input
+                          value={mergeSearch}
+                          onChange={(e) => searchForMerge(e.target.value)}
+                          placeholder="Search by name..."
+                          className="pl-8 h-9 text-sm"
+                        />
+                      </div>
+                      {mergeSearching && <p className="text-xs text-muted-foreground">Searching…</p>}
+                      {!mergeSearching && mergeSearch && mergeResults.length === 0 && (
+                        <p className="text-xs text-muted-foreground">No other contacts found</p>
+                      )}
+                      {mergeResults.length > 0 && (
+                        <div className="border border-border rounded-lg divide-y divide-border max-h-48 overflow-y-auto">
+                          {mergeResults.map((c) => (
+                            <button
+                              key={c.id}
+                              onClick={() => setMergeTarget(mergeTarget?.id === c.id ? null : c)}
+                              className={cn(
+                                "w-full text-left px-3 py-2.5 text-sm hover:bg-muted/50 transition-colors flex items-center gap-3",
+                                mergeTarget?.id === c.id && "bg-destructive/5 border-l-2 border-l-destructive",
+                              )}
+                            >
+                              <div className={cn("w-7 h-7 rounded shrink-0 flex items-center justify-center text-xs font-medium", getAvatarColor(c.name))}>
+                                {getInitials(c.name)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-medium truncate">{[c.title, c.name].filter(Boolean).join(" ")}</div>
+                                {c.memberships[0] && <div className="text-xs text-muted-foreground truncate">{c.memberships[0].orgName}</div>}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {mergeTarget && (
+                        <div className="rounded-lg bg-destructive/5 border border-destructive/20 p-3 space-y-2">
+                          <p className="text-xs text-destructive font-medium">
+                            Delete &quot;{[mergeTarget.title, mergeTarget.name].filter(Boolean).join(" ")}&quot; and move all records to this contact
+                          </p>
+                          <Button
+                            size="sm" className="w-full text-xs bg-destructive hover:bg-destructive/90"
+                            onClick={handleMerge} disabled={merging}
+                          >
+                            {merging ? "Merging…" : "Confirm merge"}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

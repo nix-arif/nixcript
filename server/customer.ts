@@ -279,6 +279,57 @@ export async function updateCustomer(
     .where(and(eq(customer.id, id), eq(customer.organizationId, orgId)));
 }
 
+// ── Merge duplicate customers ─────────────────────────────────────────────────
+// keepId   — the canonical record to retain
+// deleteId — the duplicate to remove
+// All FK references are re-pointed from deleteId → keepId.
+// customerCompany memberships are migrated (org duplicates are skipped).
+// All 6 document tables have their customerId updated.
+export async function mergeCustomers(keepId: string, deleteId: string) {
+  const { orgId } = await requireAccess("customer:delete");
+  if (keepId === deleteId) throw new Error("Cannot merge a customer with itself");
+
+  const [keepRow, deleteRow] = await Promise.all([
+    db.select({ id: customer.id }).from(customer)
+      .where(and(eq(customer.id, keepId), eq(customer.organizationId, orgId))).limit(1),
+    db.select({ id: customer.id }).from(customer)
+      .where(and(eq(customer.id, deleteId), eq(customer.organizationId, orgId))).limit(1),
+  ]);
+  if (!keepRow[0])   throw new Error("Primary customer not found");
+  if (!deleteRow[0]) throw new Error("Duplicate customer not found");
+
+  // Migrate customerCompany memberships: only move orgs the keep record doesn't already have
+  const [keepOrgs, deleteOrgs] = await Promise.all([
+    db.select({ customerOrganizationId: customerCompany.customerOrganizationId })
+      .from(customerCompany).where(eq(customerCompany.customerId, keepId)),
+    db.select({ id: customerCompany.id, customerOrganizationId: customerCompany.customerOrganizationId })
+      .from(customerCompany).where(eq(customerCompany.customerId, deleteId)),
+  ]);
+  const keepOrgIds = new Set(keepOrgs.map((r) => r.customerOrganizationId));
+  for (const row of deleteOrgs) {
+    if (!keepOrgIds.has(row.customerOrganizationId)) {
+      await db.update(customerCompany)
+        .set({ customerId: keepId })
+        .where(eq(customerCompany.id, row.id));
+    }
+    // Duplicate membership (keep already has this org) — just leave it to be cascade-deleted
+  }
+
+  // Re-point all document FKs
+  await Promise.all([
+    db.update(quotation).set({ customerId: keepId }).where(eq(quotation.customerId, deleteId)),
+    db.update(salesOrder).set({ customerId: keepId }).where(eq(salesOrder.customerId, deleteId)),
+    db.update(customerPurchaseOrder).set({ customerId: keepId }).where(eq(customerPurchaseOrder.customerId, deleteId)),
+    db.update(deliveryOrder).set({ customerId: keepId }).where(eq(deliveryOrder.customerId, deleteId)),
+    db.update(invoice).set({ customerId: keepId }).where(eq(invoice.customerId, deleteId)),
+    db.update(consignment).set({ customerId: keepId }).where(eq(consignment.customerId, deleteId)),
+  ]);
+
+  // Delete the duplicate (cascades remaining customerCompany rows)
+  await db.delete(customer)
+    .where(and(eq(customer.id, deleteId), eq(customer.organizationId, orgId)));
+}
+
 export async function deleteCustomer(id: string) {
   const { orgId } = await requireAccess("customer:delete");
 
