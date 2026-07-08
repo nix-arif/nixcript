@@ -32,15 +32,17 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const SO_STATUS: Record<string, { label: string; className: string; accent: string }> = {
-  draft:     { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400",   accent: "bg-amber-400" },
-  submitted: { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400", accent: "bg-purple-400" },
-  confirmed: { label: "Confirmed",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400",       accent: "bg-blue-400" },
-  fulfilled: { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400",   accent: "bg-green-500" },
-  cancelled: { label: "Cancelled",         className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400",           accent: "bg-red-400" },
+  "pending-do": { label: "Pending DO",        className: "bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-400",     accent: "bg-teal-500" },
+  "pending-pr": { label: "Pending PR",        className: "bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400", accent: "bg-orange-400" },
+  draft:        { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400",   accent: "bg-amber-400" },
+  submitted:    { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400", accent: "bg-purple-400" },
+  confirmed:    { label: "Confirmed",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400",       accent: "bg-blue-400" },
+  fulfilled:    { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400",   accent: "bg-green-500" },
+  cancelled:    { label: "Cancelled",         className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400",           accent: "bg-red-400" },
 };
 
-const EDITABLE_STATUSES = new Set(["draft"]);
-const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
+const EDITABLE_STATUSES  = new Set(["draft", "pending-do", "pending-pr"]);
+const DELETABLE_STATUSES = new Set(["draft", "pending-do", "pending-pr", "cancelled"]);
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = SO_STATUS[status] ?? SO_STATUS.draft;

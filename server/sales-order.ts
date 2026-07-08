@@ -29,7 +29,7 @@ import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
 import { adjustReservation } from "@/lib/inventory/create-movement";
 import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
-import { performStockCheckAndReserve } from "@/server/stock-reservation";
+import { performStockCheckAndReserve, getSoStockStatus } from "@/server/stock-reservation";
 import { Resend } from "resend";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import SoNotificationEmail from "@/components/emails/so-notification";
@@ -399,7 +399,13 @@ export async function getSalesOrderForPrint(id: string) {
 
   if (!so) return null;
 
-  const [items, userRows, orgRows] = await Promise.all([
+  const cpoIds = [
+    ...new Set(
+      ((so.customerPoLinks as { customerPoId: string }[] | null) ?? []).map((l) => l.customerPoId),
+    ),
+  ];
+
+  const [items, userRows, orgRows, cpoRows] = await Promise.all([
     db.select().from(salesOrderItem).where(eq(salesOrderItem.salesOrderId, id)).orderBy(asc(salesOrderItem.rowNo)),
     db.select({ id: user.id, name: user.name }).from(user).where(
       inArray(user.id, [so.createdBy, so.submittedBy, so.approvedBy].filter((x): x is string => !!x)),
@@ -424,16 +430,45 @@ export async function getSalesOrderForPrint(id: string) {
     .leftJoin(organizationProfile, eq(organizationProfile.organizationId, organization.id))
     .where(eq(organization.id, orgId))
     .limit(1),
+    cpoIds.length > 0
+      ? db
+          .select({
+            id: customerPurchaseOrder.id,
+            customerId: customerPurchaseOrder.customerId,
+            customerSnapshot: customerPurchaseOrder.customerSnapshot,
+            deliveryDate: customerPurchaseOrder.deliveryDate,
+            salesPersonName: customerPurchaseOrder.salesPersonName,
+          })
+          .from(customerPurchaseOrder)
+          .where(inArray(customerPurchaseOrder.id, cpoIds))
+      : Promise.resolve([]),
   ]);
 
   const r2Public = process.env.R2_PUBLIC_URL ?? "";
-  const org = orgRows[0];
+  const org     = orgRows[0];
   const orgLogoUrl = org?.logoKey ? `${r2Public}/${org.logoKey}` : (org?.logo ?? null);
-  const nameOf = (uid: string | null) => userRows.find((u) => u.id === uid)?.name ?? null;
+  const nameOf  = (uid: string | null) => userRows.find((u) => u.id === uid)?.name ?? null;
+  const cpoMap  = new Map(cpoRows.map((c) => [c.id, c]));
+
+  const links = (so.customerPoLinks as { customerPoId: string; customerPoNo: string; salesPersonName?: string | null; externalPersons?: { id: string; name: string }[] }[] | null) ?? [];
+  const cpoCustomers: CpoCustomer[] = links.map((l) => {
+    const cpo = cpoMap.get(l.customerPoId);
+    return {
+      customerPoId:    l.customerPoId,
+      customerPoNo:    l.customerPoNo,
+      customerId:      cpo?.customerId ?? null,
+      customerSnapshot: (cpo?.customerSnapshot as CpoCustomer["customerSnapshot"]) ?? null,
+      deliveryDate:    cpo?.deliveryDate ?? null,
+      salesPersonName: cpo?.salesPersonName ?? null,
+      soSalesPersonName: l.salesPersonName ?? null,
+      externalPersons: l.externalPersons ?? [],
+    };
+  });
 
   return {
     order: so,
     items,
+    cpoCustomers,
     createdByName: nameOf(so.createdBy),
     submittedByName: nameOf(so.submittedBy ?? null),
     approvedByName: nameOf(so.approvedBy ?? null),
@@ -502,7 +537,7 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
       urgentAuthDate: input.urgentAuthDate ?? null,
       urgentPoExpectedBy: input.urgentPoExpectedBy ?? null,
       urgentAuthNotes: input.urgentAuthNotes ?? null,
-      status: "draft",
+      status: "pending-do",
       createdBy: userId,
     })
     .returning();
@@ -542,6 +577,14 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
         isAdditional: item.isAdditional ?? false,
       })),
     );
+  }
+
+  // Determine correct initial status now that items are in the DB (product code
+  // resolution requires a DB lookup against this org's catalog).
+  const soStatus = await getSoStockStatus(orgId, row.id);
+  if (soStatus !== "pending-do") {
+    await db.update(salesOrder).set({ status: soStatus }).where(eq(salesOrder.id, row.id));
+    row.status = soStatus;
   }
 
   // Back-link: update all linked Customer POs so they point to this new SO
@@ -864,7 +907,7 @@ export async function submitSalesOrder(id: string): Promise<void> {
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
   if (!so) throw new Error("Sales order not found");
-  if (so.status !== "draft") throw new Error("Only draft orders can be submitted");
+  if (!["draft", "pending-do", "pending-pr"].includes(so.status)) throw new Error("Only draft orders can be submitted");
 
   await db
     .update(salesOrder)

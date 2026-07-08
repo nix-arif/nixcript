@@ -7,6 +7,12 @@ import {
   customerOrganization,
   user,
   member,
+  quotation,
+  salesOrder,
+  consignment,
+  customerPurchaseOrder,
+  deliveryOrder,
+  invoice,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -275,6 +281,37 @@ export async function updateCustomer(
 
 export async function deleteCustomer(id: string) {
   const { orgId } = await requireAccess("customer:delete");
+
+  // Pre-check all FK references so we return a friendly error instead of a DB violation.
+  const [qtRow, soRow, cpoRow, doRow, invRow, conRow] = await Promise.all([
+    db.select({ id: quotation.id }).from(quotation)
+      .where(and(eq(quotation.customerId, id), eq(quotation.organizationId, orgId))).limit(1),
+    db.select({ id: salesOrder.id }).from(salesOrder)
+      .where(and(eq(salesOrder.customerId, id), eq(salesOrder.organizationId, orgId))).limit(1),
+    db.select({ id: customerPurchaseOrder.id }).from(customerPurchaseOrder)
+      .where(and(eq(customerPurchaseOrder.customerId, id), eq(customerPurchaseOrder.organizationId, orgId))).limit(1),
+    db.select({ id: deliveryOrder.id }).from(deliveryOrder)
+      .where(and(eq(deliveryOrder.customerId, id), eq(deliveryOrder.organizationId, orgId))).limit(1),
+    db.select({ id: invoice.id }).from(invoice)
+      .where(and(eq(invoice.customerId, id), eq(invoice.organizationId, orgId))).limit(1),
+    db.select({ id: consignment.id }).from(consignment)
+      .where(and(eq(consignment.customerId, id), eq(consignment.organizationId, orgId))).limit(1),
+  ]);
+
+  const blocking: string[] = [
+    qtRow.length  > 0 && "quotation(s)",
+    soRow.length  > 0 && "sales order(s)",
+    cpoRow.length > 0 && "purchase order(s)",
+    doRow.length  > 0 && "delivery order(s)",
+    invRow.length > 0 && "invoice(s)",
+    conRow.length > 0 && "consignment(s)",
+  ].filter(Boolean) as string[];
+
+  if (blocking.length > 0) {
+    throw new Error(
+      `Cannot delete this customer — they are linked to existing ${blocking.join(", ")}. Remove those records first.`,
+    );
+  }
 
   await db
     .delete(customer)

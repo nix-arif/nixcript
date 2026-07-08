@@ -1426,7 +1426,7 @@ export const salesOrder = pgTable(
     customerPoLinks: json("customer_po_links").$type<{ customerPoId: string; customerPoNo: string }[]>(),
 
     notes: text("notes"),
-    status: text("status").notNull().default("draft"), // draft | confirmed | fulfilled | cancelled
+    status: text("status").notNull().default("draft"), // pending-do | pending-pr | submitted | confirmed | fulfilled | cancelled
 
     deliveryDate: timestamp("delivery_date"),
     deliveryAddress: text("delivery_address"),

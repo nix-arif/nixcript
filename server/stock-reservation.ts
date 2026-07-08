@@ -64,8 +64,12 @@ async function computeStockCheckItems(orgId: string, soId: string) {
     }
   }
 
+  // Items that still have a product code but no resolved productId belong to a
+  // different org's catalog — they cannot be stock-checked and must block DO creation.
+  const hasUnresolvableItems = items.some((i) => !i.productId && i.productCode);
+
   const productItems = items.filter((i) => i.productId);
-  if (productItems.length === 0) return { productItems, result: [] as StockCheckItem[] };
+  if (productItems.length === 0) return { productItems, result: [] as StockCheckItem[], hasUnresolvableItems };
 
   const productIds = [...new Set(productItems.map((i) => i.productId!))];
   const levels = await db
@@ -97,7 +101,7 @@ async function computeStockCheckItems(orgId: string, soId: string) {
     };
   });
 
-  return { productItems, result };
+  return { productItems, result, hasUnresolvableItems };
 }
 
 /**
@@ -112,8 +116,8 @@ export async function getStockInsight(soId: string): Promise<StockCheckResult> {
     .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
   if (!so) throw new Error("Sales order not found");
 
-  const { result } = await computeStockCheckItems(orgId, soId);
-  return { canReserve: result.every((r) => r.shortage === 0), items: result };
+  const { result, hasUnresolvableItems } = await computeStockCheckItems(orgId, soId);
+  return { canReserve: !hasUnresolvableItems && result.every((r) => r.shortage === 0), items: result };
 }
 
 export async function checkAndReserveStock(soId: string): Promise<StockCheckResult> {
@@ -139,9 +143,19 @@ export async function performStockCheckAndReserve(
   if (so.status !== "confirmed") throw new Error("Only confirmed sales orders can have stock reserved");
   if (so.stockReservationStatus === "reserved") throw new Error("Stock is already reserved for this sales order");
 
-  const { productItems, result } = await computeStockCheckItems(orgId, soId);
+  const { productItems, result, hasUnresolvableItems } = await computeStockCheckItems(orgId, soId);
 
-  // No trackable items — mark reserved immediately so DO can be created
+  // Items with product codes that couldn't be resolved to this org's catalog cannot
+  // be stock-checked — treat as insufficient so DO is blocked until the catalog is linked.
+  if (hasUnresolvableItems && productItems.length === 0) {
+    await db
+      .update(salesOrder)
+      .set({ stockReservationStatus: "insufficient" })
+      .where(eq(salesOrder.id, soId));
+    return { canReserve: false, items: [] };
+  }
+
+  // Truly no trackable items (description-only, no product code) — allow DO
   if (productItems.length === 0) {
     await db
       .update(salesOrder)
@@ -212,4 +226,17 @@ export async function recheckAllInsufficientSos(): Promise<{ resolved: number }>
   }
 
   return { resolved };
+}
+
+/**
+ * Pure read — determines whether an SO should be "pending-do" or "pending-pr"
+ * based on current stock, without mutating reservedQty or stockReservationStatus.
+ * Safe to call at creation time (after items have been inserted).
+ */
+export async function getSoStockStatus(orgId: string, soId: string): Promise<"pending-do" | "pending-pr"> {
+  const { productItems, result, hasUnresolvableItems } = await computeStockCheckItems(orgId, soId);
+  if (productItems.length === 0) {
+    return hasUnresolvableItems ? "pending-pr" : "pending-do";
+  }
+  return result.every((r) => r.shortage === 0) ? "pending-do" : "pending-pr";
 }
