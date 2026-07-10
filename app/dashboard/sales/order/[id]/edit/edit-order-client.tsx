@@ -123,16 +123,22 @@ function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown, onBlur: onCodeBlur
   const [open, setOpen] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const codeOnFocus = useRef("");
+  const currentVal = useRef(item.productCode ?? "");
 
-  useEffect(() => { setQ(item.productCode ?? ""); }, [item.productCode]);
+  useEffect(() => {
+    setQ(item.productCode ?? "");
+    currentVal.current = item.productCode ?? "";
+  }, [item.productCode]);
 
   function handleInput(val: string) {
     setQ(val);
+    currentVal.current = val;
     onUpdate(item._key, { productCode: val, productId: undefined });
     if (debounce.current) clearTimeout(debounce.current);
     if (!val.trim()) { setResults([]); setOpen(false); return; }
     debounce.current = setTimeout(async () => {
       const r = await searchProducts(val);
+      if (val !== currentVal.current) return;
       setResults(r);
       setOpen(r.length > 0);
       const exact = r.find((p) => p.productCode.toLowerCase() === val.trim().toLowerCase());

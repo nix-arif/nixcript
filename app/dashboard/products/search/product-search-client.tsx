@@ -1096,6 +1096,7 @@ export function ProductSearch() {
   const [selected, setSelected] = useState<Product | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchGenRef = useRef(0);
 
   useEffect(() => {
     getDistinctBrands()
@@ -1110,16 +1111,20 @@ export function ProductSearch() {
       setPage(1);
       return;
     }
+    const gen = ++searchGenRef.current;
     setLoading(true);
     setSearched(true);
+    setResults([]);
     try {
       const res = await searchProducts(q.trim(), b || undefined);
+      if (gen !== searchGenRef.current) return;
       setResults(res);
       setPage(1);
     } catch {
+      if (gen !== searchGenRef.current) return;
       setResults([]);
     } finally {
-      setLoading(false);
+      if (gen === searchGenRef.current) setLoading(false);
     }
   }, []);
 
