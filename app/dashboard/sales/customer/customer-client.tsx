@@ -61,7 +61,7 @@ type OrgSearchResult = Awaited<ReturnType<typeof searchCustomerOrganizations>>[n
 
 const TITLES = [
   "Dr", "Matron", "Sr", "MA", "Mr", "Ms", "Mdm", "Prof",
-  "Dato", "Datin", "Tan Sri", "Tuan", "Puan", "Encik", "KJ",
+  "Dato", "Datin", "Tan Sri", "Tuan", "Puan", "Encik", "KJ", "SN",
 ];
 
 const AVATAR_COLORS = [
