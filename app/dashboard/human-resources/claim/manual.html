@@ -1,0 +1,517 @@
+<title>Claim Submission — User Manual</title>
+<style>
+:root {
+  --bg:#F4F6FA;--surface:#FFF;--surface-2:#EEF1F7;
+  --text:#1E2130;--muted:#68748A;
+  --accent:#2558D9;--accent-sub:#E8EEFA;--border:#DCE1EC;--r:8px;
+  --d:#6B7280;--d-bg:#F3F4F6;
+  --pe:#B45309;--pe-bg:#FEF3C7;
+  --ck:#1D4ED8;--ck-bg:#DBEAFE;
+  --ap:#047857;--ap-bg:#D1FAE5;
+  --po:#6D28D9;--po-bg:#EDE9FE;
+  --rj:#B91C1C;--rj-bg:#FEE2E2;
+  --ca:#9CA3AF;--ca-bg:#F1F5F9;
+  --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono","Fira Code",monospace;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0E1219;--surface:#161C27;--surface-2:#1D2536;
+  --text:#E2E8F4;--muted:#8A97B0;
+  --accent:#5B80F5;--accent-sub:#1A2444;--border:#2A3248;
+  --d:#9CA3AF;--d-bg:#1E2535;
+  --pe:#F59E0B;--pe-bg:#2A2010;
+  --ck:#60A5FA;--ck-bg:#142035;
+  --ap:#34D399;--ap-bg:#0B2418;
+  --po:#A78BFA;--po-bg:#1D1330;
+  --rj:#F87171;--rj-bg:#2A1010;
+  --ca:#6B7280;--ca-bg:#1E2535;
+}}
+:root[data-theme="dark"]{
+  --bg:#0E1219;--surface:#161C27;--surface-2:#1D2536;
+  --text:#E2E8F4;--muted:#8A97B0;
+  --accent:#5B80F5;--accent-sub:#1A2444;--border:#2A3248;
+  --d:#9CA3AF;--d-bg:#1E2535;
+  --pe:#F59E0B;--pe-bg:#2A2010;
+  --ck:#60A5FA;--ck-bg:#142035;
+  --ap:#34D399;--ap-bg:#0B2418;
+  --po:#A78BFA;--po-bg:#1D1330;
+  --rj:#F87171;--rj-bg:#2A1010;
+  --ca:#6B7280;--ca-bg:#1E2535;
+}
+:root[data-theme="light"]{
+  --bg:#F4F6FA;--surface:#FFF;--surface-2:#EEF1F7;
+  --text:#1E2130;--muted:#68748A;
+  --accent:#2558D9;--accent-sub:#E8EEFA;--border:#DCE1EC;
+  --d:#6B7280;--d-bg:#F3F4F6;
+  --pe:#B45309;--pe-bg:#FEF3C7;
+  --ck:#1D4ED8;--ck-bg:#DBEAFE;
+  --ap:#047857;--ap-bg:#D1FAE5;
+  --po:#6D28D9;--po-bg:#EDE9FE;
+  --rj:#B91C1C;--rj-bg:#FEE2E2;
+  --ca:#9CA3AF;--ca-bg:#F1F5F9;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+body::before{content:'';display:block;height:3px;background:var(--accent)}
+.ph{background:var(--surface);border-bottom:1px solid var(--border);padding:26px 48px}
+.phi{max-width:1080px;margin:0 auto;display:flex;align-items:center;gap:18px}
+.phi-icon{flex-shrink:0;width:46px;height:46px;background:var(--accent);border-radius:11px;display:flex;align-items:center;justify-content:center}
+.phi-meta h1{font-size:18px;font-weight:700;letter-spacing:-.025em;line-height:1.2}
+.phi-meta p{font-size:13px;color:var(--muted);margin-top:3px}
+.phi-tag{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);background:var(--accent-sub);padding:4px 10px;border-radius:6px;margin-left:auto;white-space:nowrap}
+.layout{max-width:1080px;margin:0 auto;padding:40px 48px;display:grid;grid-template-columns:200px 1fr;gap:52px;align-items:start}
+.toc{position:sticky;top:24px}
+.toc-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:10px;padding-left:10px}
+.toc nav{display:flex;flex-direction:column;gap:1px}
+.toc a{display:block;font-size:13px;color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:6px;line-height:1.3;transition:color .12s,background .12s}
+.toc a:hover{color:var(--text);background:var(--surface-2)}
+.toc a.sub{padding-left:22px;font-size:12px}
+.content{display:flex;flex-direction:column;gap:52px;min-width:0}
+.sec{display:flex;flex-direction:column;gap:22px}
+.sec-hd{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--border);padding-bottom:14px}
+.sec-n{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--accent);flex-shrink:0}
+h2{font-size:19px;font-weight:700;letter-spacing:-.02em;text-wrap:balance;line-height:1.2}
+h3{font-size:14px;font-weight:700;line-height:1.3}
+p{color:var(--text);max-width:62ch}
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;line-height:1.6;vertical-align:middle}
+.badge::before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.b-d{background:var(--d-bg);color:var(--d)}
+.b-pe{background:var(--pe-bg);color:var(--pe)}
+.b-ck{background:var(--ck-bg);color:var(--ck)}
+.b-ap{background:var(--ap-bg);color:var(--ap)}
+.b-po{background:var(--po-bg);color:var(--po)}
+.b-rj{background:var(--rj-bg);color:var(--rj)}
+.b-ca{background:var(--ca-bg);color:var(--ca)}
+.type-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px;display:flex;flex-direction:column;gap:10px}
+.tc-icon{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:var(--accent-sub);font-size:18px;flex-shrink:0}
+.tc h3{font-size:13.5px}
+.tc p{font-size:12.5px;color:var(--muted);line-height:1.5;max-width:none}
+.tc-eg{display:flex;flex-direction:column;gap:3px;margin-top:4px}
+.tc-eg span{font-size:11.5px;color:var(--muted);padding-left:12px;position:relative}
+.tc-eg span::before{content:'·';position:absolute;left:4px;color:var(--accent)}
+.steps{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:40px 1fr;gap:16px;padding-bottom:24px;position:relative}
+.step:not(:last-child)::after{content:'';position:absolute;left:19px;top:42px;bottom:0;width:2px;background:var(--border)}
+.step-n{width:40px;height:40px;background:var(--surface);border:2px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);position:relative;z-index:1;flex-shrink:0}
+.step-b{padding-top:8px}
+.step-b h3{margin-bottom:5px;font-size:14px}
+.step-b p{font-size:13.5px;color:var(--muted);max-width:52ch}
+.step-paths{display:flex;gap:10px;margin-top:12px}
+.sp{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;flex:1}
+.sp-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:4px}
+.sp p{font-size:12px;color:var(--muted);max-width:none}
+.fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:28px 24px;overflow-x:auto}
+.status-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
+tbody tr:last-child td{border-bottom:none}
+.td-d{color:var(--muted);max-width:260px}
+.td-a{font-size:12px;color:var(--muted)}
+.roles-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.rc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 20px}
+.rc-perm{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:6px}
+.rc h3{font-size:15px;margin-bottom:14px}
+.rc-acts{display:flex;flex-direction:column;gap:8px}
+.rc-act{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted)}
+.rc-act::before{content:'→';color:var(--accent);font-size:11px;margin-top:2px;flex-shrink:0}
+.info{background:var(--accent-sub);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch}
+.act-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ac{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.ac h3{margin-bottom:8px}
+.ac p{font-size:13px;color:var(--muted);max-width:none;line-height:1.55}
+.ac ol{margin-top:10px;padding-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+.cat-grp{display:flex;flex-direction:column;gap:14px}
+.cat-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:8px}
+.cat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ci{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:13px 15px}
+.ci-code{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--accent);letter-spacing:.04em;margin-bottom:3px}
+.ci-name{font-size:13px;font-weight:600;margin-bottom:3px}
+.ci-desc{font-size:12px;color:var(--muted);line-height:1.45}
+.ref-row{display:flex;align-items:center;gap:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 22px;width:fit-content}
+.ref-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;font-weight:600}
+.ref-fmt{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.ref-fmt span{color:var(--accent)}
+.ref-div{width:1px;background:var(--border);align-self:stretch}
+.ref-key{font-size:12.5px;color:var(--muted);line-height:1.7}
+.ref-key strong{color:var(--accent)}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+@media(max-width:800px){
+  .ph{padding:20px 24px}
+  .phi-tag{display:none}
+  .layout{grid-template-columns:1fr;padding:28px 20px;gap:0}
+  .toc{display:none}
+  .type-grid,.roles-grid,.act-grid{grid-template-columns:1fr}
+  .cat-grid{grid-template-columns:1fr}
+  .step-paths{flex-direction:column}
+  .ref-row{flex-direction:column;align-items:flex-start;gap:12px;width:100%}
+  .ref-div{display:none}
+}
+</style>
+
+<header class="ph">
+  <div class="phi">
+    <div class="phi-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M9 12H15M9 16H15M7 4H5C3.9 4 3 4.9 3 6V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V6C21 4.9 20.1 4 19 4H17M9 4C9 3.4 9.4 3 10 3H14C14.6 3 15 3.4 15 4V5C15 5.6 14.6 6 14 6H10C9.4 6 9 5.6 9 5V4Z" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="phi-meta">
+      <h1>Claim Submission — User Manual</h1>
+      <p>Human Resources · Expense Claims</p>
+    </div>
+    <div class="phi-tag">HR System</div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="toc">
+    <p class="toc-lbl">Contents</p>
+    <nav>
+      <a href="#overview">Overview</a>
+      <a href="#types">Claim Types</a>
+      <a href="#submit">How to Submit</a>
+      <a href="#flow">Status &amp; Workflow</a>
+      <a href="#roles">Roles</a>
+      <a href="#manage">Managing Claims</a>
+      <a href="#resubmit" class="sub">Resubmit</a>
+      <a href="#cancel" class="sub">Cancel</a>
+      <a href="#categories">Line Item Categories</a>
+      <a href="#ref">Quick Reference</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+
+    <section class="sec" id="overview">
+      <div class="sec-hd"><span class="sec-n">01</span><h2>Overview</h2></div>
+      <p>The Claim module lets you submit and track expense reimbursement requests — covering local travel, overseas trips, and customer entertainment. Each claim moves through a review chain and is automatically posted as a journal entry once approved.</p>
+      <p>You can submit immediately or save a draft and finalize later. Depending on your organisation's setup, a Checker may review the claim before it reaches the Approver.</p>
+      <div class="info">Every claim gets a unique application number: <strong>CR-YYYY-XXXX</strong> (e.g. CR-2026-0001). Quote this number when following up on a claim.</div>
+    </section>
+
+    <section class="sec" id="types">
+      <div class="sec-hd"><span class="sec-n">02</span><h2>Claim Types</h2></div>
+      <p>Select the form that matches your expense. Using the wrong type may cause rejection.</p>
+      <div class="type-grid">
+        <div class="tc">
+          <div class="tc-icon">🚗</div>
+          <h3>Local Claim</h3>
+          <p>Domestic travel and day-to-day business expenses.</p>
+          <div class="tc-eg">
+            <span>Mileage (own vehicle / car pool)</span>
+            <span>Daily allowance &amp; accommodation</span>
+            <span>Toll &amp; parking</span>
+            <span>Mobile phone charges</span>
+            <span>Other local expenses</span>
+          </div>
+        </div>
+        <div class="tc">
+          <div class="tc-icon">✈️</div>
+          <h3>Overseas Claim</h3>
+          <p>Expenses incurred during foreign business trips.</p>
+          <div class="tc-eg">
+            <span>Overseas expenses in MYR</span>
+            <span>Foreign currency (FX) expenses</span>
+            <span>Flights &amp; accommodation</span>
+            <span>Other overseas expenses</span>
+          </div>
+        </div>
+        <div class="tc">
+          <div class="tc-icon">🍽️</div>
+          <h3>Entertainment Form</h3>
+          <p>Customer or client entertainment expenses.</p>
+          <div class="tc-eg">
+            <span>Restaurant &amp; dining</span>
+            <span>Event &amp; function costs</span>
+            <span>In-base entertainment</span>
+            <span>Gifts (within policy)</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="submit">
+      <div class="sec-hd"><span class="sec-n">03</span><h2>How to Submit a Claim</h2></div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-n">1</div>
+          <div class="step-b">
+            <h3>Navigate to My Claims</h3>
+            <p>From the sidebar go to <strong>Human Resources → My Claims</strong>. This lists all your past and active claims.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">2</div>
+          <div class="step-b">
+            <h3>Click "New Claim"</h3>
+            <p>Use the button at the top-right of the My Claims page to open the submission form.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">3</div>
+          <div class="step-b">
+            <h3>Select Claim Type</h3>
+            <p>Choose <strong>Local</strong>, <strong>Overseas</strong>, or <strong>Entertainment Form</strong>. See Section 02 if you're unsure which applies.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">4</div>
+          <div class="step-b">
+            <h3>Fill In Claim Details</h3>
+            <p>Complete the header (claim period, purpose, department) and add each expense as a line item. Attach receipts where required. For travel, enter distance and route. For overseas FX, enter the foreign-currency amount — the system records the exchange rate.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">5</div>
+          <div class="step-b">
+            <h3>Submit or Save as Draft</h3>
+            <p>Choose how to proceed:</p>
+            <div class="step-paths">
+              <div class="sp">
+                <p class="sp-lbl">Submit Now</p>
+                <p>Claim is sent immediately. Status becomes <span class="badge b-pe">Pending</span> and reviewers are notified.</p>
+              </div>
+              <div class="sp">
+                <p class="sp-lbl">Save as Draft</p>
+                <p>Claim is saved privately as <span class="badge b-d">Draft</span>. Click <strong>Finalize</strong> when ready to submit.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="flow">
+      <div class="sec-hd"><span class="sec-n">04</span><h2>Status &amp; Approval Workflow</h2></div>
+      <div class="fw">
+        <pre class="mermaid">
+flowchart TD
+    START([Start]) --> NAV[Human Resources → My Claims]
+    NAV --> NEW[Click New Claim]
+    NEW --> TYPE{Choose\nClaim Type}
+    TYPE -->|Local| FORM
+    TYPE -->|Overseas| FORM
+    TYPE -->|Entertainment| FORM
+    FORM[Fill in details and add line items] --> ACTION{Submit or\nSave Draft?}
+    ACTION -->|Save as Draft| DRAFT([DRAFT])
+    ACTION -->|Submit Now| PENDING([PENDING])
+    DRAFT -->|Finalize| PENDING
+    DRAFT -->|Cancel| CANCELLED([CANCELLED])
+    PENDING -->|Cancel| CANCELLED
+    PENDING --> CHK{Checker\nassigned?}
+    CHK -->|Yes| CREV[Checker Reviews]
+    CHK -->|No checkers| AREV[Approver Reviews]
+    CREV -->|Approve| CHECKED([CHECKED])
+    CREV -->|Reject| REJECTED([REJECTED])
+    CHECKED --> AREV
+    CHECKED -->|Cancel| CANCELLED
+    AREV -->|Approve| APPROVED([APPROVED])
+    AREV -->|Reject| REJECTED
+    APPROVED --> POSTED([POSTED — Journal Entry Created])
+    POSTED --> DONE([Done])
+    REJECTED --> RESUB{Resubmit?}
+    RESUB -->|Yes| PENDING
+    RESUB -->|No| DONE
+    CANCELLED --> DONE
+    classDef sd fill:#F3F4F6,stroke:#9CA3AF,color:#374151,font-weight:600
+    classDef sp fill:#FEF3C7,stroke:#D97706,color:#92400E,font-weight:600
+    classDef sc fill:#DBEAFE,stroke:#2563EB,color:#1E40AF,font-weight:600
+    classDef sa fill:#D1FAE5,stroke:#059669,color:#065F46,font-weight:600
+    classDef spo fill:#EDE9FE,stroke:#7C3AED,color:#4C1D95,font-weight:600
+    classDef sr fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,font-weight:600
+    classDef sca fill:#F1F5F9,stroke:#94A3B8,color:#475569,font-weight:600
+    class DRAFT sd
+    class PENDING sp
+    class CHECKED sc
+    class APPROVED sa
+    class POSTED spo
+    class REJECTED sr
+    class CANCELLED sca
+        </pre>
+      </div>
+
+      <div class="status-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Meaning</th>
+              <th>Who acts next</th>
+              <th>Actions available</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge b-d">Draft</span></td>
+              <td class="td-d">Saved but not submitted. Only you can see it.</td>
+              <td>Submitter</td>
+              <td class="td-a">Edit · Finalize · Cancel</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-pe">Pending</span></td>
+              <td class="td-d">Submitted and awaiting first review. Checker (or Approver if none) is notified.</td>
+              <td>Checker / Approver</td>
+              <td class="td-a">Cancel (submitter)</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-ck">Checked</span></td>
+              <td class="td-d">Checker approved. Now awaiting Approver's decision.</td>
+              <td>Approver</td>
+              <td class="td-a">Cancel (submitter)</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-ap">Approved</span></td>
+              <td class="td-d">Approver approved. Journal entry is being created.</td>
+              <td>System</td>
+              <td class="td-a">—</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-po">Posted</span></td>
+              <td class="td-d">Journal entry created. Claim is finalised and locked.</td>
+              <td>Finance</td>
+              <td class="td-a">View journal</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-rj">Rejected</span></td>
+              <td class="td-d">Rejected by Checker or Approver. A reason is provided.</td>
+              <td>Submitter</td>
+              <td class="td-a">Resubmit · Cancel</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-ca">Cancelled</span></td>
+              <td class="td-d">Withdrawn by submitter. Cannot be reopened.</td>
+              <td>—</td>
+              <td class="td-a">—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sec" id="roles">
+      <div class="sec-hd"><span class="sec-n">05</span><h2>Roles &amp; Responsibilities</h2></div>
+      <p>Three roles participate in the claim process. A user may hold more than one role.</p>
+      <div class="roles-grid">
+        <div class="rc">
+          <p class="rc-perm">claim:submit</p>
+          <h3>Submitter</h3>
+          <div class="rc-acts">
+            <div class="rc-act">Create new claims (Local, Overseas, Entertainment)</div>
+            <div class="rc-act">Save claims as drafts and finalize when ready</div>
+            <div class="rc-act">Cancel claims before approval</div>
+            <div class="rc-act">Resubmit rejected claims after editing</div>
+            <div class="rc-act">View own claim history</div>
+          </div>
+        </div>
+        <div class="rc">
+          <p class="rc-perm">claim:check</p>
+          <h3>Checker</h3>
+          <div class="rc-acts">
+            <div class="rc-act">Review claims in the Checker queue</div>
+            <div class="rc-act">Approve → <span class="badge b-ck">Checked</span></div>
+            <div class="rc-act">Reject with reason → <span class="badge b-rj">Rejected</span></div>
+            <div class="rc-act">View all claims checked in the organisation</div>
+          </div>
+        </div>
+        <div class="rc">
+          <p class="rc-perm">claim:approve</p>
+          <h3>Approver</h3>
+          <div class="rc-acts">
+            <div class="rc-act">Review Checked claims (or Pending if no Checker)</div>
+            <div class="rc-act">Approve → <span class="badge b-ap">Approved</span> then <span class="badge b-po">Posted</span></div>
+            <div class="rc-act">Reject with reason → <span class="badge b-rj">Rejected</span></div>
+            <div class="rc-act">View all approved claim history</div>
+          </div>
+        </div>
+      </div>
+      <div class="info"><strong>No Checker assigned?</strong> If no user holds the <code>claim:check</code> role, the Checker step is skipped entirely — claims go directly from <span class="badge b-pe">Pending</span> to Approver review.</div>
+    </section>
+
+    <section class="sec" id="manage">
+      <div class="sec-hd"><span class="sec-n">06</span><h2>Managing Your Claims</h2></div>
+      <div class="act-grid">
+        <div class="ac" id="resubmit">
+          <h3>Resubmitting a Rejected Claim</h3>
+          <p>If rejected, you receive a notification with the reviewer's reason. You can edit and resubmit from the claim detail page.</p>
+          <ol>
+            <li>Open the rejected claim from <strong>My Claims</strong></li>
+            <li>Read the rejection reason shown at the top</li>
+            <li>Edit claim details or line items as needed</li>
+            <li>Click <strong>Resubmit</strong></li>
+            <li>Status returns to <span class="badge b-pe">Pending</span> and reviewers are notified again</li>
+          </ol>
+        </div>
+        <div class="ac" id="cancel">
+          <h3>Cancelling a Claim</h3>
+          <p>Cancellation is available when the claim is in <span class="badge b-d">Draft</span>, <span class="badge b-pe">Pending</span>, or <span class="badge b-ck">Checked</span> status.</p>
+          <ol>
+            <li>Open the claim from <strong>My Claims</strong></li>
+            <li>Click <strong>Cancel Claim</strong></li>
+            <li>Confirm the cancellation</li>
+            <li>Status changes to <span class="badge b-ca">Cancelled</span> — this cannot be undone</li>
+          </ol>
+          <p style="margin-top:10px">Claims that are <span class="badge b-ap">Approved</span> or <span class="badge b-po">Posted</span> cannot be cancelled.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="categories">
+      <div class="sec-hd"><span class="sec-n">07</span><h2>Line Item Categories</h2></div>
+      <p>Each line item must be assigned a category. Choose the one that best describes the expense.</p>
+      <div class="cat-grp">
+        <div>
+          <p class="cat-lbl">Local Claim</p>
+          <div class="cat-grid">
+            <div class="ci"><p class="ci-code">TRAVEL</p><p class="ci-name">Travel — Mileage</p><p class="ci-desc">Own vehicle or car pool trips. Enter route, distance, and travel mode.</p></div>
+            <div class="ci"><p class="ci-code">TRAVEL_DAILY_ALLOWANCE</p><p class="ci-name">Daily Allowance</p><p class="ci-desc">Per-diem allowance associated with a travel trip.</p></div>
+            <div class="ci"><p class="ci-code">TRAVEL_ACCOMMODATION</p><p class="ci-name">Accommodation</p><p class="ci-desc">Hotel or lodging costs during a local business trip.</p></div>
+            <div class="ci"><p class="ci-code">TRAVEL_ENTERTAINMENT</p><p class="ci-name">Travel Entertainment</p><p class="ci-desc">Entertainment expenses incurred while travelling.</p></div>
+            <div class="ci"><p class="ci-code">TOLL / PARKING</p><p class="ci-name">Toll &amp; Parking</p><p class="ci-desc">Highway toll charges and parking fees.</p></div>
+            <div class="ci"><p class="ci-code">MOBILE</p><p class="ci-name">Mobile Phone</p><p class="ci-desc">Business-related phone charges.</p></div>
+            <div class="ci"><p class="ci-code">IN_BASE_ENT</p><p class="ci-name">In-Base Entertainment</p><p class="ci-desc">Customer or client entertainment at the home base location.</p></div>
+            <div class="ci"><p class="ci-code">OTHER_LOCAL</p><p class="ci-name">Other Local</p><p class="ci-desc">Miscellaneous local expenses not covered by other categories.</p></div>
+          </div>
+        </div>
+        <div>
+          <p class="cat-lbl">Overseas Claim</p>
+          <div class="cat-grid">
+            <div class="ci"><p class="ci-code">OVERSEAS_MYR</p><p class="ci-name">Overseas — MYR</p><p class="ci-desc">Overseas expenses paid in Malaysian Ringgit.</p></div>
+            <div class="ci"><p class="ci-code">OVERSEAS_FX</p><p class="ci-name">Overseas — Foreign Currency</p><p class="ci-desc">Expenses in foreign currency. Enter the FX amount; the system records the exchange rate.</p></div>
+            <div class="ci"><p class="ci-code">OVERSEAS_OTHER</p><p class="ci-name">Overseas — Other</p><p class="ci-desc">Other overseas expenses not covered above.</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="ref">
+      <div class="sec-hd"><span class="sec-n">08</span><h2>Quick Reference</h2></div>
+      <h3 style="margin-bottom:10px">Application Number Format</h3>
+      <div class="ref-row">
+        <div>
+          <p class="ref-lbl">Format</p>
+          <p class="ref-fmt"><span>CR</span>-2026-<span>0001</span></p>
+        </div>
+        <div class="ref-div"></div>
+        <div class="ref-key">
+          <p><strong>CR</strong> — Claim Request prefix</p>
+          <p><strong style="color:var(--text)">2026</strong> — Calendar year</p>
+          <p><strong>0001</strong> — Sequential number (resets each year)</p>
+        </div>
+      </div>
+      <h3 style="margin-top:28px;margin-bottom:10px">All Statuses</h3>
+      <div class="badge-row">
+        <span class="badge b-d">Draft</span>
+        <span class="badge b-pe">Pending</span>
+        <span class="badge b-ck">Checked</span>
+        <span class="badge b-ap">Approved</span>
+        <span class="badge b-po">Posted</span>
+        <span class="badge b-rj">Rejected</span>
+        <span class="badge b-ca">Cancelled</span>
+      </div>
+    </section>
+
+  </main>
+</div>

@@ -16,6 +16,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { ChevronsUpDownIcon, PlusIcon, CheckIcon } from "lucide-react";
+import Image from "next/image";
 import CreateOrganizationForm from "./dialog-forms/create-organization-form";
 import { authClient } from "@/lib/auth-client";
 import { Spinner } from "./ui/spinner";
@@ -40,12 +41,12 @@ function orgAvatarColor(name: string) {
 }
 
 function OrgAvatar({ name, logo, size = "md" }: { name: string; logo?: string | null; size?: "sm" | "md" }) {
+  const px = size === "sm" ? 24 : 32;
   const dim = size === "sm" ? "size-6" : "size-8";
   const text = size === "sm" ? "text-[11px]" : "text-sm";
   if (logo) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img src={logo} alt={name} className={`${dim} rounded-md object-contain`} />
+      <Image src={logo} alt={name} width={px} height={px} className={`${dim} rounded-md object-contain`} />
     );
   }
   return (

@@ -598,7 +598,15 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
       let cuRY2 = cuTop2;
       const _vdE2 = (q.validUntil && q.createdAt) ? Math.round((new Date(q.validUntil).getTime() - new Date(q.createdAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
-      for (const [lbl, val] of [["Date", fmtD(q.createdAt)], ["Validity", _vdE2 !== null ? `${_vdE2} days` : "—"]] as [string,string][]) {
+      const _spDisplay2 = (!q.revisionNo && q.salesPersonName)
+        ? ((q as any).salesPersonPhone ? `${q.salesPersonName} (${(q as any).salesPersonPhone})` : q.salesPersonName)
+        : null;
+      const dateRows2: [string, string][] = [
+        ["Date",     fmtD(q.createdAt)],
+        ["Validity", _vdE2 !== null ? `${_vdE2} days` : "—"],
+        ...(_spDisplay2 ? [["Sales Person", _spDisplay2]] as [string, string][] : []),
+      ];
+      for (const [lbl, val] of dateRows2) {
         page.drawText(`${lbl}:`, { x: RIGHT_X, y: cuRY2, size: 8, font: fontL, color: C_DARK });
         const vw2 = fontS.widthOfTextAtSize(val, 8);
         page.drawText(val, { x: W - MR - vw2, y: cuRY2, size: 8, font: fontS, color: C_DARK });
