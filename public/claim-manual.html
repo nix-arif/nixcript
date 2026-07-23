@@ -1,3 +1,8 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Claim Submission — User Manual</title>
 <style>
 :root {
@@ -26,30 +31,6 @@
   --rj:#F87171;--rj-bg:#2A1010;
   --ca:#6B7280;--ca-bg:#1E2535;
 }}
-:root[data-theme="dark"]{
-  --bg:#0E1219;--surface:#161C27;--surface-2:#1D2536;
-  --text:#E2E8F4;--muted:#8A97B0;
-  --accent:#5B80F5;--accent-sub:#1A2444;--border:#2A3248;
-  --d:#9CA3AF;--d-bg:#1E2535;
-  --pe:#F59E0B;--pe-bg:#2A2010;
-  --ck:#60A5FA;--ck-bg:#142035;
-  --ap:#34D399;--ap-bg:#0B2418;
-  --po:#A78BFA;--po-bg:#1D1330;
-  --rj:#F87171;--rj-bg:#2A1010;
-  --ca:#6B7280;--ca-bg:#1E2535;
-}
-:root[data-theme="light"]{
-  --bg:#F4F6FA;--surface:#FFF;--surface-2:#EEF1F7;
-  --text:#1E2130;--muted:#68748A;
-  --accent:#2558D9;--accent-sub:#E8EEFA;--border:#DCE1EC;
-  --d:#6B7280;--d-bg:#F3F4F6;
-  --pe:#B45309;--pe-bg:#FEF3C7;
-  --ck:#1D4ED8;--ck-bg:#DBEAFE;
-  --ap:#047857;--ap-bg:#D1FAE5;
-  --po:#6D28D9;--po-bg:#EDE9FE;
-  --rj:#B91C1C;--rj-bg:#FEE2E2;
-  --ca:#9CA3AF;--ca-bg:#F1F5F9;
-}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
 body::before{content:'';display:block;height:3px;background:var(--accent)}
@@ -102,8 +83,11 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding
 .sp{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;flex:1}
 .sp-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:4px}
 .sp p{font-size:12px;color:var(--muted);max-width:none}
-.fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:28px 24px;overflow-x:auto}
-.status-wrap{overflow-x:auto}
+/* Flowchart wrapper — scrollable on mobile */
+.fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fw svg{display:block;max-width:100%;height:auto}
+.fw .mermaid{min-width:min-content}
+.status-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{width:100%;border-collapse:collapse;font-size:13px}
 thead th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
 tbody td{padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
@@ -139,17 +123,21 @@ tbody tr:last-child td{border-bottom:none}
 .ref-key strong{color:var(--accent)}
 .badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 @media(max-width:800px){
-  .ph{padding:20px 24px}
+  .ph{padding:20px 20px}
   .phi-tag{display:none}
-  .layout{grid-template-columns:1fr;padding:28px 20px;gap:0}
+  .layout{grid-template-columns:1fr;padding:24px 16px;gap:0}
   .toc{display:none}
   .type-grid,.roles-grid,.act-grid{grid-template-columns:1fr}
   .cat-grid{grid-template-columns:1fr}
   .step-paths{flex-direction:column}
   .ref-row{flex-direction:column;align-items:flex-start;gap:12px;width:100%}
   .ref-div{display:none}
+  /* Keep flowchart scrollable horizontally on small screens */
+  .fw{padding:16px 14px}
 }
 </style>
+</head>
+<body>
 
 <header class="ph">
   <div class="phi">
@@ -287,7 +275,7 @@ tbody tr:last-child td{border-bottom:none}
     <section class="sec" id="flow">
       <div class="sec-hd"><span class="sec-n">04</span><h2>Status &amp; Approval Workflow</h2></div>
       <div class="fw">
-        <pre class="mermaid">
+        <div class="mermaid">
 flowchart TD
     START([Start]) --> NAV[Human Resources → My Claims]
     NAV --> NEW[Click New Claim]
@@ -330,7 +318,7 @@ flowchart TD
     class POSTED spo
     class REJECTED sr
     class CANCELLED sca
-        </pre>
+        </div>
       </div>
 
       <div class="status-wrap">
@@ -515,3 +503,14 @@ flowchart TD
 
   </main>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'neutral',
+    flowchart: { useMaxWidth: true, htmlLabels: true }
+  });
+</script>
+</body>
+</html>
