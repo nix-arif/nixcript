@@ -55,6 +55,25 @@ export default function Home() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
           </a>
+          <a
+            href="/leave-manual.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 p-3.5 bg-white border border-slate-200 rounded-xl hover:border-slate-300 hover:shadow-sm transition-all group"
+          >
+            <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center text-sm shrink-0">
+              📅
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-800 group-hover:text-black truncate">
+                Leave Submission Manual
+              </p>
+              <p className="text-xs text-slate-400">How to apply for leave</p>
+            </div>
+            <svg className="ml-auto w-4 h-4 text-slate-300 group-hover:text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </a>
         </div>
       </div>
 

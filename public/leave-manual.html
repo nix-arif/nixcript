@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leave Submission — User Manual</title>
+<style>
+:root {
+  --bg:#F3F7F4;--surface:#FFF;--surface-2:#EAF2EC;
+  --text:#1A2820;--muted:#5A7565;
+  --accent:#1A7A4A;--accent-sub:#E0F2E9;--border:#C8DED0;--r:8px;
+  --pe:#B45309;--pe-bg:#FEF3C7;
+  --ap:#047857;--ap-bg:#D1FAE5;
+  --rj:#B91C1C;--rj-bg:#FEE2E2;
+  --ca:#9CA3AF;--ca-bg:#F1F5F9;
+  --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono","Fira Code",monospace;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0A1410;--surface:#111D16;--surface-2:#182B1F;
+  --text:#D8EDE0;--muted:#7BAF8A;
+  --accent:#3DC87A;--accent-sub:#0D2B1A;--border:#1E3D2A;
+  --pe:#FBB040;--pe-bg:#2B2010;
+  --ap:#4DD8A0;--ap-bg:#0C2B20;
+  --rj:#FF8080;--rj-bg:#2B1010;
+  --ca:#6B7A96;--ca-bg:#182B1F;
+}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+body::before{content:'';display:block;height:3px;background:var(--accent)}
+.ph{background:var(--surface);border-bottom:1px solid var(--border);padding:26px 48px}
+.phi{max-width:1080px;margin:0 auto;display:flex;align-items:center;gap:18px}
+.phi-icon{flex-shrink:0;width:46px;height:46px;background:var(--accent);border-radius:11px;display:flex;align-items:center;justify-content:center}
+.phi-meta h1{font-size:18px;font-weight:700;letter-spacing:-.025em;line-height:1.2}
+.phi-meta p{font-size:13px;color:var(--muted);margin-top:3px}
+.phi-tag{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);background:var(--accent-sub);padding:4px 10px;border-radius:6px;margin-left:auto;white-space:nowrap}
+.layout{max-width:1080px;margin:0 auto;padding:40px 48px;display:grid;grid-template-columns:200px 1fr;gap:52px;align-items:start}
+.toc{position:sticky;top:24px}
+.toc-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:10px;padding-left:10px}
+.toc nav{display:flex;flex-direction:column;gap:1px}
+.toc a{display:block;font-size:13px;color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:6px;line-height:1.3;transition:color .12s,background .12s}
+.toc a:hover{color:var(--text);background:var(--surface-2)}
+.toc a.sub{padding-left:22px;font-size:12px}
+.content{display:flex;flex-direction:column;gap:52px;min-width:0}
+.sec{display:flex;flex-direction:column;gap:22px}
+.sec-hd{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--border);padding-bottom:14px}
+.sec-n{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--accent);flex-shrink:0}
+h2{font-size:19px;font-weight:700;letter-spacing:-.02em;text-wrap:balance;line-height:1.2}
+h3{font-size:14px;font-weight:700;line-height:1.3}
+p{color:var(--text);max-width:62ch}
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--accent)}
+strong{font-weight:700}
+/* badges */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;line-height:1.6;vertical-align:middle}
+.badge::before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.b-pe{background:var(--pe-bg);color:var(--pe)}
+.b-ap{background:var(--ap-bg);color:var(--ap)}
+.b-rj{background:var(--rj-bg);color:var(--rj)}
+.b-ca{background:var(--ca-bg);color:var(--ca)}
+/* pill tags */
+.pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.03em;vertical-align:middle}
+.pill-paid{background:#D1FAE5;color:#065F46}
+.pill-unpaid{background:#FEE2E2;color:#7F1D1D}
+.pill-doc{background:#FEF3C7;color:#92400E}
+.pill-half{background:var(--accent-sub);color:var(--accent)}
+.pill-cf{background:#EDE9FE;color:#4C1D95}
+@media(prefers-color-scheme:dark){
+  .pill-paid{background:#0C2B20;color:#4DD8A0}
+  .pill-unpaid{background:#2B1010;color:#FF8080}
+  .pill-doc{background:#2B2010;color:#FBB040}
+  .pill-half{background:var(--accent-sub);color:var(--accent)}
+  .pill-cf{background:#1E1438;color:#BB9EFF}
+}
+/* info / warn boxes */
+.info{background:var(--accent-sub);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch}
+.warn{background:var(--pe-bg);border-left:3px solid var(--pe);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch;color:var(--pe)}
+/* steps */
+.steps{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:40px 1fr;gap:16px;padding-bottom:24px;position:relative}
+.step:not(:last-child)::after{content:'';position:absolute;left:19px;top:42px;bottom:0;width:2px;background:var(--border)}
+.step-n{width:40px;height:40px;background:var(--surface);border:2px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);position:relative;z-index:1;flex-shrink:0}
+.step-b{padding-top:8px}
+.step-b h3{margin-bottom:5px;font-size:14px}
+.step-b p{font-size:13.5px;color:var(--muted);max-width:54ch}
+/* leave type table */
+.lt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* generic table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle;line-height:1.5}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--surface-2)}
+.td-m{color:var(--muted);font-size:12px}
+/* balance card */
+.bal-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.bal-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.bal-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+.bal-val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+.bal-sub{font-size:11px;color:var(--muted);margin-top:3px}
+/* flowchart */
+.fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fw svg{display:block;max-width:100%;height:auto}
+.fw-loading{display:flex;align-items:center;justify-content:center;min-height:160px;color:var(--muted);font-size:13px}
+/* status wrap */
+.status-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* roles */
+.roles-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.rc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 20px}
+.rc-perm{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:6px}
+.rc h3{font-size:15px;margin-bottom:14px}
+.rc-acts{display:flex;flex-direction:column;gap:8px}
+.rc-act{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted)}
+.rc-act::before{content:'→';color:var(--accent);font-size:11px;margin-top:2px;flex-shrink:0}
+/* formula */
+.formula{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;font-family:var(--mono);font-size:13px;color:var(--text);line-height:2}
+.formula span{color:var(--accent);font-weight:700}
+/* ref */
+.ref-row{display:flex;align-items:center;gap:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 22px;width:fit-content}
+.ref-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;font-weight:600}
+.ref-fmt{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.ref-fmt span{color:var(--accent)}
+.ref-div{width:1px;background:var(--border);align-self:stretch}
+.ref-key{font-size:12.5px;color:var(--muted);line-height:1.7}
+.ref-key strong{color:var(--accent)}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+/* cancel cards */
+.act-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ac{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.ac h3{margin-bottom:8px}
+.ac p{font-size:13px;color:var(--muted);max-width:none;line-height:1.55}
+.ac ol{margin-top:10px;padding-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+@media(max-width:800px){
+  .ph{padding:20px}
+  .phi-tag{display:none}
+  .layout{grid-template-columns:1fr;padding:24px 16px;gap:0}
+  .toc{display:none}
+  .bal-grid{grid-template-columns:1fr 1fr}
+  .roles-grid,.act-grid{grid-template-columns:1fr}
+  .ref-row{flex-direction:column;align-items:flex-start;gap:12px;width:100%}
+  .ref-div{display:none}
+  .fw{padding:16px 12px}
+}
+@media(max-width:480px){
+  .bal-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<header class="ph">
+  <div class="phi">
+    <div class="phi-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M8 7V3M16 7V3M7 11H17M5 21H19C20.1 21 21 20.1 21 19V7C21 5.9 20.1 5 19 5H5C3.9 5 3 5.9 3 7V19C3 20.1 3.9 21 5 21Z" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="phi-meta">
+      <h1>Leave Submission — User Manual</h1>
+      <p>Human Resources · Leave Applications</p>
+    </div>
+    <div class="phi-tag">HR System</div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="toc">
+    <p class="toc-lbl">Contents</p>
+    <nav>
+      <a href="#overview">Overview</a>
+      <a href="#types">Leave Types</a>
+      <a href="#balance">Leave Balance</a>
+      <a href="#apply">How to Apply</a>
+      <a href="#halfday" class="sub">Half-Day Leave</a>
+      <a href="#docs" class="sub">Document Upload</a>
+      <a href="#flow">Status &amp; Workflow</a>
+      <a href="#roles">Roles</a>
+      <a href="#cancel">Cancelling Leave</a>
+      <a href="#ref">Quick Reference</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+
+    <section class="sec" id="overview">
+      <div class="sec-hd"><span class="sec-n">01</span><h2>Overview</h2></div>
+      <p>The Leave module lets you apply for, track, and manage leave applications — from annual leave to medical and emergency leave. Applications are submitted directly for Approver review; there is no draft or checker step.</p>
+      <p>Leave balances are calculated per calendar year based on your length of service. The system counts working days only (Monday to Friday) and prevents overlapping applications.</p>
+      <div class="info">Every application gets a unique number: <strong>LV-YYYY-XXXX</strong> (e.g. LV-2026-0001). Use this number when following up with HR.</div>
+    </section>
+
+    <section class="sec" id="types">
+      <div class="sec-hd"><span class="sec-n">02</span><h2>Leave Types</h2></div>
+      <p>Your organisation may configure custom leave types. The defaults are listed below.</p>
+      <div class="lt-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Leave Type</th>
+              <th>Code</th>
+              <th>Entitlement (by service)</th>
+              <th>Paid</th>
+              <th>Half-Day</th>
+              <th>Document Required</th>
+              <th>Carry Forward</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Annual Leave</strong></td>
+              <td><code>AL</code></td>
+              <td class="td-m">0–2 yrs: 8 days<br>2–5 yrs: 12 days<br>5+ yrs: 16 days</td>
+              <td><span class="pill pill-paid">Paid</span></td>
+              <td><span class="pill pill-half">Yes</span></td>
+              <td>No</td>
+              <td><span class="pill pill-cf">Up to 8 days</span></td>
+            </tr>
+            <tr>
+              <td><strong>Medical / Sick Leave</strong></td>
+              <td><code>ML</code></td>
+              <td class="td-m">0–2 yrs: 14 days<br>2–5 yrs: 18 days<br>5+ yrs: 22 days</td>
+              <td><span class="pill pill-paid">Paid</span></td>
+              <td>No</td>
+              <td><span class="pill pill-doc">MC Required</span></td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><strong>Hospitalisation Leave</strong></td>
+              <td><code>HL</code></td>
+              <td class="td-m">60 days (all service)</td>
+              <td><span class="pill pill-paid">Paid</span></td>
+              <td>No</td>
+              <td><span class="pill pill-doc">Doc Required</span></td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><strong>Maternity Leave</strong></td>
+              <td><code>MAT</code></td>
+              <td class="td-m">98 days (all service)</td>
+              <td><span class="pill pill-paid">Paid</span></td>
+              <td>No</td>
+              <td><span class="pill pill-doc">Doc Required</span></td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><strong>Paternity Leave</strong></td>
+              <td><code>PAT</code></td>
+              <td class="td-m">7 days (all service)</td>
+              <td><span class="pill pill-paid">Paid</span></td>
+              <td>No</td>
+              <td><span class="pill pill-doc">Doc Required</span></td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><strong>Bereavement Leave</strong></td>
+              <td><code>BER</code></td>
+              <td class="td-m">3 days per incident</td>
+              <td><span class="pill pill-paid">Paid</span></td>
+              <td>No</td>
+              <td>No</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><strong>Emergency Leave</strong></td>
+              <td><code>EMERG</code></td>
+              <td class="td-m">3 days per incident</td>
+              <td><span class="pill pill-paid">Paid</span></td>
+              <td>No</td>
+              <td>No</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><strong>Unpaid Leave</strong></td>
+              <td><code>UPL</code></td>
+              <td class="td-m">At employer discretion</td>
+              <td><span class="pill pill-unpaid">Unpaid</span></td>
+              <td>No</td>
+              <td>No</td>
+              <td>No</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="info">Entitlement days are based on your <strong>length of service</strong> (join date). The system calculates this automatically. Carry forward days from the previous year are added to your current balance.</div>
+    </section>
+
+    <section class="sec" id="balance">
+      <div class="sec-hd"><span class="sec-n">03</span><h2>Your Leave Balance</h2></div>
+      <p>Go to <strong>Human Resources → My Leave</strong> to see your balances for the current year. Each leave type shows:</p>
+      <div class="bal-grid">
+        <div class="bal-card">
+          <p class="bal-label">Entitled</p>
+          <p class="bal-val">16</p>
+          <p class="bal-sub">Days granted this year based on service</p>
+        </div>
+        <div class="bal-card">
+          <p class="bal-label">Carry Forward</p>
+          <p class="bal-val">5</p>
+          <p class="bal-sub">Unused days brought over from last year</p>
+        </div>
+        <div class="bal-card">
+          <p class="bal-label">Used</p>
+          <p class="bal-val">4</p>
+          <p class="bal-sub">Approved and consumed days</p>
+        </div>
+        <div class="bal-card">
+          <p class="bal-label">Available</p>
+          <p class="bal-val" style="color:var(--accent)">17</p>
+          <p class="bal-sub">Remaining days you can apply for</p>
+        </div>
+      </div>
+      <div class="formula">
+        <span>Available</span> = Entitled + Carry Forward − Used − Pending
+      </div>
+      <p style="font-size:13px;color:var(--muted)">Days in <strong>Pending</strong> status are reserved from your balance until the application is approved or cancelled. Weekends are not counted in any balance.</p>
+    </section>
+
+    <section class="sec" id="apply">
+      <div class="sec-hd"><span class="sec-n">04</span><h2>How to Apply for Leave</h2></div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-n">1</div>
+          <div class="step-b">
+            <h3>Check Your Balance</h3>
+            <p>Go to <strong>Human Resources → My Leave</strong> and verify you have enough available days for the leave type you need.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">2</div>
+          <div class="step-b">
+            <h3>Click "Apply Leave"</h3>
+            <p>Use the button at the top-right of the My Leave page to open the application form.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">3</div>
+          <div class="step-b">
+            <h3>Select Leave Type</h3>
+            <p>Choose from the available leave types in the dropdown. Only active types with sufficient balance are selectable.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">4</div>
+          <div class="step-b">
+            <h3>Set Dates</h3>
+            <p>Pick your start and end date. The system automatically calculates the number of <strong>working days</strong> (Monday–Friday only). Weekends and public holidays are excluded.</p>
+            <p style="margin-top:6px">For <strong>half-day</strong> leave, enable the toggle and select <strong>AM</strong> (morning) or <strong>PM</strong> (afternoon). See Section 04a below.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">5</div>
+          <div class="step-b">
+            <h3>Add Reason &amp; Upload Document</h3>
+            <p>Enter a reason for the leave. For leave types that require a supporting document (Medical Leave, Hospitalisation, etc.), upload the document before submitting. See Section 04b.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">6</div>
+          <div class="step-b">
+            <h3>Submit</h3>
+            <p>Click <strong>Submit Application</strong>. The status immediately becomes <span class="badge b-pe">Pending</span> and your Approver is notified. Days are reserved from your balance until a decision is made.</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="halfday" style="display:flex;flex-direction:column;gap:12px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)">
+        <h3>04a — Half-Day Leave</h3>
+        <p style="font-size:13.5px;color:var(--muted);max-width:none">Half-day leave is only available for leave types that allow it (e.g. Annual Leave). It counts as <strong>0.5 days</strong> against your balance.</p>
+        <ul style="padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted)">
+          <li>Enable the <strong>Half Day</strong> toggle on the form</li>
+          <li>Select <strong>AM</strong> (you leave at noon) or <strong>PM</strong> (you arrive after noon)</li>
+          <li>Start date and end date must be the same day for a half-day application</li>
+        </ul>
+      </div>
+
+      <div id="docs" style="display:flex;flex-direction:column;gap:12px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)">
+        <h3>04b — Document Upload</h3>
+        <p style="font-size:13.5px;color:var(--muted);max-width:none">Certain leave types require a supporting document. The form will prompt you when a document is needed.</p>
+        <ul style="padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted)">
+          <li><strong>Medical Leave</strong> — upload your Medical Certificate (MC)</li>
+          <li><strong>Hospitalisation Leave</strong> — upload hospital admission letter or discharge summary</li>
+          <li><strong>Maternity / Paternity Leave</strong> — upload birth certificate or hospital document</li>
+          <li>Accepted formats: PDF, JPG, PNG</li>
+          <li>You can upload additional documents after submission from the application detail page</li>
+        </ul>
+      </div>
+
+      <div class="warn">You cannot submit an application if the dates overlap with an existing <span class="badge b-pe">Pending</span> or <span class="badge b-ap">Approved</span> application. Cancel the existing application first if needed.</div>
+    </section>
+
+    <section class="sec" id="flow">
+      <div class="sec-hd"><span class="sec-n">05</span><h2>Status &amp; Approval Workflow</h2></div>
+      <div id="fw-wrap" class="fw">
+        <div class="fw-loading">Loading diagram…</div>
+      </div>
+
+      <div class="status-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Meaning</th>
+              <th>Balance effect</th>
+              <th>Who acts next</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge b-pe">Pending</span></td>
+              <td style="color:var(--muted);max-width:240px">Submitted and awaiting Approver's decision. Approver is notified.</td>
+              <td style="font-size:12px;color:var(--muted)">Days deducted as <em>pending</em></td>
+              <td>Approver</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-ap">Approved</span></td>
+              <td style="color:var(--muted);max-width:240px">Approver approved. Leave is confirmed.</td>
+              <td style="font-size:12px;color:var(--muted)">Pending → Used</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-rj">Rejected</span></td>
+              <td style="color:var(--muted);max-width:240px">Approver rejected with a reason. You are notified.</td>
+              <td style="font-size:12px;color:var(--muted)">Pending days returned</td>
+              <td>Applicant (new application)</td>
+            </tr>
+            <tr>
+              <td><span class="badge b-ca">Cancelled</span></td>
+              <td style="color:var(--muted);max-width:240px">Withdrawn by applicant (or Approver). Cannot be reopened.</td>
+              <td style="font-size:12px;color:var(--muted)">Pending or Used days returned</td>
+              <td>—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="info"><strong>No re-submission:</strong> Unlike claims, rejected leave applications cannot be resubmitted. Submit a new application instead with corrected dates or details.</div>
+    </section>
+
+    <section class="sec" id="roles">
+      <div class="sec-hd"><span class="sec-n">06</span><h2>Roles &amp; Responsibilities</h2></div>
+      <p>Two roles participate in the leave process.</p>
+      <div class="roles-grid">
+        <div class="rc">
+          <p class="rc-perm">leave:apply</p>
+          <h3>Applicant</h3>
+          <div class="rc-acts">
+            <div class="rc-act">Check leave balances</div>
+            <div class="rc-act">Submit leave applications</div>
+            <div class="rc-act">Upload supporting documents</div>
+            <div class="rc-act">Cancel own Pending or Approved applications</div>
+            <div class="rc-act">View own application history</div>
+          </div>
+        </div>
+        <div class="rc">
+          <p class="rc-perm">leave:approve</p>
+          <h3>Approver</h3>
+          <div class="rc-acts">
+            <div class="rc-act">View all pending applications in the Approvals queue</div>
+            <div class="rc-act">Approve → <span class="badge b-ap">Approved</span> (with optional comment)</div>
+            <div class="rc-act">Reject with reason → <span class="badge b-rj">Rejected</span></div>
+            <div class="rc-act">Cancel any application on behalf of applicant</div>
+            <div class="rc-act"><strong>Cannot approve their own application</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="cancel">
+      <div class="sec-hd"><span class="sec-n">07</span><h2>Cancelling a Leave Application</h2></div>
+      <p>You can cancel an application in either <span class="badge b-pe">Pending</span> or <span class="badge b-ap">Approved</span> status. The balance is restored automatically.</p>
+      <div class="act-grid">
+        <div class="ac">
+          <h3>Cancel a Pending Application</h3>
+          <p>The application has not yet been reviewed.</p>
+          <ol>
+            <li>Open the application from <strong>My Leave</strong></li>
+            <li>Click <strong>Cancel Application</strong></li>
+            <li>Confirm the cancellation</li>
+            <li>Status changes to <span class="badge b-ca">Cancelled</span> — pending days are returned to your balance</li>
+          </ol>
+        </div>
+        <div class="ac">
+          <h3>Cancel an Approved Application</h3>
+          <p>The leave has been approved but you no longer need it.</p>
+          <ol>
+            <li>Open the application from <strong>My Leave</strong></li>
+            <li>Click <strong>Cancel Application</strong></li>
+            <li>Confirm the cancellation</li>
+            <li>Status changes to <span class="badge b-ca">Cancelled</span> — used days are returned to your balance</li>
+          </ol>
+          <p style="margin-top:10px;font-size:12.5px">Notify your manager separately if cancelling approved leave affects work coverage.</p>
+        </div>
+      </div>
+      <div class="warn">Cancelled applications cannot be reopened. Submit a new application if you still need the leave.</div>
+    </section>
+
+    <section class="sec" id="ref">
+      <div class="sec-hd"><span class="sec-n">08</span><h2>Quick Reference</h2></div>
+      <h3 style="margin-bottom:10px">Application Number Format</h3>
+      <div class="ref-row">
+        <div>
+          <p class="ref-lbl">Format</p>
+          <p class="ref-fmt"><span>LV</span>-2026-<span>0001</span></p>
+        </div>
+        <div class="ref-div"></div>
+        <div class="ref-key">
+          <p><strong>LV</strong> — Leave Application prefix</p>
+          <p><strong style="color:var(--text)">2026</strong> — Calendar year</p>
+          <p><strong>0001</strong> — Sequential number (resets each year)</p>
+        </div>
+      </div>
+      <h3 style="margin-top:28px;margin-bottom:10px">Key Rules at a Glance</h3>
+      <table style="max-width:640px">
+        <tbody>
+          <tr><td style="font-weight:600;width:220px;padding:10px 14px">Day counting</td><td style="color:var(--muted);padding:10px 14px">Working days only (Mon–Fri). Weekends excluded.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Half-day value</td><td style="color:var(--muted);padding:10px 14px">0.5 days deducted from balance.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Overlap rule</td><td style="color:var(--muted);padding:10px 14px">No two active applications may share a date.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Self-approval</td><td style="color:var(--muted);padding:10px 14px">Approvers cannot approve their own leave.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Carry forward</td><td style="color:var(--muted);padding:10px 14px">Annual Leave only — unused days roll over (max 8 days).</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Balance year</td><td style="color:var(--muted);padding:10px 14px">Balances reset every January 1st.</td></tr>
+        </tbody>
+      </table>
+      <h3 style="margin-top:28px;margin-bottom:10px">All Statuses</h3>
+      <div class="badge-row">
+        <span class="badge b-pe">Pending</span>
+        <span class="badge b-ap">Approved</span>
+        <span class="badge b-rj">Rejected</span>
+        <span class="badge b-ca">Cancelled</span>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  var diagramBase = [
+    'flowchart TD',
+    '    START([Start]) --> BAL[Check Leave Balance\\nHuman Resources → My Leave]',
+    '    BAL --> APPLY[Click Apply Leave]',
+    '    APPLY --> TYPE[Select Leave Type]',
+    '    TYPE --> FORM[Set dates and enter reason]',
+    '    FORM --> HDEC{Half-Day?}',
+    '    HDEC -->|Yes| HPER[Select AM or PM]',
+    '    HDEC -->|No| DDEC',
+    '    HPER --> DDEC',
+    '    DDEC{Document\\nRequired?} -->|Yes — upload MC or doc| SUB',
+    '    DDEC -->|No| SUB',
+    '    SUB[Submit Application] --> PENDING([PENDING])',
+    '    PENDING --> APV{Approver\\nDecision}',
+    '    APV -->|Approve| APPROVED([APPROVED])',
+    '    APV -->|Reject with reason| REJECTED([REJECTED])',
+    '    PENDING -->|Cancel| CANCELLED([CANCELLED])',
+    '    APPROVED -->|Cancel| CANCELLED',
+    '    APPROVED --> DONE([Done])',
+    '    REJECTED --> DONE',
+    '    CANCELLED --> DONE'
+  ].join('\n');
+
+  var lightDefs = [
+    '    classDef sp fill:#FEF3C7,stroke:#D97706,color:#92400E,font-weight:600',
+    '    classDef sa fill:#D1FAE5,stroke:#059669,color:#065F46,font-weight:600',
+    '    classDef sr fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,font-weight:600',
+    '    classDef sca fill:#F1F5F9,stroke:#94A3B8,color:#475569,font-weight:600'
+  ].join('\n');
+
+  var darkDefs = [
+    '    classDef sp fill:#2B2010,stroke:#FBB040,color:#FDE8A0,font-weight:600',
+    '    classDef sa fill:#0C2B20,stroke:#4DD8A0,color:#A7F3D0,font-weight:600',
+    '    classDef sr fill:#2B1010,stroke:#FF8080,color:#FECACA,font-weight:600',
+    '    classDef sca fill:#182B1F,stroke:#6B7A96,color:#8D9BB8,font-weight:600'
+  ].join('\n');
+
+  var classAssign = [
+    '    class PENDING sp',
+    '    class APPROVED sa',
+    '    class REJECTED sr',
+    '    class CANCELLED sca'
+  ].join('\n');
+
+  function render(dark) {
+    var diagram = diagramBase + '\n' + (dark ? darkDefs : lightDefs) + '\n' + classAssign;
+    var wrap = document.getElementById('fw-wrap');
+    var el = document.createElement('div');
+    el.className = 'mermaid';
+    el.textContent = diagram;
+    wrap.innerHTML = '';
+    wrap.appendChild(el);
+
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'base',
+      themeVariables: dark ? {
+        background: 'transparent',
+        primaryColor: '#182B1F',
+        primaryTextColor: '#D8EDE0',
+        primaryBorderColor: '#1E3D2A',
+        lineColor: '#2E5E3A',
+        secondaryColor: '#0D2B1A',
+        tertiaryColor: '#111D16',
+        edgeLabelBackground: '#111D16',
+        fontSize: '14px'
+      } : {
+        background: 'transparent',
+        primaryColor: '#EAF2EC',
+        primaryTextColor: '#1A2820',
+        primaryBorderColor: '#C8DED0',
+        lineColor: '#8AB89A',
+        secondaryColor: '#E0F2E9',
+        tertiaryColor: '#F3F7F4',
+        edgeLabelBackground: '#F3F7F4',
+        fontSize: '14px'
+      },
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+    });
+
+    mermaid.run({ nodes: [el] });
+  }
+
+  render(isDark);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
+    render(e.matches);
+  });
+})();
+</script>
+</body>
+</html>
