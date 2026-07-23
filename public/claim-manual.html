@@ -20,16 +20,16 @@
   --mono:ui-monospace,"SF Mono","Fira Code",monospace;
 }
 @media(prefers-color-scheme:dark){:root{
-  --bg:#0E1219;--surface:#161C27;--surface-2:#1D2536;
-  --text:#E2E8F4;--muted:#8A97B0;
-  --accent:#5B80F5;--accent-sub:#1A2444;--border:#2A3248;
-  --d:#9CA3AF;--d-bg:#1E2535;
-  --pe:#F59E0B;--pe-bg:#2A2010;
-  --ck:#60A5FA;--ck-bg:#142035;
-  --ap:#34D399;--ap-bg:#0B2418;
-  --po:#A78BFA;--po-bg:#1D1330;
-  --rj:#F87171;--rj-bg:#2A1010;
-  --ca:#6B7280;--ca-bg:#1E2535;
+  --bg:#0B0F17;--surface:#131929;--surface-2:#1A2236;
+  --text:#DDE3F0;--muted:#8D9BB8;
+  --accent:#6B8EF8;--accent-sub:#192044;--border:#253050;
+  --d:#8D9BB8;--d-bg:#1A2236;
+  --pe:#FBB040;--pe-bg:#2B2010;
+  --ck:#7BB3FF;--ck-bg:#122040;
+  --ap:#4DD8A0;--ap-bg:#0C2B20;
+  --po:#BB9EFF;--po-bg:#1E1438;
+  --rj:#FF8080;--rj-bg:#2B1010;
+  --ca:#6B7A96;--ca-bg:#1A2236;
 }}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
@@ -54,7 +54,7 @@ body::before{content:'';display:block;height:3px;background:var(--accent)}
 h2{font-size:19px;font-weight:700;letter-spacing:-.02em;text-wrap:balance;line-height:1.2}
 h3{font-size:14px;font-weight:700;line-height:1.3}
 p{color:var(--text);max-width:62ch}
-code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--accent)}
 .badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;line-height:1.6;vertical-align:middle}
 .badge::before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
 .b-d{background:var(--d-bg);color:var(--d)}
@@ -83,10 +83,9 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding
 .sp{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;flex:1}
 .sp-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:4px}
 .sp p{font-size:12px;color:var(--muted);max-width:none}
-/* Flowchart wrapper — scrollable on mobile */
 .fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .fw svg{display:block;max-width:100%;height:auto}
-.fw .mermaid{min-width:min-content}
+.fw-loading{display:flex;align-items:center;justify-content:center;min-height:160px;color:var(--muted);font-size:13px}
 .status-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{width:100%;border-collapse:collapse;font-size:13px}
 thead th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
@@ -123,7 +122,7 @@ tbody tr:last-child td{border-bottom:none}
 .ref-key strong{color:var(--accent)}
 .badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 @media(max-width:800px){
-  .ph{padding:20px 20px}
+  .ph{padding:20px}
   .phi-tag{display:none}
   .layout{grid-template-columns:1fr;padding:24px 16px;gap:0}
   .toc{display:none}
@@ -132,8 +131,7 @@ tbody tr:last-child td{border-bottom:none}
   .step-paths{flex-direction:column}
   .ref-row{flex-direction:column;align-items:flex-start;gap:12px;width:100%}
   .ref-div{display:none}
-  /* Keep flowchart scrollable horizontally on small screens */
-  .fw{padding:16px 14px}
+  .fw{padding:16px 12px}
 }
 </style>
 </head>
@@ -274,51 +272,8 @@ tbody tr:last-child td{border-bottom:none}
 
     <section class="sec" id="flow">
       <div class="sec-hd"><span class="sec-n">04</span><h2>Status &amp; Approval Workflow</h2></div>
-      <div class="fw">
-        <div class="mermaid">
-flowchart TD
-    START([Start]) --> NAV[Human Resources → My Claims]
-    NAV --> NEW[Click New Claim]
-    NEW --> TYPE{Choose\nClaim Type}
-    TYPE -->|Local| FORM
-    TYPE -->|Overseas| FORM
-    TYPE -->|Entertainment| FORM
-    FORM[Fill in details and add line items] --> ACTION{Submit or\nSave Draft?}
-    ACTION -->|Save as Draft| DRAFT([DRAFT])
-    ACTION -->|Submit Now| PENDING([PENDING])
-    DRAFT -->|Finalize| PENDING
-    DRAFT -->|Cancel| CANCELLED([CANCELLED])
-    PENDING -->|Cancel| CANCELLED
-    PENDING --> CHK{Checker\nassigned?}
-    CHK -->|Yes| CREV[Checker Reviews]
-    CHK -->|No checkers| AREV[Approver Reviews]
-    CREV -->|Approve| CHECKED([CHECKED])
-    CREV -->|Reject| REJECTED([REJECTED])
-    CHECKED --> AREV
-    CHECKED -->|Cancel| CANCELLED
-    AREV -->|Approve| APPROVED([APPROVED])
-    AREV -->|Reject| REJECTED
-    APPROVED --> POSTED([POSTED — Journal Entry Created])
-    POSTED --> DONE([Done])
-    REJECTED --> RESUB{Resubmit?}
-    RESUB -->|Yes| PENDING
-    RESUB -->|No| DONE
-    CANCELLED --> DONE
-    classDef sd fill:#F3F4F6,stroke:#9CA3AF,color:#374151,font-weight:600
-    classDef sp fill:#FEF3C7,stroke:#D97706,color:#92400E,font-weight:600
-    classDef sc fill:#DBEAFE,stroke:#2563EB,color:#1E40AF,font-weight:600
-    classDef sa fill:#D1FAE5,stroke:#059669,color:#065F46,font-weight:600
-    classDef spo fill:#EDE9FE,stroke:#7C3AED,color:#4C1D95,font-weight:600
-    classDef sr fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,font-weight:600
-    classDef sca fill:#F1F5F9,stroke:#94A3B8,color:#475569,font-weight:600
-    class DRAFT sd
-    class PENDING sp
-    class CHECKED sc
-    class APPROVED sa
-    class POSTED spo
-    class REJECTED sr
-    class CANCELLED sca
-        </div>
+      <div id="fw-wrap" class="fw">
+        <div class="fw-loading">Loading diagram…</div>
       </div>
 
       <div class="status-wrap">
@@ -504,13 +459,117 @@ flowchart TD
   </main>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>
-  mermaid.initialize({
-    startOnLoad: true,
-    theme: 'neutral',
-    flowchart: { useMaxWidth: true, htmlLabels: true }
+(function () {
+  var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  var diagramBase = [
+    'flowchart TD',
+    '    START([Start]) --> NAV[Human Resources → My Claims]',
+    '    NAV --> NEW[Click New Claim]',
+    '    NEW --> TYPE{Choose\\nClaim Type}',
+    '    TYPE -->|Local| FORM',
+    '    TYPE -->|Overseas| FORM',
+    '    TYPE -->|Entertainment| FORM',
+    '    FORM[Fill in details and add line items] --> ACTION{Submit or\\nSave Draft?}',
+    '    ACTION -->|Save as Draft| DRAFT([DRAFT])',
+    '    ACTION -->|Submit Now| PENDING([PENDING])',
+    '    DRAFT -->|Finalize| PENDING',
+    '    DRAFT -->|Cancel| CANCELLED([CANCELLED])',
+    '    PENDING -->|Cancel| CANCELLED',
+    '    PENDING --> CHK{Checker\\nassigned?}',
+    '    CHK -->|Yes| CREV[Checker Reviews]',
+    '    CHK -->|No checkers| AREV[Approver Reviews]',
+    '    CREV -->|Approve| CHECKED([CHECKED])',
+    '    CREV -->|Reject| REJECTED([REJECTED])',
+    '    CHECKED --> AREV',
+    '    CHECKED -->|Cancel| CANCELLED',
+    '    AREV -->|Approve| APPROVED([APPROVED])',
+    '    AREV -->|Reject| REJECTED',
+    '    APPROVED --> POSTED([POSTED — Journal Entry Created])',
+    '    POSTED --> DONE([Done])',
+    '    REJECTED --> RESUB{Resubmit?}',
+    '    RESUB -->|Yes| PENDING',
+    '    RESUB -->|No| DONE',
+    '    CANCELLED --> DONE'
+  ].join('\n');
+
+  var lightDefs = [
+    '    classDef sd fill:#F3F4F6,stroke:#9CA3AF,color:#374151,font-weight:600',
+    '    classDef sp fill:#FEF3C7,stroke:#D97706,color:#92400E,font-weight:600',
+    '    classDef sc fill:#DBEAFE,stroke:#2563EB,color:#1E40AF,font-weight:600',
+    '    classDef sa fill:#D1FAE5,stroke:#059669,color:#065F46,font-weight:600',
+    '    classDef spo fill:#EDE9FE,stroke:#7C3AED,color:#4C1D95,font-weight:600',
+    '    classDef sr fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,font-weight:600',
+    '    classDef sca fill:#F1F5F9,stroke:#94A3B8,color:#475569,font-weight:600'
+  ].join('\n');
+
+  var darkDefs = [
+    '    classDef sd fill:#1A2236,stroke:#8D9BB8,color:#C5CDE0,font-weight:600',
+    '    classDef sp fill:#2B2010,stroke:#FBB040,color:#FDE8A0,font-weight:600',
+    '    classDef sc fill:#122040,stroke:#7BB3FF,color:#BFDBFE,font-weight:600',
+    '    classDef sa fill:#0C2B20,stroke:#4DD8A0,color:#A7F3D0,font-weight:600',
+    '    classDef spo fill:#1E1438,stroke:#BB9EFF,color:#DDD6FE,font-weight:600',
+    '    classDef sr fill:#2B1010,stroke:#FF8080,color:#FECACA,font-weight:600',
+    '    classDef sca fill:#1A2236,stroke:#6B7A96,color:#8D9BB8,font-weight:600'
+  ].join('\n');
+
+  var classAssign = [
+    '    class DRAFT sd',
+    '    class PENDING sp',
+    '    class CHECKED sc',
+    '    class APPROVED sa',
+    '    class POSTED spo',
+    '    class REJECTED sr',
+    '    class CANCELLED sca'
+  ].join('\n');
+
+  function render(dark) {
+    var diagram = diagramBase + '\n' + (dark ? darkDefs : lightDefs) + '\n' + classAssign;
+    var wrap = document.getElementById('fw-wrap');
+    var el = document.createElement('div');
+    el.className = 'mermaid';
+    el.textContent = diagram;
+    wrap.innerHTML = '';
+    wrap.appendChild(el);
+
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'base',
+      themeVariables: dark ? {
+        background: 'transparent',
+        primaryColor: '#1A2236',
+        primaryTextColor: '#DDE3F0',
+        primaryBorderColor: '#253050',
+        lineColor: '#4B5A78',
+        secondaryColor: '#192044',
+        tertiaryColor: '#131929',
+        edgeLabelBackground: '#131929',
+        fontSize: '14px'
+      } : {
+        background: 'transparent',
+        primaryColor: '#EEF1F7',
+        primaryTextColor: '#1E2130',
+        primaryBorderColor: '#DCE1EC',
+        lineColor: '#94A3B8',
+        secondaryColor: '#E8EEFA',
+        tertiaryColor: '#F4F6FA',
+        edgeLabelBackground: '#F4F6FA',
+        fontSize: '14px'
+      },
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+    });
+
+    mermaid.run({ nodes: [el] });
+  }
+
+  render(isDark);
+
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
+    render(e.matches);
   });
+})();
 </script>
 </body>
 </html>
