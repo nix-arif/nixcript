@@ -988,6 +988,10 @@ export const customerCompanyRelations = relations(customerCompany, ({ one }) => 
    QUOTATION TABLE
 =============================================================================================================================================================================================================================================== */
 
+export type PaymentOption =
+  | { type: "lump_sum";   label: string; discountPct?: number; note?: string }
+  | { type: "instalment"; label: string; deposit: string; monthly: string; months: number; lastMonth?: string; note?: string };
+
 // ── Quotation ──────────────────────────────────────────────────────────────
 export const quotation = pgTable(
   "quotation",
@@ -1032,6 +1036,7 @@ export const quotation = pgTable(
     paymentTerm: text("payment_term"),
     returnPolicy: text("return_policy"),
     warranty: text("warranty"),
+    paymentOptions: json("payment_options").$type<PaymentOption[]>(),
 
     // Pricing
     subtotal: text("subtotal").notNull().default("0"),
@@ -1048,6 +1053,7 @@ export const quotation = pgTable(
     showTotalPrice: integer("show_total_price").notNull().default(1),
     showItemizeDiscount: integer("show_itemize_discount").notNull().default(0),
     showProductCode: integer("show_product_code").notNull().default(1),
+    showItemizedPricing: integer("show_itemized_pricing").notNull().default(1),
 
     // Attached documents
     inclMof: integer("incl_mof").notNull().default(1),
@@ -2981,7 +2987,6 @@ export const claimEntertainmentDetail = pgTable("claim_entertainment_detail", {
   id: text("id").primaryKey(),
   applicationId: text("application_id")
     .notNull()
-    .unique()
     .references(() => claimApplication.id, { onDelete: "cascade" }),
   organizationId: text("organization_id").notNull(),
   eventDate: text("event_date").notNull(),
@@ -2990,8 +2995,12 @@ export const claimEntertainmentDetail = pgTable("claim_entertainment_detail", {
   departmentOrganization: text("department_organization").notNull(),
   purpose: text("purpose").notNull(),
   amount: text("amount").notNull(),
+  sortOrder: integer("sort_order").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+},
+(t) => [
+  index("claim_ent_detail_app_idx").on(t.applicationId),
+]);
 
 // Maps a line-item category (or "ENTERTAINMENT_FORM") → ledger expense account for the org.
 // Used by approveClaim to post per-category debit lines instead of a single catch-all.
@@ -3036,10 +3045,7 @@ export const claimApplicationRelations = relations(claimApplication, ({ one, man
   journalEntry: one(ledgerEntry, { fields: [claimApplication.journalEntryId], references: [ledgerEntry.id] }),
   documents: many(claimDocument),
   lineItems: many(claimLineItem),
-  entertainmentDetail: one(claimEntertainmentDetail, {
-    fields: [claimApplication.id],
-    references: [claimEntertainmentDetail.applicationId],
-  }),
+  entertainmentDetails: many(claimEntertainmentDetail),
 }));
 
 export const claimDocumentRelations = relations(claimDocument, ({ one }) => ({
@@ -3055,6 +3061,7 @@ export const claimLineItemRelations = relations(claimLineItem, ({ one }) => ({
 export const claimEntertainmentDetailRelations = relations(claimEntertainmentDetail, ({ one }) => ({
   application: one(claimApplication, { fields: [claimEntertainmentDetail.applicationId], references: [claimApplication.id] }),
 }));
+
 
 /* =========================
    DOCUMENT CATEGORY
@@ -3080,6 +3087,40 @@ export const documentCategory = pgTable(
 
 export const documentCategoryRelations = relations(documentCategory, ({ one }) => ({
   organization: one(organization, { fields: [documentCategory.organizationId], references: [organization.id] }),
+}));
+
+/* =========================
+   SALES ACTIVITY
+========================= */
+
+export const salesActivity = pgTable(
+  "sales_activity",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    date: text("date").notNull(), // YYYY-MM-DD
+    customerOrganization: text("customer_organization").notNull(),
+    customerName: text("customer_name").notNull(),
+    productCategory: text("product_category").notNull(),
+    remark: text("remark"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("sales_activity_org_idx").on(t.organizationId),
+    index("sales_activity_user_idx").on(t.userId),
+    index("sales_activity_date_idx").on(t.date),
+  ],
+);
+
+export const salesActivityRelations = relations(salesActivity, ({ one }) => ({
+  organization: one(organization, { fields: [salesActivity.organizationId], references: [organization.id] }),
+  user: one(user, { fields: [salesActivity.userId], references: [user.id] }),
 }));
 
 /* =========================
@@ -3241,4 +3282,7 @@ export const schema = {
   // document categories
   documentCategory,
   documentCategoryRelations,
+  // sales activity
+  salesActivity,
+  salesActivityRelations,
 };

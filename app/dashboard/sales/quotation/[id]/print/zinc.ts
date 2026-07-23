@@ -128,6 +128,7 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
   const cust     = q.customerSnapshot as any;
   const bankList = (orgBankingInfo ?? []) as any[];
   const bank     = bankList.find(b => b.isPrimary) ?? bankList[0] ?? null;
+  const showIP   = !!Number(q.showItemizedPricing ?? 1);
   const showDisc = !!Number(q.showItemizeDiscount);
   const showTP   = !!Number(q.showTotalPrice);
   const coName   = orgCompanyName ?? orgName;
@@ -264,12 +265,14 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 3 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
-  const TOTALS_H     = 16 + totRowCount * 13 + 6 + 1.5 + 10 + 24 + 8;
+  const payOpts      = q.paymentOptions as import("@/db/schema").PaymentOption[] | null | undefined;
+  const TOTALS_H     = showIP ? (16 + totRowCount * 13 + 6 + 1.5 + 10 + 24 + 8) : 0;
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
+  const PAY_OPTS_H   = payOpts?.length ? 26 + payOpts.reduce((s, o) => s + (o.note ? 50 : 38), 0) : 0;
   const FOOTER_BLOCK = 30;
   const CLOSING_H    = 38;
   const ACCEPT_H     = 0;
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
+  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + PAY_OPTS_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
 
   const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 32;
   const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 28;
@@ -556,69 +559,111 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
 
     // ── Last page: totals + notes ──────────────────────────────────────────
     if (isLast) {
-      curY -= 10;
-      hLine(page, curY, ML, W - MR, C_LINE, 0.6);
-      curY -= 16;
+      if (showIP) {
+        curY -= 10;
+        hLine(page, curY, ML, W - MR, C_LINE, 0.6);
+        curY -= 16;
 
-      // Bank info (left)
-      if (bank) {
-        let by = curY;
-        page.drawText("PAYMENT TO", { x: ML, y: by, size: 7.5, font: fontB, color: C_MID });
-        by -= 13;
-        for (const [lbl, val] of [
-          ["Bank", bank.bankName ?? ""],
-          ["Branch", (bank as any).branchName ?? ""],
-          ["Account Name", bank.accountHolder ?? ""],
-          ["Account No.", bank.accountNo ?? ""],
-        ] as [string,string][]) {
-          page.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_LITE });
-          page.drawText(trunc(String(val), fontB, 9.5, 170), {
-            x: ML + 76, y: by, size: 9.5, font: fontB, color: C_DARK,
-          });
+        // Bank info (left)
+        if (bank) {
+          let by = curY;
+          page.drawText("PAYMENT TO", { x: ML, y: by, size: 7.5, font: fontB, color: C_MID });
           by -= 13;
+          for (const [lbl, val] of [
+            ["Bank", bank.bankName ?? ""],
+            ["Branch", (bank as any).branchName ?? ""],
+            ["Account Name", bank.accountHolder ?? ""],
+            ["Account No.", bank.accountNo ?? ""],
+          ] as [string,string][]) {
+            page.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_LITE });
+            page.drawText(trunc(String(val), fontB, 9.5, 170), {
+              x: ML + 76, y: by, size: 9.5, font: fontB, color: C_DARK,
+            });
+            by -= 13;
+          }
         }
+
+        // Totals (right-aligned)
+        const totW  = 220;
+        const totX  = W - MR - totW;
+        let ty      = curY;
+        const totItems: [string, string][] = [];
+        if (showDisc && itemDiscPerSet > 0) {
+          totItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
+          totItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
+          totItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
+        } else {
+          totItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
+        }
+        if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
+        if (discAmt > 0) {
+          totItems.push([Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount", `- ${fmtM(discAmt)}`]);
+          totItems.push(["After Discount", fmtM(afterDisc)]);
+        }
+        if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
+
+        for (const [lbl, val] of totItems) {
+          page.drawText(lbl, { x: totX, y: ty, size: 9.5, font: fontR, color: C_MID });
+          const vw = fontR.widthOfTextAtSize(val, 9.5);
+          page.drawText(val, { x: W - MR - vw, y: ty, size: 9.5, font: fontR, color: C_DARK });
+          ty -= 13;
+        }
+
+        ty -= 4;
+        // Zinc: charcoal grand total band
+        const GRAND_BAND_H = 28;
+        page.drawRectangle({ x: totX - 8, y: ty - GRAND_BAND_H, width: totW + 8, height: GRAND_BAND_H, color: C_CHARCOAL });
+        page.drawRectangle({ x: totX - 8, y: ty - GRAND_BAND_H, width: 3, height: GRAND_BAND_H, color: accent });
+        page.drawText(payOpts?.length ? "List Price" : "Grand Total", {
+          x: totX, y: ty - 18, size: 10, font: fontB, color: C_WHITE80,
+        });
+        const gtAmt = fmtM(grand);
+        const gtAmtW = fontB.widthOfTextAtSize(gtAmt, 12);
+        page.drawText(gtAmt, {
+          x: W - MR - gtAmtW, y: ty - 18, size: 12, font: fontB, color: C_WHITE,
+        });
+        curY = ty - GRAND_BAND_H - 10;
       }
 
-      // Totals (right-aligned)
-      const totW  = 220;
-      const totX  = W - MR - totW;
-      let ty      = curY;
-      const totItems: [string, string][] = [];
-      if (showDisc && itemDiscPerSet > 0) {
-        totItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
-        totItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
-        totItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
-      } else {
-        totItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
-      }
-      if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
-      if (discAmt > 0) {
-        totItems.push([Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount", `- ${fmtM(discAmt)}`]);
-        totItems.push(["After Discount", fmtM(afterDisc)]);
-      }
-      if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
+      // Payment Options
+      if (payOpts?.length) {
+        curY -= 8;
+        const HDR_H = 18;
+        const boxH  = HDR_H + payOpts.reduce((s, o) => s + (o.note ? 50 : 38), 0) + 4;
 
-      for (const [lbl, val] of totItems) {
-        page.drawText(lbl, { x: totX, y: ty, size: 9.5, font: fontR, color: C_MID });
-        const vw = fontR.widthOfTextAtSize(val, 9.5);
-        page.drawText(val, { x: W - MR - vw, y: ty, size: 9.5, font: fontR, color: C_DARK });
-        ty -= 13;
-      }
+        page.drawRectangle({ x: ML, y: curY - boxH, width: CW, height: boxH, color: rgb(0.97, 0.97, 0.97) });
+        page.drawRectangle({ x: ML, y: curY - HDR_H, width: CW, height: HDR_H, color: C_CHARCOAL });
+        page.drawText("PAYMENT OPTIONS", { x: ML + 10, y: curY - HDR_H + 5, size: 7.5, font: fontB, color: C_WHITE });
 
-      ty -= 4;
-      // Zinc: charcoal grand total band
-      const GRAND_BAND_H = 28;
-      page.drawRectangle({ x: totX - 8, y: ty - GRAND_BAND_H, width: totW + 8, height: GRAND_BAND_H, color: C_CHARCOAL });
-      page.drawRectangle({ x: totX - 8, y: ty - GRAND_BAND_H, width: 3, height: GRAND_BAND_H, color: accent });
-      page.drawText("Grand Total", {
-        x: totX, y: ty - 18, size: 10, font: fontB, color: C_WHITE80,
-      });
-      const gtAmt = fmtM(grand);
-      const gtAmtW = fontB.widthOfTextAtSize(gtAmt, 12);
-      page.drawText(gtAmt, {
-        x: W - MR - gtAmtW, y: ty - 18, size: 12, font: fontB, color: C_WHITE,
-      });
-      curY = ty - GRAND_BAND_H - 10;
+        let oy = curY - HDR_H;
+        for (let oi = 0; oi < payOpts.length; oi++) {
+          const opt  = payOpts[oi];
+          const optH = opt.note ? 50 : 38;
+          if (oi > 0) hLine(page, oy, ML + 6, W - MR - 6, C_ALT, 0.5);
+          if (oi % 2 === 1) page.drawRectangle({ x: ML, y: oy - optH, width: CW, height: optH, color: C_ALT });
+
+          const payable = opt.type === "lump_sum"
+            ? (opt.discountPct ? grand * (1 - opt.discountPct / 100) : grand)
+            : (Number(opt.deposit) + Number(opt.monthly) * (opt.lastMonth ? opt.months - 1 : opt.months) + (opt.lastMonth ? Number(opt.lastMonth) : 0));
+          const amtStr = fmtM(payable);
+          const amtW   = fontB.widthOfTextAtSize(amtStr, 11);
+          page.drawText(amtStr, { x: W - MR - amtW - 10, y: oy - 11, size: 11, font: fontB, color: accent });
+          page.drawText(trunc(opt.label, fontB, 9.5, CW - amtW - 30), { x: ML + 10, y: oy - 11, size: 9.5, font: fontB, color: C_DARK });
+
+          const detailStr = opt.type === "lump_sum"
+            ? (opt.discountPct
+                ? `Full payment  ·  ${opt.discountPct}% discount off RM ${grand.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+                : "Full payment")
+            : opt.lastMonth
+              ? `Deposit RM ${Number(opt.deposit).toLocaleString("en-MY", { minimumFractionDigits: 2 })}  +  RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })}/mo  ×  ${opt.months - 1} months  +  last month RM ${Number(opt.lastMonth).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+              : `Deposit RM ${Number(opt.deposit).toLocaleString("en-MY", { minimumFractionDigits: 2 })}  +  RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })}/mo  ×  ${opt.months} months`;
+          page.drawText(trunc(detailStr, fontR, 8, CW - amtW - 32), { x: ML + 10, y: oy - 23, size: 8, font: fontR, color: C_MID });
+
+          if (opt.note) page.drawText(trunc(opt.note, fontR, 7.5, CW - 20), { x: ML + 10, y: oy - 35, size: 7.5, font: fontR, color: C_LITE });
+          oy -= optH;
+        }
+        curY -= boxH;
+      }
 
       // ── Closing message ──────────────────────────────────────────────────
       curY -= 14;
@@ -644,6 +689,7 @@ export async function generateQuotationZinc(data: Data): Promise<Uint8Array> {
           page.drawText(line, { x: ML + 10, y: ny, size: 9.5, font: fontR, color: C_DARK });
           ny -= 12;
         }
+        curY -= noteH;
       }
 
     }

@@ -5,6 +5,7 @@ import { getDocumentCategories } from "@/server/document-category";
 import { notFound, redirect } from "next/navigation";
 import { NewQuotationClient, type EditData } from "../../new/new-quotation-client";
 import type { ReviewItem } from "@/server/quotation";
+import type { PaymentOption } from "@/db/schema";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -133,6 +134,7 @@ export default async function EditQuotationPage({ params }: Props) {
     paymentTerm: q.paymentTerm ?? "30 days",
     returnPolicy: q.returnPolicy ?? "GOODS ONCE SOLD WILL NOT TAKEN BACK",
     warranty: q.warranty ?? "5 years against material and manufacturing defects",
+    paymentOptions: (q.paymentOptions as PaymentOption[] | null) ?? [],
     categoryIds: q.categoryIds ?? [],
     items,
   };

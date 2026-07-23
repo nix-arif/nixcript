@@ -128,8 +128,10 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const cust     = q.customerSnapshot as any;
   const bankList = (orgBankingInfo ?? []) as any[];
   const bank     = bankList.find(b => b.isPrimary) ?? bankList[0] ?? null;
-  const showDisc = !!Number(q.showItemizeDiscount);
-  const showTP   = !!Number(q.showTotalPrice);
+  const showIP    = !!Number(q.showItemizedPricing ?? 1);
+  const showDisc  = showIP && !!Number(q.showItemizeDiscount);
+  const showTP    = !!Number(q.showTotalPrice ?? 1);
+  const showTPCol = showIP && showTP;
   const coName   = orgCompanyName ?? orgName;
 
   const sets           = Number(q.sets ?? 1);
@@ -173,9 +175,9 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const C_QTY  = showSetHeaders ? 38 : 28;
   const C_TQTY = showSetHeaders ? 48 : 0;
   const C_UOM  = 34;
-  const C_UP   = 64;
+  const C_UP   = showIP ? 64 : 0;
   const C_DISC = showDisc ? 55 : 0;
-  const C_TOT  = showTP ? 68 : 0;
+  const C_TOT  = showTPCol ? 68 : 0;
   const C_DESC = CW - C_NO - C_CODE - C_QTY - C_TQTY - C_UOM - C_UP - C_DISC - C_TOT;
 
   const X_NO   = ML;
@@ -268,12 +270,23 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (discAmt > 0 ? 2 : 0) + (sstAmt > 0 ? 1 : 0);
   const termsNoteLines = q.notes ? wrap(q.notes, fontR, 8.5, CW - 80) : [];
-  const TOTALS_H     = 26 + Math.max(bank ? 52 : 0, (totRowCount + 1) * 16) + 20;
-  const TERMS_H      = 96 + (q.notes ? 4 + termsNoteLines.length * 12 : 0);
+  const payOpts      = q.paymentOptions as import("@/db/schema").PaymentOption[] | null | undefined;
+  const TOTALS_H     = showIP && showTP ? (26 + Math.max(bank ? 52 : 0, (totRowCount + 1) * 16) + 20)
+                     : showTP           ? 54
+                     : 0;
+  const baseTermsRows  = 1 + (q.deliveryTerm ? 1 : 0) + (q.paymentTerm ? 1 : 0) + ((q as any).warranty ? 1 : 0);
+  const totalTermsRows = baseTermsRows + (q.notes ? 1 : 0);
+  const termsBoxH      = 16
+    + baseTermsRows * 12
+    + (q.notes ? termsNoteLines.length * 12 : 0)
+    + Math.max(totalTermsRows - 1, 0) * 4
+    + 8;
+  const TERMS_H      = 18 + termsBoxH;
+  const PAY_OPTS_H   = payOpts?.length ? 26 + payOpts.reduce((s, o) => s + (o.note ? 50 : 38), 0) : 0;
   const FOOTER_BLOCK = 30;
-  const CLOSING_H    = 38;
+  const CLOSING_H    = 34;
   const ACCEPT_H     = 0;
-  const BOTTOM_RESERVE = TOTALS_H + TERMS_H + FOOTER_BLOCK + 16 + CLOSING_H + ACCEPT_H;
+  const BOTTOM_RESERVE = TOTALS_H + TERMS_H + PAY_OPTS_H + CLOSING_H + ACCEPT_H;
 
   // Header repeats on every page — same row availability for all pages
   const PAGE_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 30;
@@ -325,7 +338,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     const lastItemsH = lastGroup.reduce((s, i) => s + renderItems[i].rowH, 0);
     // items start at avail+28 (after header/info/dividers/banner/tHdr), end at avail+28-lastItemsH
     const curYAfterItems = avail + 28 - lastItemsH;
-    if (curYAfterItems - 10 - BOTTOM_RESERVE < MB + 32) {
+    if (curYAfterItems - BOTTOM_RESERVE < MB + FOOTER_BLOCK) {
       pageGroups.push([]);
       hasOverflowPage = true;
     }
@@ -418,9 +431,9 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       { label: showSetHeaders ? "Qty/Set" : "Qty", x: X_QTY,  w: C_QTY,  align: "c" },
       ...(showSetHeaders ? [{ label: "Total Qty",  x: X_TQTY, w: C_TQTY, align: "c" as const }] : []),
       { label: "UOM",                              x: X_UOM,  w: C_UOM,  align: "c" },
-      { label: "Unit Price",                       x: X_UP,   w: C_UP,   align: "r" as const },
+      ...(showIP ? [{ label: "Unit Price",           x: X_UP,   w: C_UP,   align: "r" as const }] : []),
       ...(showDisc ? [{ label: "Discount",         x: X_DISC, w: C_DISC, align: "c" as const }] : []),
-      ...(showTP   ? [{ label: "Total",            x: X_TOT,  w: C_TOT,  align: "r" as const }] : []),
+      ...(showTPCol ? [{ label: "Total",            x: X_TOT,  w: C_TOT,  align: "r" as const }] : []),
     ];
 
     if (!isOverflowPage) {
@@ -453,7 +466,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         page.drawText(labelUpper,  { x: ML + TABLE_PAD,          y: textY, size: FS_DESC, font: fontB, color: C_DARK });
         page.drawText(setCountStr, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
 
-        if (showTP) {
+        if (showTPCol) {
           // Unit Price column — price per set
           const upStr  = `RM ${entry.pricePerSet.toFixed(2)}`;
           const upStrW = fontB.widthOfTextAtSize(upStr, FS_DESC);
@@ -530,11 +543,13 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       });
 
       // Unit Price
-      const up  = `RM ${Number(item.unitPrice ?? 0).toFixed(2)}`;
-      const upW = fontR.widthOfTextAtSize(up, FS_CODE);
-      page.drawText(up, {
-        x: X_UP + (C_UP - upW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
-      });
+      if (showIP) {
+        const up  = `RM ${Number(item.unitPrice ?? 0).toFixed(2)}`;
+        const upW = fontR.widthOfTextAtSize(up, FS_CODE);
+        page.drawText(up, {
+          x: X_UP + (C_UP - upW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
+        });
+      }
 
       // Discount amount + percentage
       if (showDisc) {
@@ -555,7 +570,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       }
 
       // Total
-      if (showTP) {
+      if (showTPCol) {
         const tot  = `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`;
         const totW = fontR.widthOfTextAtSize(tot, FS_DESC);
         page.drawText(tot, {
@@ -579,77 +594,98 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
     // ── Last page: totals + notes ──────────────────────────────────────────
     if (isLast) {
-      curY -= 10;
-      hLine(page, curY, ML, W - MR, C_LINE, 0.6);
-      curY -= 16;
+      if (showIP && showTP) {
+        curY -= 10;
+        hLine(page, curY, ML, W - MR, C_LINE, 0.6);
+        curY -= 16;
 
-      // Bank info (left)
-      let bankEndY = curY;
-      if (bank) {
-        let by = curY;
-        page.drawText("PAYMENT TO", { x: ML, y: by, size: 7.5, font: fontB, color: accent });
-        by -= 13;
-        for (const [lbl, val] of [
-          ["Bank", bank.bankName ?? ""],
-          ["Branch", (bank as any).branchName ?? ""],
-          ["Account Name", bank.accountHolder ?? ""],
-          ["Account No.", bank.accountNo ?? ""],
-        ] as [string,string][]) {
-          page.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_LITE });
-          page.drawText(trunc(String(val), fontB, 9.5, 170), {
-            x: ML + 76, y: by, size: 9.5, font: fontB, color: C_DARK,
-          });
+        // Bank info (left)
+        let bankEndY = curY;
+        if (bank) {
+          let by = curY;
+          page.drawText("PAYMENT TO", { x: ML, y: by, size: 7.5, font: fontB, color: accent });
           by -= 13;
+          for (const [lbl, val] of [
+            ["Bank", bank.bankName ?? ""],
+            ["Branch", (bank as any).branchName ?? ""],
+            ["Account Name", bank.accountHolder ?? ""],
+            ["Account No.", bank.accountNo ?? ""],
+          ] as [string,string][]) {
+            page.drawText(`${lbl}:`, { x: ML, y: by, size: 9, font: fontR, color: C_LITE });
+            page.drawText(trunc(String(val), fontB, 9.5, 170), {
+              x: ML + 76, y: by, size: 9.5, font: fontB, color: C_DARK,
+            });
+            by -= 13;
+          }
+          bankEndY = by;
         }
-        bankEndY = by;
-      }
 
-      // Totals (card style, right side)
-      const TOT_ROW_H   = 20;
-      const GRAND_ROW_H = 22;
-      const totW  = 260;
-      const totX  = W - MR - totW;
-      const TPADX = 10;
-      let ty = curY;
-      const totItems: [string, string][] = [];
-      if (showDisc && itemDiscPerSet > 0) {
-        totItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
-        totItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
-        totItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
-      } else {
-        totItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
-      }
-      if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
-      if (discAmt > 0) {
-        totItems.push([Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount", `- ${fmtM(discAmt)}`]);
-        totItems.push(["After Discount", fmtM(afterDisc)]);
-      }
-      if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
-
-      const totalPanelH = totItems.length * TOT_ROW_H + GRAND_ROW_H;
-      page.drawRectangle({ x: totX, y: ty - totalPanelH, width: totW, height: totalPanelH, color: rgb(1, 1, 1) });
-      for (let i = 0; i < totItems.length; i++) {
-        const [lbl, val] = totItems[i];
-        const rowBottom  = ty - TOT_ROW_H;
-        if (i % 2 === 0) {
-          page.drawRectangle({ x: totX, y: rowBottom, width: totW, height: TOT_ROW_H, color: rgb(0.95, 0.95, 0.95) });
+        // Totals (card style, right side)
+        const TOT_ROW_H   = 20;
+        const GRAND_ROW_H = 22;
+        const totW  = 260;
+        const totX  = W - MR - totW;
+        const TPADX = 10;
+        let ty = curY;
+        const totItems: [string, string][] = [];
+        if (showDisc && itemDiscPerSet > 0) {
+          totItems.push([sets > 1 ? "Subtotal before disc (1 set)" : "Subtotal (before disc)", fmtM(rawSubtotalPerSet)]);
+          totItems.push([sets > 1 ? "Item Discount (1 set)"        : "Item Discount",          `- ${fmtM(itemDiscPerSet)}`]);
+          totItems.push([sets > 1 ? "Subtotal (1 set)"             : "Subtotal",               fmtM(subtotalPerSet)]);
+        } else {
+          totItems.push([sets > 1 ? "Subtotal (1 set)" : "Subtotal", fmtM(subtotalPerSet)]);
         }
-        const textY = rowBottom + 6;
-        page.drawText(lbl, { x: totX + TPADX, y: textY, size: 9.5, font: fontR, color: C_MID });
-        const vw = fontR.widthOfTextAtSize(val, 9.5);
-        page.drawText(val, { x: totX + totW - TPADX - vw, y: textY, size: 9.5, font: fontR, color: C_DARK });
-        ty -= TOT_ROW_H;
+        if (sets > 1) totItems.push([`× ${sets} sets`, fmtM(subtotal)]);
+        if (discAmt > 0) {
+          totItems.push([Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount", `- ${fmtM(discAmt)}`]);
+          totItems.push(["After Discount", fmtM(afterDisc)]);
+        }
+        if (sstAmt > 0) totItems.push([`SST (${q.sstPct}%)`, fmtM(sstAmt)]);
+
+        const totalPanelH = totItems.length * TOT_ROW_H + GRAND_ROW_H;
+        page.drawRectangle({ x: totX, y: ty - totalPanelH, width: totW, height: totalPanelH, color: rgb(1, 1, 1) });
+        for (let i = 0; i < totItems.length; i++) {
+          const [lbl, val] = totItems[i];
+          const rowBottom  = ty - TOT_ROW_H;
+          if (i % 2 === 0) {
+            page.drawRectangle({ x: totX, y: rowBottom, width: totW, height: TOT_ROW_H, color: rgb(0.95, 0.95, 0.95) });
+          }
+          const textY = rowBottom + 6;
+          page.drawText(lbl, { x: totX + TPADX, y: textY, size: 9.5, font: fontR, color: C_MID });
+          const vw = fontR.widthOfTextAtSize(val, 9.5);
+          page.drawText(val, { x: totX + totW - TPADX - vw, y: textY, size: 9.5, font: fontR, color: C_DARK });
+          ty -= TOT_ROW_H;
+        }
+        const gtRowBottom = ty - GRAND_ROW_H;
+        page.drawRectangle({ x: totX, y: gtRowBottom, width: totW, height: GRAND_ROW_H, color: accent });
+        const gtTextY = gtRowBottom + 7;
+        page.drawText(payOpts?.length ? "LIST PRICE" : "GRAND TOTAL", { x: totX + TPADX, y: gtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
+        const gtAmt  = fmtM(grand);
+        const gtAmtW = fontB.widthOfTextAtSize(gtAmt, 9.5);
+        page.drawText(gtAmt, { x: totX + totW - TPADX - gtAmtW, y: gtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
+        ty -= GRAND_ROW_H;
+        page.drawRectangle({ x: totX, y: ty, width: totW, height: totalPanelH, borderColor: accent, borderWidth: 0.6 });
+        curY = Math.min(ty, bankEndY) - 6;
+      } else if (!showIP && showTP) {
+        // Grand total only — no breakdown rows, no bank info
+        curY -= 10;
+        hLine(page, curY, ML, W - MR, C_LINE, 0.6);
+        curY -= 16;
+
+        const GRAND_ROW_H = 22;
+        const totW  = 260;
+        const totX  = W - MR - totW;
+        const TPADX = 10;
+        const gtRowBottom = curY - GRAND_ROW_H;
+        page.drawRectangle({ x: totX, y: gtRowBottom, width: totW, height: GRAND_ROW_H, color: accent });
+        const gtTextY = gtRowBottom + 7;
+        page.drawText(payOpts?.length ? "LIST PRICE" : "GRAND TOTAL", { x: totX + TPADX, y: gtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
+        const gtAmt  = fmtM(grand);
+        const gtAmtW = fontB.widthOfTextAtSize(gtAmt, 9.5);
+        page.drawText(gtAmt, { x: totX + totW - TPADX - gtAmtW, y: gtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
+        page.drawRectangle({ x: totX, y: gtRowBottom, width: totW, height: GRAND_ROW_H, borderColor: accent, borderWidth: 0.6 });
+        curY = gtRowBottom - 6;
       }
-      const gtRowBottom = ty - GRAND_ROW_H;
-      page.drawRectangle({ x: totX, y: gtRowBottom, width: totW, height: GRAND_ROW_H, color: accent });
-      const gtTextY = gtRowBottom + 7;
-      page.drawText("GRAND TOTAL", { x: totX + TPADX, y: gtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
-      const gtAmt  = fmtM(grand);
-      const gtAmtW = fontB.widthOfTextAtSize(gtAmt, 9.5);
-      page.drawText(gtAmt, { x: totX + totW - TPADX - gtAmtW, y: gtTextY, size: 9.5, font: fontB, color: rgb(1, 1, 1) });
-      ty -= GRAND_ROW_H;
-      page.drawRectangle({ x: totX, y: ty, width: totW, height: totalPanelH, borderColor: accent, borderWidth: 0.6 });
-      curY = Math.min(ty, bankEndY) - 6;
 
       // ── Terms box ────────────────────────────────────────────────────────
       curY -= 10;
@@ -703,6 +739,46 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
           tty -= valLines.length * TLH + (ri < termsRendered.length - 1 ? ROW_GAP : 0);
         }
         curY = termsBoxY - 8;
+      }
+
+      // Payment Options
+      if (payOpts?.length) {
+        curY -= 8;
+        const HDR_H = 18;
+        const boxH  = HDR_H + payOpts.reduce((s, o) => s + (o.note ? 50 : 38), 0) + 4;
+
+        page.drawRectangle({ x: ML, y: curY - boxH, width: CW, height: boxH, color: rgb(0.970, 0.974, 0.984), borderColor: rgb(0.88, 0.88, 0.90), borderWidth: 0.4 });
+        page.drawRectangle({ x: ML, y: curY - HDR_H, width: CW, height: HDR_H, color: accent });
+        page.drawText("PAYMENT OPTIONS", { x: ML + 10, y: curY - HDR_H + 5, size: 7.5, font: fontB, color: C_WHITE });
+
+        let oy = curY - HDR_H;
+        for (let oi = 0; oi < payOpts.length; oi++) {
+          const opt  = payOpts[oi];
+          const optH = opt.note ? 50 : 38;
+          if (oi > 0) hLine(page, oy, ML + 6, W - MR - 6, rgb(0.88, 0.88, 0.90), 0.3);
+          if (oi % 2 === 1) page.drawRectangle({ x: ML, y: oy - optH, width: CW, height: optH, color: rgb(0.960, 0.962, 0.970) });
+
+          const payable = opt.type === "lump_sum"
+            ? (opt.discountPct ? grand * (1 - opt.discountPct / 100) : grand)
+            : (Number(opt.deposit) + Number(opt.monthly) * (opt.lastMonth ? opt.months - 1 : opt.months) + (opt.lastMonth ? Number(opt.lastMonth) : 0));
+          const amtStr = fmtM(payable);
+          const amtW   = fontB.widthOfTextAtSize(amtStr, 11);
+          page.drawText(amtStr, { x: W - MR - amtW - 10, y: oy - 11, size: 11, font: fontB, color: accent });
+          page.drawText(trunc(opt.label, fontB, 9.5, CW - amtW - 30), { x: ML + 10, y: oy - 11, size: 9.5, font: fontB, color: C_DARK });
+
+          const detailStr = opt.type === "lump_sum"
+            ? (opt.discountPct
+                ? `Full payment  ·  ${opt.discountPct}% discount off RM ${grand.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+                : "Full payment")
+            : opt.lastMonth
+              ? `Deposit RM ${Number(opt.deposit).toLocaleString("en-MY", { minimumFractionDigits: 2 })}  +  RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })}/mo  ×  ${opt.months - 1} months  +  last month RM ${Number(opt.lastMonth).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+              : `Deposit RM ${Number(opt.deposit).toLocaleString("en-MY", { minimumFractionDigits: 2 })}  +  RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })}/mo  ×  ${opt.months} months`;
+          page.drawText(trunc(detailStr, fontR, 8, CW - amtW - 32), { x: ML + 10, y: oy - 23, size: 8, font: fontR, color: C_MID });
+
+          if (opt.note) page.drawText(trunc(opt.note, fontR, 7.5, CW - 20), { x: ML + 10, y: oy - 35, size: 7.5, font: fontR, color: C_LITE });
+          oy -= optH;
+        }
+        curY -= boxH;
       }
 
       // ── Closing message ──────────────────────────────────────────────────

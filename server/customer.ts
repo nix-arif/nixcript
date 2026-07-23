@@ -200,6 +200,13 @@ export async function createCustomer(data: {
 
   const customerId = nanoid();
 
+  const primaryOrgName =
+    data.companies?.find((c) => c.isPrimary)?.orgName ??
+    data.companies?.find((c) => c.isPrimary)?.organizationName ??
+    data.companies?.[0]?.orgName ??
+    data.companies?.[0]?.organizationName ??
+    null;
+
   const [row] = await db
     .insert(customer)
     .values({
@@ -208,6 +215,7 @@ export async function createCustomer(data: {
       createdBy: userId,
       title: data.title,
       name: data.name.trim(),
+      organizationName: primaryOrgName?.trim() || null,
       contactNo: data.contactNo,
       email: data.email,
     })
@@ -667,22 +675,33 @@ export async function lookupCustomersByName(names: string[]) {
   const { orgId } = await requireAccess("customer:read");
   if (!names.length) return [];
 
+  const orgIds = await getOwnerOrgIds(orgId);
+
   const rows = await db
-    .select({ id: customer.id, name: customer.name })
+    .select({ id: customer.id, name: customer.name, organizationName: customer.organizationName })
     .from(customer)
-    .where(eq(customer.organizationId, orgId));
+    .where(inArray(customer.organizationId, orgIds));
 
   if (rows.length === 0) return names.map((name) => ({ name, found: false, customer: null }));
 
   const memberships = await getMembershipsForCustomers(rows.map((r) => r.id)) as (CustomerOrgMembership & { customerId: string })[];
 
   return names.map((name) => {
-    const cust = rows.find(
-      (r) => r.name.toLowerCase().trim() === name.toLowerCase().trim(),
-    );
+    const lc = name.toLowerCase().trim();
+
+    const custByOrgMembership = (() => {
+      const m = memberships.find((m) => m.orgName.toLowerCase().trim() === lc);
+      return m ? rows.find((r) => r.id === m.customerId) : undefined;
+    })();
+
+    const cust =
+      rows.find((r) => r.name.toLowerCase().trim() === lc) ??
+      rows.find((r) => r.organizationName && r.organizationName.toLowerCase().trim() === lc) ??
+      custByOrgMembership;
+
     if (!cust) return { name, found: false, customer: null };
 
-    const custMemberships = memberships.filter((m) => m.customerId === cust.id);
+    const custMemberships = memberships.filter((m) => m.customerId === cust!.id);
     const primary = custMemberships.find((m) => m.isPrimary) ?? custMemberships[0] ?? null;
 
     return {

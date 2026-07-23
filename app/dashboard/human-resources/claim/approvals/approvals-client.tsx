@@ -36,7 +36,7 @@ function fmtClaimDate(claimDate: string, formType: string | null): string {
 }
 
 function getFormType(app: ClaimApplicationWithDetails): string | null {
-  if (app.entertainmentDetail) return CLAIM_FORM.ENTERTAINMENT_FORM;
+  if (app.entertainmentDetails && app.entertainmentDetails.length > 0) return CLAIM_FORM.ENTERTAINMENT_FORM;
   if (app.lineItems.length === 0) return null;
   const cat = app.lineItems[0].category;
   if (cat.startsWith("OVERSEAS")) return CLAIM_FORM.OVERSEAS;
@@ -196,26 +196,32 @@ function ClaimDetailContent({ app }: { app: ClaimApplicationWithDetails }) {
       {/* Line items */}
       {app.lineItems.length > 0 && <LineItemDetail items={app.lineItems}/>}
 
-      {/* Entertainment detail */}
-      {app.entertainmentDetail && (
+      {/* Entertainment details */}
+      {app.entertainmentDetails && app.entertainmentDetails.length > 0 && (
         <div className="rounded-md border border-border overflow-hidden text-sm">
           <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-semibold text-muted-foreground">
-            Entertainment Details
+            Entertainment Details ({app.entertainmentDetails.length})
           </div>
-          <div className="divide-y divide-border">
-            {[
-              ["Date", app.entertainmentDetail.eventDate],
-              ["Restaurant / Venue", app.entertainmentDetail.restaurantName],
-              ["Customer", app.entertainmentDetail.customerName],
-              ["Dept & Org", app.entertainmentDetail.departmentOrganization],
-              ["Purpose", app.entertainmentDetail.purpose],
-            ].map(([label, value]) => (
-              <div key={label} className="px-3 py-2 flex justify-between gap-4">
-                <span className="text-muted-foreground shrink-0 text-xs">{label}</span>
-                <span className="text-right text-xs font-medium">{value}</span>
-              </div>
-            ))}
-          </div>
+          {app.entertainmentDetails.map((ed, idx) => (
+            <div key={idx} className="divide-y divide-border border-t border-border first:border-t-0">
+              {app.entertainmentDetails.length > 1 && (
+                <div className="px-3 py-1.5 bg-muted/20 text-[10px] font-semibold text-muted-foreground uppercase">Entry {idx + 1}</div>
+              )}
+              {[
+                ["Date", ed.eventDate],
+                ["Restaurant / Venue", ed.restaurantName],
+                ["Customer", ed.customerName],
+                ["Dept & Org", ed.departmentOrganization],
+                ["Purpose", ed.purpose],
+                ["Amount", `RM ${parseFloat(ed.amount).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`],
+              ].map(([label, value]) => (
+                <div key={label} className="px-3 py-2 flex justify-between gap-4">
+                  <span className="text-muted-foreground shrink-0 text-xs">{label}</span>
+                  <span className="text-right text-xs font-medium">{value}</span>
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       )}
 

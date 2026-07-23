@@ -384,8 +384,10 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const cust     = q.customerSnapshot as any;
   const bankList = (orgBankingInfo ?? []) as any[];
   const bank     = bankList.find(b => b.isPrimary) ?? bankList[0] ?? null;
-  const showDisc = !!Number(q.showItemizeDiscount);
-  const showTP   = !!Number(q.showTotalPrice);
+  const showIP    = !!Number(q.showItemizedPricing ?? 1);
+  const showDisc  = showIP && !!Number(q.showItemizeDiscount);
+  const showTP    = !!Number(q.showTotalPrice ?? 1);
+  const showTPCol = showIP && showTP;
   const coName   = orgCompanyName ?? orgName;
 
   const sets           = Number(q.sets ?? 1);
@@ -438,9 +440,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   const C_QTY  = showSetHeaders ? 38 : 28;
   const C_TQTY = showSetHeaders ? 48 : 0;
   const C_UOM  = 34;
-  const C_UP   = 64;
+  const C_UP   = showIP ? 64 : 0;
   const C_DISC = showDisc ? 55 : 0;
-  const C_TOT  = showTP ? 68 : 0;
+  const C_TOT  = showTPCol ? 68 : 0;
   const C_DESCA = CW - C_NO - C_CODE - C_QTY - C_TQTY - C_UOM - C_UP - C_DISC - C_TOT;
 
   const X_NO   = ML;
@@ -509,12 +511,16 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
+  const payOpts      = q.paymentOptions as import("@/db/schema").PaymentOption[] | null | undefined;
+  const PAY_OPTS_H   = payOpts?.length ? 26 + payOpts.reduce((s, o) => s + (o.note ? 50 : 38), 0) : 0;
   const SUMMARY_ROW_H = TABLE_HDR_H;             // subtotal & grand total rows inside the table
   const TOT_PAD       = 5;                        // inner padding for summary / footer rows
   // Compute 2-col footer table height accurately (words wrap varies with grand total size)
   const _wordsLinesEst = wrap(numberToWords(grand), fontR, FS_BODY, CW * 0.65 - TOT_PAD * 2).slice(0, 4);
   const BTM_TABLE_H   = TABLE_HDR_H + Math.max(_wordsLinesEst.length * INFO_LH + 6, 3 * 14);
-  const TOTALS_H      = (2 + (sets > 1 ? 1 : 0)) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8;
+  const TOTALS_H      = showIP && showTP ? ((2 + (sets > 1 ? 1 : 0)) * SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8)
+                      : showTP           ? (SUMMARY_ROW_H + 8 + BTM_TABLE_H + 8)
+                      : 0;
   const NOTES_H      = q.notes ? noteLines.length * 12 + 30 : 0;
   const FOOTER_BLOCK = 32;
   const CLOSING_H    = 50;
@@ -573,9 +579,11 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
   ) * INFO_LH + 8;
   const TERMS_BOX_H = TABLE_HDR_H + SUB_HDR_H + tConH;
 
-  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + FOOTER_BLOCK + 16 + CLOSING_H + (bank ? BANK_BOX_H + 8 : 0) + TERMS_BOX_H + 12 + ACCEPT_H;
+  const BOTTOM_RESERVE = TOTALS_H + NOTES_H + PAY_OPTS_H + FOOTER_BLOCK + 16 + CLOSING_H + (bank ? BANK_BOX_H + 8 : 0) + TERMS_BOX_H + 12 + ACCEPT_H;
 
-  const summaryRowsH = (2 + (sets > 1 ? 1 : 0)) * SUMMARY_ROW_H;
+  const summaryRowsH = showIP && showTP ? (2 + (sets > 1 ? 1 : 0)) * SUMMARY_ROW_H
+                     : showTP           ? SUMMARY_ROW_H
+                     : 0;
   const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - MB - 36 - summaryRowsH;
   const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 32 - summaryRowsH;
 
@@ -731,9 +739,9 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       { label: showSetHeaders ? "Qty/Set" : "Qty",           x: X_QTY,  w: C_QTY  },
       ...(showSetHeaders ? [{ label: "Total Qty",            x: X_TQTY, w: C_TQTY }] : []),
       { label: "UOM",                                        x: X_UOM,  w: C_UOM  },
-      { label: "Unit Price",                                 x: X_UP,   w: C_UP   },
+      ...(showIP ? [{ label: "Unit Price",                   x: X_UP,   w: C_UP   }] : []),
       ...(showDisc ? [{ label: "Discount",                   x: X_DISC, w: C_DISC  }] : []),
-      ...(showTP   ? [{ label: "Total",                      x: X_TOT,  w: C_TOT   }] : []),
+      ...(showTPCol ? [{ label: "Total",                      x: X_TOT,  w: C_TOT   }] : []),
     ];
     if (!isOverflowPage) {
 
@@ -781,12 +789,12 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         page.drawText(entry.label.toUpperCase(), { x: ML + TABLE_PAD, y: textY, size: FS_BODY, font: fontB, color: C_BLACK });
         const qtyText = `  x  ${entry.qty} ${entry.qty === 1 ? "SET" : "SETS"}`;
         page.drawText(qtyText, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_BODY, font: fontR, color: C_BLACK });
-        if (showTP && entry.qty > 1) {
+        if (showTPCol && entry.qty > 1) {
           const qtyTextW = fontR.widthOfTextAtSize(qtyText, FS_BODY);
           const ppsStr = `  ·  RM ${entry.pricePerSet.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / set`;
           page.drawText(ppsStr, { x: ML + TABLE_PAD + labelW + qtyTextW, y: textY, size: FS_BODY, font: fontR, color: C_BLACK });
         }
-        if (showTP) {
+        if (showTPCol) {
           const totStr = `RM ${entry.setTotal.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           const totW = fontB.widthOfTextAtSize(totStr, FS_BODY);
           page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totW, y: textY, size: FS_BODY, font: fontB, color: C_BLACK });
@@ -866,10 +874,12 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       });
 
       // Unit Price — "RM" left, value right-aligned (accounting format)
-      const upNum  = fmtAcct(Number(item.unitPrice ?? 0));
-      const upNumW = fontR.widthOfTextAtSize(upNum, FS_BODY);
-      page.drawText("RM", { x: X_UP + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
-      page.drawText(upNum, { x: X_UP + C_UP - TABLE_PAD - upNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+      if (showIP) {
+        const upNum  = fmtAcct(Number(item.unitPrice ?? 0));
+        const upNumW = fontR.widthOfTextAtSize(upNum, FS_BODY);
+        page.drawText("RM", { x: X_UP + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+        page.drawText(upNum, { x: X_UP + C_UP - TABLE_PAD - upNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+      }
 
       // Discount amount + percentage
       if (showDisc) {
@@ -891,7 +901,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
       }
 
       // Total — "RM" left, value right-aligned (accounting format)
-      if (showTP) {
+      if (showTPCol) {
         const totNum  = fmtAcct(Number(item.totalPrice ?? 0));
         const totNumW = fontR.widthOfTextAtSize(totNum, FS_BODY);
         page.drawText("RM", { x: X_TOT + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
@@ -902,94 +912,94 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     }
 
     // ── Subtotal + grand total rows — rendered on last items page ────────────
-    if (isSummaryPage) {
+    if (showTP && isSummaryPage) {
       const totalQtyPerSet = items.reduce((s, i) => s + parseFloat(i.qty ?? "0"), 0);
       const fmtQty = (n: number) => n % 1 === 0 ? String(n) : n.toFixed(2);
-      const amtAreaW = W - MR - X_UP; // width of merged cols 6-7 amount area
+      const amtAreaW = W - MR - X_UP;
 
-      // ── Subtotal row ────────────────────────────────────────────────────────
-      const subLabel = sets > 1 ? `SUBTOTAL × 1 SET` : "SUBTOTAL";
-      const subRowY  = curY - SUMMARY_ROW_H;
-      // Borders
-      page.drawLine({ start: { x: ML,     y: subRowY }, end: { x: W - MR, y: subRowY }, thickness: 0.8, color: C_BLACK });
-      page.drawLine({ start: { x: ML,     y: curY    }, end: { x: ML,     y: subRowY }, thickness: 0.8, color: C_BLACK });
-      page.drawLine({ start: { x: W - MR, y: curY    }, end: { x: W - MR, y: subRowY }, thickness: 0.8, color: C_BLACK });
-      // Column dividers: after col-3, before amount area (cols 4&5 merged, no X_UOM divider)
-      page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: subRowY }, thickness: 0.3, color: C_BLACK });
-      page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: subRowY }, thickness: 0.3, color: C_BLACK });
-      // Label cols 1-3
-      page.drawText(subLabel, { x: X_NO + TOT_PAD, y: subRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
-      // Qty cols 4-5 merged — centered in X_QTY to X_UP
-      const subQtyStr = fmtQty(totalQtyPerSet);
-      const subQtyW   = fontR.widthOfTextAtSize(subQtyStr, FS_BODY);
-      page.drawText(subQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) -subQtyW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
-      // Amount cols 6-7 — centered in merged area (1-set amount)
-      const subStr  = fmtM(subtotalPerSet);
-      const subStrW = fontR.widthOfTextAtSize(subStr, FS_BODY);
-      page.drawText(subStr, { x: X_UP + (amtAreaW - subStrW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
-      curY = subRowY;
+      if (showIP) {
+        // ── Subtotal row ──────────────────────────────────────────────────────
+        const subLabel = sets > 1 ? `SUBTOTAL × 1 SET` : "SUBTOTAL";
+        const subRowY  = curY - SUMMARY_ROW_H;
+        page.drawLine({ start: { x: ML,     y: subRowY }, end: { x: W - MR, y: subRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: ML,     y: curY    }, end: { x: ML,     y: subRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: W - MR, y: curY    }, end: { x: W - MR, y: subRowY }, thickness: 0.8, color: C_BLACK });
+        page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: subRowY }, thickness: 0.3, color: C_BLACK });
+        page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: subRowY }, thickness: 0.3, color: C_BLACK });
+        page.drawText(subLabel, { x: X_NO + TOT_PAD, y: subRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+        const subQtyStr = fmtQty(totalQtyPerSet);
+        const subQtyW   = fontR.widthOfTextAtSize(subQtyStr, FS_BODY);
+        page.drawText(subQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) - subQtyW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        const subStr  = fmtM(subtotalPerSet);
+        const subStrW = fontR.widthOfTextAtSize(subStr, FS_BODY);
+        page.drawText(subStr, { x: X_UP + (amtAreaW - subStrW) / 2, y: subRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        curY = subRowY;
 
-      // ── Subtotal × N sets row ───────────────────────────────────────────────
-      if (sets > 1) {
-        const snsRowY = curY - SUMMARY_ROW_H;
-        page.drawLine({ start: { x: ML,     y: snsRowY }, end: { x: W - MR, y: snsRowY }, thickness: 0.8, color: C_BLACK });
-        page.drawLine({ start: { x: ML,     y: curY    }, end: { x: ML,     y: snsRowY }, thickness: 0.8, color: C_BLACK });
-        page.drawLine({ start: { x: W - MR, y: curY    }, end: { x: W - MR, y: snsRowY }, thickness: 0.8, color: C_BLACK });
-        page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: snsRowY }, thickness: 0.3, color: C_BLACK });
-        page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: snsRowY }, thickness: 0.3, color: C_BLACK });
-        page.drawText(`SUBTOTAL × ${sets} SETS`, { x: X_NO + TOT_PAD, y: snsRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
-        const snsQtyStr = fmtQty(totalQtyPerSet * sets);
-        const snsQtyW   = fontR.widthOfTextAtSize(snsQtyStr, FS_BODY);
-        page.drawText(snsQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) -snsQtyW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
-        const snsStr  = fmtM(subtotal);
-        const snsStrW = fontR.widthOfTextAtSize(snsStr, FS_BODY);
-        page.drawText(snsStr, { x: X_UP + (amtAreaW - snsStrW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
-        curY = snsRowY;
-      }
-
-      // ── Overall discount row ────────────────────────────────────────────────
-      if (discAmt > 0) {
-        const odRowY = curY - SUMMARY_ROW_H;
-        page.drawLine({ start: { x: ML,     y: odRowY }, end: { x: W - MR, y: odRowY }, thickness: 0.8, color: C_BLACK });
-        page.drawLine({ start: { x: ML,     y: curY   }, end: { x: ML,     y: odRowY }, thickness: 0.8, color: C_BLACK });
-        page.drawLine({ start: { x: W - MR, y: curY   }, end: { x: W - MR, y: odRowY }, thickness: 0.8, color: C_BLACK });
-        page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: odRowY }, thickness: 0.3, color: C_BLACK });
-        page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: odRowY }, thickness: 0.3, color: C_BLACK });
-        const isFixedDisc = Number(q.overallDiscountPct ?? 0) === 0;
-        page.drawText(isFixedDisc ? "SPECIAL DISCOUNT" : "OVERALL DISCOUNT", { x: X_NO + TOT_PAD, y: odRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
-        if (!isFixedDisc) {
-          const odPctStr = `(${q.overallDiscountPct}%)`;
-          const odPctW   = fontR.widthOfTextAtSize(odPctStr, FS_BODY);
-          page.drawText(odPctStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) -odPctW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+        // ── Subtotal × N sets row ─────────────────────────────────────────────
+        if (sets > 1) {
+          const snsRowY = curY - SUMMARY_ROW_H;
+          page.drawLine({ start: { x: ML,     y: snsRowY }, end: { x: W - MR, y: snsRowY }, thickness: 0.8, color: C_BLACK });
+          page.drawLine({ start: { x: ML,     y: curY    }, end: { x: ML,     y: snsRowY }, thickness: 0.8, color: C_BLACK });
+          page.drawLine({ start: { x: W - MR, y: curY    }, end: { x: W - MR, y: snsRowY }, thickness: 0.8, color: C_BLACK });
+          page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: snsRowY }, thickness: 0.3, color: C_BLACK });
+          page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: snsRowY }, thickness: 0.3, color: C_BLACK });
+          page.drawText(`SUBTOTAL × ${sets} SETS`, { x: X_NO + TOT_PAD, y: snsRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+          const snsQtyStr = fmtQty(totalQtyPerSet * sets);
+          const snsQtyW   = fontR.widthOfTextAtSize(snsQtyStr, FS_BODY);
+          page.drawText(snsQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) - snsQtyW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+          const snsStr  = fmtM(subtotal);
+          const snsStrW = fontR.widthOfTextAtSize(snsStr, FS_BODY);
+          page.drawText(snsStr, { x: X_UP + (amtAreaW - snsStrW) / 2, y: snsRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+          curY = snsRowY;
         }
-        const odStr  = `- ${fmtM(discAmt)}`;
-        const odStrW = fontR.widthOfTextAtSize(odStr, FS_BODY);
-        page.drawText(odStr, { x: X_UP + (amtAreaW - odStrW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
-        curY = odRowY;
+
+        // ── Overall discount row ──────────────────────────────────────────────
+        if (discAmt > 0) {
+          const odRowY = curY - SUMMARY_ROW_H;
+          page.drawLine({ start: { x: ML,     y: odRowY }, end: { x: W - MR, y: odRowY }, thickness: 0.8, color: C_BLACK });
+          page.drawLine({ start: { x: ML,     y: curY   }, end: { x: ML,     y: odRowY }, thickness: 0.8, color: C_BLACK });
+          page.drawLine({ start: { x: W - MR, y: curY   }, end: { x: W - MR, y: odRowY }, thickness: 0.8, color: C_BLACK });
+          page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: odRowY }, thickness: 0.3, color: C_BLACK });
+          page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: odRowY }, thickness: 0.3, color: C_BLACK });
+          const isFixedDisc = Number(q.overallDiscountPct ?? 0) === 0;
+          page.drawText(isFixedDisc ? "SPECIAL DISCOUNT" : "OVERALL DISCOUNT", { x: X_NO + TOT_PAD, y: odRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+          if (!isFixedDisc) {
+            const odPctStr = `(${q.overallDiscountPct}%)`;
+            const odPctW   = fontR.widthOfTextAtSize(odPctStr, FS_BODY);
+            page.drawText(odPctStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) - odPctW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+          }
+          const odStr  = `- ${fmtM(discAmt)}`;
+          const odStrW = fontR.widthOfTextAtSize(odStr, FS_BODY);
+          page.drawText(odStr, { x: X_UP + (amtAreaW - odStrW) / 2, y: odRowY + 6, size: FS_BODY, font: fontR, color: C_BLACK });
+          curY = odRowY;
+        }
       }
 
-      // ── Grand total row (accent fill) ───────────────────────────────────────
-      const gtLabel       = sets > 1 ? `TOTAL BEFORE TAX × ${sets} SETS` : "TOTAL BEFORE TAX";
+      // ── Grand total row (accent fill) — always when showTP ─────────────────
+      const gtLabel = showIP
+        ? (sets > 1 ? `TOTAL BEFORE TAX × ${sets} SETS` : "TOTAL BEFORE TAX")
+        : "GRAND TOTAL";
       const totalQtyAllSets = totalQtyPerSet * sets;
-      const gtRowY        = curY - SUMMARY_ROW_H;
+      const gtRowY  = curY - SUMMARY_ROW_H;
       page.drawRectangle({ x: ML, y: gtRowY, width: CW, height: SUMMARY_ROW_H, color: accentColor });
-      // Borders
       page.drawLine({ start: { x: ML,     y: gtRowY }, end: { x: W - MR, y: gtRowY }, thickness: 0.8, color: C_BLACK });
       page.drawLine({ start: { x: ML,     y: curY   }, end: { x: ML,     y: gtRowY }, thickness: 0.8, color: C_BLACK });
       page.drawLine({ start: { x: W - MR, y: curY   }, end: { x: W - MR, y: gtRowY }, thickness: 0.8, color: C_BLACK });
-      // Column dividers: after col-3, before amount area (cols 4&5 merged, no X_UOM divider)
-      page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: gtRowY }, thickness: 0.3, color: C_BLACK });
-      page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: gtRowY }, thickness: 0.3, color: C_BLACK });
-      // Label cols 1-3
       page.drawText(gtLabel, { x: X_NO + TOT_PAD, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
-      // Qty cols 4-5 merged — centered in X_QTY to X_UP
-      const gtQtyStr = fmtQty(totalQtyAllSets);
-      const gtQtyW   = fontB.widthOfTextAtSize(gtQtyStr, FS_BODY);
-      page.drawText(gtQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) -gtQtyW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
-      // Amount cols 6-7 merged — centered in merged area
-      const gtAmtStr = fmtM(afterDisc);
-      const gtAmtW   = fontB.widthOfTextAtSize(gtAmtStr, FS_BODY);
-      page.drawText(gtAmtStr, { x: X_UP + (amtAreaW - gtAmtW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+      if (showIP) {
+        page.drawLine({ start: { x: X_QTY, y: curY }, end: { x: X_QTY, y: gtRowY }, thickness: 0.3, color: C_BLACK });
+        page.drawLine({ start: { x: X_UP,  y: curY }, end: { x: X_UP,  y: gtRowY }, thickness: 0.3, color: C_BLACK });
+        const gtQtyStr = fmtQty(totalQtyAllSets);
+        const gtQtyW   = fontB.widthOfTextAtSize(gtQtyStr, FS_BODY);
+        page.drawText(gtQtyStr, { x: X_QTY + ((C_QTY + C_TQTY + C_UOM) - gtQtyW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+        const gtAmtStr = fmtM(afterDisc);
+        const gtAmtW   = fontB.widthOfTextAtSize(gtAmtStr, FS_BODY);
+        page.drawText(gtAmtStr, { x: X_UP + (amtAreaW - gtAmtW) / 2, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+      } else {
+        const gtAmtStr = fmtM(grand);
+        const gtAmtW   = fontB.widthOfTextAtSize(gtAmtStr, FS_BODY);
+        page.drawText(gtAmtStr, { x: W - MR - TOT_PAD - gtAmtW, y: gtRowY + 6, size: FS_BODY, font: fontB, color: C_BLACK });
+      }
       curY = gtRowY;
     }
 
@@ -1001,82 +1011,84 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     // ── Last page: footer content ──────────────────────────────────────────
     if (isLast) {
       // ── 2-column footer table ───────────────────────────────────────────────
-      curY -= 8;
-      const LEFT_COL_W  = CW * 0.65;
-      const RIGHT_COL_X = ML + LEFT_COL_W;
-      const BTM_HDR_H   = TABLE_HDR_H;
-      const wordsText   = numberToWords(grand);
-      const RIGHT_ROW_H  = 14; // height of each right-column sub-row
-      const summaryRows  = 3;
-      const wordsLines   = wrap(wordsText, fontR, FS_BODY, LEFT_COL_W - TOT_PAD * 2).slice(0, 4);
-      const btmConH      = Math.max(wordsLines.length * INFO_LH + 6, summaryRows * RIGHT_ROW_H);
-      const btmTotalH   = BTM_HDR_H + btmConH;
+      if (showTP) {
+        curY -= 8;
+        const LEFT_COL_W  = CW * 0.65;
+        const RIGHT_COL_X = ML + LEFT_COL_W;
+        const BTM_HDR_H   = TABLE_HDR_H;
+        const wordsText   = numberToWords(grand);
+        const RIGHT_ROW_H  = 14; // height of each right-column sub-row
+        const summaryRows  = 3;
+        const wordsLines   = wrap(wordsText, fontR, FS_BODY, LEFT_COL_W - TOT_PAD * 2).slice(0, 4);
+        const btmConH      = Math.max(wordsLines.length * INFO_LH + 6, summaryRows * RIGHT_ROW_H);
+        const btmTotalH   = BTM_HDR_H + btmConH;
 
-      // Outer border
-      page.drawRectangle({
-        x: ML, y: curY - btmTotalH, width: CW, height: btmTotalH,
-        borderColor: C_BLACK, borderWidth: 0.8,
-      });
+        // Outer border
+        page.drawRectangle({
+          x: ML, y: curY - btmTotalH, width: CW, height: btmTotalH,
+          borderColor: C_BLACK, borderWidth: 0.8,
+        });
 
-      // Header row — accent fill
-      page.drawRectangle({
-        x: ML, y: curY - BTM_HDR_H, width: CW, height: BTM_HDR_H,
-        color: accentColor,
-      });
+        // Header row — accent fill
+        page.drawRectangle({
+          x: ML, y: curY - BTM_HDR_H, width: CW, height: BTM_HDR_H,
+          color: accentColor,
+        });
 
-      // Vertical divider (full height)
-      page.drawLine({
-        start: { x: RIGHT_COL_X, y: curY - btmTotalH },
-        end:   { x: RIGHT_COL_X, y: curY },
-        thickness: 0.6, color: C_BLACK,
-      });
+        // Vertical divider (full height)
+        page.drawLine({
+          start: { x: RIGHT_COL_X, y: curY - btmTotalH },
+          end:   { x: RIGHT_COL_X, y: curY },
+          thickness: 0.6, color: C_BLACK,
+        });
 
-      // Horizontal separator below header
-      page.drawLine({
-        start: { x: ML,      y: curY - BTM_HDR_H },
-        end:   { x: ML + CW, y: curY - BTM_HDR_H },
-        thickness: 0.5, color: C_BLACK,
-      });
+        // Horizontal separator below header
+        page.drawLine({
+          start: { x: ML,      y: curY - BTM_HDR_H },
+          end:   { x: ML + CW, y: curY - BTM_HDR_H },
+          thickness: 0.5, color: C_BLACK,
+        });
 
-      // Header labels (black text)
-      const btmLblY = curY - BTM_HDR_H / 2 - FS_BODY / 2 + 1;
-      page.drawText("TOTAL IN WORDS", {
-        x: ML + TOT_PAD, y: btmLblY, size: FS_BODY, font: fontB, color: C_BLACK,
-      });
-      page.drawText("AMOUNT SUMMARY", {
-        x: RIGHT_COL_X + TOT_PAD, y: btmLblY, size: FS_BODY, font: fontB, color: C_BLACK,
-      });
+        // Header labels (black text)
+        const btmLblY = curY - BTM_HDR_H / 2 - FS_BODY / 2 + 1;
+        page.drawText("TOTAL IN WORDS", {
+          x: ML + TOT_PAD, y: btmLblY, size: FS_BODY, font: fontB, color: C_BLACK,
+        });
+        page.drawText("AMOUNT SUMMARY", {
+          x: RIGHT_COL_X + TOT_PAD, y: btmLblY, size: FS_BODY, font: fontB, color: C_BLACK,
+        });
 
-      // Content — total in words (left column, vertically centred)
-      const wordsTextH = wordsLines.length * INFO_LH;
-      let wy = (curY - BTM_HDR_H) - Math.floor((btmConH - wordsTextH) / 2);
-      for (const line of wordsLines) {
-        page.drawText(line, { x: ML + TOT_PAD, y: wy, size: FS_BODY, font: fontR, color: C_BLACK });
-        wy -= INFO_LH;
+        // Content — total in words (left column, vertically centred)
+        const wordsTextH = wordsLines.length * INFO_LH;
+        let wy = (curY - BTM_HDR_H) - Math.floor((btmConH - wordsTextH) / 2);
+        for (const line of wordsLines) {
+          page.drawText(line, { x: ML + TOT_PAD, y: wy, size: FS_BODY, font: fontR, color: C_BLACK });
+          wy -= INFO_LH;
+        }
+
+        // Right column — Taxable Amount | [Total Discount] | SST | Total After Tax
+        const rTop = curY - BTM_HDR_H; // top of right content area
+        let   rRow = 0;
+
+        const drawSummaryRow = (label: string, val: string, bold = false) => {
+          rRow++;
+          page.drawLine({ start: { x: RIGHT_COL_X, y: rTop - rRow * RIGHT_ROW_H }, end: { x: W - MR, y: rTop - rRow * RIGHT_ROW_H }, thickness: 0.3, color: C_BLACK });
+          const font = bold ? fontB : fontR;
+          page.drawText(label, { x: RIGHT_COL_X + TOT_PAD, y: rTop - rRow * RIGHT_ROW_H + 4, size: FS_BODY, font, color: C_BLACK });
+          const vw = font.widthOfTextAtSize(val, FS_BODY);
+          page.drawText(val, { x: W - MR - TOT_PAD - vw, y: rTop - rRow * RIGHT_ROW_H + 4, size: FS_BODY, font, color: C_BLACK });
+        };
+
+        drawSummaryRow("TAXABLE AMOUNT (MYR)", fmtM(afterDisc));
+
+        // Next row: SST
+        drawSummaryRow(`SST (${q.sstPct ?? "0"}%)`, fmtM(sstAmt));
+
+        // Last row: Total After Tax (bold)
+        drawSummaryRow("TOTAL AFTER TAX", fmtM(grand), true);
+
+        curY -= btmTotalH;
       }
-
-      // Right column — Taxable Amount | [Total Discount] | SST | Total After Tax
-      const rTop = curY - BTM_HDR_H; // top of right content area
-      let   rRow = 0;
-
-      const drawSummaryRow = (label: string, val: string, bold = false) => {
-        rRow++;
-        page.drawLine({ start: { x: RIGHT_COL_X, y: rTop - rRow * RIGHT_ROW_H }, end: { x: W - MR, y: rTop - rRow * RIGHT_ROW_H }, thickness: 0.3, color: C_BLACK });
-        const font = bold ? fontB : fontR;
-        page.drawText(label, { x: RIGHT_COL_X + TOT_PAD, y: rTop - rRow * RIGHT_ROW_H + 4, size: FS_BODY, font, color: C_BLACK });
-        const vw = font.widthOfTextAtSize(val, FS_BODY);
-        page.drawText(val, { x: W - MR - TOT_PAD - vw, y: rTop - rRow * RIGHT_ROW_H + 4, size: FS_BODY, font, color: C_BLACK });
-      };
-
-      drawSummaryRow("TAXABLE AMOUNT (MYR)", fmtM(afterDisc));
-
-      // Next row: SST
-      drawSummaryRow(`SST (${q.sstPct ?? "0"}%)`, fmtM(sstAmt));
-
-      // Last row: Total After Tax (bold)
-      drawSummaryRow("TOTAL AFTER TAX", fmtM(grand), true);
-
-      curY -= btmTotalH;
 
       // ── Bank Detail table ──────────────────────────────────────────────────
       if (bank) {
@@ -1160,6 +1172,46 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         curY -= TERMS_BOX_H + 10;
       }
 
+      // Payment Options
+      if (payOpts?.length) {
+        curY -= 8;
+        const HDR_H = 18;
+        const boxH  = HDR_H + payOpts.reduce((s, o) => s + (o.note ? 50 : 38), 0) + 4;
+
+        page.drawRectangle({ x: ML, y: curY - boxH, width: CW, height: boxH, borderColor: C_BORDER, borderWidth: 0.8 });
+        page.drawRectangle({ x: ML, y: curY - HDR_H, width: CW, height: HDR_H, color: C_HDR_BG });
+        page.drawText("PAYMENT OPTIONS", { x: ML + 10, y: curY - HDR_H + 5, size: 7.5, font: fontB, color: C_WHITE });
+
+        let oy = curY - HDR_H;
+        for (let oi = 0; oi < payOpts.length; oi++) {
+          const opt  = payOpts[oi];
+          const optH = opt.note ? 50 : 38;
+          if (oi > 0) hLine(page, oy, ML + 6, W - MR - 6, C_BORDER, 0.4);
+          if (oi % 2 === 1) page.drawRectangle({ x: ML, y: oy - optH, width: CW, height: optH, color: rgb(0.96, 0.96, 0.96) });
+
+          const payable = opt.type === "lump_sum"
+            ? (opt.discountPct ? grand * (1 - opt.discountPct / 100) : grand)
+            : (Number(opt.deposit) + Number(opt.monthly) * (opt.lastMonth ? opt.months - 1 : opt.months) + (opt.lastMonth ? Number(opt.lastMonth) : 0));
+          const amtStr = fmtM(payable);
+          const amtW   = fontB.widthOfTextAtSize(amtStr, 11);
+          page.drawText(amtStr, { x: W - MR - amtW - 10, y: oy - 11, size: 11, font: fontB, color: accentColor });
+          page.drawText(trunc(opt.label, fontB, 9.5, CW - amtW - 30), { x: ML + 10, y: oy - 11, size: 9.5, font: fontB, color: C_TEXT });
+
+          const detailStr = opt.type === "lump_sum"
+            ? (opt.discountPct
+                ? `Full payment  ·  ${opt.discountPct}% discount off RM ${grand.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+                : "Full payment")
+            : opt.lastMonth
+              ? `Deposit RM ${Number(opt.deposit).toLocaleString("en-MY", { minimumFractionDigits: 2 })}  +  RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })}/mo  ×  ${opt.months - 1} months  +  last month RM ${Number(opt.lastMonth).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+              : `Deposit RM ${Number(opt.deposit).toLocaleString("en-MY", { minimumFractionDigits: 2 })}  +  RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })}/mo  ×  ${opt.months} months`;
+          page.drawText(trunc(detailStr, fontR, 8, CW - amtW - 32), { x: ML + 10, y: oy - 23, size: 8, font: fontR, color: C_MUTED });
+
+          if (opt.note) page.drawText(trunc(opt.note, fontR, 7.5, CW - 20), { x: ML + 10, y: oy - 35, size: 7.5, font: fontR, color: C_FAINT });
+          oy -= optH;
+        }
+        curY -= boxH;
+      }
+
       // Closing message
       curY -= 10;
       const closeMsg = "We trust the above quotation meets your requirements. Should you have any queries, please do not hesitate to contact us. We look forward to your kind confirmation.";
@@ -1184,6 +1236,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
           page.drawText(line, { x: ML + 8, y: ny, size: 9.5, font: fontR, color: C_TEXT });
           ny -= 12;
         }
+        curY -= noteH;
       }
 
     }

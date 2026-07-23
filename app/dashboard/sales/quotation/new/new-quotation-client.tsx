@@ -12,6 +12,7 @@ import {
   type ReviewItem,
   type UpdateQuotationInput,
 } from "@/server/quotation";
+import type { PaymentOption } from "@/db/schema";
 import { getCustomers } from "@/server/customer";
 import { getOrgMembersForQuotation } from "@/server/quotation";
 import { Button } from "@/components/ui/button";
@@ -142,6 +143,7 @@ export type EditData = {
   paymentTerm: string;
   returnPolicy: string;
   warranty: string;
+  paymentOptions: PaymentOption[];
   categoryIds: string[];
   items: ReviewItem[];
 };
@@ -193,6 +195,7 @@ export function NewQuotationClient({
   const [paymentTerm, setPaymentTerm] = useState(editData?.paymentTerm ?? "30 days");
   const [returnPolicy, setReturnPolicy] = useState(editData?.returnPolicy ?? "GOODS ONCE SOLD WILL NOT TAKEN BACK");
   const [warranty, setWarranty] = useState(editData?.warranty ?? "5 years against material and manufacturing defects");
+  const [paymentOptions, setPaymentOptions] = useState<PaymentOption[]>(editData?.paymentOptions ?? []);
   const [categoryIds, setCategoryIds] = useState<string[]>(() =>
     editData ? editData.categoryIds : categories.filter((c) => c.isDefault).map((c) => c.id),
   );
@@ -222,6 +225,7 @@ export function NewQuotationClient({
   const [includeCatalogue, setIncludeCatalogue] = useState(true);
   const [includeMdaCerts, setIncludeMdaCerts] = useState(true);
   const [showProductCode, setShowProductCode] = useState(true);
+  const [showItemizedPricing, setShowItemizedPricing] = useState(true);
   const [inclMof, setInclMof] = useState(true);
   const [inclSsm, setInclSsm] = useState(true);
   const [inclTcc, setInclTcc] = useState(true);
@@ -683,6 +687,7 @@ export function NewQuotationClient({
         paymentTerm: paymentTerm || undefined,
         returnPolicy: returnPolicy || undefined,
         warranty: warranty || undefined,
+        paymentOptions: paymentOptions.length ? paymentOptions : null,
         items: finalItems,
         overallDiscountPct: applyTotalDiscount && discountType === "pct" ? (overallDiscount || "0") : "0",
         overallDiscountAmt: applyTotalDiscount && discountType === "fixed" ? (specialDiscAmt || "0") : undefined,
@@ -692,6 +697,7 @@ export function NewQuotationClient({
         showTotalPrice: true,
         showItemizeDiscount: false,
         showProductCode,
+        showItemizedPricing,
         inclMof,
         inclSsm,
         inclTcc,
@@ -1197,6 +1203,175 @@ export function NewQuotationClient({
                     className="text-sm resize-none"
                   />
                 </Field>
+              </div>
+
+              {/* Payment Options */}
+              <div className="mt-4 border-t border-border pt-4 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Payment Options</span>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showItemizedPricing}
+                        onChange={(e) => setShowItemizedPricing(e.target.checked)}
+                        className="w-3.5 h-3.5 rounded accent-primary"
+                      />
+                      <span className="text-xs text-muted-foreground">Show itemized pricing</span>
+                    </label>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1"
+                    onClick={() =>
+                      setPaymentOptions((prev) => [
+                        ...prev,
+                        prev.length === 0
+                          ? { type: "lump_sum", label: "Option 1 — Full Payment", note: "" }
+                          : { type: "instalment", label: "Option 2 — Instalment", deposit: "", monthly: "", months: 12, lastMonth: "", note: "" },
+                      ])
+                    }
+                  >
+                    + Add Option
+                  </Button>
+                </div>
+
+                {paymentOptions.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No payment options — the standard Payment Terms field above will be used.</p>
+                )}
+
+                {paymentOptions.map((opt, idx) => (
+                  <div key={idx} className="border border-border rounded-lg p-3 space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={opt.label}
+                        onChange={(e) => setPaymentOptions((prev) => prev.map((o, i) => i === idx ? { ...o, label: e.target.value } : o))}
+                        placeholder="Option label"
+                        className="h-8 text-sm flex-1"
+                      />
+                      <select
+                        value={opt.type}
+                        onChange={(e) => {
+                          const t = e.target.value as PaymentOption["type"];
+                          setPaymentOptions((prev) => prev.map((o, i) => {
+                            if (i !== idx) return o;
+                            return t === "lump_sum"
+                              ? { type: "lump_sum", label: o.label, discountPct: undefined, note: o.note }
+                              : { type: "instalment", label: o.label, deposit: "", monthly: "", months: 12, lastMonth: "", note: o.note };
+                          }));
+                        }}
+                        className="h-8 text-sm border border-border rounded-md px-2 bg-background"
+                      >
+                        <option value="lump_sum">Full Payment</option>
+                        <option value="instalment">Instalment</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentOptions((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        <XIcon className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {opt.type === "lump_sum" && (
+                      <div className="flex items-end gap-3">
+                        <div className="space-y-1 w-36">
+                          <label className="text-xs text-muted-foreground">Discount (%)</label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            value={opt.discountPct ?? ""}
+                            onChange={(e) => setPaymentOptions((prev) => prev.map((o, i) =>
+                              i === idx ? { ...o, discountPct: e.target.value !== "" ? Number(e.target.value) : undefined } : o
+                            ))}
+                            placeholder="e.g. 10"
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        {grandTotal > 0 && (
+                          <p className="text-xs text-muted-foreground pb-1.5">
+                            {opt.discountPct
+                              ? <>Pay <span className="font-semibold text-foreground">RM {(grandTotal * (1 - opt.discountPct / 100)).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</span> ({opt.discountPct}% off RM {grandTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })})</>
+                              : <>Full: RM {grandTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}</>
+                            }
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {opt.type === "instalment" && (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-4 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">Deposit (RM)</label>
+                            <Input
+                              value={opt.deposit}
+                              onChange={(e) => setPaymentOptions((prev) => prev.map((o, i) => i === idx ? { ...o, deposit: e.target.value } : o))}
+                              placeholder="e.g. 3000"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">Monthly (RM)</label>
+                            <Input
+                              value={opt.monthly}
+                              onChange={(e) => setPaymentOptions((prev) => prev.map((o, i) => i === idx ? { ...o, monthly: e.target.value } : o))}
+                              placeholder="e.g. 900"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">Months</label>
+                            <Input
+                              type="number"
+                              min={1}
+                              value={opt.months}
+                              onChange={(e) => setPaymentOptions((prev) => prev.map((o, i) => i === idx ? { ...o, months: Number(e.target.value) || 1 } : o))}
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">Last Month (RM)</label>
+                            <Input
+                              value={opt.lastMonth ?? ""}
+                              onChange={(e) => setPaymentOptions((prev) => prev.map((o, i) => i === idx ? { ...o, lastMonth: e.target.value } : o))}
+                              placeholder="optional"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                        </div>
+                        {opt.deposit && opt.monthly && opt.months > 0 && (() => {
+                          const regularMonths = opt.lastMonth ? opt.months - 1 : opt.months;
+                          const total = Number(opt.deposit) + Number(opt.monthly) * regularMonths + (opt.lastMonth ? Number(opt.lastMonth) : 0);
+                          const breakdown = opt.lastMonth
+                            ? `deposit + RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })} × ${regularMonths} months + last month RM ${Number(opt.lastMonth).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+                            : `deposit + RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })} × ${opt.months} months`;
+                          return (
+                            <p className="text-xs text-muted-foreground">
+                              Total payable: <span className="font-semibold text-foreground">RM {total.toLocaleString("en-MY", { minimumFractionDigits: 2 })}</span>
+                              <span className="ml-1">({breakdown})</span>
+                            </p>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Note (optional)</label>
+                      <Input
+                        value={opt.note ?? ""}
+                        onChange={(e) => setPaymentOptions((prev) => prev.map((o, i) => i === idx ? { ...o, note: e.target.value } : o))}
+                        placeholder="e.g. Upon signing of agreement"
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

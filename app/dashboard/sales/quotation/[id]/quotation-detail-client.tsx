@@ -9,6 +9,7 @@ import {
   getQuotationGroupAllDetails,
   reviseQuotation,
   updateQuotationSettings,
+  updateQuotationDocumentOptions,
 } from "@/server/quotation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -122,6 +123,8 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   const [inclLampiran12, setInclLampiran12] = useState(!!Number(q.inclLampiran12));
   const [inclLampiran13, setInclLampiran13] = useState(!!Number(q.inclLampiran13));
   const [showItemizeDiscount, setShowItemizeDiscount] = useState(!!Number(q.showItemizeDiscount));
+  const [showItemizedPricing, setShowItemizedPricing] = useState(!!Number(q.showItemizedPricing ?? 1));
+  const [showTotalPrice, setShowTotalPrice] = useState(!!Number(q.showTotalPrice ?? 1));
 
   // Re-sync when switching between comparison tabs
   useEffect(() => {
@@ -142,6 +145,8 @@ export function QuotationDetailClient({ group, initialId }: Props) {
     setInclLampiran12(!!Number(q.inclLampiran12));
     setInclLampiran13(!!Number(q.inclLampiran13));
     setShowItemizeDiscount(!!Number(q.showItemizeDiscount));
+    setShowItemizedPricing(!!Number(q.showItemizedPricing ?? 1));
+    setShowTotalPrice(!!Number(q.showTotalPrice ?? 1));
   }, [q.id]);
 
   const saveSettings = async (patch: Partial<{
@@ -207,6 +212,25 @@ export function QuotationDetailClient({ group, initialId }: Props) {
       toast.error(e.message);
     } finally {
       setFinalizing(false);
+    }
+  };
+
+  const saveDocumentOptions = async (patch: Partial<{
+    showItemizedPricing: boolean; showProductCode: boolean; showItemizeDiscount: boolean;
+    showTotalPrice: boolean; includeCatalogue: boolean; includeMdaCerts: boolean;
+    inclMof: boolean; inclSsm: boolean; inclTcc: boolean; inclBankStatement: boolean;
+    inclMdaEstablishment: boolean; inclLampiran12: boolean; inclLampiran13: boolean;
+  }>) => {
+    try {
+      await updateQuotationDocumentOptions(q.id, {
+        showItemizedPricing, showProductCode, showItemizeDiscount, showTotalPrice,
+        includeCatalogue, includeMdaCerts, inclMof, inclSsm, inclTcc, inclBankStatement,
+        inclMdaEstablishment, inclLampiran12, inclLampiran13,
+        ...patch,
+      });
+      router.refresh();
+    } catch (e: any) {
+      toast.error(e.message);
     }
   };
 
@@ -674,7 +698,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                   return rows;
                 })()}
               </tbody>
-              {Number(q.showTotalPrice) && (
+              {!!Number(q.showTotalPrice) && (
                 <tfoot>
                   {subtotalPerSet !== null && (
                     <tr className="border-t border-border">
@@ -914,59 +938,39 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               </span>
             </div>
             <div className="p-3 space-y-3 text-xs">
-              {isDraft ? (
-                <>
-                  <div className="space-y-1">
-                    <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Display</p>
-                    {([
-                      { id: "det-pc",   label: "Product code",     val: showProductCode,  set: setShowProductCode,  key: "showProductCode" as const },
-                      { id: "det-mda",  label: "MDA certificates", val: includeMdaCerts,  set: setIncludeMdaCerts,  key: "includeMdaCerts" as const },
-                    ]).map(({ id, label, val, set, key }) => (
-                      <label key={id} className="flex items-center gap-2 py-1 cursor-pointer">
-                        <input type="checkbox" id={id} checked={val} onChange={(e) => { set(e.target.checked); saveSettings({ [key]: e.target.checked }); }} className="w-3.5 h-3.5" />
-                        <span>{label}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Attached Documents</p>
-                    {([
-                      { id: "det-cat",  label: "Product catalogue",                val: includeCatalogue,     set: setIncludeCatalogue,     key: "includeCatalogue" as const },
-                      { id: "det-mof",  label: "MOF Certificate",                  val: inclMof,              set: setInclMof,              key: "inclMof" as const },
-                      { id: "det-ssm",  label: "SSM",                              val: inclSsm,              set: setInclSsm,              key: "inclSsm" as const },
-                      { id: "det-tcc",  label: "TCC (Tax Compliance Certificate)", val: inclTcc,              set: setInclTcc,              key: "inclTcc" as const },
-                      { id: "det-bank", label: "Bank Statement",                   val: inclBankStatement,    set: setInclBankStatement,    key: "inclBankStatement" as const },
-                      { id: "det-mda2", label: "MDA Establishment",                val: inclMdaEstablishment, set: setInclMdaEstablishment, key: "inclMdaEstablishment" as const },
-                      { id: "det-l12",  label: "Lampiran 12",                      val: inclLampiran12,       set: setInclLampiran12,       key: "inclLampiran12" as const },
-                      { id: "det-l13",  label: "Lampiran 13",                      val: inclLampiran13,       set: setInclLampiran13,       key: "inclLampiran13" as const },
-                    ]).map(({ id, label, val, set, key }) => (
-                      <label key={id} className="flex items-center gap-2 py-1 cursor-pointer">
-                        <input type="checkbox" id={id} checked={val} onChange={(e) => { set(e.target.checked); saveSettings({ [key]: e.target.checked }); }} className="w-3.5 h-3.5" />
-                        <span>{label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="space-y-1.5">
-                    <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Display</p>
-                    <OptionRow label="Product code"    enabled={!!Number(q.showProductCode)} />
-                    <OptionRow label="MDA certificates" enabled={!!Number(q.includeMdaCerts)} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Attached Documents</p>
-                    <OptionRow label="Product catalogue"                enabled={!!Number(q.includeCatalogue)} />
-                    <OptionRow label="MOF Certificate"                  enabled={!!Number(q.inclMof)} />
-                    <OptionRow label="SSM"                              enabled={!!Number(q.inclSsm)} />
-                    <OptionRow label="TCC (Tax Compliance Certificate)" enabled={!!Number(q.inclTcc)} />
-                    <OptionRow label="Bank Statement"                   enabled={!!Number(q.inclBankStatement)} />
-                    <OptionRow label="MDA Establishment"                enabled={!!Number(q.inclMdaEstablishment)} />
-                    <OptionRow label="Lampiran 12"                      enabled={!!Number(q.inclLampiran12)} />
-                    <OptionRow label="Lampiran 13"                      enabled={!!Number(q.inclLampiran13)} />
-                  </div>
-                </>
-              )}
+              <div className="space-y-1">
+                <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Display</p>
+                {([
+                  { id: "det-ip",   label: "Itemized pricing",  val: showItemizedPricing,  set: setShowItemizedPricing,  key: "showItemizedPricing" as const },
+                  { id: "det-pc",   label: "Product code",      val: showProductCode,       set: setShowProductCode,       key: "showProductCode" as const },
+                  { id: "det-disc", label: "Itemized discount",  val: showItemizeDiscount,  set: setShowItemizeDiscount,  key: "showItemizeDiscount" as const },
+                  { id: "det-tp",   label: "Total price",        val: showTotalPrice,        set: setShowTotalPrice,        key: "showTotalPrice" as const },
+                  { id: "det-mda",  label: "MDA certificates",   val: includeMdaCerts,       set: setIncludeMdaCerts,       key: "includeMdaCerts" as const },
+                ]).map(({ id, label, val, set, key }) => (
+                  <label key={id} className="flex items-center gap-2 py-1 cursor-pointer">
+                    <input type="checkbox" id={id} checked={val} onChange={(e) => { set(e.target.checked); saveDocumentOptions({ [key]: e.target.checked }); }} className="w-3.5 h-3.5" />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="space-y-1">
+                <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">Attached Documents</p>
+                {([
+                  { id: "det-cat",  label: "Product catalogue",                val: includeCatalogue,     set: setIncludeCatalogue,     key: "includeCatalogue" as const },
+                  { id: "det-mof",  label: "MOF Certificate",                  val: inclMof,              set: setInclMof,              key: "inclMof" as const },
+                  { id: "det-ssm",  label: "SSM",                              val: inclSsm,              set: setInclSsm,              key: "inclSsm" as const },
+                  { id: "det-tcc",  label: "TCC (Tax Compliance Certificate)", val: inclTcc,              set: setInclTcc,              key: "inclTcc" as const },
+                  { id: "det-bank", label: "Bank Statement",                   val: inclBankStatement,    set: setInclBankStatement,    key: "inclBankStatement" as const },
+                  { id: "det-mda2", label: "MDA Establishment",                val: inclMdaEstablishment, set: setInclMdaEstablishment, key: "inclMdaEstablishment" as const },
+                  { id: "det-l12",  label: "Lampiran 12",                      val: inclLampiran12,       set: setInclLampiran12,       key: "inclLampiran12" as const },
+                  { id: "det-l13",  label: "Lampiran 13",                      val: inclLampiran13,       set: setInclLampiran13,       key: "inclLampiran13" as const },
+                ]).map(({ id, label, val, set, key }) => (
+                  <label key={id} className="flex items-center gap-2 py-1 cursor-pointer">
+                    <input type="checkbox" id={id} checked={val} onChange={(e) => { set(e.target.checked); saveDocumentOptions({ [key]: e.target.checked }); }} className="w-3.5 h-3.5" />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
 

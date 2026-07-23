@@ -1191,6 +1191,48 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
         </div>
       )}
 
+      {(q.paymentOptions?.length ?? 0) > 0 && (
+        <div style={{ margin: "14px 28px 0", border: "1px solid #000", overflow: "hidden" }}>
+          <div style={{ padding: "5px 10px", background: primary, fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "#000" }}>
+            Payment Options
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #ccc", background: "#f9f9f9" }}>
+                <th style={{ padding: "5px 10px", fontSize: "9px", textAlign: "left", color: "#555", fontWeight: "600", textTransform: "uppercase" }}>Option</th>
+                <th style={{ padding: "5px 10px", fontSize: "9px", textAlign: "left", color: "#555", fontWeight: "600", textTransform: "uppercase" }}>Type</th>
+                <th style={{ padding: "5px 10px", fontSize: "9px", textAlign: "left", color: "#555", fontWeight: "600", textTransform: "uppercase" }}>Details</th>
+                <th style={{ padding: "5px 10px", fontSize: "9px", textAlign: "left", color: "#555", fontWeight: "600", textTransform: "uppercase" }}>Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(q.paymentOptions as import("@/db/schema").PaymentOption[]).map((opt, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
+                  <td style={{ padding: "6px 10px", fontSize: "10px", color: "#000", fontWeight: "600" }}>{opt.label}</td>
+                  <td style={{ padding: "6px 10px", fontSize: "10px", color: "#000", textTransform: "uppercase" }}>
+                    {opt.type === "lump_sum" ? "Full Payment" : "Instalment"}
+                  </td>
+                  <td style={{ padding: "6px 10px", fontSize: "10px", color: "#000" }}>
+                    {opt.type === "lump_sum"
+                      ? opt.discountPct
+                        ? `Pay RM ${(Number(q.grandTotal) * (1 - opt.discountPct / 100)).toLocaleString("en-MY", { minimumFractionDigits: 2 })}  (${opt.discountPct}% off RM ${Number(q.grandTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })})`
+                        : `Full amount: RM ${Number(q.grandTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+                      : (() => {
+                          const regularMonths = opt.lastMonth ? opt.months - 1 : opt.months;
+                          const total = Number(opt.deposit) + Number(opt.monthly) * regularMonths + (opt.lastMonth ? Number(opt.lastMonth) : 0);
+                          return opt.lastMonth
+                            ? `Deposit RM ${Number(opt.deposit).toLocaleString("en-MY", { minimumFractionDigits: 2 })} · RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })}/mo × ${regularMonths} months · last month RM ${Number(opt.lastMonth).toLocaleString("en-MY", { minimumFractionDigits: 2 })} = Total RM ${total.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`
+                            : `Deposit RM ${Number(opt.deposit).toLocaleString("en-MY", { minimumFractionDigits: 2 })} · RM ${Number(opt.monthly).toLocaleString("en-MY", { minimumFractionDigits: 2 })}/mo × ${opt.months} = Total RM ${total.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
+                        })()}
+                  </td>
+                  <td style={{ padding: "6px 10px", fontSize: "10px", color: "#555" }}>{opt.note ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {q.status === "final" && (
         <div style={{ margin: "0 28px 14px", border: "1px solid #000", overflow: "hidden" }}>
           <div style={{ padding: "5px 10px", background: primary, fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "#000" }}>Acceptance</div>

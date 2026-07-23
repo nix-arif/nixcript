@@ -21,7 +21,7 @@ import {
   ExternalLinkIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { lookupCustomersByName, createCustomer, getCustomers } from "@/server/customer";
+import { lookupCustomersByName, getCustomers } from "@/server/customer";
 import {
   createGovernmentBatch,
   type GovGroupResult,
@@ -49,6 +49,7 @@ type ParsedFile = {
   sheet2: Sheet2Info;
   customerStatus: "pending" | "checking" | "found" | "not_found";
   customerId?: string;
+  resolvedCustomerName?: string;
   selectedOriginalOrgId: string;
   markups: number[]; // ascending markup % per dummy org
   parseError?: string;
@@ -384,6 +385,20 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
       return [...prev, ...parsed.slice(0, remaining)];
     });
 
+    // Files with no extractable customer name go straight to "not_found" so the resolver shows
+    const emptyNameUids = new Set(
+      parsed.filter((f) => !f.parseError && !f.sheet2.customerName).map((f) => f.uid),
+    );
+    if (emptyNameUids.size > 0) {
+      setFiles((prev) =>
+        prev.map((pf) =>
+          emptyNameUids.has(pf.uid) && pf.customerStatus === "pending"
+            ? { ...pf, customerStatus: "not_found" }
+            : pf,
+        ),
+      );
+    }
+
     // Names that need lookup (skip parse errors and empty names)
     const names = parsed
       .filter((f) => !f.parseError && f.sheet2.customerName)
@@ -415,6 +430,7 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
             ...pf,
             customerStatus: result.found ? "found" : "not_found",
             customerId: result.customer?.id,
+            resolvedCustomerName: result.customer?.name,
           };
         }),
       );
@@ -444,40 +460,21 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
   );
   const canGenerate = validFiles.length > 0 && genState.phase === "idle" && !checking;
 
-  // Per-name resolver state
-  type ResolverMode = "search" | "create";
+  // Per-file resolver state (keyed by file uid)
   type CustomerResult = Awaited<ReturnType<typeof getCustomers>>[number];
-  const [activeResolver, setActiveResolver] = useState<string | null>(null);
-  const [resolverMode, setResolverMode] = useState<ResolverMode>("search");
+  const [activeResolverUid, setActiveResolverUid] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<CustomerResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const [savingCustomer, setSavingCustomer] = useState(false);
-  const [customerForm, setCustomerForm] = useState({
-    name: "", department: "", organizationName: "", organizationAddress: "",
-    contactNo: "", email: "",
-  });
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function openResolver(customerName: string) {
-    const src = files.find(
-      (f) => f.sheet2.customerName.toLowerCase() === customerName.toLowerCase(),
-    );
-    setActiveResolver(customerName);
-    setResolverMode("search");
-    setSearchQuery(customerName);
+  function openResolver(fileUid: string) {
+    const src = files.find((f) => f.uid === fileUid);
+    const query = src?.sheet2.customerName || src?.sheet2.organizationName || "";
+    setActiveResolverUid(fileUid);
+    setSearchQuery(query);
     setSearchResults([]);
-    // Pre-fill create form in case user switches to it
-    setCustomerForm({
-      name: customerName,
-      department: src?.sheet2.department ?? "",
-      organizationName: src?.sheet2.organizationName ?? "",
-      organizationAddress: src?.sheet2.organizationAddress ?? "",
-      contactNo: "",
-      email: "",
-    });
-    // Auto-run search
-    runSearch(customerName);
+    if (query) runSearch(query);
   }
 
   async function runSearch(q: string) {
@@ -500,55 +497,16 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
   }
 
   function resolveWith(cust: CustomerResult) {
-    if (!activeResolver) return;
-    const lowerName = activeResolver.toLowerCase().trim();
+    if (!activeResolverUid) return;
     setFiles((prev) =>
       prev.map((f) =>
-        f.sheet2.customerName.toLowerCase().trim() === lowerName
-          ? { ...f, customerStatus: "found", customerId: cust.id }
+        f.uid === activeResolverUid
+          ? { ...f, customerStatus: "found", customerId: cust.id, resolvedCustomerName: cust.name }
           : f,
       ),
     );
     toast.success(`Matched to "${cust.name}"`);
-    setActiveResolver(null);
-  }
-
-  async function handleCreateCustomer() {
-    if (!activeResolver || !customerForm.name.trim()) return;
-    setSavingCustomer(true);
-    try {
-      const newCust = await createCustomer({
-        name: customerForm.name.trim(),
-        contactNo: customerForm.contactNo.trim() || undefined,
-        email: customerForm.email.trim() || undefined,
-        companies:
-          customerForm.organizationName.trim()
-            ? [
-                {
-                  organizationName: customerForm.organizationName.trim(),
-                  organizationAddress:
-                    customerForm.organizationAddress.trim() || undefined,
-                  department: customerForm.department.trim() || undefined,
-                  isPrimary: true,
-                },
-              ]
-            : [],
-      });
-      const lowerName = activeResolver.toLowerCase().trim();
-      setFiles((prev) =>
-        prev.map((f) =>
-          f.sheet2.customerName.toLowerCase().trim() === lowerName
-            ? { ...f, customerStatus: "found", customerId: newCust.id }
-            : f,
-        ),
-      );
-      toast.success(`Customer "${newCust.name}" created`);
-      setActiveResolver(null);
-    } catch (e: any) {
-      toast.error(e.message ?? "Failed to create customer");
-    } finally {
-      setSavingCustomer(false);
-    }
+    setActiveResolverUid(null);
   }
 
   const handleGenerate = async () => {
@@ -755,7 +713,9 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
                               f.customerStatus === "not_found" ? "text-amber-600" : "",
                             )}
                           >
-                            {f.sheet2.customerName || "—"}
+                            {f.customerStatus === "found" && f.resolvedCustomerName
+                              ? f.resolvedCustomerName
+                              : f.sheet2.customerName || "—"}
                           </span>
                         </div>
                       )}
@@ -804,23 +764,22 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
           <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 dark:bg-amber-950/20">
             <AlertCircleIcon className="w-4 h-4 text-amber-600 shrink-0" />
             <span className="text-sm font-medium text-amber-800 dark:text-amber-300">
-              {[...new Set(missingCustomers.map((f) => f.sheet2.customerName))].length} customer
-              {[...new Set(missingCustomers.map((f) => f.sheet2.customerName))].length > 1 ? "s" : ""} not found — resolve them below to continue
+              {missingCustomers.length} file{missingCustomers.length > 1 ? "s" : ""} missing customer — resolve them below to continue
             </span>
           </div>
 
-          {[...new Set(missingCustomers.map((f) => f.sheet2.customerName))].map((name) => {
-            const src = files.find((f) => f.sheet2.customerName === name);
-            const isOpen = activeResolver === name;
+          {missingCustomers.map((f) => {
+            const displayName = f.sheet2.customerName || f.sheet2.organizationName || f.filename;
+            const isOpen = activeResolverUid === f.uid;
             return (
-              <div key={name} className="border-t border-amber-200 dark:border-amber-800">
+              <div key={f.uid} className="border-t border-amber-200 dark:border-amber-800">
                 {/* Row header */}
                 <div className="flex items-center justify-between px-4 py-2.5 bg-amber-50/50 dark:bg-amber-950/10">
                   <div className="text-sm text-amber-800 dark:text-amber-300 font-medium">
-                    {name}
-                    {src?.sheet2.organizationName && (
+                    {displayName}
+                    {f.sheet2.customerName && f.sheet2.organizationName && (
                       <span className="ml-2 text-xs font-normal text-amber-600 dark:text-amber-500">
-                        · {src.sheet2.organizationName}
+                        · {f.sheet2.organizationName}
                       </span>
                     )}
                   </div>
@@ -828,7 +787,7 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-400"
-                    onClick={() => isOpen ? setActiveResolver(null) : openResolver(name)}
+                    onClick={() => isOpen ? setActiveResolverUid(null) : openResolver(f.uid)}
                   >
                     {isOpen ? "Cancel" : "Resolve"}
                   </Button>
@@ -837,145 +796,49 @@ export function GovernmentClient({ ownerOrgs, activeOrgId }: Props) {
                 {/* Resolver panel */}
                 {isOpen && (
                   <div className="px-4 py-4 bg-background border-t border-amber-100 dark:border-amber-900 space-y-3">
-                    {/* Mode toggle */}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setResolverMode("search")}
-                        className={cn(
-                          "text-xs px-3 py-1.5 rounded-md border transition-all",
-                          resolverMode === "search"
-                            ? "border-primary bg-primary/5 text-primary font-medium"
-                            : "border-border text-muted-foreground hover:border-primary/40",
-                        )}
-                      >
-                        Search existing
-                      </button>
-                      <button
-                        onClick={() => setResolverMode("create")}
-                        className={cn(
-                          "text-xs px-3 py-1.5 rounded-md border transition-all",
-                          resolverMode === "create"
-                            ? "border-primary bg-primary/5 text-primary font-medium"
-                            : "border-border text-muted-foreground hover:border-primary/40",
-                        )}
-                      >
-                        Create new
-                      </button>
+                    <div className="space-y-2">
+                      <Input
+                        value={searchQuery}
+                        onChange={(e) => onSearchChange(e.target.value)}
+                        placeholder="Search by name or organization…"
+                        className="h-8 text-sm"
+                        autoFocus
+                      />
+                      {searching && (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                          <LoaderIcon className="w-3 h-3 animate-spin" />
+                          Searching…
+                        </div>
+                      )}
+                      {!searching && searchResults.length === 0 && searchQuery.trim() && (
+                        <p className="text-xs text-muted-foreground py-1">
+                          No customers found — try a different search term.
+                        </p>
+                      )}
+                      {!searching && searchResults.length > 0 && (
+                        <div className="border border-border rounded-lg overflow-hidden max-h-52 overflow-y-auto">
+                          {searchResults.map((cust) => (
+                            <button
+                              key={cust.id}
+                              onClick={() => resolveWith(cust)}
+                              className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/40 border-b border-border last:border-0 transition-colors"
+                            >
+                              <div className="font-medium">{cust.name}</div>
+                              {cust.companies.length > 0 && (
+                                <div className="text-xs text-muted-foreground mt-0.5">
+                                  {[
+                                    cust.companies[0].organizationName,
+                                    cust.companies[0].department,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-
-                    {/* Search mode */}
-                    {resolverMode === "search" && (
-                      <div className="space-y-2">
-                        <Input
-                          value={searchQuery}
-                          onChange={(e) => onSearchChange(e.target.value)}
-                          placeholder="Search by name, organization…"
-                          className="h-8 text-sm"
-                          autoFocus
-                        />
-                        {searching && (
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
-                            <LoaderIcon className="w-3 h-3 animate-spin" />
-                            Searching…
-                          </div>
-                        )}
-                        {!searching && searchResults.length === 0 && searchQuery.trim() && (
-                          <p className="text-xs text-muted-foreground py-1">
-                            No customers found — try a different search or switch to &quot;Create new&quot;.
-                          </p>
-                        )}
-                        {!searching && searchResults.length > 0 && (
-                          <div className="border border-border rounded-lg overflow-hidden max-h-52 overflow-y-auto">
-                            {searchResults.map((cust) => (
-                              <button
-                                key={cust.id}
-                                onClick={() => resolveWith(cust)}
-                                className="w-full text-left px-3 py-2.5 text-sm hover:bg-muted/40 border-b border-border last:border-0 transition-colors"
-                              >
-                                <div className="font-medium">{cust.name}</div>
-                                {cust.companies.length > 0 && (
-                                  <div className="text-xs text-muted-foreground mt-0.5">
-                                    {[
-                                      cust.companies[0].organizationName,
-                                      cust.companies[0].department,
-                                    ]
-                                      .filter(Boolean)
-                                      .join(" · ")}
-                                  </div>
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Create mode */}
-                    {resolverMode === "create" && (
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-xs font-medium text-muted-foreground">Name *</label>
-                            <Input
-                              value={customerForm.name}
-                              onChange={(e) => setCustomerForm((p) => ({ ...p, name: e.target.value }))}
-                              placeholder="Full name"
-                              className="h-8 text-sm"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-medium text-muted-foreground">Department</label>
-                            <Input
-                              value={customerForm.department}
-                              onChange={(e) => setCustomerForm((p) => ({ ...p, department: e.target.value }))}
-                              placeholder="e.g. Procurement Division"
-                              className="h-8 text-sm"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-medium text-muted-foreground">Organization</label>
-                            <Input
-                              value={customerForm.organizationName}
-                              onChange={(e) => setCustomerForm((p) => ({ ...p, organizationName: e.target.value }))}
-                              placeholder="Ministry / Company"
-                              className="h-8 text-sm"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-medium text-muted-foreground">Contact No.</label>
-                            <Input
-                              value={customerForm.contactNo}
-                              onChange={(e) => setCustomerForm((p) => ({ ...p, contactNo: e.target.value }))}
-                              placeholder="e.g. 0123456789"
-                              className="h-8 text-sm"
-                            />
-                          </div>
-                          <div className="col-span-2 space-y-1">
-                            <label className="text-xs font-medium text-muted-foreground">Address</label>
-                            <Input
-                              value={customerForm.organizationAddress}
-                              onChange={(e) => setCustomerForm((p) => ({ ...p, organizationAddress: e.target.value }))}
-                              placeholder="Organization address"
-                              className="h-8 text-sm"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex justify-end">
-                          <Button
-                            size="sm"
-                            onClick={handleCreateCustomer}
-                            disabled={savingCustomer || !customerForm.name.trim()}
-                            className="min-w-28"
-                          >
-                            {savingCustomer ? (
-                              <><LoaderIcon className="w-3.5 h-3.5 animate-spin mr-1.5" />Saving…</>
-                            ) : (
-                              "Save Customer"
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

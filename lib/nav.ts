@@ -52,6 +52,7 @@ export const navConfig: NavGroup[] = [
       { title: "Customer POs", url: "/dashboard/sales/customer-po",   permission: "customer-po:read" },
       { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
       { title: "Consignment",  url: "/dashboard/sales/consignment",   permission: "sales-order:read" },
+      { title: "Activity Log", url: "/dashboard/sales/activity",      permission: "customer:read"    },
     ],
   },
   {

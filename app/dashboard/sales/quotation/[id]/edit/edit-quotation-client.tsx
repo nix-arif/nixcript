@@ -351,6 +351,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         includeCatalogue,
         includeMdaCerts,
         showTotalPrice: true,
+        showItemizedPricing: true,
         showItemizeDiscount: items.some((it) => Number(it.discountPct) > 0),
         showProductCode,
         inclMof,

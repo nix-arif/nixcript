@@ -15,6 +15,7 @@ import {
   ledgerEntry,
   ledgerLine,
   member,
+  customer,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -69,15 +70,15 @@ export type ApplyClaimInput = {
   claimTypeId: string;
   claimPeriod: string;       // YYYY-MM for LOCAL/OVERSEAS; YYYY-MM-DD for ENTERTAINMENT_FORM
   description: string;       // overall note / summary
-  lineItems?: ClaimLineItemInput[];                    // LOCAL + OVERSEAS
-  entertainmentDetail?: ClaimEntertainmentDetailInput; // ENTERTAINMENT_FORM
+  lineItems?: ClaimLineItemInput[];                      // LOCAL + OVERSEAS
+  entertainmentDetails?: ClaimEntertainmentDetailInput[]; // ENTERTAINMENT_FORM (multiple rows)
 };
 
 export type ClaimApplicationWithDetails = ClaimApplicationRow & {
   applicantName: string | null;
   documents: ClaimDocumentRow[];
   lineItems: ClaimLineItemRow[];
-  entertainmentDetail: ClaimEntertainmentDetailRow | null;
+  entertainmentDetails: ClaimEntertainmentDetailRow[];
 };
 
 /* =========================
@@ -182,7 +183,7 @@ async function notifyUser(
 async function loadExtras(appIds: string[]): Promise<{
   docMap: Record<string, ClaimDocumentRow[]>;
   lineMap: Record<string, ClaimLineItemRow[]>;
-  entMap: Record<string, ClaimEntertainmentDetailRow>;
+  entMap: Record<string, ClaimEntertainmentDetailRow[]>;
 }> {
   const [docs, lines, ents] = await Promise.all([
     db.select().from(claimDocument).where(inArray(claimDocument.applicationId, appIds)),
@@ -194,7 +195,8 @@ async function loadExtras(appIds: string[]): Promise<{
     db
       .select()
       .from(claimEntertainmentDetail)
-      .where(inArray(claimEntertainmentDetail.applicationId, appIds)),
+      .where(inArray(claimEntertainmentDetail.applicationId, appIds))
+      .orderBy(asc(claimEntertainmentDetail.sortOrder), asc(claimEntertainmentDetail.createdAt)),
   ]);
   const docMap: Record<string, ClaimDocumentRow[]> = {};
   for (const doc of docs) {
@@ -206,8 +208,11 @@ async function loadExtras(appIds: string[]): Promise<{
     if (!lineMap[li.applicationId]) lineMap[li.applicationId] = [];
     lineMap[li.applicationId].push(li);
   }
-  const entMap: Record<string, ClaimEntertainmentDetailRow> = {};
-  for (const e of ents) entMap[e.applicationId] = e;
+  const entMap: Record<string, ClaimEntertainmentDetailRow[]> = {};
+  for (const e of ents) {
+    if (!entMap[e.applicationId]) entMap[e.applicationId] = [];
+    entMap[e.applicationId].push(e);
+  }
   return { docMap, lineMap, entMap };
 }
 
@@ -414,7 +419,7 @@ export async function getMyClaimApplications(): Promise<ClaimApplicationWithDeta
     applicantName,
     documents: docMap[a.id] ?? [],
     lineItems: lineMap[a.id] ?? [],
-    entertainmentDetail: entMap[a.id] ?? null,
+    entertainmentDetails: entMap[a.id] ?? [],
   }));
 }
 
@@ -436,7 +441,7 @@ export async function getPendingClaimApprovals(): Promise<ClaimApplicationWithDe
     applicantName: applicantName ?? null,
     documents: docMap[app.id] ?? [],
     lineItems: lineMap[app.id] ?? [],
-    entertainmentDetail: entMap[app.id] ?? null,
+    entertainmentDetails: entMap[app.id] ?? [],
   }));
 }
 
@@ -518,8 +523,8 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
   // ── Compute total amount ──────────────────────────────────────────────────
   let totalAmount: number;
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
-    if (!data.entertainmentDetail) throw new Error("Entertainment details are required");
-    totalAmount = parseFloat(data.entertainmentDetail.amount);
+    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new Error("At least one entertainment detail is required");
+    totalAmount = data.entertainmentDetails.reduce((s, ed) => s + parseFloat(ed.amount), 0);
   } else {
     if (!data.lineItems || data.lineItems.length === 0)
       throw new Error("At least one expense line item is required");
@@ -606,21 +611,23 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
     await db.insert(claimLineItem).values(rows);
   }
 
-  // ── Insert entertainment detail ───────────────────────────────────────────
-  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetail) {
-    const ed = data.entertainmentDetail;
-    await db.insert(claimEntertainmentDetail).values({
-      id: nanoid(),
-      applicationId: appId,
-      organizationId: orgId,
-      eventDate: ed.eventDate,
-      restaurantName: ed.restaurantName.trim(),
-      customerName: ed.customerName.trim(),
-      departmentOrganization: ed.departmentOrganization.trim(),
-      purpose: ed.purpose.trim(),
-      amount: ed.amount,
-      createdAt: new Date(),
-    });
+  // ── Insert entertainment details ──────────────────────────────────────────
+  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetails && data.entertainmentDetails.length > 0) {
+    await db.insert(claimEntertainmentDetail).values(
+      data.entertainmentDetails.map((ed, idx) => ({
+        id: nanoid(),
+        applicationId: appId,
+        organizationId: orgId,
+        eventDate: ed.eventDate,
+        restaurantName: ed.restaurantName.trim(),
+        customerName: ed.customerName.trim(),
+        departmentOrganization: ed.departmentOrganization.trim(),
+        purpose: ed.purpose.trim(),
+        amount: ed.amount,
+        sortOrder: idx,
+        createdAt: new Date(),
+      })),
+    );
   }
 
   // Notify checkers first; if none exist, fall through to approvers
@@ -878,7 +885,7 @@ async function replaceClaimItems(
   const formType = ct.category as ClaimFormType;
   let totalAmount: number;
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
-    totalAmount = data.entertainmentDetail ? parseFloat(data.entertainmentDetail.amount) : 0;
+    totalAmount = (data.entertainmentDetails ?? []).reduce((s, ed) => s + parseFloat(ed.amount), 0);
   } else {
     totalAmount = (data.lineItems ?? []).reduce((s, li) => s + parseFloat(li.amountMyr), 0);
   }
@@ -909,20 +916,22 @@ async function replaceClaimItems(
     }));
     await db.insert(claimLineItem).values(rows);
   }
-  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetail) {
-    const ed = data.entertainmentDetail;
-    await db.insert(claimEntertainmentDetail).values({
-      id: nanoid(),
-      applicationId: appId,
-      organizationId: orgId,
-      eventDate: ed.eventDate,
-      restaurantName: ed.restaurantName.trim(),
-      customerName: ed.customerName.trim(),
-      departmentOrganization: ed.departmentOrganization.trim(),
-      purpose: ed.purpose.trim(),
-      amount: ed.amount,
-      createdAt: new Date(),
-    });
+  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetails && data.entertainmentDetails.length > 0) {
+    await db.insert(claimEntertainmentDetail).values(
+      data.entertainmentDetails.map((ed, idx) => ({
+        id: nanoid(),
+        applicationId: appId,
+        organizationId: orgId,
+        eventDate: ed.eventDate,
+        restaurantName: ed.restaurantName.trim(),
+        customerName: ed.customerName.trim(),
+        departmentOrganization: ed.departmentOrganization.trim(),
+        purpose: ed.purpose.trim(),
+        amount: ed.amount,
+        sortOrder: idx,
+        createdAt: new Date(),
+      })),
+    );
   }
   return totalAmount;
 }
@@ -989,8 +998,8 @@ export async function finalizeDraftClaim(draftId: string, data: ApplyClaimInput)
   const formType = ct.category as ClaimFormType;
   let totalAmount: number;
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
-    if (!data.entertainmentDetail) throw new Error("Entertainment details required");
-    totalAmount = parseFloat(data.entertainmentDetail.amount);
+    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new Error("At least one entertainment detail required");
+    totalAmount = data.entertainmentDetails.reduce((s, ed) => s + parseFloat(ed.amount), 0);
   } else {
     if (!data.lineItems || data.lineItems.length === 0) throw new Error("At least one expense item required");
     totalAmount = data.lineItems.reduce((s, li) => s + parseFloat(li.amountMyr), 0);
@@ -1035,8 +1044,8 @@ export async function resubmitRejectedClaim(appId: string, data: ApplyClaimInput
   const formType = ct.category as ClaimFormType;
   let totalAmount: number;
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
-    if (!data.entertainmentDetail) throw new Error("Entertainment details required");
-    totalAmount = parseFloat(data.entertainmentDetail.amount);
+    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new Error("At least one entertainment detail required");
+    totalAmount = data.entertainmentDetails.reduce((s, ed) => s + parseFloat(ed.amount), 0);
   } else {
     if (!data.lineItems || data.lineItems.length === 0) throw new Error("At least one expense item required");
     totalAmount = data.lineItems.reduce((s, li) => s + parseFloat(li.amountMyr), 0);
@@ -1118,7 +1127,7 @@ export async function getPendingClaimChecks(): Promise<ClaimApplicationWithDetai
     applicantName: applicantName ?? null,
     documents: docMap[app.id] ?? [],
     lineItems: lineMap[app.id] ?? [],
-    entertainmentDetail: entMap[app.id] ?? null,
+    entertainmentDetails: entMap[app.id] ?? [],
   }));
 }
 
@@ -1213,4 +1222,30 @@ export async function deleteClaimDocument(id: string): Promise<string> {
   // Best-effort R2 cleanup — DB is already clean so ignore R2 errors
   await deleteClaimDocFromR2(doc[0].fileKey).catch(() => {});
   return doc[0].fileKey;
+}
+
+/* =========================
+   CUSTOMER LOOKUP FOR ENTERTAINMENT FORM
+========================= */
+
+export type ClaimCustomerOption = {
+  id: string;
+  name: string;
+  organizationName: string | null;
+};
+
+export async function getCustomersForClaim(): Promise<ClaimCustomerOption[]> {
+  const { orgId } = await requireAccess("claim:apply");
+
+  const rows = await db
+    .select({
+      id: customer.id,
+      name: customer.name,
+      organizationName: customer.organizationName,
+    })
+    .from(customer)
+    .where(eq(customer.organizationId, orgId))
+    .orderBy(asc(customer.name));
+
+  return rows;
 }

@@ -15,6 +15,7 @@ import {
   organization,
   organizationProfile,
   profile,
+  type PaymentOption,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -426,6 +427,7 @@ export type CreateQuotationInput = {
   paymentTerm?: string;
   returnPolicy?: string;
   warranty?: string;
+  paymentOptions?: PaymentOption[] | null;
   items: ReviewItem[];
   overallDiscountPct: string;
   overallDiscountAmt?: string;
@@ -435,6 +437,7 @@ export type CreateQuotationInput = {
   showTotalPrice: boolean;
   showItemizeDiscount: boolean;
   showProductCode: boolean;
+  showItemizedPricing: boolean;
   inclMof: boolean;
   inclSsm: boolean;
   inclTcc: boolean;
@@ -541,6 +544,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     paymentTerm: input.paymentTerm ?? null,
     returnPolicy: input.returnPolicy ?? null,
     warranty: input.warranty ?? null,
+    paymentOptions: input.paymentOptions?.length ? input.paymentOptions : null,
     subtotal: subtotal.toFixed(2),
     overallDiscountPct: input.overallDiscountPct,
     overallDiscountAmt: overallDiscAmt.toFixed(2),
@@ -555,6 +559,7 @@ export async function createQuotation(input: CreateQuotationInput) {
     showTotalPrice: input.showTotalPrice ? 1 : 0,
     showItemizeDiscount: input.showItemizeDiscount ? 1 : 0,
     showProductCode: input.showProductCode ? 1 : 0,
+    showItemizedPricing: input.showItemizedPricing ? 1 : 0,
     inclMof: input.inclMof ? 1 : 0,
     inclSsm: input.inclSsm ? 1 : 0,
     inclTcc: input.inclTcc ? 1 : 0,
@@ -1675,7 +1680,14 @@ export async function getQuotationGroupForPrint(id: string) {
 
 // ── Finalize quotation (draft → final) ────────────────────────────────────
 // markups: { [quotationId]: markupPct } — applied to unit prices of dummy quotations
-export async function finalizeQuotation(id: string) {
+export async function finalizeQuotation(id: string, settings?: {
+  showItemizedPricing?: boolean;
+  showProductCode?: boolean;
+  showItemizeDiscount?: boolean;
+  showTotalPrice?: boolean;
+  includeCatalogue?: boolean;
+  includeMdaCerts?: boolean;
+}) {
   const { orgId, userId } = await requireAccess("quotation:update");
   const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
   const ownerOrgIds =
@@ -1691,6 +1703,17 @@ export async function finalizeQuotation(id: string) {
 
   if (!q) throw new Error("Quotation not found");
   if (q.status !== "draft") throw new Error("Already finalized");
+
+  if (settings) {
+    await db.update(quotation).set({
+      ...(settings.showItemizedPricing !== undefined && { showItemizedPricing: settings.showItemizedPricing ? 1 : 0 }),
+      ...(settings.showProductCode !== undefined && { showProductCode: settings.showProductCode ? 1 : 0 }),
+      ...(settings.showItemizeDiscount !== undefined && { showItemizeDiscount: settings.showItemizeDiscount ? 1 : 0 }),
+      ...(settings.showTotalPrice !== undefined && { showTotalPrice: settings.showTotalPrice ? 1 : 0 }),
+      ...(settings.includeCatalogue !== undefined && { includeCatalogue: settings.includeCatalogue ? 1 : 0 }),
+      ...(settings.includeMdaCerts !== undefined && { includeMdaCerts: settings.includeMdaCerts ? 1 : 0 }),
+    }).where(eq(quotation.id, id));
+  }
 
   // Assign real sequential quotation numbers to drafts that still hold placeholder IDs.
   // Revisions already have proper numbers (e.g. BMS-QT-2026-0003-R1), so skip those.
@@ -1735,6 +1758,7 @@ export type UpdateQuotationInput = {
   paymentTerm?: string | null;
   returnPolicy?: string | null;
   warranty?: string | null;
+  paymentOptions?: PaymentOption[] | null;
   overallDiscountPct: string;
   overallDiscountAmt?: string;
   sstPct: string;
@@ -1743,6 +1767,7 @@ export type UpdateQuotationInput = {
   showTotalPrice: boolean;
   showItemizeDiscount: boolean;
   showProductCode: boolean;
+  showItemizedPricing: boolean;
   inclMof: boolean;
   inclSsm: boolean;
   inclTcc: boolean;
@@ -1844,6 +1869,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       paymentTerm: input.paymentTerm ?? null,
       returnPolicy: input.returnPolicy ?? null,
       warranty: input.warranty ?? null,
+      paymentOptions: input.paymentOptions?.length ? input.paymentOptions : null,
       subtotal: subtotal.toFixed(2),
       overallDiscountPct: input.overallDiscountPct,
       overallDiscountAmt: overallDiscAmt.toFixed(2),
@@ -2229,6 +2255,7 @@ export async function createGovernmentBatch(
       showTotalPrice: 1,
       showItemizeDiscount: 0,
       showProductCode: 1,
+      showItemizedPricing: 1,
       inclMof: file.inclMof ? 1 : 0,
       inclSsm: file.inclSsm ? 1 : 0,
       inclTcc: file.inclTcc ? 1 : 0,
@@ -2336,6 +2363,7 @@ export async function updateQuotationSettings(
     overallDiscountAmt?: string;
     sstPct?: string;
     showProductCode?: boolean;
+    showItemizedPricing?: boolean;
     includeMdaCerts?: boolean;
     includeCatalogue?: boolean;
     inclMof?: boolean;
@@ -2375,6 +2403,7 @@ export async function updateQuotationSettings(
     sstPct: input.sstPct ?? "0",
     grandTotal: grandTotal.toFixed(2),
     showProductCode: input.showProductCode ? 1 : 0,
+    showItemizedPricing: input.showItemizedPricing !== undefined ? (input.showItemizedPricing ? 1 : 0) : 1,
     includeMdaCerts: input.includeMdaCerts ? 1 : 0,
     includeCatalogue: input.includeCatalogue ? 1 : 0,
     inclMof: input.inclMof ? 1 : 0,
@@ -2385,6 +2414,51 @@ export async function updateQuotationSettings(
     inclLampiran12: input.inclLampiran12 ? 1 : 0,
     inclLampiran13: input.inclLampiran13 ? 1 : 0,
     showItemizeDiscount: input.showItemizeDiscount ? 1 : 0,
+  }).where(eq(quotation.id, id));
+}
+
+export async function updateQuotationDocumentOptions(
+  id: string,
+  input: {
+    showItemizedPricing: boolean;
+    showProductCode: boolean;
+    showItemizeDiscount: boolean;
+    showTotalPrice: boolean;
+    includeCatalogue: boolean;
+    includeMdaCerts: boolean;
+    inclMof: boolean;
+    inclSsm: boolean;
+    inclTcc: boolean;
+    inclBankStatement: boolean;
+    inclMdaEstablishment: boolean;
+    inclLampiran12: boolean;
+    inclLampiran13: boolean;
+  },
+) {
+  await requireAccess("quotation:update");
+
+  const [q] = await db
+    .select({ id: quotation.id })
+    .from(quotation)
+    .where(eq(quotation.id, id))
+    .limit(1);
+
+  if (!q) throw new Error("Quotation not found");
+
+  await db.update(quotation).set({
+    showItemizedPricing: input.showItemizedPricing ? 1 : 0,
+    showProductCode: input.showProductCode ? 1 : 0,
+    showItemizeDiscount: input.showItemizeDiscount ? 1 : 0,
+    showTotalPrice: input.showTotalPrice ? 1 : 0,
+    includeCatalogue: input.includeCatalogue ? 1 : 0,
+    includeMdaCerts: input.includeMdaCerts ? 1 : 0,
+    inclMof: input.inclMof ? 1 : 0,
+    inclSsm: input.inclSsm ? 1 : 0,
+    inclTcc: input.inclTcc ? 1 : 0,
+    inclBankStatement: input.inclBankStatement ? 1 : 0,
+    inclMdaEstablishment: input.inclMdaEstablishment ? 1 : 0,
+    inclLampiran12: input.inclLampiran12 ? 1 : 0,
+    inclLampiran13: input.inclLampiran13 ? 1 : 0,
   }).where(eq(quotation.id, id));
 }
 

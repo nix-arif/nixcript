@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   ClaimApplicationWithDetails, ClaimTypeRow, ClaimLineItemRow,
-  ClaimLineItemInput, ClaimEntertainmentDetailInput,
+  ClaimLineItemInput, ClaimEntertainmentDetailInput, ClaimCustomerOption,
 } from "@/server/claim";
 import {
   deleteClaim, submitClaim, saveDraftClaim, updateDraftClaim,
@@ -30,7 +30,7 @@ import { uid } from "@/lib/uid";
 import {
   PlusIcon, FileDownIcon, XIcon, ReceiptIcon,
   AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon, LoaderIcon, RouteIcon,
-  EyeIcon,
+  EyeIcon, TrashIcon,
 } from "lucide-react";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -333,9 +333,25 @@ interface Props {
   applications: ClaimApplicationWithDetails[];
   claimTypes: ClaimTypeRow[];
   permissions: string[];
+  customers: ClaimCustomerOption[];
 }
 
-export function MyClaimClient({ applications, claimTypes, permissions }: Props) {
+type EntRow = {
+  id: string;
+  eventDate: string;
+  restaurantName: string;
+  customerName: string;
+  departmentOrganization: string;
+  purpose: string;
+  amount: string;
+  custSearch: string;
+};
+
+function emptyEntRow(): EntRow {
+  return { id: Math.random().toString(36).slice(2), eventDate: "", restaurantName: "", customerName: "", departmentOrganization: "", purpose: "", amount: "", custSearch: "" };
+}
+
+export function MyClaimClient({ applications, claimTypes, permissions, customers }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -371,13 +387,8 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
   const [ovFxRows,    setOvFxRows]    = useState<OvFxRow[]>([]);
   const [ovOtherRows, setOvOtherRows] = useState<OvOtherRow[]>([]);
 
-  // ENTERTAINMENT_FORM
-  const [entDate,    setEntDate]    = useState("");
-  const [entRest,    setEntRest]    = useState("");
-  const [entCust,    setEntCust]    = useState("");
-  const [entDeptOrg, setEntDeptOrg] = useState("");
-  const [entPurpose, setEntPurpose] = useState("");
-  const [entAmount,  setEntAmount]  = useState("");
+  // ENTERTAINMENT_FORM — multiple rows
+  const [entRows, setEntRows] = useState<EntRow[]>([emptyEntRow()]);
 
   const canApply = permissions.includes("claim:apply") || permissions.includes("*");
   const selectedType = claimTypes.find(t => t.id === selectedTypeId) ?? null;
@@ -413,7 +424,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
     setSelectedTypeId(""); setClaimPeriod(""); setNote(""); setQueuedFiles([]);
     setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
-    setEntDate(""); setEntRest(""); setEntCust(""); setEntDeptOrg(""); setEntPurpose(""); setEntAmount("");
+    setEntRows([emptyEntRow()]);
     setUploadedFiles({});
     setUploadingFields(new Set());
   }
@@ -451,13 +462,21 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
     setClaimPeriod(periodMatch ? periodMatch[1] : app.claimDate);
     setNote(app.description !== "Draft" ? app.description : "");
     setQueuedFiles([]);
-    if (app.entertainmentDetail) {
-      setEntDate(app.entertainmentDetail.eventDate);
-      setEntRest(app.entertainmentDetail.restaurantName);
-      setEntCust(app.entertainmentDetail.customerName);
-      setEntDeptOrg(app.entertainmentDetail.departmentOrganization);
-      setEntPurpose(app.entertainmentDetail.purpose);
-      setEntAmount(app.entertainmentDetail.amount);
+    setUploadedFiles({});
+    setUploadingFields(new Set());
+    if (app.entertainmentDetails && app.entertainmentDetails.length > 0) {
+      setEntRows(app.entertainmentDetails.map(ed => ({
+        id: Math.random().toString(36).slice(2),
+        eventDate: ed.eventDate,
+        restaurantName: ed.restaurantName,
+        customerName: ed.customerName,
+        departmentOrganization: ed.departmentOrganization,
+        purpose: ed.purpose,
+        amount: ed.amount,
+        custSearch: "",
+      })));
+      setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
+      setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     } else {
       const { travelRows, miscRows, inEntRows, otherRows, ovMyrRows, ovFxRows, ovOtherRows } = buildFormRows(app.lineItems);
       setTravelRows(travelRows);
@@ -467,6 +486,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
       setOvMyrRows(ovMyrRows);
       setOvFxRows(ovFxRows);
       setOvOtherRows(ovOtherRows);
+      setEntRows([emptyEntRow()]);
     }
     setSubmitOpen(true);
   }
@@ -476,7 +496,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
     setClaimPeriod(""); setNote(""); setQueuedFiles([]);
     setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
-    setEntDate(""); setEntRest(""); setEntCust(""); setEntDeptOrg(""); setEntPurpose(""); setEntAmount("");
+    setEntRows([emptyEntRow()]);
   }
 
   // generic updater factory
@@ -575,7 +595,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
     setSubmitting(true);
     try {
       let lineItems: ClaimLineItemInput[] | undefined;
-      let entertainmentDetail: ClaimEntertainmentDetailInput | undefined;
+      let entertainmentDetails: ClaimEntertainmentDetailInput[] | undefined;
 
       if (formType === CLAIM_FORM.LOCAL) {
         // Validate receipt presence for misc / in-base-ent / other rows
@@ -637,19 +657,20 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
         ];
         if (lineItems.length === 0) { toast.error("Add at least one expense item"); setSubmitting(false); return; }
       } else {
-        if (!entDate || !entRest.trim() || !entCust.trim() || !entDeptOrg.trim() || !entPurpose.trim() || !entAmount) {
-          toast.error("All entertainment fields are required"); setSubmitting(false); return;
+        const validEnt = entRows.filter(r => r.eventDate && r.restaurantName.trim() && r.customerName.trim() && r.departmentOrganization.trim() && r.purpose.trim() && parseFloat(r.amount) > 0);
+        if (validEnt.length === 0) {
+          toast.error("At least one complete entertainment detail is required"); setSubmitting(false); return;
         }
-        entertainmentDetail = { eventDate: entDate, restaurantName: entRest, customerName: entCust, departmentOrganization: entDeptOrg, purpose: entPurpose, amount: entAmount };
+        entertainmentDetails = validEnt.map(r => ({ eventDate: r.eventDate, restaurantName: r.restaurantName, customerName: r.customerName, departmentOrganization: r.departmentOrganization, purpose: r.purpose, amount: r.amount }));
       }
 
       const autoDesc = formType === CLAIM_FORM.LOCAL
         ? (note.trim() || `Local Claim — ${new Date(claimPeriod+"-02").toLocaleDateString("en-MY",{month:"long",year:"numeric"})}`)
         : formType === CLAIM_FORM.OVERSEAS
         ? (note.trim() || `Overseas Claim — ${new Date(claimPeriod+"-02").toLocaleDateString("en-MY",{month:"long",year:"numeric"})}`)
-        : (entPurpose.trim() || "Entertainment");
+        : (entRows[0]?.purpose.trim() || "Entertainment");
 
-      const claimData = { claimTypeId: selectedType.id, claimPeriod, description: autoDesc, lineItems, entertainmentDetail };
+      const claimData = { claimTypeId: selectedType.id, claimPeriod, description: autoDesc, lineItems, entertainmentDetails };
 
       let appId: string;
       if (editingApp?.status === "DRAFT") {
@@ -695,18 +716,17 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
     if (!selectedType) { toast.error("Select a claim type first"); return; }
     setSavingDraft(true);
     try {
-      const claimData = {
-        claimTypeId: selectedType.id,
-        claimPeriod: claimPeriod || new Date().toISOString().slice(0,7),
-        description: note.trim() || "Draft",
-        lineItems: formType === CLAIM_FORM.LOCAL ? [
+      let draftLineItems: ClaimLineItemInput[] | undefined;
+      let draftEntDetails: ClaimEntertainmentDetailInput[] | undefined;
+      if (formType === CLAIM_FORM.LOCAL) {
+        draftLineItems = [
           ...travelRows.flatMap(r => {
             if (!r.lineDate) return [];
             const items: ClaimLineItemInput[] = [];
             const km = parseFloat(r.distanceKm);
             const usesMileage = r.mode !== TRAVEL_MODE.FLIGHT && r.mode !== TRAVEL_MODE.COMPANY_CAR;
             const mileageAmt = usesMileage && km > 0 ? km * ratePerKm : 0;
-            if (r.lineDate && (r.fromLocation.trim() || r.toLocation.trim() || r.purpose.trim() || r.mode)) {
+            if (r.fromLocation.trim() || r.toLocation.trim() || r.purpose.trim() || r.mode) {
               items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
             }
             const bf = parseFloat(r.breakfastDays)||0;
@@ -727,7 +747,27 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
           ...miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
           ...inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
           ...otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
-        ] : [],
+        ];
+      } else if (formType === CLAIM_FORM.OVERSEAS) {
+        draftLineItems = [
+          ...ovMyrRows.filter(r => r.lineDate && r.destination.trim() && parseFloat(r.amountMyr) > 0)
+            .map(r => ({ id: r.id, category: LINE_CATEGORY.OVERSEAS_MYR, lineDate: r.lineDate, destination: r.destination, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...ovFxRows.filter(r => r.lineDate && r.destination.trim() && parseFloat(r.amountForeign) > 0 && parseFloat(r.exchangeRate) > 0)
+            .map(r => ({ id: r.id, category: LINE_CATEGORY.OVERSEAS_FX, lineDate: r.lineDate, destination: r.destination, currency: r.currency, amountForeign: r.amountForeign, exchangeRate: r.exchangeRate, amountMyr: fxMyr(r.amountForeign, r.exchangeRate).toFixed(2) } satisfies ClaimLineItemInput)),
+          ...ovOtherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0)
+            .map(r => ({ id: r.id, category: LINE_CATEGORY.OVERSEAS_OTHER, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+        ];
+      } else {
+        draftEntDetails = entRows
+          .filter(r => r.eventDate && r.restaurantName.trim() && r.customerName.trim() && r.departmentOrganization.trim() && r.purpose.trim() && parseFloat(r.amount) > 0)
+          .map(r => ({ eventDate: r.eventDate, restaurantName: r.restaurantName, customerName: r.customerName, departmentOrganization: r.departmentOrganization, purpose: r.purpose, amount: r.amount }));
+      }
+      const claimData = {
+        claimTypeId: selectedType.id,
+        claimPeriod: claimPeriod || new Date().toISOString().slice(0,7),
+        description: note.trim() || "Draft",
+        lineItems: draftLineItems,
+        entertainmentDetails: draftEntDetails,
       };
 
       let appId: string;
@@ -1399,34 +1439,94 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
             </>)}
 
             {/* ── ENTERTAINMENT FORM ─────────────────────────────────────── */}
+            {formType === CLAIM_FORM.ENTERTAINMENT_FORM && (<>
+              <Section title="Claim Period">
+                <div className="flex flex-col gap-1.5 w-48">
+                  <Label>Month / Year <span className="text-destructive">*</span></Label>
+                  <input type="month" value={claimPeriod} onChange={e => setClaimPeriod(e.target.value)} className={inputCls+" w-48"} required/>
+                </div>
+              </Section>
+            </>)}
             {formType === CLAIM_FORM.ENTERTAINMENT_FORM && (
               <Section title="Entertainment Details">
-                <div className="grid grid-cols-2 gap-4">
-                  <Field>
-                    <Label htmlFor="entDate">Date <span className="text-destructive">*</span></Label>
-                    <Input id="entDate" type="date" value={entDate} onChange={e => setEntDate(e.target.value)} max={new Date().toISOString().split("T")[0]} required/>
-                  </Field>
-                  <Field>
-                    <Label htmlFor="entAmount">Amount (RM) <span className="text-destructive">*</span></Label>
-                    <Input id="entAmount" type="number" min="0.01" step="0.01" placeholder="0.00" value={entAmount} onChange={e => setEntAmount(e.target.value)} required/>
-                  </Field>
+                {entRows.map((row, idx) => {
+                  const filteredCusts = customers.filter(c => {
+                    const q = row.custSearch.toLowerCase();
+                    if (!q) return true;
+                    return c.name.toLowerCase().includes(q) || (c.organizationName ?? "").toLowerCase().includes(q);
+                  });
+                  const updateRow = (patch: Partial<EntRow>) =>
+                    setEntRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+                  return (
+                    <div key={row.id} className="border border-border rounded-lg p-3 flex flex-col gap-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-muted-foreground">Entry {idx + 1}</span>
+                        {entRows.length > 1 && (
+                          <Button type="button" variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                            onClick={() => setEntRows(prev => prev.filter((_, i) => i !== idx))}>
+                            <TrashIcon className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field>
+                          <Label>Date <span className="text-destructive">*</span></Label>
+                          <Input type="date" value={row.eventDate} onChange={e => updateRow({ eventDate: e.target.value })} max={new Date().toISOString().split("T")[0]} required/>
+                        </Field>
+                        <Field>
+                          <Label>Amount (RM) <span className="text-destructive">*</span></Label>
+                          <Input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.amount} onChange={e => updateRow({ amount: e.target.value })} required/>
+                        </Field>
+                      </div>
+                      <Field>
+                        <Label>Restaurant / Venue Name <span className="text-destructive">*</span></Label>
+                        <Input value={row.restaurantName} onChange={e => updateRow({ restaurantName: e.target.value })} placeholder="e.g. Restoran Nelayan, Kuala Lumpur" required/>
+                      </Field>
+                      <Field>
+                        <Label>Customer <span className="text-destructive">*</span></Label>
+                        <Input
+                          placeholder="Search customer name or organization..."
+                          value={row.custSearch || row.customerName}
+                          onChange={e => updateRow({ custSearch: e.target.value, customerName: e.target.value, departmentOrganization: row.custSearch ? row.departmentOrganization : "" })}
+                        />
+                        {row.custSearch.length > 0 && filteredCusts.length > 0 && (
+                          <div className="border border-border rounded-md bg-popover shadow-md max-h-40 overflow-y-auto">
+                            {filteredCusts.slice(0, 8).map(c => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted flex flex-col"
+                                onClick={() => updateRow({ customerName: c.name, departmentOrganization: c.organizationName ?? "", custSearch: "" })}
+                              >
+                                <span>{c.name}</span>
+                                {c.organizationName && <span className="text-xs text-muted-foreground">{c.organizationName}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </Field>
+                      <Field>
+                        <Label>Department &amp; Organization <span className="text-destructive">*</span></Label>
+                        <Input value={row.departmentOrganization} onChange={e => updateRow({ departmentOrganization: e.target.value })} placeholder="e.g. Procurement Dept, ABC Sdn Bhd" required/>
+                      </Field>
+                      <Field>
+                        <Label>Purpose <span className="text-destructive">*</span></Label>
+                        <Textarea value={row.purpose} onChange={e => updateRow({ purpose: e.target.value })} placeholder="e.g. Business discussion on Q3 supply contract renewal" rows={2} required/>
+                      </Field>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center justify-between pt-1">
+                  <Button type="button" variant="outline" size="sm" className="gap-1.5"
+                    onClick={() => setEntRows(prev => [...prev, emptyEntRow()])}>
+                    <PlusIcon className="h-3.5 w-3.5"/>Add Entry
+                  </Button>
+                  {entRows.length > 0 && (
+                    <span className="text-sm font-medium">
+                      Total: RM {entRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                    </span>
+                  )}
                 </div>
-                <Field>
-                  <Label htmlFor="entRest">Restaurant / Venue Name <span className="text-destructive">*</span></Label>
-                  <Input id="entRest" value={entRest} onChange={e => setEntRest(e.target.value)} placeholder="e.g. Restoran Nelayan, Kuala Lumpur" required/>
-                </Field>
-                <Field>
-                  <Label htmlFor="entCust">Customer Name <span className="text-destructive">*</span></Label>
-                  <Input id="entCust" value={entCust} onChange={e => setEntCust(e.target.value)} placeholder="Customer or guest name" required/>
-                </Field>
-                <Field>
-                  <Label htmlFor="entDeptOrg">Department &amp; Organization <span className="text-destructive">*</span></Label>
-                  <Input id="entDeptOrg" value={entDeptOrg} onChange={e => setEntDeptOrg(e.target.value)} placeholder="e.g. Procurement Dept, ABC Sdn Bhd" required/>
-                </Field>
-                <Field>
-                  <Label htmlFor="entPurpose">Purpose <span className="text-destructive">*</span></Label>
-                  <Textarea id="entPurpose" value={entPurpose} onChange={e => setEntPurpose(e.target.value)} placeholder="e.g. Business discussion on Q3 supply contract renewal" rows={2} required/>
-                </Field>
               </Section>
             )}
 
@@ -1472,7 +1572,7 @@ export function MyClaimClient({ applications, claimTypes, permissions }: Props) 
                 <Button type="submit" disabled={submitting || savingDraft || !selectedTypeId || !claimPeriod} className="flex-1 sm:flex-none sm:min-w-44">
                   {submitting ? "Submitting…" : editingApp?.status === "DRAFT" ? "Submit Draft" : editingApp?.status === "REJECTED" ? "Resubmit Claim" : `Submit ${FORM_LABELS[formType ?? ""] ?? "Claim"}`}
                 </Button>
-                {(!editingApp || editingApp.status === "DRAFT") && formType !== CLAIM_FORM.ENTERTAINMENT_FORM && (
+                {(!editingApp || editingApp.status === "DRAFT") && (
                   <Button type="button" variant="outline" disabled={submitting || savingDraft || !selectedTypeId} onClick={handleSaveDraft} className="flex-1 sm:flex-none">
                     {savingDraft ? "Saving…" : "Save as Draft"}
                   </Button>
