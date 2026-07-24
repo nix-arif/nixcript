@@ -358,3 +358,11 @@ export async function checkProductCodesExist(
   const found = new Set(rows.map((r) => r.productCode));
   return Object.fromEntries(unique.map((c) => [c, found.has(c)]));
 }
+
+export async function setProductRental(productId: string, isRental: boolean) {
+  const { orgId } = await requireAccess("product:seed");
+  await db
+    .update(product)
+    .set({ isRental, updatedAt: new Date() })
+    .where(and(eq(product.id, productId), eq(product.organizationId, orgId)));
+}

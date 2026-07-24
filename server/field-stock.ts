@@ -32,6 +32,7 @@ export interface RepStockItem {
   uom: string | null;
   qty: number;
   unitCost: string | null;
+  isRental: boolean;
 }
 
 export interface RepSummary {
@@ -97,6 +98,7 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
       productCode: product.productCode,
       description: product.description,
       uom: product.uom,
+      isRental: product.isRental,
     })
     .from(stockLevel)
     .innerJoin(product, eq(product.id, stockLevel.productId))
@@ -110,6 +112,7 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
       uom: r.uom ?? null,
       qty: parseFloat(r.qty),
       unitCost: r.unitCost,
+      isRental: r.isRental,
     }))
     .filter((r) => r.qty > 0);
 }

@@ -4,6 +4,8 @@ import { getSalesOrderDetail } from "@/server/sales-order";
 import { getCustomer } from "@/server/customer";
 import { getSoRemainingItems } from "@/server/delivery-order";
 import { getDocumentCategories } from "@/server/document-category";
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
 
 export default async function CreateDeliveryOrderPage({
   searchParams,
@@ -12,6 +14,7 @@ export default async function CreateDeliveryOrderPage({
 }) {
   await requirePermission("delivery-order:create");
   const { soId, customerPoId } = await searchParams;
+  const session = await auth.api.getSession({ headers: await headers() });
   const categories = await getDocumentCategories().catch(() => []);
 
   let prefill: React.ComponentProps<typeof CreateDeliveryOrderClient>["prefill"] = undefined;
@@ -69,5 +72,12 @@ export default async function CreateDeliveryOrderPage({
     }
   }
 
-  return <CreateDeliveryOrderClient prefill={prefill} categories={categories} />;
+  return (
+    <CreateDeliveryOrderClient
+      prefill={prefill}
+      categories={categories}
+      currentUserId={session?.user.id ?? ""}
+      currentUserName={session?.user.name ?? ""}
+    />
+  );
 }

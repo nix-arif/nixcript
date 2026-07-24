@@ -98,7 +98,11 @@ export async function POST(req: NextRequest) {
   const perms = await getUserPermissions(session.user.id, orgId);
   if (!hasAccess(perms, "product:read")) return new Response("Forbidden", { status: 403 });
 
-  const { rows }: { rows: Array<{ no: string; productCode: string }> } = await req.json();
+  const { rows, highlightRows = true, tagWithNo = true }: {
+    rows: Array<{ no: string; productCode: string }>;
+    highlightRows?: boolean;
+    tagWithNo?: boolean;
+  } = await req.json();
   if (!rows?.length) return new Response("No rows provided", { status: 400 });
 
   const ownerOrgIds = await getAllOwnerOrgIds(session.user.id, orgId);
@@ -198,11 +202,11 @@ export async function POST(req: NextRequest) {
       const nosLabel = allNos.join(", ");
 
       if (isMdapc(g.items)) {
-        // MDAPC: full certificate, no highlights, nos badge on first page only
+        // MDAPC: full certificate, no highlights, optional nos badge on first page only
         const allIdx = Array.from({ length: total }, (_, i) => i);
         const copied = await mergedPdf.copyPages(srcPdf, allIdx);
         copied.forEach((page, i) => {
-          if (i === 0 && nosLabel) {
+          if (i === 0 && nosLabel && tagWithNo) {
             const badgeH = 16;
             const badgeX = page.getWidth() - font.widthOfTextAtSize(nosLabel, 10) - 6 - 10;
             const badgeY = page.getHeight() - badgeH - 10;
@@ -211,7 +215,7 @@ export async function POST(req: NextRequest) {
           mergedPdf.addPage(page);
         });
       } else {
-        // Standard: pages 1 & 2 + item-specific pages with row highlights
+        // Standard: pages 1 & 2 + item-specific pages with optional row highlights and tags
         const pageSet = new Set<number>([0, 1].filter((i) => i < total));
         // Key: "pageIdx:y" — merges same-product duplicate rows into one highlight
         const hlMap = new Map<string, { x: number; y: number; w: number; h: number; nos: string[] }>();
@@ -254,8 +258,10 @@ export async function POST(req: NextRequest) {
         sortedIdx.forEach((srcIdx, i) => {
           const page = copied[i];
           for (const hl of highlights.get(srcIdx) ?? []) {
-            page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
-            if (hl.nos.length > 0) {
+            if (highlightRows) {
+              page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
+            }
+            if (tagWithNo && hl.nos.length > 0) {
               const label = hl.nos.slice().sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })).join(", ");
               const badgeH = hl.h;
               const badgeX = hl.w - font.widthOfTextAtSize(label, Math.max(7, Math.min(10, badgeH * 0.75))) - 6 - 2;

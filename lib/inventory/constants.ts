@@ -10,6 +10,8 @@ export const MOVEMENT_TYPE = {
   FIELD_OUT:     "FIELD_OUT",      // warehouse → field rep's holding
   FIELD_RETURN:  "FIELD_RETURN",   // field rep → warehouse
   CASE_USE:      "CASE_USE",       // rep field stock consumed during a case
+  LOAN_OUT:      "LOAN_OUT",       // rental machine sent out for a case
+  LOAN_RETURN:   "LOAN_RETURN",    // rental machine returned from a case
 } as const;
 
 export const MOVEMENT_LABELS: Record<string, string> = {
@@ -24,6 +26,8 @@ export const MOVEMENT_LABELS: Record<string, string> = {
   FIELD_OUT:      "Field Transfer Out",
   FIELD_RETURN:   "Field Return",
   CASE_USE:       "Case Usage",
+  LOAN_OUT:       "Loan Out",
+  LOAN_RETURN:    "Loan Return",
 };
 
 export const REF_TYPE = {

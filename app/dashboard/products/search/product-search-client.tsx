@@ -673,7 +673,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { searchProducts, getDistinctBrands } from "@/server/products";
+import { searchProducts, getDistinctBrands, setProductRental } from "@/server/products";
 import {
   SearchIcon,
   ShieldCheckIcon,
@@ -810,6 +810,20 @@ function ProductSlideOver({
   onClose: () => void;
 }) {
   const status = getCertStatus(p);
+  const [isRental, setIsRental] = useState(p.isRental);
+  const [toggling, setToggling] = useState(false);
+
+  async function handleToggleRental() {
+    setToggling(true);
+    try {
+      await setProductRental(p.id, !isRental);
+      setIsRental((v) => !v);
+    } catch {
+      // leave state unchanged on error
+    } finally {
+      setToggling(false);
+    }
+  }
 
   // Close on Escape
   useEffect(() => {
@@ -984,6 +998,38 @@ function ProductSlideOver({
                 </div>
               </div>
             )}
+
+            {/* Rental flag */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-muted/40 border-b border-border">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Item type
+                </span>
+              </div>
+              <div className="px-3 py-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">{isRental ? "Rental-capable (machine / equipment)" : "Consumable / disposable"}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {isRental
+                      ? "Can be rented (loan out, returned) or sold — chosen per case DO line."
+                      : "Always sold / consumed — stock permanently deducted on case DO."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={toggling}
+                  onClick={handleToggleRental}
+                  className={cn(
+                    "shrink-0 text-xs px-3 py-1.5 rounded-md border font-medium transition-colors disabled:opacity-50",
+                    isRental
+                      ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
+                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {toggling ? "saving…" : isRental ? "rental" : "consumable"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

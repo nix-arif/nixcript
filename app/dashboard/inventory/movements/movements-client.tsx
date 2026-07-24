@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 import { ArrowLeftIcon, ArrowRightIcon, ArrowLeftRightIcon, TrendingUpIcon, TrendingDownIcon, PencilIcon, Trash2Icon, PlusIcon } from "lucide-react";
 import type { MovementWithMeta, Warehouse } from "@/server/inventory";
-import { adjustStock, transferStock, searchProducts, editStockMovement, deleteStockMovement } from "@/server/inventory";
+import { adjustStock, transferStock, searchProducts, editStockMovement, deleteStockMovement, getTransferStockInfo, getWarehouseStock } from "@/server/inventory";
 import { MOVEMENT_LABELS, MOVEMENT_TYPE } from "@/lib/inventory/constants";
 import { getRepFieldStock, type RepStockItem } from "@/server/field-stock";
 import { cn } from "@/lib/utils";
@@ -89,13 +89,21 @@ function fmtDate(d: Date | string) {
   return new Date(d).toLocaleString("en-MY", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export function MovementsClient({ movements, warehouses, permissions }: { movements: MovementWithMeta[]; warehouses: Warehouse[]; permissions: string[] }) {
+export function MovementsClient({ movements, warehouses, permissions, isOwner }: { movements: MovementWithMeta[]; warehouses: Warehouse[]; permissions: string[]; isOwner: boolean }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const canManage = permissions.includes("inventory:manage") || permissions.includes("*");
-  const canAdjust = permissions.includes("inventory:adjust") || permissions.includes("*");
+
+  function formatWarehouse(label: string) {
+    if (!label.startsWith("Field:")) return label;
+    const name = warehouses.find((w) => w.label === label)?.address;
+    return name ? `Field: ${name.toLowerCase()}` : label;
+  }
+
+  const canManage = permissions.includes("inventory:manage") || permissions.includes("*") || isOwner;
+  const canAdjust = permissions.includes("inventory:adjust") || permissions.includes("*") || isOwner;
 
   // ── New Movement sheet ─────────────────────────────────────────────────────
+  const FIELD_RESTRICTED = [MOVEMENT_TYPE.OPENING, MOVEMENT_TYPE.STOCK_IN];
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjProductId, setAdjProductId] = useState("");
   const [adjProductLabel, setAdjProductLabel] = useState("");
@@ -105,6 +113,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
   const [adjCost, setAdjCost] = useState("");
   const [adjRef, setAdjRef] = useState("");
   const [adjNotes, setAdjNotes] = useState("");
+  const [adjSerialNo, setAdjSerialNo] = useState("");
   const [adjLotNo, setAdjLotNo] = useState("");
   const [adjExpiry, setAdjExpiry] = useState("");
   const [saving, setSaving] = useState(false);
@@ -113,14 +122,21 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
 
   // ── Transfer sheet ─────────────────────────────────────────────────────────
   const [txOpen, setTxOpen] = useState(false);
-  const [txProductId, setTxProductId] = useState("");
-  const [txProductLabel, setTxProductLabel] = useState("");
   const [txFrom, setTxFrom] = useState(warehouses[0]?.label ?? "Default");
   const [txTo, setTxTo] = useState(warehouses[1]?.label ?? warehouses[0]?.label ?? "Default");
-  const [txQty, setTxQty] = useState("");
   const [txNotes, setTxNotes] = useState("");
   const [transferring, setTransferring] = useState(false);
-  const [txFieldItems, setTxFieldItems] = useState<RepStockItem[]>([]);
+  const [txFromStock, setTxFromStock] = useState<{ productId: string; productCode: string; description: string | null; uom: string | null; quantity: number }[]>([]);
+  const [txFromStockLoading, setTxFromStockLoading] = useState(false);
+  type TxItem = {
+    productId: string; productCode: string; description: string | null; uom: string | null;
+    onHand: number; qty: string;
+    lots: { id: string; lotNo: string; expiryDate: Date | null; quantity: string }[];
+    selectedLotId: string | null;
+    serialNos: string[];
+    loadingInfo: boolean;
+  };
+  const [txSelected, setTxSelected] = useState<TxItem[]>([]);
 
   useEffect(() => {
     if (!adjOpen || !adjWarehouse.startsWith("Field:")) { setAdjFieldItems([]); return; }
@@ -134,13 +150,48 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
   }, [adjOpen, adjWarehouse]);
 
   useEffect(() => {
-    if (!txOpen) { setTxFieldItems([]); return; }
-    const fieldWh = txTo.startsWith("Field:") ? txTo : txFrom.startsWith("Field:") ? txFrom : null;
-    if (!fieldWh) { setTxFieldItems([]); return; }
-    const repId = fieldWh.slice(6);
-    if (!repId) return;
-    getRepFieldStock(repId).then(items => setTxFieldItems(items)).catch(() => setTxFieldItems([]));
-  }, [txOpen, txFrom, txTo]);
+    setTxFromStock([]); setTxSelected([]);
+    if (!txOpen || !txFrom) return;
+    setTxFromStockLoading(true);
+    getWarehouseStock(txFrom)
+      .then(items => setTxFromStock(items))
+      .catch(() => setTxFromStock([]))
+      .finally(() => setTxFromStockLoading(false));
+  }, [txOpen, txFrom]);
+
+  function handleTxProductToggle(item: typeof txFromStock[0]) {
+    const alreadySelected = txSelected.some(p => p.productId === item.productId);
+    if (alreadySelected) {
+      setTxSelected(prev => prev.filter(p => p.productId !== item.productId));
+      return;
+    }
+    const entry: TxItem = {
+      productId: item.productId, productCode: item.productCode,
+      description: item.description, uom: item.uom,
+      onHand: item.quantity, qty: "",
+      lots: [], selectedLotId: null, serialNos: [], loadingInfo: true,
+    };
+    setTxSelected(prev => [...prev, entry]);
+    getTransferStockInfo(item.productId, txFrom)
+      .then(info => setTxSelected(ps => ps.map(p =>
+        p.productId === item.productId
+          ? { ...p, lots: info.lots, serialNos: info.serialNos, selectedLotId: info.lots.length === 1 ? info.lots[0].id : null, loadingInfo: false }
+          : p
+      )))
+      .catch(() => setTxSelected(ps => ps.map(p =>
+        p.productId === item.productId ? { ...p, loadingInfo: false } : p
+      )));
+  }
+
+  function handleTxLotSelect(productId: string, lotId: string) {
+    setTxSelected(prev => prev.map(p =>
+      p.productId === productId ? { ...p, selectedLotId: p.selectedLotId === lotId ? null : lotId } : p
+    ));
+  }
+
+  function handleTxQtyChange(productId: string, qty: string) {
+    setTxSelected(prev => prev.map(p => p.productId === productId ? { ...p, qty } : p));
+  }
 
   async function handleAdjust(e: React.FormEvent) {
     e.preventDefault();
@@ -149,7 +200,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
     if (isNaN(qty) || qty <= 0) { toast.error("Enter a valid quantity"); return; }
     setSaving(true);
     try {
-      await adjustStock({ productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined, referenceNo: adjRef || undefined, notes: adjNotes || undefined, lotNo: adjLotNo || undefined, expiryDate: adjExpiry ? new Date(adjExpiry) : undefined });
+      await adjustStock({ productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined, referenceNo: adjRef || undefined, notes: adjNotes || undefined, serialNo: adjSerialNo || undefined, lotNo: adjLotNo || undefined, expiryDate: adjExpiry ? new Date(adjExpiry) : undefined });
       toast.success("Movement recorded");
       setAdjOpen(false);
       setAdjProductId(""); setAdjProductLabel(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry("");
@@ -160,15 +211,27 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
 
   async function handleTransfer(e: React.FormEvent) {
     e.preventDefault();
-    if (!txProductId) { toast.error("Select a product"); return; }
-    const qty = parseFloat(txQty);
-    if (isNaN(qty) || qty <= 0) { toast.error("Enter a valid quantity"); return; }
+    if (txSelected.length === 0) { toast.error("Select at least one product"); return; }
+    for (const p of txSelected) {
+      const qty = parseFloat(p.qty);
+      if (isNaN(qty) || qty <= 0) { toast.error(`Enter a valid quantity for ${p.productCode}`); return; }
+      if (qty > p.onHand) { toast.error(`${p.productCode}: only ${p.onHand} units on hand`); return; }
+    }
     setTransferring(true);
     try {
-      await transferStock({ productId: txProductId, fromWarehouse: txFrom, toWarehouse: txTo, quantity: qty, notes: txNotes || undefined });
-      toast.success(`Transferred ${qty} units: ${txFrom} → ${txTo}`);
+      for (const p of txSelected) {
+        const qty = parseFloat(p.qty);
+        const lot = p.lots.find(l => l.id === p.selectedLotId) ?? null;
+        await transferStock({
+          productId: p.productId, fromWarehouse: txFrom, toWarehouse: txTo, quantity: qty,
+          notes: txNotes || undefined,
+          lotNo: lot?.lotNo || undefined,
+          expiryDate: lot?.expiryDate ?? undefined,
+        });
+      }
+      toast.success(`Transferred ${txSelected.length} product(s): ${formatWarehouse(txFrom)} → ${formatWarehouse(txTo)}`);
       setTxOpen(false);
-      setTxProductId(""); setTxProductLabel(""); setTxQty(""); setTxNotes("");
+      setTxSelected([]); setTxFromStock([]); setTxNotes("");
       startTransition(() => router.refresh());
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
     finally { setTransferring(false); }
@@ -187,6 +250,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
   const [editQty, setEditQty] = useState("");
   const [editCost, setEditCost] = useState("");
   const [editRef, setEditRef] = useState("");
+  const [editSerialNo, setEditSerialNo] = useState("");
   const [editLotNo, setEditLotNo] = useState("");
   const [editExpiry, setEditExpiry] = useState("");
   const [editNotes, setEditNotes] = useState("");
@@ -205,6 +269,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
     setEditQty(String(Math.abs(parseFloat(m.quantity))));
     setEditCost(m.unitCost ?? "");
     setEditRef(m.referenceNo ?? "");
+    setEditSerialNo(m.serialNo ?? "");
     setEditLotNo(m.lotNo ?? "");
     setEditExpiry(m.expiryDate ? new Date(m.expiryDate).toISOString().split("T")[0] : "");
     setEditNotes(m.notes ?? "");
@@ -222,6 +287,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
       await editStockMovement(editItem.id, {
         notes: editNotes || null,
         referenceNo: editRef || null,
+        serialNo: editSerialNo || null,
         lotNo: editLotNo || null,
         expiryDate: editExpiry ? new Date(editExpiry) : null,
         ...(isPending && {
@@ -310,18 +376,19 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
               <TableHead className="w-28">Type</TableHead>
               <TableHead className="w-24 text-right">Qty</TableHead>
               <TableHead className="w-24 text-right">Balance</TableHead>
+              <TableHead className="w-28">Serial No.</TableHead>
               <TableHead className="w-24">Lot No.</TableHead>
               <TableHead className="w-28">Reference</TableHead>
               <TableHead>Notes</TableHead>
               <TableHead className="w-24">Status</TableHead>
               <TableHead className="w-32">By</TableHead>
-              {canManage && <TableHead className="w-20"/>}
+              {(canManage || isOwner) && <TableHead className="w-20"/>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={canManage ? 12 : 11} className="text-center py-10 text-sm text-muted-foreground">
+                <TableCell colSpan={(canManage || isOwner) ? 12 : 11} className="text-center py-10 text-sm text-muted-foreground">
                   No movements found.
                 </TableCell>
               </TableRow>
@@ -332,8 +399,8 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(m.createdAt)}</TableCell>
                   <TableCell className="font-mono text-xs font-medium">{m.productCode}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    {m.warehouseLabel}
-                    {m.warehouseTo && <span className="text-muted-foreground"> → {m.warehouseTo}</span>}
+                    {formatWarehouse(m.warehouseLabel)}
+                    {m.warehouseTo && <span className="text-muted-foreground"> → {formatWarehouse(m.warehouseTo)}</span>}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={`text-xs gap-1 ${TYPE_STYLE[m.movementType] ?? ""}`}>
@@ -347,6 +414,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
                   <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
                     {m.balanceAfter ? parseFloat(m.balanceAfter).toLocaleString("en-MY", { maximumFractionDigits: 4 }) : "—"}
                   </TableCell>
+                  <TableCell className="text-xs font-mono text-muted-foreground">{m.serialNo ?? "—"}</TableCell>
                   <TableCell className="text-xs font-mono text-muted-foreground">{m.lotNo ?? "—"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{m.referenceNo ?? "—"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground max-w-48 truncate" title={m.notes ?? ""}>{m.notes ?? "—"}</TableCell>
@@ -356,13 +424,15 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{m.createdByName ?? "—"}</TableCell>
-                  {canManage && (
+                  {(canManage || isOwner) && (
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(m)} title="Edit">
-                          <PencilIcon className="h-3.5 w-3.5"/>
-                        </Button>
-                        {m.status !== "APPROVED" && (
+                        {canManage && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(m)} title="Edit">
+                            <PencilIcon className="h-3.5 w-3.5"/>
+                          </Button>
+                        )}
+                        {isOwner && (
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => setDeleteTarget(m)} title="Delete">
                             <Trash2Icon className="h-3.5 w-3.5"/>
                           </Button>
@@ -387,7 +457,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
                 <Badge variant="outline" className={`text-xs ${editItem.status === "APPROVED" ? "text-green-700 border-green-300 bg-green-50 dark:text-green-400" : "text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-400"}`}>
                   {editItem.status}
                 </Badge>
-                <p className="text-xs text-muted-foreground font-mono">{editItem.productCode} · {editItem.warehouseLabel} · {fmtDate(editItem.createdAt)}</p>
+                <p className="text-xs text-muted-foreground font-mono">{editItem.productCode} · {formatWarehouse(editItem.warehouseLabel)} · {fmtDate(editItem.createdAt)}</p>
               </div>
             )}
           </SheetHeader>
@@ -412,8 +482,8 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
                   <Select value={editType} onValueChange={setEditType}>
                     <SelectTrigger><SelectValue/></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>
-                      <SelectItem value={MOVEMENT_TYPE.STOCK_IN}>Stock In ↑</SelectItem>
+                      {!editWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>}
+                      {!editWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.STOCK_IN}>Stock In ↑</SelectItem>}
                       <SelectItem value={MOVEMENT_TYPE.STOCK_OUT}>Stock Out ↓</SelectItem>
                       <SelectItem value={MOVEMENT_TYPE.ADJUSTMENT}>Adjustment</SelectItem>
                       <SelectItem value={MOVEMENT_TYPE.RETURN}>Return</SelectItem>
@@ -439,6 +509,10 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
             <div className="flex flex-col gap-1.5">
               <Label>Reference No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
               <Input placeholder="e.g. PO-001" value={editRef} onChange={e => setEditRef(e.target.value)}/>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Serial No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+              <Input placeholder="e.g. SN-2024-001" value={editSerialNo} onChange={e => setEditSerialNo(e.target.value)}/>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
@@ -472,7 +546,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
               <br/>{MOVEMENT_LABELS[deleteTarget.movementType] ?? deleteTarget.movementType} · {fmt(deleteTarget.quantity)}
             </p>
             <p className="text-xs text-muted-foreground">
-              Only pending movements can be deleted. This cannot be undone.
+              This cannot be undone.
             </p>
             <div className="flex gap-2">
               <Button variant="destructive" className="flex-1" disabled={deleting} onClick={handleDelete}>
@@ -491,7 +565,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
           <form onSubmit={handleAdjust} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label>Warehouse <span className="text-destructive">*</span></Label>
-              <Select value={adjWarehouse} onValueChange={v => { setAdjWarehouse(v); setAdjProductId(""); setAdjProductLabel(""); }}>
+              <Select value={adjWarehouse} onValueChange={v => { setAdjWarehouse(v); setAdjProductId(""); setAdjProductLabel(""); if (v.startsWith("Field:") && FIELD_RESTRICTED.includes(adjType)) setAdjType(MOVEMENT_TYPE.STOCK_OUT); }}>
                 <SelectTrigger><SelectValue/></SelectTrigger>
                 <SelectContent>
                   {warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : `${w.label}${w.address ? ` — ${w.address}` : ""}`}</SelectItem>)}
@@ -529,13 +603,16 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
               <Select value={adjType} onValueChange={setAdjType}>
                 <SelectTrigger><SelectValue/></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>
-                  <SelectItem value={MOVEMENT_TYPE.STOCK_IN}>Stock In ↑</SelectItem>
+                  {!adjWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>}
+                  {!adjWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.STOCK_IN}>Stock In ↑</SelectItem>}
                   <SelectItem value={MOVEMENT_TYPE.STOCK_OUT}>Stock Out ↓</SelectItem>
                   <SelectItem value={MOVEMENT_TYPE.ADJUSTMENT}>Adjustment</SelectItem>
                   <SelectItem value={MOVEMENT_TYPE.RETURN}>Return</SelectItem>
                 </SelectContent>
               </Select>
+              {adjWarehouse.startsWith("Field:") && (
+                <p className="text-xs text-muted-foreground">Field stock is replenished via Transfer from a warehouse, not Stock In.</p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
@@ -550,6 +627,10 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
             <div className="flex flex-col gap-1.5">
               <Label>Reference No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
               <Input placeholder="e.g. PO-2025-0001" value={adjRef} onChange={e => setAdjRef(e.target.value)}/>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Serial No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+              <Input placeholder="e.g. SN-2024-001" value={adjSerialNo} onChange={e => setAdjSerialNo(e.target.value)}/>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
@@ -581,7 +662,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
             <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
               <div className="flex flex-col gap-1.5">
                 <Label>From</Label>
-                <Select value={txFrom} onValueChange={v => { setTxFrom(v); setTxProductId(""); setTxProductLabel(""); }}>
+                <Select value={txFrom} onValueChange={setTxFrom}>
                   <SelectTrigger><SelectValue/></SelectTrigger>
                   <SelectContent>{warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : w.label}</SelectItem>)}</SelectContent>
                 </Select>
@@ -589,7 +670,7 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
               <ArrowRightIcon className="h-4 w-4 text-muted-foreground mb-2 shrink-0"/>
               <div className="flex flex-col gap-1.5">
                 <Label>To</Label>
-                <Select value={txTo} onValueChange={v => { setTxTo(v); setTxProductId(""); setTxProductLabel(""); }}>
+                <Select value={txTo} onValueChange={setTxTo}>
                   <SelectTrigger><SelectValue/></SelectTrigger>
                   <SelectContent>{warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : w.label}</SelectItem>)}</SelectContent>
                 </Select>
@@ -597,33 +678,122 @@ export function MovementsClient({ movements, warehouses, permissions }: { moveme
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Product <span className="text-destructive">*</span></Label>
-              {txFieldItems.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {txFieldItems.map(item => {
-                    const fl = `${item.productCode}${item.description ? ` — ${item.description}` : ""}`;
+              {txFromStockLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+              {!txFromStockLoading && txFromStock.length === 0 && (
+                <p className="text-xs text-muted-foreground">No stock in this warehouse.</p>
+              )}
+              {!txFromStockLoading && txFromStock.length > 0 && (
+                <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto rounded-md border border-border">
+                  {txFromStock.map(item => {
+                    const selected = txSelected.some(p => p.productId === item.productId);
                     return (
-                      <button key={item.productId} type="button"
-                        onClick={() => { setTxProductId(item.productId); setTxProductLabel(fl); }}
+                      <button
+                        key={item.productId}
+                        type="button"
+                        onClick={() => handleTxProductToggle(item)}
                         className={cn(
-                          "text-xs px-2.5 py-1 rounded-full border transition-colors",
-                          txProductId === item.productId
-                            ? "bg-teal-600 text-white border-teal-600 dark:bg-teal-700"
-                            : "border-border bg-background hover:bg-muted"
+                          "flex items-center justify-between px-3 py-2 text-xs text-left transition-colors",
+                          selected ? "bg-teal-600 text-white" : "hover:bg-muted"
                         )}
                       >
-                        <span className="font-mono font-medium">{item.productCode}</span>
-                        <span className="ml-1 opacity-60 text-[10px]">{item.qty}</span>
+                        <span className="flex items-center gap-2">
+                          <span className={cn("w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0", selected ? "bg-white border-white" : "border-border")}>
+                            {selected && <span className="text-teal-600 font-bold text-[10px]">✓</span>}
+                          </span>
+                          <span className="font-mono font-medium">{item.productCode}</span>
+                          {item.description && <span className="opacity-70">{item.description}</span>}
+                        </span>
+                        <span className={cn("tabular-nums shrink-0 ml-3", selected ? "text-white/80" : "text-muted-foreground")}>
+                          {item.quantity.toLocaleString("en-MY", { maximumFractionDigits: 4 })} {item.uom ?? ""}
+                        </span>
                       </button>
                     );
                   })}
                 </div>
               )}
-              <ProductSearch key={txProductId} value={txProductId} initialLabel={txProductLabel} onChange={(id, _code, fullLabel) => { setTxProductId(id); setTxProductLabel(fullLabel); }}/>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label>Quantity <span className="text-destructive">*</span></Label>
-              <Input type="number" min="0.0001" step="0.0001" placeholder="0" value={txQty} onChange={e => setTxQty(e.target.value)}/>
-            </div>
+
+            {/* ── Per-product detail cards ─────────────────────────────────────── */}
+            {txSelected.map(p => {
+              const qty = parseFloat(p.qty);
+              const overQty = !isNaN(qty) && qty > p.onHand;
+              return (
+                <div key={p.productId} className="rounded-md border border-border bg-muted/20 flex flex-col gap-3 p-3">
+                  {/* Header */}
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs font-mono font-semibold">{p.productCode}</p>
+                      {p.description && <p className="text-[11px] text-muted-foreground mt-0.5">{p.description}</p>}
+                    </div>
+                    <button type="button" onClick={() => handleTxProductToggle({ productId: p.productId, productCode: p.productCode, description: p.description, uom: p.uom, quantity: p.onHand })}
+                      className="text-muted-foreground hover:text-destructive text-xs ml-2 shrink-0">✕</button>
+                  </div>
+
+                  {/* Qty input */}
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs">Qty to transfer <span className="text-destructive">*</span></Label>
+                      <span className="text-[11px] text-muted-foreground">On hand: <span className={overQty ? "text-destructive font-medium" : "font-medium"}>{p.onHand.toLocaleString("en-MY", { maximumFractionDigits: 4 })} {p.uom ?? ""}</span></span>
+                    </div>
+                    <Input type="number" min="0.0001" step="0.0001" placeholder="0"
+                      value={p.qty} onChange={e => handleTxQtyChange(p.productId, e.target.value)}
+                      className={overQty ? "border-destructive focus-visible:ring-destructive h-8 text-xs" : "h-8 text-xs"}
+                    />
+                    {overQty && <p className="text-[11px] text-destructive">Exceeds on-hand quantity</p>}
+                  </div>
+
+                  {/* Read-only lot + serial info */}
+                  {p.loadingInfo ? (
+                    <p className="text-[11px] text-muted-foreground">Loading stock info…</p>
+                  ) : (
+                    <>
+                      {p.lots.length > 0 && (
+                        <div className="flex flex-col gap-1.5">
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Lot</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {p.lots.map(lot => (
+                              <button key={lot.id} type="button"
+                                onClick={() => handleTxLotSelect(p.productId, lot.id)}
+                                className={cn(
+                                  "text-[11px] px-2 py-0.5 rounded-full border transition-colors",
+                                  p.selectedLotId === lot.id
+                                    ? "bg-teal-600 text-white border-teal-600"
+                                    : "border-border bg-background hover:bg-muted"
+                                )}
+                              >
+                                <span className="font-mono">{lot.lotNo}</span>
+                                {lot.expiryDate && <span className="ml-1.5 opacity-70">exp {new Date(lot.expiryDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</span>}
+                                <span className="ml-1.5 opacity-60">({lot.quantity})</span>
+                              </button>
+                            ))}
+                          </div>
+                          {p.selectedLotId && (() => {
+                            const lot = p.lots.find(l => l.id === p.selectedLotId)!;
+                            return (
+                              <div className="grid grid-cols-2 gap-2 mt-0.5 text-xs">
+                                <div><p className="text-[10px] text-muted-foreground">Lot No.</p><p className="font-mono font-medium">{lot.lotNo}</p></div>
+                                <div><p className="text-[10px] text-muted-foreground">Expiry</p><p>{lot.expiryDate ? new Date(lot.expiryDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</p></div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                      {p.serialNos.length > 0 && (
+                        <div className="flex flex-col gap-1">
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Serial No.</p>
+                          <div className="flex flex-wrap gap-1">
+                            {p.serialNos.map(sn => (
+                              <span key={sn} className="text-[11px] font-mono px-1.5 py-0.5 rounded border border-border bg-background">{sn}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
+
             <div className="flex flex-col gap-1.5">
               <Label>Notes <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
               <Input placeholder="Reason for transfer…" value={txNotes} onChange={e => setTxNotes(e.target.value)}/>

@@ -14,6 +14,9 @@ import {
   quotation,
   purchaseOrder,
   purchaseOrderItem,
+  stockLevel,
+  stockMovement,
+  product as productTable,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -254,6 +257,7 @@ export interface DeliveryOrderItemInput {
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
+  loanOut?: boolean;
 }
 
 export interface CreateDeliveryOrderInput {
@@ -274,7 +278,6 @@ export interface CreateDeliveryOrderInput {
   salesPersonName?: string;
   applicationSpecialistId?: string;
   applicationSpecialistName?: string;
-  caseType?: string;
   caseDate?: Date;
   mrnNo?: string;
   categoryIds?: string[];
@@ -625,7 +628,6 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       salesPersonName: input.salesPersonName ?? null,
       applicationSpecialistId: input.applicationSpecialistId ?? null,
       applicationSpecialistName: input.applicationSpecialistName ?? null,
-      caseType: input.caseType ?? null,
       caseDate: input.caseDate ?? null,
       mrnNo: input.mrnNo ?? null,
       categoryIds: input.categoryIds ?? [],
@@ -655,7 +657,6 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
   // Case DO: deduct used items from the rep's field stock
   if (input.isCaseDo && input.applicationSpecialistId) {
     const { fieldWarehouseLabel, MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
-    const { stockLevel, stockMovement, product: productTable } = await import("@/db/schema");
     const fieldLabel = fieldWarehouseLabel(input.applicationSpecialistId);
     const now = new Date();
 
@@ -664,7 +665,7 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       const qty = parseFloat(item.qty ?? "1");
       if (qty <= 0) continue;
 
-      const [prod] = await db.select({ productCode: productTable.productCode })
+      const [prod] = await db.select({ productCode: productTable.productCode, isRental: productTable.isRental })
         .from(productTable).where(eq(productTable.id, item.productId)).limit(1);
       if (!prod) continue;
 
@@ -684,13 +685,16 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
           .where(eq(stockLevel.id, fieldLevel.id));
       }
 
+      const movementType = item.loanOut ? MT.LOAN_OUT : MT.CASE_USE;
+      const notes = item.loanOut ? `Loan out — ${doNo}` : `Case usage — ${doNo}`;
+
       await db.insert(stockMovement).values({
         id: nanoid(), organizationId: orgId, productId: item.productId,
         productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: null,
-        movementType: MT.CASE_USE,
+        movementType,
         quantity: (-qty).toFixed(4), balanceAfter: newQty.toFixed(4),
         referenceType: RT.CASE, referenceId: row.id, referenceNo: doNo,
-        notes: `Case usage — ${doNo}${input.caseType ? ` (${input.caseType})` : ""}`,
+        notes,
         status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
       });
     }
@@ -1006,4 +1010,80 @@ export async function getPendingDosForInvoice(): Promise<PendingDoForInvoiceRow[
       createdAt: r.createdAt,
     };
   });
+}
+
+export async function returnRentalItems(
+  doId: string,
+  returns: { movementId: string; returnQty: number }[],
+): Promise<void> {
+  const { orgId, userId } = await requireAccess("delivery-order:update");
+  const { MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
+
+  const [do_] = await db
+    .select({ doNo: deliveryOrder.doNo, applicationSpecialistId: deliveryOrder.applicationSpecialistId })
+    .from(deliveryOrder)
+    .where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId)))
+    .limit(1);
+  if (!do_) throw new Error("Delivery order not found");
+
+  const now = new Date();
+
+  for (const { movementId, returnQty } of returns) {
+    if (returnQty <= 0) continue;
+
+    const [loanMovement] = await db
+      .select()
+      .from(stockMovement)
+      .where(and(
+        eq(stockMovement.id, movementId),
+        eq(stockMovement.organizationId, orgId),
+        eq(stockMovement.movementType, MT.LOAN_OUT),
+      ))
+      .limit(1);
+    if (!loanMovement) continue;
+
+    const qty = Math.min(returnQty, Math.abs(parseFloat(loanMovement.quantity)));
+
+    const [sl] = await db
+      .select()
+      .from(stockLevel)
+      .where(and(
+        eq(stockLevel.organizationId, orgId),
+        eq(stockLevel.productId, loanMovement.productId),
+        eq(stockLevel.warehouseLabel, loanMovement.warehouseLabel),
+      ))
+      .limit(1);
+
+    const currentQty = parseFloat(sl?.quantity ?? "0");
+    const newQty = currentQty + qty;
+
+    if (sl) {
+      await db.update(stockLevel)
+        .set({ quantity: newQty.toFixed(4), updatedAt: now })
+        .where(eq(stockLevel.id, sl.id));
+    } else {
+      const { nanoid: nid } = await import("nanoid");
+      await db.insert(stockLevel).values({
+        id: nid(), organizationId: orgId, productId: loanMovement.productId,
+        warehouseLabel: loanMovement.warehouseLabel, quantity: newQty.toFixed(4),
+        reorderPoint: null, maxStock: null, unitCost: null, notes: null,
+        createdAt: now, updatedAt: now,
+      });
+    }
+
+    await db.insert(stockMovement).values({
+      id: nanoid(), organizationId: orgId,
+      productId: loanMovement.productId, productCode: loanMovement.productCode,
+      warehouseLabel: loanMovement.warehouseLabel, warehouseTo: null,
+      movementType: MT.LOAN_RETURN,
+      quantity: qty.toFixed(4), balanceAfter: newQty.toFixed(4),
+      referenceType: RT.CASE, referenceId: doId, referenceNo: do_.doNo,
+      notes: `Loan return — ${do_.doNo}`,
+      status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+    });
+  }
+
+  revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard/inventory/movements");
+  revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
 }

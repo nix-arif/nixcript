@@ -547,6 +547,9 @@ export const product = pgTable(
     supplier: text("supplier"),
     brand: text("brand"),
 
+    // Rental flag
+    isRental: boolean("is_rental").default(false).notNull(),
+
     // Image
     imageKey: text("image_key"), // R2 key for product catalogue image
     imageUploadedAt: timestamp("image_uploaded_at"), // bumped on every image upload for cache-busting
@@ -639,6 +642,7 @@ export const stockMovement = pgTable(
     referenceId: text("reference_id"),
     referenceNo: text("reference_no"),
     notes: text("notes"),
+    serialNo: text("serial_no"),
     lotNo: text("lot_no"),
     expiryDate: timestamp("expiry_date"),
     lotId: text("lot_id"),   // FK to stock_lot — populated at approval time

@@ -69,6 +69,8 @@ export function MdaCertGeneratorClient() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
+  const [highlightRows, setHighlightRows] = useState(true);
+  const [tagWithNo, setTagWithNo] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (f: File) => {
@@ -115,7 +117,7 @@ export function MdaCertGeneratorClient() {
       const res = await fetch("/api/products/mda-cert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows }),
+        body: JSON.stringify({ rows, highlightRows, tagWithNo }),
       });
       if (!res.ok) {
         const text = await res.text();
@@ -348,33 +350,70 @@ export function MdaCertGeneratorClient() {
 
       {/* Action bar */}
       {rows.length > 0 && (
-        <div className="flex items-center justify-between p-4 bg-background border border-border rounded-xl">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <InfoIcon className="w-3.5 h-3.5 shrink-0" />
-            {withCert > 0
-              ? `${withCert} product${withCert > 1 ? "s" : ""} will be included in the PDF`
-              : "No products have MDA certificate data — seed the products first"}
+        <div className="flex flex-col gap-3 p-4 bg-background border border-border rounded-xl">
+          {/* PDF options */}
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-xs font-medium text-muted-foreground">PDF options</span>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={highlightRows}
+                onClick={() => setHighlightRows((v) => !v)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors",
+                  highlightRows ? "bg-amber-400 dark:bg-amber-500" : "bg-muted"
+                )}
+              >
+                <span className={cn("pointer-events-none block h-4 w-4 rounded-full bg-white shadow transition-transform", highlightRows ? "translate-x-4" : "translate-x-0")} />
+              </button>
+              <span className="text-xs">Highlight matched rows</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={tagWithNo}
+                onClick={() => setTagWithNo((v) => !v)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors",
+                  tagWithNo ? "bg-blue-500 dark:bg-blue-600" : "bg-muted"
+                )}
+              >
+                <span className={cn("pointer-events-none block h-4 w-4 rounded-full bg-white shadow transition-transform", tagWithNo ? "translate-x-4" : "translate-x-0")} />
+              </button>
+              <span className="text-xs">Tag with row numbers</span>
+            </label>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={reset} disabled={generating}>Cancel</Button>
-            <Button
-              size="sm"
-              onClick={handleGenerate}
-              disabled={generating || withCert === 0}
-              className="gap-2 min-w-44"
-            >
-              {generating ? (
-                <>
-                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  Generating…
-                </>
-              ) : (
-                <>
-                  <ShieldCheckIcon className="w-3.5 h-3.5" />
-                  Generate MDA Certificates
-                </>
-              )}
-            </Button>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <InfoIcon className="w-3.5 h-3.5 shrink-0" />
+              {withCert > 0
+                ? `${withCert} product${withCert > 1 ? "s" : ""} will be included in the PDF`
+                : "No products have MDA certificate data — seed the products first"}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={reset} disabled={generating}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={handleGenerate}
+                disabled={generating || withCert === 0}
+                className="gap-2 min-w-44"
+              >
+                {generating ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheckIcon className="w-3.5 h-3.5" />
+                    Generate MDA Certificates
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       )}

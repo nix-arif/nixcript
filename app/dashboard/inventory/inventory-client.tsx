@@ -9,11 +9,13 @@ import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Label } from "@/components/ui/label";
 import {
-  PackageIcon, AlertTriangleIcon, ArrowRightIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, XIcon,
+  PackageIcon, AlertTriangleIcon, ArrowRightIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, XIcon, Trash2Icon,
 } from "lucide-react";
 import type { StockWithProduct, Warehouse, StockLotRow, ExpiringLot } from "@/server/inventory";
-import { searchProducts, getProductLots, editStockLot, assignLotToStock } from "@/server/inventory";
+import { searchProducts, getProductLots, editStockLot, assignLotToStock, deleteStockLevel, editStockLevel } from "@/server/inventory";
 import type { ConsignmentItemRow } from "@/server/consignment";
 
 const EXPIRY_WARN_DAYS = 90;
@@ -45,6 +47,7 @@ interface Props {
   inventory: StockWithProduct[];
   warehouses: Warehouse[];
   permissions: string[];
+  isOwner: boolean;
   activeConsignments?: ActiveConsignment[];
   expiringLots?: ExpiringLot[];
 }
@@ -218,7 +221,7 @@ function ExpiringLotsAlert({ lots }: { lots: ExpiringLot[] }) {
                   <tr key={l.id} className="border-t border-black/10 dark:border-white/10">
                     <td className="py-1 pr-4 font-mono font-medium">{l.productCode}</td>
                     <td className="py-1 pr-4 text-muted-foreground max-w-48 truncate" title={l.description ?? ""}>{l.description ?? "—"}</td>
-                    <td className="py-1 pr-4 text-muted-foreground">{l.warehouseLabel}</td>
+                    <td className="py-1 pr-4 text-muted-foreground">{formatWarehouse(l.warehouseLabel)}</td>
                     <td className="py-1 pr-4 font-mono">{l.lotNo}</td>
                     <td className="py-1 pr-4 text-right tabular-nums">{parseFloat(l.quantity).toLocaleString("en-MY", { maximumFractionDigits: 4 })}</td>
                     <td className="py-1 pr-4 text-right tabular-nums whitespace-nowrap">
@@ -417,11 +420,79 @@ function fmt(v: string | number) {
   return parseFloat(String(v)).toLocaleString("en-MY", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 }
 
-export function InventoryClient({ inventory, warehouses, permissions, activeConsignments = [], expiringLots = [] }: Props) {
+export function InventoryClient({ inventory, warehouses, permissions, isOwner, activeConsignments = [], expiringLots = [] }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
+
+  function formatWarehouse(label: string) {
+    if (!label.startsWith("Field:")) return label;
+    const name = warehouses.find((w) => w.label === label)?.address;
+    return name ? `Field: ${name.toLowerCase()}` : label;
+  }
   const [search, setSearch] = useState("");
   const [warehouseFilter, setWarehouseFilter] = useState("ALL");
+
+  // Edit stock level
+  const [editTarget, setEditTarget] = useState<StockWithProduct | null>(null);
+  const [editQty, setEditQty] = useState("");
+  const [editReorder, setEditReorder] = useState("");
+  const [editMaxStock, setEditMaxStock] = useState("");
+  const [editUnitCost, setEditUnitCost] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function openEdit(item: StockWithProduct) {
+    setEditTarget(item);
+    setEditQty(parseFloat(item.quantity).toString());
+    setEditReorder(item.reorderPoint ? parseFloat(item.reorderPoint).toString() : "");
+    setEditMaxStock(item.maxStock ? parseFloat(item.maxStock).toString() : "");
+    setEditUnitCost(item.unitCost ?? "");
+    setEditNotes("");
+  }
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTarget) return;
+    const targetQty = parseFloat(editQty);
+    if (isNaN(targetQty) || targetQty < 0) { toast.error("Enter a valid quantity"); return; }
+    setSaving(true);
+    try {
+      await editStockLevel({
+        stockLevelId: editTarget.id,
+        targetQty,
+        reorderPoint: editReorder.trim() || null,
+        maxStock: editMaxStock.trim() || null,
+        unitCost: editUnitCost.trim() || null,
+        correctionNotes: editNotes.trim() || undefined,
+      });
+      toast.success("Stock record updated");
+      setEditTarget(null);
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Delete stock level
+  const [deleteTarget, setDeleteTarget] = useState<StockWithProduct | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteStockLevel(deleteTarget.id);
+      toast.success(`${deleteTarget.productCode} removed from inventory`);
+      setDeleteTarget(null);
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
 
 
@@ -497,7 +568,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
         <div className="flex items-center gap-1.5 flex-wrap">
           <Button size="sm" variant={warehouseFilter === "ALL" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setWarehouseFilter("ALL")}>All Warehouses</Button>
           {allWarehouses.map(wh => (
-            <Button key={wh} size="sm" variant={warehouseFilter === wh ? "default" : "outline"} className="h-7 text-xs" onClick={() => setWarehouseFilter(wh)}>{wh}</Button>
+            <Button key={wh} size="sm" variant={warehouseFilter === wh ? "default" : "outline"} className="h-7 text-xs" onClick={() => setWarehouseFilter(wh)}>{formatWarehouse(wh)}</Button>
           ))}
         </div>
       </div>
@@ -510,7 +581,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
       ) : grouped.map(group => (
         <div key={group.label} className="flex flex-col gap-0 rounded-lg border border-border overflow-hidden">
           <div className="px-4 py-2.5 bg-muted/40 border-b border-border flex items-center gap-3">
-            <span className="text-sm font-semibold">{group.label}</span>
+            <span className="text-sm font-semibold">{formatWarehouse(group.label)}</span>
             {group.address && <span className="text-xs text-muted-foreground">{group.address}</span>}
             <Badge variant="outline" className="text-xs ml-auto">{group.rows.length} product{group.rows.length !== 1 ? "s" : ""}</Badge>
           </div>
@@ -525,6 +596,7 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
                 <TableHead className="w-28 text-right">Available</TableHead>
                 <TableHead className="w-28 text-right">Reorder Pt.</TableHead>
                 <TableHead className="w-20 text-center">Status</TableHead>
+                {isOwner && <TableHead className="w-12"/>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -561,14 +633,38 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
                           <Badge variant="outline" className="text-xs text-green-700 border-green-300 bg-green-50 dark:text-green-400">OK</Badge>
                         )}
                       </TableCell>
+                      {isOwner && (
+                        <TableCell>
+                          <div className="flex items-center gap-1 justify-center">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => openEdit(item)}
+                              title="Edit stock record"
+                            >
+                              <PencilIcon className="h-3.5 w-3.5"/>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              onClick={() => setDeleteTarget(item)}
+                              title="Delete stock record"
+                            >
+                              <Trash2Icon className="h-3.5 w-3.5"/>
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                     {isExpanded && (
                       <TableRow className="bg-muted/20 hover:bg-muted/20">
                         <TableCell/>
-                        <TableCell colSpan={7} className="py-2 pb-3">
+                        <TableCell colSpan={isOwner ? 8 : 7} className="py-2 pb-3">
                           <LotSubTable
                             lots={lots}
-                            canManage={false}
+                            canManage={isOwner}
                             productId={item.productId}
                             warehouseLabel={item.warehouseLabel}
                             currentBalance={parseFloat(item.quantity)}
@@ -637,6 +733,106 @@ export function InventoryClient({ inventory, warehouses, permissions, activeCons
                 })}
               </TableBody>
             </Table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Sheet ─────────────────────────────────────────────────────── */}
+      <Sheet open={!!editTarget} onOpenChange={o => { if (!saving) setEditTarget(o ? editTarget : null); }}>
+        <SheetContent className="w-full data-[side=right]:sm:max-w-md overflow-y-auto px-6">
+          <SheetHeader className="mb-5">
+            <SheetTitle>Edit Stock Record</SheetTitle>
+            {editTarget && (
+              <p className="text-xs text-muted-foreground font-mono">
+                {editTarget.productCode} · {formatWarehouse(editTarget.warehouseLabel)}
+                {editTarget.description && ` — ${editTarget.description}`}
+              </p>
+            )}
+          </SheetHeader>
+          <form onSubmit={handleEdit} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label>On-hand Quantity <span className="text-destructive">*</span></Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.0001"
+                value={editQty}
+                onChange={e => setEditQty(e.target.value)}
+                placeholder="0"
+              />
+              <p className="text-xs text-muted-foreground">Setting a different quantity creates an auto-approved adjustment movement.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label>Reorder Point <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={editReorder}
+                  onChange={e => setEditReorder(e.target.value)}
+                  placeholder="—"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label>Max Stock <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={editMaxStock}
+                  onChange={e => setEditMaxStock(e.target.value)}
+                  placeholder="—"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Unit Cost (RM) <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={editUnitCost}
+                onChange={e => setEditUnitCost(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Correction Notes <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+              <Input
+                value={editNotes}
+                onChange={e => setEditNotes(e.target.value)}
+                placeholder="Reason for quantity change…"
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button type="submit" disabled={saving} className="flex-1">{saving ? "Saving…" : "Save"}</Button>
+              <Button type="button" variant="outline" onClick={() => setEditTarget(null)} disabled={saving}>Cancel</Button>
+            </div>
+          </form>
+        </SheetContent>
+      </Sheet>
+
+      {/* ── Delete Confirmation ─────────────────────────────────────────────── */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-background rounded-xl border border-border shadow-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4">
+            <h2 className="text-base font-semibold">Remove from inventory?</h2>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-mono font-medium text-foreground">{deleteTarget.productCode}</span>
+              {deleteTarget.description && <> — {deleteTarget.description}</>}
+              <br/>
+              <span className="text-xs">{formatWarehouse(deleteTarget.warehouseLabel)} · {fmt(deleteTarget.quantity)} on hand</span>
+            </p>
+            <p className="text-xs text-destructive font-medium">
+              This also deletes all lot records for this product in this warehouse. Movement history is kept.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="destructive" className="flex-1" disabled={deleting} onClick={handleDelete}>
+                {deleting ? "Removing…" : "Remove"}
+              </Button>
+              <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</Button>
+            </div>
           </div>
         </div>
       )}

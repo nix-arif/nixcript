@@ -57,6 +57,23 @@ async function requireAccess(permission: string) {
   return { orgId, userId };
 }
 
+async function requireOwnerForDelete() {
+  const { orgId, userId } = await getSession();
+  const [ownerRow] = await db
+    .select({ id: member.id })
+    .from(member)
+    .where(and(
+      eq(member.organizationId, orgId),
+      eq(member.userId, userId),
+      eq(member.role, "owner"),
+      isNull(member.deletedAt),
+    ))
+    .limit(1);
+  if (!ownerRow) throw new Error("Only the owner can delete inventory data");
+  return { orgId, userId };
+}
+
+
 async function getAllOwnerOrgIds(currentOrgId: string): Promise<string[]> {
   const [ownerMember] = await db
     .select({ userId: member.userId })
@@ -170,6 +187,34 @@ export async function getInventory(): Promise<StockWithProduct[]> {
   });
 }
 
+export async function getWarehouseStock(warehouseLabel: string): Promise<{
+  productId: string;
+  productCode: string;
+  description: string | null;
+  uom: string | null;
+  quantity: number;
+}[]> {
+  const { orgId } = await requireAccess("inventory:read");
+  const rows = await db
+    .select({
+      productId: stockLevel.productId,
+      productCode: product.productCode,
+      description: product.description,
+      uom: product.uom,
+      quantity: stockLevel.quantity,
+    })
+    .from(stockLevel)
+    .innerJoin(product, eq(stockLevel.productId, product.id))
+    .where(and(
+      eq(stockLevel.organizationId, orgId),
+      eq(stockLevel.warehouseLabel, warehouseLabel),
+    ))
+    .orderBy(asc(product.productCode));
+  return rows
+    .map(r => ({ ...r, quantity: parseFloat(r.quantity) }))
+    .filter(r => r.quantity > 0);
+}
+
 export async function getUntrackedProducts(): Promise<UntrackedProduct[]> {
   const { orgId } = await requireAccess("inventory:read");
   const orgIds = await getAllOwnerOrgIds(orgId);
@@ -238,6 +283,7 @@ export async function adjustStock(data: {
   referenceType?: string;
   referenceNo?: string;
   notes?: string;
+  serialNo?: string;
   lotNo?: string;
   expiryDate?: Date;
 }): Promise<void> {
@@ -275,6 +321,7 @@ export async function adjustStock(data: {
     referenceId: null,
     referenceNo: data.referenceNo?.trim() || null,
     notes: data.notes?.trim() || null,
+    serialNo: data.serialNo?.trim() || null,
     lotNo: data.lotNo?.trim() || null,
     expiryDate: data.expiryDate ?? null,
     status: canApprove ? "APPROVED" : "PENDING",
@@ -333,6 +380,10 @@ export async function transferStock(data: {
   toWarehouse: string;
   quantity: number;
   notes?: string;
+  referenceNo?: string;
+  serialNo?: string;
+  lotNo?: string;
+  expiryDate?: Date;
 }): Promise<void> {
   const { orgId, userId } = await requireAccess("inventory:adjust");
 
@@ -342,14 +393,19 @@ export async function transferStock(data: {
   const [prod] = await db
     .select({ productCode: product.productCode })
     .from(product)
-    .where(and(eq(product.id, data.productId), eq(product.organizationId, orgId)))
+    .where(and(eq(product.id, data.productId), inArray(product.organizationId, await getAllOwnerOrgIds(orgId))))
     .limit(1);
   if (!prod) throw new Error("Product not found");
 
+  const serialNo = data.serialNo?.trim() || null;
+  const lotNo = data.lotNo?.trim() || null;
+  const expiryDate = data.expiryDate ?? null;
+  const referenceNo = data.referenceNo?.trim() || null;
+
   const now = new Date();
   await db.insert(stockMovement).values([
-    { id: nanoid(), organizationId: orgId, productId: data.productId, productCode: prod.productCode, warehouseLabel: data.fromWarehouse, warehouseTo: data.toWarehouse, movementType: MOVEMENT_TYPE.TRANSFER, quantity: (-data.quantity).toFixed(4), balanceAfter: null, unitCost: null, referenceType: REF_TYPE.MANUAL, referenceId: null, referenceNo: null, notes: data.notes?.trim() || null, status: "PENDING", createdBy: userId, createdAt: now },
-    { id: nanoid(), organizationId: orgId, productId: data.productId, productCode: prod.productCode, warehouseLabel: data.toWarehouse, warehouseTo: null, movementType: MOVEMENT_TYPE.TRANSFER, quantity: data.quantity.toFixed(4), balanceAfter: null, unitCost: null, referenceType: REF_TYPE.MANUAL, referenceId: null, referenceNo: null, notes: data.notes?.trim() || null, status: "PENDING", createdBy: userId, createdAt: now },
+    { id: nanoid(), organizationId: orgId, productId: data.productId, productCode: prod.productCode, warehouseLabel: data.fromWarehouse, warehouseTo: data.toWarehouse, movementType: MOVEMENT_TYPE.TRANSFER, quantity: (-data.quantity).toFixed(4), balanceAfter: null, unitCost: null, referenceType: REF_TYPE.MANUAL, referenceId: null, referenceNo, serialNo, lotNo, expiryDate, notes: data.notes?.trim() || null, status: "PENDING", createdBy: userId, createdAt: now },
+    { id: nanoid(), organizationId: orgId, productId: data.productId, productCode: prod.productCode, warehouseLabel: data.toWarehouse, warehouseTo: null, movementType: MOVEMENT_TYPE.TRANSFER, quantity: data.quantity.toFixed(4), balanceAfter: null, unitCost: null, referenceType: REF_TYPE.MANUAL, referenceId: null, referenceNo, serialNo, lotNo, expiryDate, notes: data.notes?.trim() || null, status: "PENDING", createdBy: userId, createdAt: now },
   ]);
 
   revalidatePath("/dashboard/inventory");
@@ -567,7 +623,7 @@ export async function editStockLot(lotId: string, data: { lotNo: string; expiryD
 }
 
 export async function deleteStockLevel(stockLevelId: string): Promise<void> {
-  const { orgId } = await requireAccess("inventory:manage");
+  const { orgId } = await requireOwnerForDelete();
 
   const [sl] = await db
     .select()
@@ -575,6 +631,13 @@ export async function deleteStockLevel(stockLevelId: string): Promise<void> {
     .where(and(eq(stockLevel.id, stockLevelId), eq(stockLevel.organizationId, orgId)))
     .limit(1);
   if (!sl) throw new Error("Stock record not found");
+
+  // Cascade: remove all movement history for this product/warehouse
+  await db.delete(stockMovement).where(and(
+    eq(stockMovement.productId, sl.productId),
+    eq(stockMovement.organizationId, orgId),
+    eq(stockMovement.warehouseLabel, sl.warehouseLabel),
+  ));
 
   // Remove lot records for this product/warehouse
   await db.delete(stockLot).where(and(
@@ -586,6 +649,7 @@ export async function deleteStockLevel(stockLevelId: string): Promise<void> {
   await db.delete(stockLevel).where(eq(stockLevel.id, stockLevelId));
 
   revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard/inventory/movements");
 }
 
 export async function setReorderPoint(
@@ -653,6 +717,51 @@ export async function getProductLots(productId: string, warehouseLabel?: string)
     .from(stockLot)
     .where(and(...conditions))
     .orderBy(asc(stockLot.expiryDate), asc(stockLot.lotNo));
+}
+
+export async function getTransferStockInfo(productId: string, warehouseLabel: string): Promise<{
+  onHand: number;
+  lots: { id: string; lotNo: string; expiryDate: Date | null; quantity: string }[];
+  serialNos: string[];
+}> {
+  const { orgId } = await requireAccess("inventory:read");
+
+  const [levelRow] = await db
+    .select({ quantity: stockLevel.quantity })
+    .from(stockLevel)
+    .where(and(
+      eq(stockLevel.productId, productId),
+      eq(stockLevel.organizationId, orgId),
+      eq(stockLevel.warehouseLabel, warehouseLabel),
+    ))
+    .limit(1);
+
+  const lots = await db
+    .select({ id: stockLot.id, lotNo: stockLot.lotNo, expiryDate: stockLot.expiryDate, quantity: stockLot.quantity })
+    .from(stockLot)
+    .where(and(
+      eq(stockLot.productId, productId),
+      eq(stockLot.organizationId, orgId),
+      eq(stockLot.warehouseLabel, warehouseLabel),
+    ))
+    .orderBy(asc(stockLot.expiryDate), asc(stockLot.lotNo));
+
+  const serialRows = await db
+    .selectDistinct({ serialNo: stockMovement.serialNo })
+    .from(stockMovement)
+    .where(and(
+      eq(stockMovement.productId, productId),
+      eq(stockMovement.organizationId, orgId),
+      eq(stockMovement.warehouseLabel, warehouseLabel),
+      eq(stockMovement.status, "APPROVED"),
+      isNotNull(stockMovement.serialNo),
+    ));
+
+  return {
+    onHand: parseFloat(levelRow?.quantity ?? "0"),
+    lots,
+    serialNos: serialRows.map(r => r.serialNo!).filter(Boolean),
+  };
 }
 
 // Backfill stock_lot rows from approved movements that recorded lotNo
@@ -727,6 +836,7 @@ export async function editStockMovement(id: string, data: {
   // Safe fields — editable on any status
   notes: string | null;
   referenceNo: string | null;
+  serialNo: string | null;
   lotNo: string | null;
   expiryDate: Date | null;
   // Pending-only fields
@@ -748,6 +858,7 @@ export async function editStockMovement(id: string, data: {
   const safeFields = {
     notes: data.notes?.trim() || null,
     referenceNo: data.referenceNo?.trim() || null,
+    serialNo: data.serialNo?.trim() || null,
     lotNo: data.lotNo?.trim() || null,
     expiryDate: data.expiryDate,
   };
@@ -793,7 +904,7 @@ export async function editStockMovement(id: string, data: {
 }
 
 export async function deleteStockMovement(id: string): Promise<void> {
-  const { orgId } = await requireAccess("inventory:manage");
+  const { orgId } = await requireOwnerForDelete();
 
   const [mv] = await db
     .select()
@@ -801,7 +912,6 @@ export async function deleteStockMovement(id: string): Promise<void> {
     .where(and(eq(stockMovement.id, id), eq(stockMovement.organizationId, orgId)))
     .limit(1);
   if (!mv) throw new Error("Movement not found");
-  if (mv.status === "APPROVED") throw new Error("Cannot delete an approved movement — create a corrective movement instead");
 
   await db.delete(stockMovement).where(eq(stockMovement.id, id));
   revalidatePath("/dashboard/inventory/movements");

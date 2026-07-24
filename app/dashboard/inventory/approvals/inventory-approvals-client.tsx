@@ -30,7 +30,15 @@ function fmtDate(d: Date | string) {
   return new Date(d).toLocaleString("en-MY", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export function InventoryApprovalsClient({ pending }: { pending: MovementWithMeta[] }) {
+export function InventoryApprovalsClient({ pending, warehouses }: {
+  pending: MovementWithMeta[];
+  warehouses: { label: string; address?: string | null }[];
+}) {
+  function formatWarehouse(label: string) {
+    if (!label.startsWith("Field:")) return label;
+    const name = warehouses.find(w => w.label === label)?.address;
+    return name ? `Field: ${name.toLowerCase()}` : label;
+  }
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -104,8 +112,8 @@ export function InventoryApprovalsClient({ pending }: { pending: MovementWithMet
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(mv.createdAt)}</TableCell>
                     <TableCell className="font-mono text-xs font-medium">{mv.productCode}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {mv.warehouseLabel}
-                      {mv.warehouseTo && <span> → {mv.warehouseTo}</span>}
+                      {formatWarehouse(mv.warehouseLabel)}
+                      {mv.warehouseTo && <span> → {formatWarehouse(mv.warehouseTo)}</span>}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className={`text-xs gap-1 ${TYPE_STYLE[mv.movementType] ?? ""}`}>
@@ -157,7 +165,7 @@ export function InventoryApprovalsClient({ pending }: { pending: MovementWithMet
             {rejectTarget && (
               <div className="rounded-md bg-muted/40 border border-border p-3 text-sm space-y-1">
                 <p><span className="text-muted-foreground">Product:</span> <strong>{rejectTarget.productCode}</strong></p>
-                <p><span className="text-muted-foreground">Warehouse:</span> {rejectTarget.warehouseLabel}</p>
+                <p><span className="text-muted-foreground">Warehouse:</span> {formatWarehouse(rejectTarget.warehouseLabel)}</p>
                 <p><span className="text-muted-foreground">Qty:</span> {rejectTarget.quantity}</p>
                 <p><span className="text-muted-foreground">By:</span> {rejectTarget.createdByName}</p>
               </div>

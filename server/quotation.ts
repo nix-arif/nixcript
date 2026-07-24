@@ -20,7 +20,7 @@ import {
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc, inArray, sql, ilike, count, or, not } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql, ilike, count, or, not, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -270,7 +270,7 @@ export async function getOrgMembersForQuotation() {
     })
     .from(member)
     .innerJoin(user, eq(user.id, member.userId))
-    .where(eq(member.organizationId, orgId))
+    .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt)))
     .orderBy(user.name);
 
   return rows.map((r) => ({ ...r, name: r.name?.toLowerCase() ?? r.name }));

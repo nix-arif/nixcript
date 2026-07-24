@@ -402,13 +402,13 @@ function ModeSelector({ onSelect }: { onSelect: (mode: "case" | "so") => void })
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export function CreateDeliveryOrderClient({ prefill, categories = [] }: { prefill?: PrefillData; categories?: DocumentCategoryRow[] }) {
+export function CreateDeliveryOrderClient({ prefill, categories = [], currentUserId = "", currentUserName = "" }: { prefill?: PrefillData; categories?: DocumentCategoryRow[]; currentUserId?: string; currentUserName?: string }) {
   const router = useRouter();
   const [mode, setMode] = useState<"case" | "so" | null>(prefill ? "so" : null);
   const [activePrefill, setActivePrefill] = useState<PrefillData | undefined>(prefill);
 
   if (!mode) return <ModeSelector onSelect={setMode} />;
-  if (mode === "case") return <CaseDoForm categories={categories} />;
+  if (mode === "case") return <CaseDoForm categories={categories} currentUserId={currentUserId} currentUserName={currentUserName} />;
   if (!activePrefill) return <SoPicker onSelect={setActivePrefill} />;
   return <DoForm prefill={activePrefill} categories={categories} />;
 }
@@ -841,30 +841,38 @@ interface CaseLineItem {
   uom: string;
   fromFieldStock?: boolean;
   fieldAvailable?: number;
+  isRental?: boolean;
+  loanOut?: boolean;
 }
 
 const newCaseLine = (): CaseLineItem => ({
   _key: uid(), productCode: "", description: "", qty: "1", uom: "",
 });
 
-function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] }) {
+function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" }: { categories?: DocumentCategoryRow[]; currentUserId?: string; currentUserName?: string }) {
   const router = useRouter();
+
+  const sessionTag = currentUserId && currentUserName
+    ? [{ id: currentUserId, name: currentUserName, isExt: false }]
+    : [];
 
   // Reps / members
   const [reps, setReps] = useState<OrgMember[]>([]);
   const [loadingReps, setLoadingReps] = useState(true);
 
-  // Application specialist (attends case, holds field stock) — required
-  const [repId, setRepId] = useState("");
+  // Application specialist (attends case, holds field stock) — tag input
+  const [appSpecs, setAppSpecs] = useState<{ id: string; name: string; isExt: boolean }[]>(sessionTag);
+  const [asInput, setAsInput] = useState("");
+  const asInputRef = useRef<HTMLInputElement>(null);
   const [loadingStock, setLoadingStock] = useState(false);
 
-  // Sales person — defaults to same as app specialist; toggle to override
-  const [splitRoles, setSplitRoles] = useState(false);
-  const [salesPersonId, setSalesPersonId] = useState("");
+  // Sales person — tag input (members + external), mirrors quotation
+  const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>(sessionTag);
+  const [spInput, setSpInput] = useState("");
+  const spInputRef = useRef<HTMLInputElement>(null);
 
   // Case fields
   const [caseDate, setCaseDate] = useState(new Date().toISOString().split("T")[0]);
-  const [caseType, setCaseType] = useState("");
   const [mrnNo, setMrnNo] = useState("");
 
   // Customer
@@ -874,8 +882,17 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
   const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
   const custTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  function custAddress(cust: Customer | null, companyId: string | undefined): string {
+    if (!cust) return "";
+    const companies = (cust as any)?.companies ?? [];
+    if (companyId) return companies.find((c: any) => c.id === companyId)?.organizationAddress ?? "";
+    const primary = companies.find((c: any) => c.isPrimary) ?? companies[0];
+    return primary?.organizationAddress ?? "";
+  }
+
   // Items
-  const [fieldItems, setFieldItems] = useState<CaseLineItem[]>([]);
+  const [fieldPool, setFieldPool] = useState<CaseLineItem[]>([]);   // full stock list (read-only reference)
+  const [fieldItems, setFieldItems] = useState<CaseLineItem[]>([]);  // user-selected items with qty
   const [extraItems, setExtraItems] = useState<CaseLineItem[]>([newCaseLine()]);
 
   // Other
@@ -891,13 +908,13 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
     getFieldReps().then((r) => { setReps(r); setLoadingReps(false); }).catch(() => setLoadingReps(false));
   }, []);
 
-  async function handleRepChange(id: string) {
-    setRepId(id);
-    if (!id) { setFieldItems([]); return; }
+  const repId = appSpecs.find((s) => !s.isExt)?.id ?? "";
+
+  useEffect(() => {
+    if (!repId) { setFieldPool([]); setFieldItems([]); return; }
     setLoadingStock(true);
-    try {
-      const stock = await getRepFieldStock(id);
-      setFieldItems(stock.map((s) => ({
+    getRepFieldStock(repId).then((stock) => {
+      setFieldPool(stock.map((s) => ({
         _key: uid(),
         productId: s.productId,
         productCode: s.productCode,
@@ -906,16 +923,24 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
         uom: s.uom ?? "",
         fromFieldStock: true,
         fieldAvailable: s.qty,
+        isRental: s.isRental,
+        loanOut: s.isRental,
       })));
-    } catch {
       setFieldItems([]);
-    } finally {
-      setLoadingStock(false);
+    }).catch(() => { setFieldPool([]); setFieldItems([]); }).finally(() => setLoadingStock(false));
+  }, [repId]);
+
+  function toggleFieldItem(poolItem: CaseLineItem) {
+    const already = fieldItems.some((i) => i.productId === poolItem.productId);
+    if (already) {
+      setFieldItems((prev) => prev.filter((i) => i.productId !== poolItem.productId));
+    } else {
+      setFieldItems((prev) => [...prev, { ...poolItem, qty: "1" }]);
     }
   }
 
-  function updateFieldItem(key: string, qty: string) {
-    setFieldItems((prev) => prev.map((i) => i._key === key ? { ...i, qty } : i));
+  function updateFieldItem(key: string, patch: Partial<CaseLineItem>) {
+    setFieldItems((prev) => prev.map((i) => i._key === key ? { ...i, ...patch } : i));
   }
 
   function updateExtraItem(key: string, patch: Partial<CaseLineItem>) {
@@ -975,7 +1000,7 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
   const selectedRep = reps.find((r) => r.id === repId);
 
   async function handleSave() {
-    if (!repId) { toast.error("Select the application specialist"); return; }
+    if (appSpecs.length === 0) { toast.error("Select the application specialist"); return; }
     const usedFieldItems = fieldItems.filter((i) => parseFloat(i.qty) > 0);
     const validExtras = extraItems.filter((i) => i.description || i.productCode);
     if (usedFieldItems.length === 0 && validExtras.length === 0) {
@@ -986,17 +1011,19 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
       ...usedFieldItems.map((i, idx) => ({
         rowNo: idx + 1, productId: i.productId, productCode: i.productCode,
         description: i.description, qty: i.qty, uom: i.uom,
+        loanOut: i.loanOut,
       })),
       ...validExtras.map((i, idx) => ({
         rowNo: usedFieldItems.length + idx + 1, productId: i.productId, productCode: i.productCode,
         description: i.description, qty: i.qty || "1", uom: i.uom,
+        loanOut: i.loanOut,
       })),
     ];
 
     setSaving(true);
     try {
-      const effectiveSalesPersonId = splitRoles ? salesPersonId : repId;
-      const effectiveSalesPerson = reps.find((r) => r.id === effectiveSalesPersonId);
+      const primarySp = salesPersons.find((s) => !s.isExt) ?? salesPersons[0];
+      const primaryAs = appSpecs.find((s) => !s.isExt) ?? appSpecs[0];
       await createDeliveryOrder({
         customerId: selectedCustomer?.id,
         customerOrgMemberId: custCompanyId || undefined,
@@ -1006,11 +1033,10 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
         categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
         items: allItems,
         isCaseDo: true,
-        salesPersonId: effectiveSalesPersonId || undefined,
-        salesPersonName: effectiveSalesPerson?.name,
-        applicationSpecialistId: repId,
-        applicationSpecialistName: selectedRep?.name,
-        caseType: caseType || undefined,
+        salesPersonId: primarySp?.isExt ? undefined : primarySp?.id,
+        salesPersonName: primarySp?.name,
+        applicationSpecialistId: primaryAs?.isExt ? undefined : primaryAs?.id,
+        applicationSpecialistName: primaryAs?.name,
         caseDate: caseDate ? new Date(caseDate) : undefined,
         mrnNo: mrnNo || undefined,
       });
@@ -1048,10 +1074,31 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
             <Label className="text-xs">MRN no.</Label>
             <Input value={mrnNo} onChange={(e) => setMrnNo(e.target.value)} placeholder="Medical record number" className="h-9 text-sm" />
           </div>
-          <div className="col-span-2 space-y-1.5">
-            <Label className="text-xs">Case type</Label>
-            <Input value={caseType} onChange={(e) => setCaseType(e.target.value)} placeholder="e.g. TKR, Hip Arthroplasty, Spine…" className="h-9 text-sm" />
-          </div>
+        </div>
+        <div className="mt-3 space-y-1.5">
+          <Label className="text-xs">Categories</Label>
+          {categories.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic py-1">No categories yet — create one in Organization → Categories</p>
+          ) : (
+            <div className="flex flex-wrap gap-2 pt-0.5">
+              {categories.map((c) => {
+                const selected = categoryIds.includes(c.id);
+                const hex = c.color ?? "#6366f1";
+                return (
+                  <button key={c.id} type="button"
+                    onClick={() => setCategoryIds((prev) => selected ? prev.filter((id) => id !== c.id) : [...prev, c.id])}
+                    className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-all select-none",
+                      selected ? "text-white shadow-sm" : "bg-background text-foreground/70 hover:text-foreground")}
+                    style={selected ? { backgroundColor: hex, borderColor: hex } : { borderColor: hex + "55" }}
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }} />
+                    {c.name}
+                    {selected && <span className="ml-0.5 opacity-80">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
@@ -1062,43 +1109,166 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="space-y-3">
+            {/* Application specialist */}
             <div className="space-y-1.5">
-              <Label className="text-xs">Sales person / Application specialist <span className="text-destructive">*</span></Label>
-              <select value={repId} onChange={(e) => { handleRepChange(e.target.value); if (!splitRoles) setSalesPersonId(""); }}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
-                <option value="">Select…</option>
-                {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
+              <label className="block text-xs font-medium text-muted-foreground">application specialist <span className="text-destructive">*</span></label>
+              <div
+                className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
+                onClick={() => asInputRef.current?.focus()}
+              >
+                {appSpecs.map((s) => (
+                  <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
+                    {s.name.toLowerCase()}
+                    {s.isExt && <span className="relative -top-0.5 text-[8px] font-bold leading-none">ext</span>}
+                    <button type="button"
+                      onClick={(e) => { e.stopPropagation(); setAppSpecs((prev) => prev.filter((x) => x.id !== s.id)); }}
+                      className="text-blue-500/60 hover:text-blue-700 ml-0.5">
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+                <select value="" onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    const r = reps.find((x) => x.id === e.target.value);
+                    if (!r) return;
+                    if (appSpecs.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())) return;
+                    setAppSpecs((prev) => [...prev, { id: r.id, name: r.name, isExt: false }]);
+                  }}
+                  className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
+                  <option value="">+ member</option>
+                  {reps.filter((r) => !appSpecs.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())).map((r) => (
+                    <option key={r.id} value={r.id}>{r.name.toLowerCase()}</option>
+                  ))}
+                </select>
+                <input ref={asInputRef} type="text" value={asInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val.includes(",")) {
+                      const parts = val.split(",");
+                      const toAdd = parts.slice(0, -1).map((p) => p.trim()).filter(Boolean);
+                      if (toAdd.length) {
+                        const repNames = new Set(reps.map((r) => r.name.toLowerCase()));
+                        const blocked = toAdd.filter((n) => repNames.has(n.toLowerCase()));
+                        if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); }
+                        const t = Date.now();
+                        setAppSpecs((prev) => {
+                          const existing = new Set(prev.map((s) => s.name.toLowerCase()));
+                          const unique = toAdd.filter((n) => !existing.has(n.toLowerCase()) && !repNames.has(n.toLowerCase()));
+                          return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                        });
+                      }
+                      setAsInput(parts[parts.length - 1].trimStart());
+                    } else {
+                      setAsInput(val);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Backspace" && !asInput && appSpecs.length > 0) {
+                      setAppSpecs((prev) => prev.slice(0, -1));
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (!asInput.trim()) return;
+                      const names = asInput.split(",").map((p) => p.trim()).filter(Boolean);
+                      const repNames = new Set(reps.map((r) => r.name.toLowerCase()));
+                      const blocked = names.filter((n) => repNames.has(n.toLowerCase()));
+                      if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); return; }
+                      const t = Date.now();
+                      setAppSpecs((prev) => {
+                        const existing = new Set(prev.map((s) => s.name.toLowerCase()));
+                        const unique = names.filter((n) => !existing.has(n.toLowerCase()));
+                        return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                      });
+                      setAsInput("");
+                    }
+                  }}
+                  placeholder={appSpecs.length === 0 ? "Type a name… (Enter or , to add)" : ""}
+                  className="flex-1 min-w-24 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">Attends the case · carries field stock (first member drives field stock)</p>
             </div>
 
-            <label className="flex items-center gap-2 cursor-pointer w-fit">
-              <input type="checkbox" checked={splitRoles} onChange={(e) => { setSplitRoles(e.target.checked); if (!e.target.checked) setSalesPersonId(""); }}
-                className="rounded border-border" />
-              <span className="text-xs text-muted-foreground">Sales person and application specialist are different people</span>
-            </label>
-
-            {splitRoles && (
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Application specialist</Label>
-                  <select value={repId} onChange={(e) => handleRepChange(e.target.value)}
-                    className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
-                    <option value="">Select…</option>
-                    {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select>
-                  <p className="text-[11px] text-muted-foreground">Attends the case · carries field stock</p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Sales person</Label>
-                  <select value={salesPersonId} onChange={(e) => setSalesPersonId(e.target.value)}
-                    className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm">
-                    <option value="">Select…</option>
-                    {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select>
-                  <p className="text-[11px] text-muted-foreground">Owns the customer account</p>
-                </div>
+            {/* Sales person */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-muted-foreground">sales person</label>
+              <div
+                className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
+                onClick={() => spInputRef.current?.focus()}
+              >
+                {salesPersons.map((s) => (
+                  <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
+                    {s.name.toLowerCase()}
+                    {s.isExt && <span className="relative -top-0.5 text-[8px] font-bold leading-none">ext</span>}
+                    <button type="button"
+                      onClick={(e) => { e.stopPropagation(); setSalesPersons((prev) => prev.filter((x) => x.id !== s.id)); }}
+                      className="text-blue-500/60 hover:text-blue-700 ml-0.5">
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+                <select value="" onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    const r = reps.find((x) => x.id === e.target.value);
+                    if (!r) return;
+                    if (salesPersons.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())) return;
+                    setSalesPersons((prev) => [...prev, { id: r.id, name: r.name, isExt: false }]);
+                  }}
+                  className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
+                  <option value="">+ member</option>
+                  {reps.filter((r) => !salesPersons.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())).map((r) => (
+                    <option key={r.id} value={r.id}>{r.name.toLowerCase()}</option>
+                  ))}
+                </select>
+                <input ref={spInputRef} type="text" value={spInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val.includes(",")) {
+                      const parts = val.split(",");
+                      const toAdd = parts.slice(0, -1).map((p) => p.trim()).filter(Boolean);
+                      if (toAdd.length) {
+                        const repNames = new Set(reps.map((r) => r.name.toLowerCase()));
+                        const blocked = toAdd.filter((n) => repNames.has(n.toLowerCase()));
+                        if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); }
+                        const t = Date.now();
+                        setSalesPersons((prev) => {
+                          const existing = new Set(prev.map((s) => s.name.toLowerCase()));
+                          const unique = toAdd.filter((n) => !existing.has(n.toLowerCase()) && !repNames.has(n.toLowerCase()));
+                          return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                        });
+                      }
+                      setSpInput(parts[parts.length - 1].trimStart());
+                    } else {
+                      setSpInput(val);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Backspace" && !spInput && salesPersons.length > 0) {
+                      setSalesPersons((prev) => prev.slice(0, -1));
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (!spInput.trim()) return;
+                      const names = spInput.split(",").map((p) => p.trim()).filter(Boolean);
+                      const repNames = new Set(reps.map((r) => r.name.toLowerCase()));
+                      const blocked = names.filter((n) => repNames.has(n.toLowerCase()));
+                      if (blocked.length) { toast.error(`"${blocked.join('", "')}" is a member — select from the member list`); return; }
+                      const t = Date.now();
+                      setSalesPersons((prev) => {
+                        const existing = new Set(prev.map((s) => s.name.toLowerCase()));
+                        const unique = names.filter((n) => !existing.has(n.toLowerCase()));
+                        return unique.length ? [...prev, ...unique.map((name, i) => ({ id: `ext-${t}-${i}`, name, isExt: true }))] : prev;
+                      });
+                      setSpInput("");
+                    }
+                  }}
+                  placeholder={salesPersons.length === 0 ? "Type a name… (Enter or , to add)" : ""}
+                  className="flex-1 min-w-24 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+                />
               </div>
-            )}
+            </div>
           </div>
         )}
       </section>
@@ -1113,7 +1283,7 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
                 <span className="font-medium text-sm">
                   {[(selectedCustomer as any).title, (selectedCustomer as any).name].filter(Boolean).join(" ")}
                 </span>
-                <button onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); }}
+                <button onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); setDeliveryAddress(""); }}
                   className="text-muted-foreground hover:text-foreground">
                   <XIcon className="w-3.5 h-3.5" />
                 </button>
@@ -1126,7 +1296,11 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
                     <select
                       className="w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm"
                       value={custCompanyId ?? ""}
-                      onChange={(e) => setCustCompanyId(e.target.value || undefined)}
+                      onChange={(e) => {
+                        const newId = e.target.value || undefined;
+                        setCustCompanyId(newId);
+                        setDeliveryAddress(custAddress(selectedCustomer, newId));
+                      }}
                     >
                       <option value="">Primary / default</option>
                       {companies.map((c: any) => (
@@ -1155,7 +1329,7 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
               <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
                 {custResults.map((c) => (
                   <button key={c.id} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0"
-                    onClick={() => { setSelectedCustomer(c as any); setCustSearch(""); setCustResults([]); setCustCompanyId(undefined); }}>
+                    onClick={() => { setSelectedCustomer(c as any); setCustSearch(""); setCustResults([]); setCustCompanyId(undefined); setDeliveryAddress(custAddress(c as any, undefined)); }}>
                     <div className="text-sm font-medium"><Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} /></div>
                     {c.companies[0]?.organizationName && (
                       <div className="text-[11px] text-muted-foreground"><Highlight text={c.companies[0].organizationName} query={custSearch} /></div>
@@ -1171,49 +1345,124 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
           <Input value={customerPoNo} onChange={(e) => setCustomerPoNo(e.target.value)}
             placeholder="e.g. PO-2025-0001" className="h-9 text-sm" />
         </div>
+        <div className="mt-3 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs">Hospital / delivery address</Label>
+            {selectedCustomer && deliveryAddress && deliveryAddress === custAddress(selectedCustomer, custCompanyId) && (
+              <span className="text-[10px] text-muted-foreground">from customer record</span>
+            )}
+            {selectedCustomer && deliveryAddress && deliveryAddress !== custAddress(selectedCustomer, custCompanyId) && (
+              <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                onClick={() => setDeliveryAddress(custAddress(selectedCustomer, custCompanyId))}>
+                reset to customer address
+              </button>
+            )}
+          </div>
+          <Input value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Hospital name and address" className="h-9 text-sm" />
+        </div>
+        <div className="mt-3 space-y-1.5">
+          <Label className="text-xs">Notes</Label>
+          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="text-sm" />
+        </div>
       </section>
 
       {/* Field stock items */}
       {repId && (
         <section className="border border-teal-200 dark:border-teal-800/50 rounded-xl p-4 bg-teal-50/40 dark:bg-teal-900/10">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h2 className="text-sm font-semibold">Disposables from field stock</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">Enter qty used from {selectedRep?.name}'s holding. Zero = not used.</p>
-            </div>
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold">Items from field stock</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Select items used from {selectedRep?.name}'s holding.</p>
           </div>
+
+          {/* Checklist */}
           {loadingStock ? (
-            <p className="text-sm text-muted-foreground py-3">Loading rep stock…</p>
-          ) : fieldItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-3">No field stock found for this rep.</p>
+            <p className="text-sm text-muted-foreground py-2">Loading rep stock…</p>
+          ) : fieldPool.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">No field stock found for this rep.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border text-muted-foreground">
-                    <th className="text-left pb-2 pr-3 w-28">Product</th>
-                    <th className="text-left pb-2 pr-3">Description</th>
-                    <th className="text-left pb-2 pr-3 w-12">UOM</th>
-                    <th className="text-right pb-2 pr-3 w-16">Available</th>
-                    <th className="text-right pb-2 w-20">Qty Used</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fieldItems.map((item) => (
-                    <tr key={item._key} className="border-b border-border/50 last:border-0">
-                      <td className="py-1.5 pr-3 font-mono font-medium">{item.productCode}</td>
-                      <td className="py-1.5 pr-3 text-muted-foreground">{item.description}</td>
-                      <td className="py-1.5 pr-3 text-muted-foreground">{item.uom || "—"}</td>
-                      <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">{item.fieldAvailable?.toFixed(0)}</td>
-                      <td className="py-1.5">
-                        <Input type="number" min="0" max={item.fieldAvailable} value={item.qty}
-                          onChange={(e) => updateFieldItem(item._key, e.target.value)}
-                          className={cn("h-7 text-xs text-right", parseFloat(item.qty) > 0 ? "border-teal-400 dark:border-teal-600" : "")} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="flex flex-col gap-0.5 rounded-md border border-teal-200 dark:border-teal-800/50 overflow-hidden mb-4">
+              {fieldPool.map((item) => {
+                const selected = fieldItems.some((i) => i.productId === item.productId);
+                return (
+                  <button key={item._key} type="button" onClick={() => toggleFieldItem(item)}
+                    className={cn(
+                      "flex items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors w-full",
+                      selected ? "bg-teal-600 text-white" : "hover:bg-teal-50/60 dark:hover:bg-teal-900/20"
+                    )}>
+                    <span className={cn("w-4 h-4 rounded border flex items-center justify-center shrink-0 text-[10px] font-bold",
+                      selected ? "bg-white border-white text-teal-600" : "border-teal-300 dark:border-teal-700")}>
+                      {selected ? "✓" : ""}
+                    </span>
+                    <span className="font-mono font-medium">{item.productCode}</span>
+                    {item.description && <span className={cn("opacity-70 truncate", selected ? "" : "text-muted-foreground")}>{item.description}</span>}
+                    <span className="ml-auto shrink-0 flex items-center gap-2">
+                      {item.isRental ? (
+                        <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-semibold border", selected ? "bg-white/20 border-white/30 text-white" : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700")}>rental</span>
+                      ) : (
+                        <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-semibold border", selected ? "bg-white/20 border-white/30 text-white" : "bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-900/20 dark:text-teal-400 dark:border-teal-700")}>disposable</span>
+                      )}
+                      <span className={cn("tabular-nums", selected ? "text-white/80" : "text-muted-foreground")}>{item.fieldAvailable?.toFixed(0)} {item.uom}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Selected item cards */}
+          {fieldItems.length > 0 && (
+            <div className="flex flex-col gap-3">
+              {fieldItems.map((item) => {
+                const qty = parseFloat(item.qty);
+                const over = !isNaN(qty) && qty > (item.fieldAvailable ?? Infinity);
+                return (
+                  <div key={item._key} className="rounded-lg border border-border bg-background p-3 flex flex-col gap-2.5">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="text-xs font-mono font-semibold">{item.productCode}</span>
+                        {item.description && <span className="text-[11px] text-muted-foreground ml-2">{item.description}</span>}
+                      </div>
+                      <button type="button" onClick={() => toggleFieldItem(item)}
+                        className="text-muted-foreground hover:text-destructive text-xs ml-2 shrink-0">✕</button>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {/* Qty */}
+                      <div className="flex flex-col gap-1 flex-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px]">Qty <span className="text-destructive">*</span></Label>
+                          <span className="text-[11px] text-muted-foreground">
+                            Available: <span className={cn("font-medium", over ? "text-destructive" : "")}>{item.fieldAvailable?.toFixed(0)} {item.uom}</span>
+                          </span>
+                        </div>
+                        <Input type="number" min="0.0001" step="0.0001" placeholder="0"
+                          value={item.qty} onChange={(e) => updateFieldItem(item._key, { qty: e.target.value })}
+                          className={cn("h-8 text-xs text-right", over ? "border-destructive" : item.loanOut ? "border-amber-400 dark:border-amber-600" : "border-teal-400 dark:border-teal-600")}
+                        />
+                        {over && <p className="text-[11px] text-destructive">Exceeds available quantity</p>}
+                      </div>
+
+                      {/* Rental / Sell / Disposable badge */}
+                      <div className="flex flex-col gap-1 items-center shrink-0">
+                        <Label className="text-[11px]">Type</Label>
+                        {item.isRental ? (
+                          <button type="button"
+                            onClick={() => updateFieldItem(item._key, { loanOut: !item.loanOut })}
+                            className={cn("px-3 py-1.5 rounded-md text-[11px] font-semibold border transition-colors",
+                              item.loanOut
+                                ? "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700"
+                                : "bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700"
+                            )}>
+                            {item.loanOut ? "Rental (loan out)" : "Sell"}
+                          </button>
+                        ) : (
+                          <span className="px-3 py-1.5 rounded-md text-[11px] font-semibold border bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-900/20 dark:text-teal-400 dark:border-teal-700">Disposable</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -1264,46 +1513,6 @@ function CaseDoForm({ categories = [] }: { categories?: DocumentCategoryRow[] })
               ))}
             </tbody>
           </table>
-        </div>
-      </section>
-
-      {/* Delivery details */}
-      <section className="border border-border rounded-xl p-4">
-        <h2 className="text-sm font-semibold mb-3">Hospital / delivery details</h2>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Hospital / delivery address</Label>
-            <Input value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Hospital name and address" className="h-9 text-sm" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Notes</Label>
-            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className="text-sm" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Categories</Label>
-            {categories.length === 0 ? (
-              <p className="text-xs text-muted-foreground italic py-1">No categories yet — create one in Organization → Categories</p>
-            ) : (
-              <div className="flex flex-wrap gap-2 pt-0.5">
-                {categories.map((c) => {
-                  const selected = categoryIds.includes(c.id);
-                  const hex = c.color ?? "#6366f1";
-                  return (
-                    <button key={c.id} type="button"
-                      onClick={() => setCategoryIds((prev) => selected ? prev.filter((id) => id !== c.id) : [...prev, c.id])}
-                      className={cn("inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-all select-none",
-                        selected ? "text-white shadow-sm" : "bg-background text-foreground/70 hover:text-foreground")}
-                      style={selected ? { backgroundColor: hex, borderColor: hex } : { borderColor: hex + "55" }}
-                    >
-                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: selected ? "rgba(255,255,255,0.8)" : hex }} />
-                      {c.name}
-                      {selected && <span className="ml-0.5 opacity-80">✓</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
       </section>
 
