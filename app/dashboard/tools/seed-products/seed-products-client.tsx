@@ -14,6 +14,7 @@ import {
   InfoIcon,
   CheckCircleIcon,
   RefreshCwIcon,
+  DownloadIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -228,6 +229,51 @@ export function SeedProductsClient() {
     }
   };
 
+  const handleExportTemplate = () => {
+    const headers = [
+      "Product Code",
+      "Description",
+      "Selling Unit Price",
+      "UOM",
+      "Supplier",
+      "Brand",
+      "MDA Registration No",
+      "MDA Valid From",
+      "MDA Expired On",
+      "MDA PDF File",
+      "MDA Page No",
+      "MDA Match X",
+      "MDA Match Y",
+      "MDA Row Height",
+      "MDA Page Width",
+      "MDA Page Height",
+    ];
+    const example = [
+      "BMS-001",
+      "Example Product Name",
+      "150.00",
+      "unit",
+      "Supplier Sdn Bhd",
+      "BrandName",
+      "GA12345",
+      "2024-01-01",
+      "2026-12-31",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, example]);
+    ws["!cols"] = headers.map((h) => ({ wch: Math.max(h.length + 2, 14) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Products");
+    XLSX.writeFile(wb, "seed-products-template.xlsx");
+    toast.success("Template downloaded");
+  };
+
   const reset = () => {
     setFile(null);
     setRows([]);
@@ -300,6 +346,62 @@ export function SeedProductsClient() {
         title="Seed products"
         description="Upload the MDA matcher output to seed product & certificate data into the database"
       />
+
+      {/* Template guide */}
+      {!file && (
+        <div className="border border-border rounded-xl overflow-hidden mb-5">
+          <div className="flex items-center justify-between px-4 py-3 bg-muted/30 border-b border-border">
+            <div>
+              <div className="text-sm font-semibold">Step 1 — Download the template</div>
+              <div className="text-xs text-muted-foreground mt-0.5">Fill in your product data, then upload the file below to seed the database.</div>
+            </div>
+            <Button size="sm" className="gap-1.5 shrink-0" onClick={handleExportTemplate}>
+              <DownloadIcon className="w-3.5 h-3.5" /> Download Template (.xlsx)
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted/20 border-b border-border">
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Product Code <span className="text-destructive">*</span></th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Description</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Selling Unit Price</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">UOM</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Supplier</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Brand</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">MDA Registration No</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">MDA Valid From</th>
+                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">MDA Expired On</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                <tr className="text-muted-foreground">
+                  <td className="px-3 py-2 font-mono">BMS-001</td>
+                  <td className="px-3 py-2">Example Product Name</td>
+                  <td className="px-3 py-2">150.00</td>
+                  <td className="px-3 py-2">unit</td>
+                  <td className="px-3 py-2">Supplier Sdn Bhd</td>
+                  <td className="px-3 py-2">BrandName</td>
+                  <td className="px-3 py-2 font-mono">GA12345</td>
+                  <td className="px-3 py-2">2024-01-01</td>
+                  <td className="px-3 py-2">2026-12-31</td>
+                </tr>
+                <tr className="text-muted-foreground/40 italic">
+                  <td className="px-3 py-2 font-mono">…</td>
+                  <td colSpan={8} />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-2.5 border-t border-border bg-muted/10 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+            <span><span className="text-destructive font-medium">*</span> <strong className="text-foreground">Product Code</strong> is required — all other columns are optional</span>
+            <span>MDA coordinate columns (Page No, Match X/Y, etc.) are output from the Certificate Matcher — leave blank if seeding manually</span>
+            <span>Existing product codes are updated · New codes are inserted</span>
+          </div>
+        </div>
+      )}
+
+      {!file && <div className="text-sm font-semibold mb-2">Step 2 — Upload the completed file</div>}
 
       {/* Error */}
       {error && (
