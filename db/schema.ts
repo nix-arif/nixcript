@@ -3128,6 +3128,47 @@ export const salesActivityRelations = relations(salesActivity, ({ one }) => ({
 }));
 
 /* =========================
+   WARRANT 2026
+========================= */
+export const warrant2026Config = pgTable("warrant_2026_config", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  columns: json("columns").notNull().default([]), // kept for potential future use
+  sheetUrl: text("sheet_url"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const warrant2026ConfigRelations = relations(warrant2026Config, ({ one }) => ({
+  organization: one(organization, { fields: [warrant2026Config.organizationId], references: [organization.id] }),
+}));
+
+export const warrant2026Row = pgTable(
+  "warrant_2026_row",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    rowIndex: integer("row_index").notNull().default(0),
+    cells: json("cells").notNull().default([]), // string[] — one value per column index
+    updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
+    updatedByName: text("updated_by_name"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("warrant_2026_org_idx").on(t.organizationId),
+    index("warrant_2026_row_order_idx").on(t.organizationId, t.rowIndex),
+  ],
+);
+
+export const warrant2026RowRelations = relations(warrant2026Row, ({ one }) => ({
+  organization: one(organization, { fields: [warrant2026Row.organizationId], references: [organization.id] }),
+  editor: one(user, { fields: [warrant2026Row.updatedBy], references: [user.id] }),
+}));
+
+/* =========================
    SCHEMA EXPORT
 ========================= */
 
@@ -3289,4 +3330,9 @@ export const schema = {
   // sales activity
   salesActivity,
   salesActivityRelations,
+  // warrant 2026
+  warrant2026Config,
+  warrant2026ConfigRelations,
+  warrant2026Row,
+  warrant2026RowRelations,
 };

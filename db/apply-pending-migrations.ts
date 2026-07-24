@@ -94,6 +94,71 @@ async function run() {
     console.log("  Done.");
   }
 
+  console.log("Applying migration 0041/0042: warrant_2026 tables");
+  // Drop old fixed-column table if it exists (from 0041 before the flexible redesign)
+  const [oldWarrantCol] = await sql`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'warrant_2026_row' AND column_name = 'warran_no'
+  `;
+  if (oldWarrantCol) {
+    console.log("  Dropping old fixed-column warrant_2026_row...");
+    await sql`DROP TABLE IF EXISTS "warrant_2026_row"`;
+    console.log("  Done.");
+  }
+
+  const [configTable] = await sql`
+    SELECT table_name FROM information_schema.tables
+    WHERE table_name = 'warrant_2026_config'
+  `;
+  if (configTable) {
+    console.log("  warrant_2026_config already exists, skipping.");
+  } else {
+    await sql`
+      CREATE TABLE "warrant_2026_config" (
+        "organization_id" text PRIMARY KEY REFERENCES "organization"("id") ON DELETE CASCADE,
+        "columns"         json NOT NULL DEFAULT '[]',
+        "updated_at"      timestamp DEFAULT now() NOT NULL
+      )
+    `;
+    console.log("  warrant_2026_config created.");
+  }
+
+  const [rowTable] = await sql`
+    SELECT table_name FROM information_schema.tables
+    WHERE table_name = 'warrant_2026_row'
+  `;
+  if (rowTable) {
+    console.log("  warrant_2026_row already exists, skipping.");
+  } else {
+    await sql`
+      CREATE TABLE "warrant_2026_row" (
+        "id"               text PRIMARY KEY NOT NULL,
+        "organization_id"  text NOT NULL REFERENCES "organization"("id") ON DELETE CASCADE,
+        "row_index"        integer NOT NULL DEFAULT 0,
+        "cells"            json NOT NULL DEFAULT '[]',
+        "updated_by"       text REFERENCES "user"("id") ON DELETE SET NULL,
+        "updated_by_name"  text,
+        "created_at"       timestamp DEFAULT now() NOT NULL,
+        "updated_at"       timestamp DEFAULT now() NOT NULL
+      )
+    `;
+    await sql`CREATE INDEX "warrant_2026_org_idx" ON "warrant_2026_row" ("organization_id")`;
+    await sql`CREATE INDEX "warrant_2026_row_order_idx" ON "warrant_2026_row" ("organization_id", "row_index")`;
+    console.log("  warrant_2026_row created.");
+  }
+
+  console.log("Applying migration 0043: warrant_2026_config add sheet_url");
+  const [sheetUrlCol] = await sql`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'warrant_2026_config' AND column_name = 'sheet_url'
+  `;
+  if (sheetUrlCol) {
+    console.log("  sheet_url already exists, skipping.");
+  } else {
+    await sql`ALTER TABLE "warrant_2026_config" ADD COLUMN "sheet_url" text`;
+    console.log("  sheet_url added.");
+  }
+
   console.log("All pending migrations applied.");
 }
 

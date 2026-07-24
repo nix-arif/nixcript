@@ -132,7 +132,8 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(FolderOpenIcon),
     items: [
-      { title: "Government", url: "/dashboard/project/government", permission: "quotation:create" },
+      { title: "Government",   url: "/dashboard/project/government",   permission: "quotation:create" },
+      { title: "Warrant 2026", url: "/dashboard/project/warrant-2026"                                 },
     ],
   },
   {
