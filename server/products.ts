@@ -319,7 +319,7 @@ export async function getProductImageUploadUrls(
     items.map(async ({ productCode, contentType }) => {
       const cmd = new PutObjectCommand({
         Bucket: PRODUCT_IMAGES_BUCKET,
-        Key: `${productCode}.jpg`,
+        Key: `${productCode.replace(/\//g, ":")}.jpg`,
         ContentType: contentType,
       });
       const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 3600 });

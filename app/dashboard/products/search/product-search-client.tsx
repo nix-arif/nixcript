@@ -786,7 +786,8 @@ function ProductImage({
     );
   }
 
-  const src = `${base}/${encodeURIComponent(productCode)}.${exts[extIndex]}${v ? `?v=${v}` : ""}`;
+  const encodedCode = encodeURIComponent(productCode.replace(/\//g, ":"));
+  const src = `${base}/${encodedCode}.${exts[extIndex]}${v ? `?v=${v}` : ""}`;
 
   return (
     <img
