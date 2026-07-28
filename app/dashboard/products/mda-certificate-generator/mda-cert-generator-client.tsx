@@ -141,12 +141,12 @@ export function MdaCertGeneratorClient() {
 
   const handleExportTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ["Product Code"],
-      ["BMS-001"],
-      ["BMS-002"],
-      ["BMS-003"],
+      ["No", "Product Code"],
+      [1, "BMS-001"],
+      [2, "BMS-002"],
+      [3, "BMS-003"],
     ]);
-    ws["!cols"] = [{ wch: 20 }];
+    ws["!cols"] = [{ wch: 6 }, { wch: 20 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "MDA Certificate");
     XLSX.writeFile(wb, "mda-certificate-template.xlsx");

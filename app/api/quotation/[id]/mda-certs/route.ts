@@ -5,7 +5,7 @@ import { member, quotation, quotationItem, product } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, degrees, pushGraphicsState, popGraphicsState, concatTransformationMatrix } from "pdf-lib";
 
 export const maxDuration = 60;
 
@@ -61,6 +61,41 @@ async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<
     .where(and(eq(member.userId, ownerId), eq(member.role, "owner")));
   const ids = ownedOrgs.map((o) => o.organizationId);
   return ids.length ? ids : [currentOrgId];
+}
+
+function normalizePage(page: ReturnType<PDFDocument["getPage"]>): void {
+  const rot = page.getRotation().angle;
+  if (rot === 0) return;
+  const pw = page.getWidth();
+  const ph = page.getHeight();
+  let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+  let newW = pw, newH = ph;
+  if (rot === 90) {
+    // 90° CW: [0, -1, 1, 0, 0, W]
+    a = 0; b = -1; c = 1; d = 0; e = 0; f = pw;
+    newW = ph; newH = pw;
+  } else if (rot === 180) {
+    a = -1; b = 0; c = 0; d = -1; e = pw; f = ph;
+  } else if (rot === 270) {
+    // 270° CW (90° CCW): [0, 1, -1, 0, H, 0]
+    a = 0; b = 1; c = -1; d = 0; e = ph; f = 0;
+    newW = ph; newH = pw;
+  } else {
+    return;
+  }
+  // Do NOT call getContentStream() here — that caches a stream inside the CTM block,
+  // causing badge drawing calls to be double-transformed and land off-page.
+  page.node.normalize();
+  const start = (page as any).createContentStream(
+    pushGraphicsState(),
+    concatTransformationMatrix(a, b, c, d, e, f),
+  );
+  const startRef = page.doc.context.register(start);
+  const end = (page as any).createContentStream(popGraphicsState());
+  const endRef = page.doc.context.register(end);
+  page.node.wrapContentStreams(startRef, endRef);
+  page.setSize(newW, newH);
+  page.setRotation(degrees(0));
 }
 
 function isMdapc(items: MdaItem[]): boolean {
@@ -219,6 +254,7 @@ export async function GET(_req: Request, { params }: Props) {
         const allIdx = Array.from({ length: total }, (_, i) => i);
         const copied = await mergedPdf.copyPages(srcPdf, allIdx);
         copied.forEach((page, i) => {
+          normalizePage(page);
           if (i === 0 && nosLabel) {
             const badgeH = 16;
             const badgeX = page.getWidth() - font.widthOfTextAtSize(nosLabel, 10) - 6 - 10;
@@ -271,6 +307,7 @@ export async function GET(_req: Request, { params }: Props) {
         const copied = await mergedPdf.copyPages(srcPdf, sortedIdx);
         sortedIdx.forEach((srcIdx, i) => {
           const page = copied[i];
+          normalizePage(page);
           for (const hl of (highlights.get(srcIdx) ?? [])) {
             page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
             if (hl.nos.length > 0) {
