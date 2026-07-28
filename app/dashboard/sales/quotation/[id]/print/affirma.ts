@@ -243,7 +243,7 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
   const TABLE_HDR_H   = 20;
   const INFO_BLOCK = estimateInfoH({
     cust, attentionNameSize: attnNameSz,
-    salesPersonName: q.salesPersonName ?? null,
+    salesPersonName: q.isDummy ? null : (q.salesPersonName ?? null),
     preparedByName: q.preparedByName ?? null,
     title: q.title || null,
     detailFontSize: detailFSz, fontR,
@@ -350,7 +350,7 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
         detailFontSize: detailFSz, detailFontBold: !!(data.orgDetailFontBold ?? 0),
         detailAlignment: (data.orgDetailAlignment ?? "right") as "left" | "right",
         quotationNo: q.quotationNo, createdAt: q.createdAt,
-        validUntil: q.validUntil, salesPersonName: q.salesPersonName ?? null,
+        validUntil: q.validUntil, salesPersonName: q.isDummy ? null : (q.salesPersonName ?? null),
         salesPersonPhone: (q as any).salesPersonPhone ?? null, revisionNo: q.revisionNo ?? 0,
         preparedByName: q.preparedByName ?? null, title: q.title || null,
       });

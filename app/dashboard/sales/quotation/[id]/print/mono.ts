@@ -507,7 +507,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   const DIVIDER_GAP   = 10;
   const TABLE_HDR_H   = 20;
-  const INFO_BLOCK    = estimateMonoInfoBoxH({ cust, title: q.title ?? null, hasSalesPerson: !(q.revisionNo) && !!q.salesPersonName });
+  const INFO_BLOCK    = estimateMonoInfoBoxH({ cust, title: q.title ?? null, hasSalesPerson: !q.isDummy && !(q.revisionNo) && !!q.salesPersonName });
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];
@@ -712,7 +712,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         quotationNo: q.quotationNo, createdAt: q.createdAt,
         validUntil: q.validUntil, title: q.title ?? null,
         accentColor,
-        salesPersonName: q.salesPersonName ?? null,
+        salesPersonName: q.isDummy ? null : (q.salesPersonName ?? null),
         salesPersonPhone: (q as any).salesPersonPhone ?? null,
         revisionNo: q.revisionNo ?? 0,
       });

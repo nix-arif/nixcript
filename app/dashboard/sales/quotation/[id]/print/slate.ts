@@ -323,7 +323,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
   } else { leftH += slateInfoLH; }
   leftH += IPAD_B;
 
-  const detailRowCount = 3 + (q.title ? 1 : 0) + (!(q.revisionNo) && q.salesPersonName ? 1 : 0);
+  const detailRowCount = 3 + (q.title ? 1 : 0) + (!q.isDummy && !(q.revisionNo) && q.salesPersonName ? 1 : 0);
   const rightH = IPAD_T + slateInfoFS + 6 + detailRowCount * slateInfoLH + IPAD_B;
   const INFO_BLOCK = Math.max(leftH, rightH);
 
@@ -528,7 +528,7 @@ export async function generateQuotationSlate(data: Data): Promise<Uint8Array> {
         const _vdS = (q.validUntil && q.createdAt)
           ? Math.round((new Date(q.validUntil).getTime() - new Date(q.createdAt).getTime()) / (1000 * 60 * 60 * 24))
           : null;
-        const _spS = (!q.revisionNo && q.salesPersonName)
+        const _spS = (!q.isDummy && !q.revisionNo && q.salesPersonName)
           ? ((q as any).salesPersonPhone ? `${q.salesPersonName} (${(q as any).salesPersonPhone})` : q.salesPersonName)
           : null;
         const detailRows: [string, string][] = [
