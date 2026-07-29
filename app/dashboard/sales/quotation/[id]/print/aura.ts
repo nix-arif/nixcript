@@ -813,7 +813,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         if (!item.productCode || imageCache.has(item.productCode)) continue;
         for (const ext of ["jpg", "jpeg", "png", "webp"]) {
           try {
-            const url = `${r2ImgBase}/${encodeURIComponent(item.productCode)}.${ext}`;
+            const url = `${r2ImgBase}/${encodeURIComponent(item.productCode.replace(/\//g, ":"))}.${ext}`;
             const res = await fetch(url);
             if (!res.ok) continue;
             const buf = await res.arrayBuffer();
