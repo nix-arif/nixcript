@@ -232,8 +232,8 @@ self.onmessage = async (e) => {
 
         if (hits.length > 0) {
           matched++;
-          pageNo = hits.map((p) => p.pageNum).join(", ");
           const best = hits[0];
+          pageNo = String(best.pageNum);
           pdfFile = best.fileName;
 
           const colBand = fileColBands.get(best.fileName) ?? null;
