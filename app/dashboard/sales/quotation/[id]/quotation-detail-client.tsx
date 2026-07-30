@@ -208,9 +208,10 @@ export function QuotationDetailClient({ group, initialId }: Props) {
       await finalizeQuotation(q.id);
       toast.success("Quotation finalized");
       router.refresh();
+      // Keep finalizing=true — spinner stays until refresh re-renders the page
+      // with status "final", at which point the button is no longer shown.
     } catch (e: any) {
       toast.error(e.message);
-    } finally {
       setFinalizing(false);
     }
   };
