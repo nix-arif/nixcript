@@ -130,9 +130,8 @@ export default function ForgotPasswordPage() {
                 <Image
                   src={authLogo}
                   alt="Image"
-                  className="absolute inset-0 h-full w-full dark:brightness-[0.2] dark:grayscale"
-                  width={100}
-                  height={100}
+                  fill
+                  className="object-cover dark:brightness-[0.2] dark:grayscale"
                 />
               </div>
             </CardContent>

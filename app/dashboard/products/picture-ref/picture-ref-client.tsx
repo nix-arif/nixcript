@@ -1,0 +1,138 @@
+"use client";
+
+import { useState, useRef } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
+import {
+  UploadIcon,
+  FileSpreadsheetIcon,
+  XIcon,
+  DownloadIcon,
+  LoaderCircleIcon,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export function PictureRefClient() {
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function handleFile(f: File) {
+    if (!f.name.match(/\.(xlsx|xls)$/i)) {
+      toast.error("Please upload an Excel file (.xlsx or .xls)");
+      return;
+    }
+    setFile(f);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  }
+
+  async function handleGenerate() {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/products/picture-ref", {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? `Server error ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "picture-ref.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("File downloaded");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Picture Reference"
+        description='Upload a spreadsheet with a "Design Brand Code to Refer" column to generate an output with embedded product images.'
+      />
+
+      {/* Drop zone */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current?.click()}
+        className={cn(
+          "flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-10 cursor-pointer transition-colors select-none",
+          dragging
+            ? "border-primary bg-primary/5"
+            : "border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-muted/30",
+        )}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+        />
+        <UploadIcon className="h-8 w-8 text-muted-foreground" />
+        <div className="text-center">
+          <p className="text-sm font-medium">Drop your spreadsheet here or click to browse</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Must contain a column named <span className="font-mono">"Design Brand Code to Refer"</span>
+          </p>
+        </div>
+      </div>
+
+      {/* Selected file */}
+      {file && (
+        <div className="flex items-center gap-3 rounded-lg border px-4 py-3">
+          <FileSpreadsheetIcon className="h-5 w-5 shrink-0 text-emerald-500" />
+          <span className="flex-1 truncate text-sm">{file.name}</span>
+          <span className="text-xs text-muted-foreground shrink-0">
+            {(file.size / 1024).toFixed(0)} KB
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); setFile(null); }}
+            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      <Button
+        onClick={handleGenerate}
+        disabled={!file || loading}
+        className="w-fit"
+      >
+        {loading ? (
+          <>
+            <LoaderCircleIcon className="h-4 w-4 animate-spin" />
+            Generating…
+          </>
+        ) : (
+          <>
+            <DownloadIcon className="h-4 w-4" />
+            Generate &amp; Download
+          </>
+        )}
+      </Button>
+    </div>
+  );
+}
