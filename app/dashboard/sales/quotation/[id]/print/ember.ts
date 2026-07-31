@@ -236,7 +236,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
   // Company content lines (for height estimate)
   const coAddrLines = orgCompanyAddress
-    ? wrap(orgCompanyAddress, fontR, B_FS_DET, CO_TEXT_W).slice(0, 2)
+    ? wrap(orgCompanyAddress, fontR, B_FS_DET, CO_TEXT_W)
     : [];
   const coContactStr = [orgPhone, orgEmail].filter(Boolean).join("  ·  ");
   const coSsmParts   = [
@@ -261,7 +261,10 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
   let CU_SECTION_H = 8 + 4;   // "ATTENTION TO" label + gap
   if (custName) CU_SECTION_H += attnNameSz + 3;
   if (cust?.organizationName) CU_SECTION_H += B_LH;
-  if (cust?.organizationAddress) CU_SECTION_H += B_LH;
+  const custAddrLines = cust?.organizationAddress
+    ? wrap(cust.organizationAddress, fontL, 9, RIGHT_X - ML - 10)
+    : [];
+  CU_SECTION_H += custAddrLines.length * B_LH;
 
   const BAND_H = B_PADT + CO_SECTION_H + B_DASH_H + CU_SECTION_H + B_PADB;
 
@@ -485,9 +488,9 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         });
         cuLY -= B_LH;
       }
-      if (cust?.organizationAddress) {
-        const addrLine = wrap(cust.organizationAddress, fontL, 9, RIGHT_X - ML - 10)[0] ?? "";
+      for (const addrLine of custAddrLines) {
         page.drawText(addrLine, { x: ML, y: cuLY, size: 9, font: fontL, color: C_DARK });
+        cuLY -= B_LH;
       }
 
       // Right: dates + validity + sales person
@@ -591,9 +594,9 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
         });
         cuLY2 -= B_LH;
       }
-      if (cust?.organizationAddress) {
-        const addrLine2 = wrap(cust.organizationAddress, fontL, 9, RIGHT_X - ML - 10)[0] ?? "";
+      for (const addrLine2 of custAddrLines) {
         page.drawText(addrLine2, { x: ML, y: cuLY2, size: 9, font: fontL, color: C_DARK });
+        cuLY2 -= B_LH;
       }
 
       let cuRY2 = cuTop2;

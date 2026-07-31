@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -32,6 +33,19 @@ export function PictureRefClient() {
     setDragging(false);
     const f = e.dataTransfer.files[0];
     if (f) handleFile(f);
+  }
+
+  function handleDownloadTemplate() {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["No", "Design Brand Code to Refer", "Description"],
+      [1, "BMS-001", "Sample product 1"],
+      [2, "BMS-002", "Sample product 2"],
+      [3, "BMS-003", "Sample product 3"],
+    ]);
+    ws["!cols"] = [{ wch: 6 }, { wch: 30 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    XLSX.writeFile(wb, "picture-ref-template.xlsx");
   }
 
   async function handleGenerate() {
@@ -69,6 +83,13 @@ export function PictureRefClient() {
         title="Picture Reference"
         description='Upload a spreadsheet with a "Design Brand Code to Refer" column to generate an output with embedded product images.'
       />
+
+      <div>
+        <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
+          <DownloadIcon className="h-4 w-4" />
+          Download Template
+        </Button>
+      </div>
 
       {/* Drop zone */}
       <div
