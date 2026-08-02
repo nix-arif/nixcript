@@ -1963,19 +1963,27 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       .where(and(eq(quotation.groupId, q.groupId), not(eq(quotation.id, id))));
 
     for (const sibling of siblings) {
-      // Load sibling's existing items to preserve prices (keyed by sortOrder)
+      // Load sibling's existing items to preserve prices.
+      // Primary key: productCode (stable across reordering/removal).
+      // Fallback key: sortOrder (for free-text/header lines with no code).
       const siblingItems = await db
-        .select({ sortOrder: quotationItem.sortOrder, unitPrice: quotationItem.unitPrice, discountPct: quotationItem.discountPct })
+        .select({ sortOrder: quotationItem.sortOrder, productCode: quotationItem.productCode, unitPrice: quotationItem.unitPrice, discountPct: quotationItem.discountPct })
         .from(quotationItem)
         .where(eq(quotationItem.quotationId, sibling.id));
 
-      const priceMap = new Map(siblingItems.map((i) => [i.sortOrder, { unitPrice: i.unitPrice, discountPct: i.discountPct }]));
+      const priceByCode = new Map<string, { unitPrice: string; discountPct: string }>();
+      const priceByPos = new Map<number, { unitPrice: string; discountPct: string }>();
+      for (const si of siblingItems) {
+        const entry = { unitPrice: si.unitPrice ?? "0", discountPct: si.discountPct ?? "0" };
+        if (si.productCode) priceByCode.set(si.productCode, entry);
+        priceByPos.set(si.sortOrder, entry);
+      }
 
       await db.delete(quotationItem).where(eq(quotationItem.quotationId, sibling.id));
 
       if (input.items.length > 0) {
         const newSiblingItems = input.items.map((item, i) => {
-          const preserved = priceMap.get(i);
+          const preserved = (item.productCode ? priceByCode.get(item.productCode) : undefined) ?? priceByPos.get(i);
           const unitPrice = preserved?.unitPrice ?? "0";
           const discountPct = preserved?.discountPct ?? item.discountPct ?? "0";
           const qty = Number(item.qty ?? 1);
