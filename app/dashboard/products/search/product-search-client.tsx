@@ -1052,7 +1052,10 @@ function ProductCard({
 
   return (
     <div className="bg-background border border-border rounded-xl p-4 flex items-center gap-4 hover:border-border/80 hover:bg-muted/10 transition-colors">
-      <div className="w-14 h-14 rounded-lg bg-muted border border-border overflow-hidden shrink-0">
+      <div
+        className="w-14 h-14 rounded-lg bg-muted border border-border overflow-hidden shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+        onClick={() => onView(p)}
+      >
         <ProductImage productCode={p.productCode} imageUploadedAt={p.imageUploadedAt} className="w-full h-full" />
       </div>
 

@@ -14,15 +14,32 @@ import { getProductImageUploadUrls, checkProductCodesExist, markProductImagesUpl
 
 const MAX_FILES = 50;
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-const REQUIRED_WIDTH  = 726;
-const REQUIRED_HEIGHT = 451;
-const MAX_SIZE_BYTES  = 100 * 1024; // 100 KB
+const TARGET_SIZE = 400; // output px (square)
+const MAX_INPUT_BYTES = 10 * 1024 * 1024; // 10 MB input guard
 
-function checkImageDimensions(file: File): Promise<{ w: number; h: number }> {
+// Resize any image to TARGET_SIZE × TARGET_SIZE JPEG (contain, white background).
+function resizeToSquare(file: File): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload  = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement("canvas");
+      canvas.width  = TARGET_SIZE;
+      canvas.height = TARGET_SIZE;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, TARGET_SIZE, TARGET_SIZE);
+      const scale = Math.min(TARGET_SIZE / img.naturalWidth, TARGET_SIZE / img.naturalHeight);
+      const w = img.naturalWidth  * scale;
+      const h = img.naturalHeight * scale;
+      ctx.drawImage(img, (TARGET_SIZE - w) / 2, (TARGET_SIZE - h) / 2, w, h);
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Canvas toBlob failed"))),
+        "image/jpeg",
+        0.85,
+      );
+    };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read image")); };
     img.src = url;
   });
@@ -89,33 +106,28 @@ export function UploadImagesClient() {
     if (candidates.length < allowed.length)
       toast.warning(`Only ${remaining} slot${remaining !== 1 ? "s" : ""} remaining — ${allowed.length - candidates.length} file${allowed.length - candidates.length !== 1 ? "s" : ""} not added`);
 
-    const valid: File[] = [];
+    const newEntries: ImageEntry[] = [];
     for (const file of candidates) {
-      if (file.size > MAX_SIZE_BYTES) {
-        toast.error(`${file.name}: ${(file.size / 1024).toFixed(0)} KB — must be under 100 KB`);
+      if (file.size > MAX_INPUT_BYTES) {
+        toast.error(`${file.name}: file too large (max 10 MB)`);
         continue;
       }
       try {
-        const { w, h } = await checkImageDimensions(file);
-        if (w !== REQUIRED_WIDTH || h !== REQUIRED_HEIGHT) {
-          toast.error(`${file.name}: ${w}×${h}px — must be exactly ${REQUIRED_WIDTH}×${REQUIRED_HEIGHT}px`);
-          continue;
-        }
+        const blob = await resizeToSquare(file);
+        const resized = new File([blob], file.name, { type: "image/jpeg" });
+        newEntries.push({
+          id: `${Date.now()}-${Math.random()}`,
+          file: resized,
+          previewUrl: URL.createObjectURL(blob),
+          productCode: codeFromFilename(file.name),
+          uploadState: "idle",
+        });
       } catch {
-        toast.error(`${file.name}: could not read image dimensions`);
-        continue;
+        toast.error(`${file.name}: could not process image`);
       }
-      valid.push(file);
     }
 
-    if (!valid.length) return;
-    const newEntries: ImageEntry[] = valid.map((file) => ({
-      id: `${Date.now()}-${Math.random()}`,
-      file,
-      previewUrl: URL.createObjectURL(file),
-      productCode: codeFromFilename(file.name),
-      uploadState: "idle",
-    }));
+    if (!newEntries.length) return;
     setEntries((prev) => [...prev, ...newEntries]);
   }
 
@@ -153,7 +165,7 @@ export function UploadImagesClient() {
 
     try {
       const urlMap = await getProductImageUploadUrls(
-        toUpload.map((e) => ({ productCode: e.productCode, contentType: e.file.type || "image/jpeg" })),
+        toUpload.map((e) => ({ productCode: e.productCode, contentType: "image/jpeg" })),
       );
       const urlByCode = Object.fromEntries(urlMap.map((u) => [u.productCode, u.uploadUrl]));
 
@@ -231,7 +243,7 @@ export function UploadImagesClient() {
           <div className="text-xs text-muted-foreground mt-1">JPEG · PNG · WebP · GIF · up to {MAX_FILES} files</div>
         </div>
         <div className="text-xs text-muted-foreground/70 space-y-0.5">
-          <div>{REQUIRED_WIDTH}×{REQUIRED_HEIGHT}px · max 100 KB per image</div>
+          <div>Auto-resized to {TARGET_SIZE}×{TARGET_SIZE}px JPEG · max 10 MB input</div>
           <div>Filename becomes the product code — e.g. <span className="font-mono">BMS-001.jpg</span> → code <span className="font-mono">BMS-001</span></div>
         </div>
         {entries.length > 0 && (
