@@ -789,7 +789,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                   >
                     <option value="">+ member</option>
                     {members.filter((m) => !salesPersons.some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
-                      <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                      <option key={m.userId} value={m.userId}>{m.name?.toLowerCase() ?? m.email}</option>
                     ))}
                   </select>
                   <input

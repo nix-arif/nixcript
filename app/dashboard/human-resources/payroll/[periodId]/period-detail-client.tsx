@@ -315,7 +315,7 @@ function PayslipSheet({
                 </SelectTrigger>
                 <SelectContent>
                   {members.map((m) => (
-                    <SelectItem key={m.userId} value={m.userId}>
+                    <SelectItem key={m.userId} value={m.userId} className="lowercase">
                       {m.fullname || m.name} — {m.email} -{" "}
                       {m.jobTitle || m.role}
                     </SelectItem>

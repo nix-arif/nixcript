@@ -1920,7 +1920,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                             }} className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
                               <option value="">+ member</option>
                               {members.filter((m) => !qtSpList.some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
-                                <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                                <option key={m.userId} value={m.userId}>{m.name?.toLowerCase() ?? m.email}</option>
                               ))}
                             </select>
                             <input
@@ -2020,7 +2020,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         }} className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
                           <option value="">+ member</option>
                           {members.filter((m) => !salesPersons.some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
-                            <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                            <option key={m.userId} value={m.userId}>{m.name?.toLowerCase() ?? m.email}</option>
                           ))}
                         </select>
                         <input
@@ -2125,7 +2125,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                               }} className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
                                 <option value="">+ member</option>
                                 {members.filter((m) => !(cpoSalesPersons[cpo.id] ?? []).some((s) => s.id === m.userId || s.name.toLowerCase() === (m.name ?? m.email).toLowerCase())).map((m) => (
-                                  <option key={m.userId} value={m.userId}>{m.name ?? m.email}</option>
+                                  <option key={m.userId} value={m.userId}>{m.name?.toLowerCase() ?? m.email}</option>
                                 ))}
                               </select>
                               <input

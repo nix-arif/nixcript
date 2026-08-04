@@ -86,7 +86,7 @@ function SalesPersonPicker({ members, value, onChange }: {
           {value.map((p, i) => (
             <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
               <UserIcon className="w-2.5 h-2.5 shrink-0" />
-              {p.name}
+              <span className="lowercase">{p.name}</span>
               {!p.id && <span className="text-[9px] opacity-60 ml-0.5">ext</span>}
               <button type="button" onClick={() => remove(i)} className="ml-0.5 hover:text-red-500 transition-colors"><XIcon className="w-2.5 h-2.5" /></button>
             </span>
@@ -98,7 +98,7 @@ function SalesPersonPicker({ members, value, onChange }: {
           <select value="" onChange={(e) => { if (e.target.value) { addMember(e.target.value); e.target.value = ""; } }}
             className="w-full h-8 rounded-md border border-border bg-background px-2 pr-8 text-xs appearance-none">
             <option value="">+ Add member as sales person…</option>
-            {available.map((m) => <option key={m.userId} value={m.userId}>{m.name}{m.email ? ` (${m.email})` : ""}</option>)}
+            {available.map((m) => <option key={m.userId} value={m.userId}>{m.name?.toLowerCase()}{m.email ? ` (${m.email})` : ""}</option>)}
           </select>
           <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
         </div>
@@ -629,7 +629,7 @@ export function EditInvoiceClient({ invoice, suppliers, allCustomerPos, categori
                       e.target.value = "";
                     }} className="w-full h-8 rounded-md border border-border bg-background px-2 pr-8 text-xs appearance-none">
                       <option value="">+ Select from org members…</option>
-                      {members.map((m) => <option key={m.userId} value={m.userId}>{m.name}{m.email ? ` (${m.email})` : ""}</option>)}
+                      {members.map((m) => <option key={m.userId} value={m.userId}>{m.name?.toLowerCase()}{m.email ? ` (${m.email})` : ""}</option>)}
                     </select>
                     <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
                   </div>

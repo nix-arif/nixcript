@@ -738,7 +738,7 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
                       <SelectContent>
                         {refData.members.map((m) => (
                           <SelectItem key={m.id} value={m.id}>
-                            {m.name}{m.role === "owner" ? " (Owner)" : ""}
+                            {m.name?.toLowerCase()}{m.role === "owner" ? " (Owner)" : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>

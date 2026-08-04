@@ -460,7 +460,7 @@ export function DashboardClient({ summary, userName }: Props) {
   const { kpi, can, openCpos, pendingSoApprovals, pendingQtApprovals, recentCpos, recentSos, isStakeholder, invoiceStats } = summary;
 
   const totalOpenTasks = openCpos.length + pendingSoApprovals.length + kpi.pendingDoCount + kpi.pendingInvoiceDoCount;
-  const firstName = userName?.split(" ")[0] ?? null;
+  const firstName = userName?.split(" ")[0]?.toLowerCase() ?? null;
 
   return (
     <div className="p-6 flex flex-col gap-6">

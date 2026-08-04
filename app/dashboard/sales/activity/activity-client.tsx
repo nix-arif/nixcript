@@ -394,7 +394,7 @@ export function ActivityClient({ initialActivities, members, currentUserId, canS
               <SelectContent>
                 <SelectItem value="ALL">All</SelectItem>
                 {members.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                  <SelectItem key={m.id} value={m.id} className="lowercase">{m.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

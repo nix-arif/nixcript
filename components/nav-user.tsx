@@ -72,7 +72,7 @@ export function NavUser() {
                 </AvatarFallback>
               </Avatar>
               <div className="grid flex-1 text-left leading-tight">
-                <span className="truncate text-sm font-semibold">{user.name}</span>
+                <span className="truncate text-sm font-semibold lowercase">{user.name}</span>
                 <span className="truncate text-[11px] text-muted-foreground">{user.email}</span>
               </div>
               <ChevronsUpDownIcon className="ml-auto size-4 text-muted-foreground shrink-0" />
@@ -94,7 +94,7 @@ export function NavUser() {
                 </AvatarFallback>
               </Avatar>
               <div className="grid flex-1 leading-tight min-w-0">
-                <span className="truncate text-sm font-semibold">{user.name}</span>
+                <span className="truncate text-sm font-semibold lowercase">{user.name}</span>
                 <span className="truncate text-[11px] text-muted-foreground">{user.email}</span>
               </div>
             </div>

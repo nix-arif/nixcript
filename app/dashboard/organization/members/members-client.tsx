@@ -356,7 +356,7 @@ export function MembersClient({
                             {getInitials(m.name)}
                           </div>
                           <div>
-                            <div className="text-sm font-medium">{m.name}</div>
+                            <div className="text-sm font-medium lowercase">{m.name}</div>
                             <div className="text-xs text-muted-foreground">{m.email}</div>
                           </div>
                         </div>
@@ -541,7 +541,7 @@ export function MembersClient({
                             {getInitials(m.name)}
                           </div>
                           <div>
-                            <div className="text-sm font-medium line-through text-muted-foreground">{m.name}</div>
+                            <div className="text-sm font-medium line-through text-muted-foreground lowercase">{m.name}</div>
                             <div className="text-xs text-muted-foreground">{m.email}</div>
                           </div>
                         </div>
@@ -583,7 +583,7 @@ export function MembersClient({
                       <TableCell className="pt-2">
                         <div className="text-xs text-destructive/70 whitespace-nowrap">{fmtDate(m.deletedAt)}</div>
                         {m.deletedByName && (
-                          <div className="text-[10px] text-muted-foreground mt-0.5">by {m.deletedByName}</div>
+                          <div className="text-[10px] text-muted-foreground mt-0.5 lowercase">by {m.deletedByName}</div>
                         )}
                       </TableCell>
 

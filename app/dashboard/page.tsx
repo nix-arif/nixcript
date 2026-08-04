@@ -31,7 +31,7 @@ const DashboardPage = async ({
       ) : (
         <div className="p-6">
           <h1 className="text-xl font-semibold tracking-tight">
-            Welcome back{session?.user?.name ? `, ${session.user.name.split(" ")[0]}` : ""}
+            Welcome back{session?.user?.name ? `, ${session.user.name.split(" ")[0].toLowerCase()}` : ""}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Here&apos;s what&apos;s happening in your workspace today.
