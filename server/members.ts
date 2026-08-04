@@ -5,7 +5,8 @@ import { department, member, memberDepartment, user, userPermission } from "@/db
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { and, eq, isNull, isNotNull } from "drizzle-orm";
+import { and, eq, isNull, isNotNull, inArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { revalidatePath } from "next/cache";
 import { grantDepartmentPermissions, resyncAllMemberPermissions } from "@/lib/permissions/grant-defaults";
 import { nanoid } from "nanoid";
@@ -70,6 +71,8 @@ export type OrgMember = Awaited<ReturnType<typeof getOrgMembers>>[number];
 export async function getDeletedMembers() {
   const { orgId } = await requireAccess("member:read");
 
+  const deleter = alias(user, "deleter");
+
   const members = await db
     .select({
       memberId: member.id,
@@ -80,9 +83,11 @@ export async function getDeletedMembers() {
       joinedAt: member.createdAt,
       deletedAt: member.deletedAt,
       deletedBy: member.deletedBy,
+      deletedByName: deleter.name,
     })
     .from(member)
     .innerJoin(user, eq(member.userId, user.id))
+    .leftJoin(deleter, eq(member.deletedBy, deleter.id))
     .where(and(eq(member.organizationId, orgId), isNotNull(member.deletedAt)));
 
   // Fetch dept assignments for deleted members (kept for restore)
@@ -98,7 +103,7 @@ export async function getDeletedMembers() {
     })
     .from(memberDepartment)
     .innerJoin(department, eq(memberDepartment.departmentId, department.id))
-    .where(eq(memberDepartment.organizationId, orgId));
+    .where(and(eq(memberDepartment.organizationId, orgId), inArray(memberDepartment.memberId, memberIds)));
 
   const assignmentsByMember: Record<string, typeof assignments> = {};
   for (const a of assignments) {

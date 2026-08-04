@@ -158,8 +158,7 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(ShieldIcon),
     items: [
-      { title: "Permissions",       url: "/dashboard/admin/permissions",       permission: "permission:read"   },
-      { title: "Bulk Presets",      url: "/dashboard/admin/bulk-permissions",  permission: "permission:create" },
+      { title: "Access Control", url: "/dashboard/admin/permissions", permission: "permission:read" },
     ],
   },
   {

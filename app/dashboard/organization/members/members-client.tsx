@@ -14,6 +14,10 @@ import {
   RotateCcwIcon, AlertTriangleIcon,
 } from "lucide-react";
 import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
@@ -173,6 +177,10 @@ export function MembersClient({
   const [addingDeptFor, setAddingDeptFor]       = useState<string | null>(null);
   const [removingDept, setRemovingDept]         = useState<string | null>(null);
 
+  // Confirmation dialog state
+  const [removeTarget, setRemoveTarget]         = useState<OrgMember | null>(null);
+  const [permDeleteTarget, setPermDeleteTarget] = useState<DeletedMember | null>(null);
+
   const filteredActive = members.filter(
     (m) =>
       m.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -187,8 +195,10 @@ export function MembersClient({
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  async function handleRemoveMember(m: OrgMember) {
-    if (!confirm(`Remove ${m.name} from this organization? They will be moved to deleted members and can be restored.`)) return;
+  async function confirmRemoveMember() {
+    if (!removeTarget) return;
+    const m = removeTarget;
+    setRemoveTarget(null);
     setRemovingId(m.memberId);
     try {
       await removeMember(m.memberId);
@@ -214,8 +224,10 @@ export function MembersClient({
     }
   }
 
-  async function handlePermanentDelete(m: DeletedMember) {
-    if (!confirm(`Permanently delete ${m.name}? This cannot be undone.`)) return;
+  async function confirmPermanentDelete() {
+    if (!permDeleteTarget) return;
+    const m = permDeleteTarget;
+    setPermDeleteTarget(null);
     setPermDeletingId(m.memberId);
     try {
       await permanentlyDeleteMember(m.memberId);
@@ -418,7 +430,7 @@ export function MembersClient({
                             size="sm"
                             className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
                             disabled={removingId === m.memberId}
-                            onClick={() => handleRemoveMember(m)}
+                            onClick={() => setRemoveTarget(m)}
                           >
                             <TrashIcon className="w-3.5 h-3.5" />
                           </Button>
@@ -432,6 +444,54 @@ export function MembersClient({
           </div>
         </>
       )}
+
+      {/* ── Remove member dialog ── */}
+      <Dialog open={!!removeTarget} onOpenChange={(open) => { if (!open) setRemoveTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove member</DialogTitle>
+            <DialogDescription>
+              Remove <span className="font-medium text-foreground">{removeTarget?.name}</span> from this organization?
+              They will be moved to deleted members and their permissions revoked. You can restore them at any time.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setRemoveTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!!removingId}
+              onClick={confirmRemoveMember}
+            >
+              {removingId ? "Removing…" : "Remove member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Permanent delete dialog ── */}
+      <Dialog open={!!permDeleteTarget} onOpenChange={(open) => { if (!open) setPermDeleteTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Permanently delete member</DialogTitle>
+            <DialogDescription>
+              Permanently delete <span className="font-medium text-foreground">{permDeleteTarget?.name}</span>?
+              This will remove all their department assignments and cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setPermDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!!permDeletingId}
+              onClick={confirmPermanentDelete}
+            >
+              {permDeletingId ? "Deleting…" : "Delete permanently"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Deleted tab ── */}
       {tab === "deleted" && (
@@ -519,9 +579,12 @@ export function MembersClient({
                         {fmtDate(m.joinedAt)}
                       </TableCell>
 
-                      {/* Removed on */}
-                      <TableCell className="text-xs text-destructive/70 pt-2 whitespace-nowrap">
-                        {fmtDate(m.deletedAt)}
+                      {/* Removed on + by */}
+                      <TableCell className="pt-2">
+                        <div className="text-xs text-destructive/70 whitespace-nowrap">{fmtDate(m.deletedAt)}</div>
+                        {m.deletedByName && (
+                          <div className="text-[10px] text-muted-foreground mt-0.5">by {m.deletedByName}</div>
+                        )}
                       </TableCell>
 
                       {/* Actions */}
@@ -542,7 +605,7 @@ export function MembersClient({
                             size="sm"
                             className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
                             disabled={permDeletingId === m.memberId}
-                            onClick={() => handlePermanentDelete(m)}
+                            onClick={() => setPermDeleteTarget(m)}
                           >
                             <TrashIcon className="w-3.5 h-3.5" />
                           </Button>

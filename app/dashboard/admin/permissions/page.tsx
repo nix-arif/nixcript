@@ -1,5 +1,5 @@
 import { getMembersWithPermissions } from "@/server/permissions";
-import { PermissionOverridesClient } from "./permissions-client";
+import { AccessControlClient } from "./permissions-client";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -20,6 +20,6 @@ export default async function PermissionsPage() {
   const members = await getMembersWithPermissions(activeOrgId);
 
   return (
-    <PermissionOverridesClient members={members} organizationId={activeOrgId} />
+    <AccessControlClient members={members} organizationId={activeOrgId} />
   );
 }

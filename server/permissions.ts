@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { permission, userPermission, member, user } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { getCurrentUser } from "./users";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -76,7 +76,7 @@ export const getMembersWithPermissions = async (organizationId: string) => {
         eq(userPermission.organizationId, organizationId),
       ),
     )
-    .where(eq(member.organizationId, organizationId));
+    .where(and(eq(member.organizationId, organizationId), isNull(member.deletedAt)));
 
   // Group flat rows into members with permissions array
   const membersMap = new Map<
