@@ -7,7 +7,7 @@ export default async function ClaimTypesPage() {
   await requirePermission("claim:manage");
   const [claimTypes, accounts, categoryMappings] = await Promise.all([
     getClaimTypes(),
-    getLedgerAccounts(),
+    getLedgerAccounts().catch(() => []),
     getClaimCategoryAccounts(),
   ]);
   const expenseAccounts = accounts.filter((a) => a.type === "EXPENSE" && a.isActive);
