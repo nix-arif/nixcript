@@ -221,7 +221,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     const rentalPrefix = item.lineType === "rent" && item.rentalDuration
       ? `RENTAL FOR ${item.rentalDuration} ${(item.rentalUnit ?? "case").toUpperCase()} `
       : "";
-    const rawDesc    = `${rentalPrefix}${item.description ?? "—"}`;
+    const rawDesc    = `${rentalPrefix}${item.description ?? "—"}`.toUpperCase();
     const descLines  = wrap(rawDesc, fontR, FS_DESC, C_DESC - TABLE_PAD * 2);
     const firstParaLineCount = /\r?\n/.test(rawDesc)
       ? Math.max(1, wrap(rawDesc.split(/\r?\n/)[0], fontR, FS_DESC, C_DESC - TABLE_PAD * 2).length)
@@ -936,7 +936,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
             detY -= 11;
           }
           if (item.description) {
-            for (const line of wrap(String(item.description), fontR, 8, detMaxW).slice(0, 4)) {
+            for (const line of wrap(String(item.description).toUpperCase(), fontR, 8, detMaxW).slice(0, 4)) {
               catPage.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_DARK });
               detY -= 10;
             }
