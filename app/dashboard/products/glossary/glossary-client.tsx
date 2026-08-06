@@ -291,11 +291,18 @@ function ProductDialog({ rows, index, onClose, onNavigate }: {
             </div>
 
             {p.description && (
-              <div style={{
-                fontSize: 13, color: "rgba(255,255,255,0.52)",
-                textTransform: "uppercase", letterSpacing: "0.05em",
-                lineHeight: 1.45, marginTop: 8,
-              }}>
+              <div
+                title={p.description}
+                style={{
+                  fontSize: 13, color: "rgba(255,255,255,0.52)",
+                  textTransform: "uppercase", letterSpacing: "0.05em",
+                  lineHeight: 1.45, marginTop: 8,
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+              >
                 {p.description}
               </div>
             )}
