@@ -101,7 +101,7 @@ function ProductRow({ p, last, query, onOpen }: { p: GlossaryProduct; last: bool
           <Highlight text={p.productCode} query={query} />
         </div>
         {p.description && (
-          <div className="text-xs text-muted-foreground mt-0.5 truncate uppercase">
+          <div className="text-xs text-muted-foreground mt-0.5 truncate uppercase" title={p.description}>
             <Highlight text={p.description} query={query} />
           </div>
         )}
@@ -129,7 +129,21 @@ function Pagination({ page, total, pageSize, onChange }: {
   page: number; total: number; pageSize: number; onChange: (p: number) => void;
 }) {
   const totalPages = Math.ceil(total / pageSize);
+  const [draft, setDraft] = useState(String(page));
+
+  useEffect(() => { setDraft(String(page)); }, [page]);
+
   if (totalPages <= 1) return null;
+
+  function commit() {
+    const n = Math.trunc(Number(draft));
+    if (Number.isFinite(n) && n >= 1 && n <= totalPages && n !== page) {
+      onChange(n);
+    } else {
+      setDraft(String(page));
+    }
+  }
+
   return (
     <div className="flex items-center justify-between px-4 py-3 border-t border-border/40 text-xs text-muted-foreground">
       <span>{((page - 1) * pageSize + 1).toLocaleString()}–{Math.min(page * pageSize, total).toLocaleString()} of {total.toLocaleString()}</span>
@@ -137,7 +151,22 @@ function Pagination({ page, total, pageSize, onChange }: {
         <Button variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={page <= 1} onClick={() => onChange(page - 1)}>
           <ChevronLeftIcon className="w-3.5 h-3.5" />
         </Button>
-        <span className="px-2">{page} / {totalPages}</span>
+        <span className="px-2 flex items-center gap-1">
+          <Input
+            type="number"
+            min={1}
+            max={totalPages}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.currentTarget.blur(); }
+              if (e.key === "Escape") { setDraft(String(page)); e.currentTarget.blur(); }
+            }}
+            className="h-6 w-12 px-1.5 text-center text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+          <span>/ {totalPages}</span>
+        </span>
         <Button variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={page >= totalPages} onClick={() => onChange(page + 1)}>
           <ChevronRightIcon className="w-3.5 h-3.5" />
         </Button>
