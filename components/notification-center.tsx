@@ -31,16 +31,22 @@ export function NotificationCenter() {
   const [isPending, startTransition] = useTransition();
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Poll unread count on mount + on page focus
+  // Poll unread count on mount + on page focus (skip while tab is hidden
+  // so we don't keep pinging the DB and blocking Neon's autosuspend)
   useEffect(() => {
     const fetchCount = () =>
       getUnreadNotificationCount().then(setUnread).catch(() => {});
 
     fetchCount();
 
-    const onFocus = () => fetchCount();
+    const onFocus = () => {
+      if (!document.hidden) fetchCount();
+    };
     window.addEventListener("focus", onFocus);
-    const interval = setInterval(fetchCount, 30_000);
+
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchCount();
+    }, 120_000);
 
     return () => {
       window.removeEventListener("focus", onFocus);
