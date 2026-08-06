@@ -169,6 +169,134 @@ export async function getProducts(page = 1, limit = 50) {
   return { rows, total: Number(count), page, limit };
 }
 
+// Lightweight index: letter → count. One GROUP BY query, no product rows fetched.
+export async function getGlossaryIndex(): Promise<{ letter: string; count: number }[]> {
+  const { orgId } = await requireAccess("product:read");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+
+  const rows = await db.execute(sql`
+    SELECT
+      CASE
+        WHEN UPPER(LEFT(product_code, 1)) ~ '^[A-Z]$'
+        THEN UPPER(LEFT(product_code, 1))
+        ELSE '#'
+      END AS letter,
+      COUNT(DISTINCT product_code)::int AS count
+    FROM product
+    WHERE organization_id = ANY(ARRAY[${sql.join(ownerOrgIds.map((id) => sql`${id}`), sql`, `)}])
+    GROUP BY letter
+    ORDER BY letter
+  `);
+
+  const data = (rows.rows ?? rows) as { letter: string; count: number }[];
+  return data.sort((a, b) => {
+    if (a.letter === "#") return 1;
+    if (b.letter === "#") return -1;
+    return a.letter.localeCompare(b.letter);
+  });
+}
+
+// Fetch one letter's products, deduplicated, paginated.
+export async function getGlossaryByLetter(
+  letter: string,
+  page = 1,
+  limit = 100,
+): Promise<{ rows: GlossaryProduct[]; total: number }> {
+  const { orgId } = await requireAccess("product:read");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+
+  const condition = letter === "#"
+    ? and(
+        inArray(product.organizationId, ownerOrgIds),
+        sql`UPPER(LEFT(${product.productCode}, 1)) !~ '^[A-Z]$'`,
+      )
+    : and(
+        inArray(product.organizationId, ownerOrgIds),
+        sql`UPPER(LEFT(${product.productCode}, 1)) = ${letter}`,
+      );
+
+  const [{ total }] = await db
+    .select({ total: sql<number>`COUNT(DISTINCT ${product.productCode})` })
+    .from(product)
+    .where(condition);
+
+  const rows = await db
+    .selectDistinctOn([product.productCode], {
+      productCode: product.productCode,
+      description: product.description,
+      brand: product.brand,
+      uom: product.uom,
+      supplier: product.supplier,
+      sellingUnitPrice: product.sellingUnitPrice,
+      sellingPriceCurrency: product.sellingPriceCurrency,
+      imageUploadedAt: product.imageUploadedAt,
+    })
+    .from(product)
+    .where(condition)
+    .orderBy(asc(product.productCode))
+    .limit(limit)
+    .offset((page - 1) * limit);
+
+  return { rows, total: Number(total) };
+}
+
+// Search across all products, paginated.
+export async function searchGlossary(
+  query: string,
+  page = 1,
+  limit = 50,
+): Promise<{ rows: GlossaryProduct[]; total: number }> {
+  const { orgId } = await requireAccess("product:read");
+  if (!query.trim()) return { rows: [], total: 0 };
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const q = `%${query.trim()}%`;
+
+  const condition = and(
+    inArray(product.organizationId, ownerOrgIds),
+    or(
+      ilike(product.productCode, q),
+      ilike(product.description, q),
+      ilike(product.brand, q),
+      ilike(product.supplier, q),
+    ),
+  );
+
+  const [{ total }] = await db
+    .select({ total: sql<number>`COUNT(DISTINCT ${product.productCode})` })
+    .from(product)
+    .where(condition);
+
+  const rows = await db
+    .selectDistinctOn([product.productCode], {
+      productCode: product.productCode,
+      description: product.description,
+      brand: product.brand,
+      uom: product.uom,
+      supplier: product.supplier,
+      sellingUnitPrice: product.sellingUnitPrice,
+      sellingPriceCurrency: product.sellingPriceCurrency,
+      imageUploadedAt: product.imageUploadedAt,
+    })
+    .from(product)
+    .where(condition)
+    .orderBy(asc(product.productCode))
+    .limit(limit)
+    .offset((page - 1) * limit);
+
+  return { rows, total: Number(total) };
+}
+
+export type GlossaryProduct = {
+  productCode: string;
+  description: string | null;
+  brand: string | null;
+  uom: string | null;
+  supplier: string | null;
+  sellingUnitPrice: string | null;
+  sellingPriceCurrency: string;
+  imageUploadedAt: Date | null;
+};
+
 // Returns all org IDs the owner of currentOrgId controls, so product queries
 // work regardless of which org products were seeded into.
 async function getAllOwnerOrgIds(

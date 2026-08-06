@@ -93,6 +93,7 @@ export const navConfig: NavGroup[] = [
     icon: React.createElement(PackageOpen),
     items: [
       { title: "Product Search",          url: "/dashboard/products/search",                    permission: "product:read" },
+      { title: "Product Glossary",        url: "/dashboard/products/glossary",                  permission: "product:read" },
       { title: "Catalogue",               url: "/dashboard/products/catalogue",                 permission: "product:read" },
       { title: "MDA Certificate Generator", url: "/dashboard/products/mda-certificate-generator", permission: "product:read" },
       { title: "Items Price Check",       url: "/dashboard/products/items-price",               permission: "product:read" },
