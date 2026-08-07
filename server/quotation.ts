@@ -2471,13 +2471,13 @@ export async function updateQuotationDocumentOptions(
 }
 
 export async function deleteQuotation(id: string) {
-  const { orgId, userId } = await requireAccess("quotation:delete");
+  const { orgId, userId } = await getSession();
   const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
   const ownerOrgIds =
     ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
   const [q] = await db
-    .select({ groupId: quotation.groupId })
+    .select({ groupId: quotation.groupId, status: quotation.status, createdBy: quotation.createdBy })
     .from(quotation)
     .where(
       and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)),
@@ -2485,6 +2485,16 @@ export async function deleteQuotation(id: string) {
     .limit(1);
 
   if (!q) throw new Error("Quotation not found");
+
+  // The creator can always delete their own draft quotation. Anything else
+  // (finalized quotations, or someone else's draft) needs the elevated permission.
+  const isOwnDraft = q.status === "draft" && q.createdBy === userId;
+  if (!isOwnDraft) {
+    const perms = await getUserPermissions(userId, orgId);
+    if (!hasAccess(perms, "quotation:delete")) {
+      throw new Error("You don't have permission to do this");
+    }
+  }
 
   if (q.groupId) {
     await db.delete(quotation).where(eq(quotation.groupId, q.groupId));
