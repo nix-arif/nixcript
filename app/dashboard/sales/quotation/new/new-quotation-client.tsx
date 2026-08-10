@@ -39,6 +39,7 @@ import {
   PencilIcon,
   DatabaseIcon,
   PlusIcon,
+  ListOrderedIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
@@ -527,6 +528,11 @@ export function NewQuotationClient({
 
   const removeItem = (i: number) => {
     setReviewItems((prev) => prev.filter((_, idx) => idx !== i));
+  };
+
+  // Resequence every row's # to match its current position (1, 2, 3, ...)
+  const renumberItems = () => {
+    setReviewItems((prev) => prev.map((it, i) => ({ ...it, rowNo: String(i + 1) })));
   };
 
   const CELL_COLS = 4; // code=0, description=1, qty=2, unitPrice=3
@@ -1687,9 +1693,18 @@ export function NewQuotationClient({
                           )}
                         >
                           {/* # + type */}
-                          <td className="px-3 py-1.5 w-12">
+                          <td className="px-3 py-1.5 w-14">
                             <div className="flex flex-col items-center gap-0.5">
-                              <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
+                              {isEditable ? (
+                                <input
+                                  aria-label="Row number"
+                                  value={item.rowNo}
+                                  onChange={(e) => updateItemField(idx, { rowNo: e.target.value })}
+                                  className="w-10 h-5 border border-input rounded px-1 text-[10px] text-center bg-background outline-none focus:ring-1 focus:ring-ring text-muted-foreground"
+                                />
+                              ) : (
+                                <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
+                              )}
                               {isEditable ? (
                                 <button
                                   type="button"
@@ -1962,13 +1977,21 @@ export function NewQuotationClient({
             </div>
 
             {step === 2 && (
-              <div className="px-4 pt-2">
+              <div className="px-4 pt-2 flex gap-2">
                 <button
                   type="button"
                   onClick={addRow}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-3 py-1.5 w-full justify-center hover:border-foreground/40 transition-colors"
+                  className="flex-1 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-3 py-1.5 justify-center hover:border-foreground/40 transition-colors"
                 >
                   <PlusIcon className="w-3.5 h-3.5" /> Add row
+                </button>
+                <button
+                  type="button"
+                  onClick={renumberItems}
+                  title="Resequence # column to match row order"
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-3 py-1.5 justify-center hover:border-foreground/40 transition-colors"
+                >
+                  <ListOrderedIcon className="w-3.5 h-3.5" /> Renumber
                 </button>
               </div>
             )}
