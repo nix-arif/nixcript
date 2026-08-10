@@ -33,6 +33,7 @@ import {
   XIcon,
   DatabaseIcon,
   PencilIcon,
+  ListOrderedIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { nanoid } from "nanoid";
@@ -283,35 +284,39 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
   };
 
   const removeItem = (key: string) => {
-    setItems((prev) =>
-      prev
-        .filter((it) => it._key !== key)
-        .map((it, i) => ({ ...it, rowNo: String(i + 1) })),
-    );
+    setItems((prev) => prev.filter((it) => it._key !== key));
+  };
+
+  // Resequence every row's # to match its current position (1, 2, 3, ...)
+  const renumberItems = () => {
+    setItems((prev) => prev.map((it, i) => ({ ...it, rowNo: String(i + 1) })));
   };
 
   const addItem = () => {
-    setItems((prev) => [
-      ...prev,
-      {
-        _key: nanoid(),
-        rowNo: String(prev.length + 1),
-        qty: "1",
-        unitPrice: "0",
-        discountPct: "0",
-        descriptionSource: "sheet",
-        priceSource: "sheet",
-        uomSource: "sheet",
-        hasCert: false,
-        hasPrice: false,
-        lineType: "sell",
-        rentalDuration: "",
-        rentalUnit: "case",
-        setGroupId: "",
-        setGroupLabel: "",
-        setQty: "",
-      },
-    ]);
+    setItems((prev) => {
+      const maxRowNo = prev.reduce((max, it) => Math.max(max, Number(it.rowNo) || 0), 0);
+      return [
+        ...prev,
+        {
+          _key: nanoid(),
+          rowNo: String(maxRowNo + 1),
+          qty: "1",
+          unitPrice: "0",
+          discountPct: "0",
+          descriptionSource: "sheet",
+          priceSource: "sheet",
+          uomSource: "sheet",
+          hasCert: false,
+          hasPrice: false,
+          lineType: "sell",
+          rentalDuration: "",
+          rentalUnit: "case",
+          setGroupId: "",
+          setGroupLabel: "",
+          setQty: "",
+        },
+      ];
+    });
   };
 
   // When setQty changes for one item in a group, sync it to all group members
@@ -397,9 +402,13 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         )}
       >
         {/* # + type toggle */}
-        <td className="px-3 py-1.5 w-12 text-center align-top">
+        <td className="px-3 py-1.5 w-14 text-center align-top">
           <div className="flex flex-col items-center gap-0.5">
-            <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
+            <input
+              value={item.rowNo}
+              onChange={(e) => updateItem(item._key, "rowNo", e.target.value)}
+              className="w-10 h-5 border border-input rounded px-1 text-[10px] text-center bg-background outline-none focus:ring-1 focus:ring-ring text-muted-foreground"
+            />
             <button
               type="button"
               onClick={() => updateItem(item._key, "lineType", isRent ? "sell" : "rent")}
@@ -984,6 +993,15 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                   <span className="text-[10px] text-muted-foreground">sets</span>
                 </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                onClick={renumberItems}
+                title="Resequence # column to match row order"
+              >
+                <ListOrderedIcon className="w-3 h-3" /> Renumber
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
