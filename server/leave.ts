@@ -180,8 +180,6 @@ async function ensureEntitlement(
     )
     .limit(1);
 
-  if (existing[0]) return existing[0];
-
   const memberRow = await db
     .select()
     .from(member)
@@ -196,6 +194,20 @@ async function ensureEntitlement(
   const joinDate = memberRow[0]?.createdAt ?? new Date();
   const serviceYears = calcServiceYears(joinDate);
   const entitledDays = getEntitledDays(type.entitlementRules, serviceYears);
+
+  if (existing[0]) {
+    // Keep entitledDays in sync with the leave type's current rules — usedDays/
+    // pendingDays/carryForwardDays/openingBalance are persisted state and stay untouched.
+    const fresh = entitledDays.toString();
+    if (fresh !== existing[0].entitledDays) {
+      await db
+        .update(leaveEntitlement)
+        .set({ entitledDays: fresh, updatedAt: new Date() })
+        .where(eq(leaveEntitlement.id, existing[0].id));
+      return { ...existing[0], entitledDays: fresh };
+    }
+    return existing[0];
+  }
 
   let carryForwardDays = 0;
   if (type.carryForwardEnabled) {
