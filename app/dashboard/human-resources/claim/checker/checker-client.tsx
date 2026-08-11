@@ -14,12 +14,18 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { ClaimApplicationWithDetails } from "@/server/claim";
-import { checkClaim, rejectByChecker } from "@/server/claim";
+import {
+  checkClaim, rejectByChecker,
+  editClaimLineItem, toggleClaimLineItemSlash,
+  editClaimEntertainmentDetail, toggleClaimEntertainmentDetailSlash,
+} from "@/server/claim";
 import { CLAIM_FORM, LINE_CATEGORY } from "@/lib/claim/constants";
+import { cn } from "@/lib/utils";
 import {
   CheckIcon, XIcon, FileDownIcon, ClipboardListIcon,
-  ArrowRightIcon, MapPinIcon, EyeIcon, CheckCircle2Icon,
+  ArrowRightIcon, MapPinIcon, EyeIcon, CheckCircle2Icon, PencilIcon,
 } from "lucide-react";
+import { EditBadge, SlashBadge } from "@/components/claim/line-item-annotations";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,7 +72,160 @@ const SECTION_LABELS: Record<string, string> = {
 
 // ── Line Item Detail ──────────────────────────────────────────────────────────
 
-function LineItemDetail({ items }: { items: ClaimApplicationWithDetails["lineItems"] }) {
+type LineItem = ClaimApplicationWithDetails["lineItems"][number];
+
+function LineItemRow({
+  item, i, cat, editable, saving, onSaveEdit, onToggleSlash,
+}: {
+  item: LineItem;
+  i: number;
+  cat: string;
+  editable: boolean;
+  saving: boolean;
+  onSaveEdit: (item: LineItem, patch: { amountMyr?: string; description?: string }, reason: string) => Promise<void>;
+  onToggleSlash: (item: LineItem, reason?: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftAmount, setDraftAmount] = useState(item.amountMyr);
+  const [draftDescription, setDraftDescription] = useState(item.description ?? "");
+  const [editReason, setEditReason] = useState("");
+  const [slashPrompt, setSlashPrompt] = useState(false);
+  const [slashReason, setSlashReason] = useState("");
+
+  const canEditDescription = cat !== LINE_CATEGORY.TRAVEL && cat !== LINE_CATEGORY.OVERSEAS_FX;
+  const arCls = item.slashed ? "line-through opacity-50" : "";
+
+  async function handleSave() {
+    const patch: { amountMyr?: string; description?: string } = {};
+    if (draftAmount !== item.amountMyr) patch.amountMyr = draftAmount;
+    if (canEditDescription && draftDescription !== (item.description ?? "")) patch.description = draftDescription;
+    if (Object.keys(patch).length === 0) { setEditing(false); return; }
+    await onSaveEdit(item, patch, editReason);
+    setEditing(false); setEditReason("");
+  }
+
+  return (
+    <div className="px-3 py-2.5 flex flex-col gap-1 text-xs">
+      <div className="flex items-start gap-2">
+        <span className="text-muted-foreground w-4 shrink-0">{i + 1}.</span>
+        <div className={cn("flex-1 flex flex-col gap-0.5 min-w-0", arCls)}>
+          {cat === LINE_CATEGORY.TRAVEL ? (
+            <div className="flex items-center gap-1 text-foreground font-medium">
+              <MapPinIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
+              <span className="truncate">{item.fromLocation}</span>
+              <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
+              <span className="truncate">{item.toLocation}</span>
+            </div>
+          ) : cat === LINE_CATEGORY.OVERSEAS_FX ? (
+            <div className="text-foreground font-medium">
+              {item.destination && <span className="mr-1">{item.destination}</span>}
+              <span className="text-muted-foreground">{item.amountForeign} {item.currency} × {item.exchangeRate}</span>
+            </div>
+          ) : editing && canEditDescription ? (
+            <input
+              value={draftDescription}
+              onChange={e => setDraftDescription(e.target.value)}
+              className="w-full h-6 border border-input rounded px-1.5 text-xs bg-background"
+              placeholder="Description"
+            />
+          ) : (
+            <span className="text-foreground font-medium truncate">
+              {item.venue
+                ? `${item.venue}${item.description ? ` — ${item.description}` : ""}`
+                : item.destination
+                  ? `${item.destination}${item.description ? ` — ${item.description}` : ""}`
+                  : item.description}
+            </span>
+          )}
+          <span className="text-muted-foreground">
+            {item.lineDate}
+            {cat === LINE_CATEGORY.TRAVEL && item.distanceKm && ` · ${item.distanceKm} km`}
+          </span>
+        </div>
+        {editing ? (
+          <input
+            type="number"
+            step="0.01"
+            value={draftAmount}
+            onChange={e => setDraftAmount(e.target.value)}
+            className="w-20 h-6 border border-input rounded px-1.5 text-xs bg-background text-right shrink-0"
+          />
+        ) : (
+          <span className={cn("text-green-700 dark:text-green-400 font-medium shrink-0", arCls)}>{fmtAmount(item.amountMyr)}</span>
+        )}
+        {editable && !editing && (
+          <button type="button" onClick={() => { setDraftAmount(item.amountMyr); setDraftDescription(item.description ?? ""); setEditing(true); }} className="text-muted-foreground hover:text-amber-600 shrink-0" title="Edit this line">
+            <PencilIcon className="h-3 w-3"/>
+          </button>
+        )}
+        {editable && (
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => item.slashed ? void onToggleSlash(item) : setSlashPrompt(true)}
+            className={cn("shrink-0 disabled:opacity-50", item.slashed ? "text-red-500" : "text-muted-foreground hover:text-red-500")}
+            title={item.slashed ? "Un-slash this line" : "Slash this line"}
+          >
+            <XIcon className="h-3 w-3"/>
+          </button>
+        )}
+      </div>
+
+      {editing && (
+        <div className="pl-6 flex flex-col gap-1.5">
+          <Textarea value={editReason} onChange={e => setEditReason(e.target.value)} placeholder="Reason for edit (required)…" rows={2} className="text-xs"/>
+          <div className="flex gap-1.5">
+            <Button size="sm" className="h-6 text-[11px] px-2" disabled={saving || !editReason.trim()} onClick={handleSave}>Save</Button>
+            <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" disabled={saving} onClick={() => { setEditing(false); setEditReason(""); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {slashPrompt && (
+        <div className="pl-6 flex flex-col gap-1.5">
+          <Textarea value={slashReason} onChange={e => setSlashReason(e.target.value)} placeholder="Reason for slashing this line (required)…" rows={2} className="text-xs"/>
+          <div className="flex gap-1.5">
+            <Button
+              size="sm" variant="destructive" className="h-6 text-[11px] px-2"
+              disabled={saving || !slashReason.trim()}
+              onClick={async () => { await onToggleSlash(item, slashReason); setSlashPrompt(false); setSlashReason(""); }}
+            >
+              Slash
+            </Button>
+            <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" disabled={saving} onClick={() => { setSlashPrompt(false); setSlashReason(""); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {item.slashed && (
+        <div className="pl-6">
+          <SlashBadge slashedByName={item.slashedByName} slashedAt={item.slashedAt} slashReason={item.slashReason}/>
+        </div>
+      )}
+      {item.editedBy && (
+        <div className="pl-6">
+          <EditBadge
+            editedByName={item.editedByName}
+            editedAt={item.editedAt}
+            editReason={item.editReason}
+            amountChange={item.originalAmountMyr ? { from: item.originalAmountMyr, to: item.amountMyr } : null}
+            descriptionChange={item.originalDescription !== null ? { from: item.originalDescription, to: item.description } : null}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LineItemDetail({
+  items, editable = false, savingId = null, onSaveEdit, onToggleSlash,
+}: {
+  items: ClaimApplicationWithDetails["lineItems"];
+  editable?: boolean;
+  savingId?: string | null;
+  onSaveEdit?: (item: LineItem, patch: { amountMyr?: string; description?: string }, reason: string) => Promise<void>;
+  onToggleSlash?: (item: LineItem, reason?: string) => Promise<void>;
+}) {
   if (items.length === 0) return null;
   const groups: Record<string, typeof items> = {};
   for (const item of items) {
@@ -76,7 +235,7 @@ function LineItemDetail({ items }: { items: ClaimApplicationWithDetails["lineIte
   return (
     <div className="rounded-md border border-border overflow-hidden">
       {Object.entries(groups).map(([cat, rows]) => {
-        const subtotal = rows.reduce((s, r) => s + parseFloat(r.amountMyr), 0);
+        const subtotal = rows.reduce((s, r) => s + (r.slashed ? 0 : parseFloat(r.amountMyr)), 0);
         return (
           <div key={cat}>
             <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
@@ -85,37 +244,16 @@ function LineItemDetail({ items }: { items: ClaimApplicationWithDetails["lineIte
             </div>
             <div className="divide-y divide-border">
               {rows.map((item, i) => (
-                <div key={item.id} className="px-3 py-2.5 flex items-start gap-2 text-xs">
-                  <span className="text-muted-foreground w-4 shrink-0">{i + 1}.</span>
-                  <div className="flex-1 flex flex-col gap-0.5 min-w-0">
-                    {cat === LINE_CATEGORY.TRAVEL ? (
-                      <div className="flex items-center gap-1 text-foreground font-medium">
-                        <MapPinIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
-                        <span className="truncate">{item.fromLocation}</span>
-                        <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
-                        <span className="truncate">{item.toLocation}</span>
-                      </div>
-                    ) : cat === LINE_CATEGORY.OVERSEAS_FX ? (
-                      <div className="text-foreground font-medium">
-                        {item.destination && <span className="mr-1">{item.destination}</span>}
-                        <span className="text-muted-foreground">{item.amountForeign} {item.currency} × {item.exchangeRate}</span>
-                      </div>
-                    ) : (
-                      <span className="text-foreground font-medium truncate">
-                        {item.venue
-                          ? `${item.venue}${item.description ? ` — ${item.description}` : ""}`
-                          : item.destination
-                            ? `${item.destination}${item.description ? ` — ${item.description}` : ""}`
-                            : item.description}
-                      </span>
-                    )}
-                    <span className="text-muted-foreground">
-                      {item.lineDate}
-                      {cat === LINE_CATEGORY.TRAVEL && item.distanceKm && ` · ${item.distanceKm} km`}
-                    </span>
-                  </div>
-                  <span className="text-green-700 dark:text-green-400 font-medium shrink-0">{fmtAmount(item.amountMyr)}</span>
-                </div>
+                <LineItemRow
+                  key={item.id}
+                  item={item}
+                  i={i}
+                  cat={cat}
+                  editable={editable}
+                  saving={savingId === item.id}
+                  onSaveEdit={onSaveEdit ?? (async () => {})}
+                  onToggleSlash={onToggleSlash ?? (async () => {})}
+                />
               ))}
             </div>
           </div>
@@ -151,7 +289,147 @@ function DocumentsSection({ documents }: { documents: ClaimApplicationWithDetail
 
 // ── Claim Detail Content ──────────────────────────────────────────────────────
 
-function ClaimDetailContent({ app }: { app: ClaimApplicationWithDetails }) {
+// ── Entertainment Detail Row ────────────────────────────────────────────────────
+
+type EntertainmentDetail = ClaimApplicationWithDetails["entertainmentDetails"][number];
+
+function EntertainmentDetailRow({
+  ed, idx, showLabel, editable, saving, onSaveEdit, onToggleSlash,
+}: {
+  ed: EntertainmentDetail;
+  idx: number;
+  showLabel: boolean;
+  editable: boolean;
+  saving: boolean;
+  onSaveEdit: (item: EntertainmentDetail, patch: { amount?: string; purpose?: string }, reason: string) => Promise<void>;
+  onToggleSlash: (item: EntertainmentDetail, reason?: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftAmount, setDraftAmount] = useState(ed.amount);
+  const [draftPurpose, setDraftPurpose] = useState(ed.purpose);
+  const [editReason, setEditReason] = useState("");
+  const [slashPrompt, setSlashPrompt] = useState(false);
+  const [slashReason, setSlashReason] = useState("");
+  const arCls = ed.slashed ? "line-through opacity-50" : "";
+
+  async function handleSave() {
+    const patch: { amount?: string; purpose?: string } = {};
+    if (draftAmount !== ed.amount) patch.amount = draftAmount;
+    if (draftPurpose !== ed.purpose) patch.purpose = draftPurpose;
+    if (Object.keys(patch).length === 0) { setEditing(false); return; }
+    await onSaveEdit(ed, patch, editReason);
+    setEditing(false); setEditReason("");
+  }
+
+  return (
+    <div className="divide-y divide-border border-t border-border first:border-t-0">
+      <div className="px-3 py-1.5 bg-muted/20 flex items-center justify-between">
+        {showLabel ? (
+          <span className="text-[10px] font-semibold text-muted-foreground uppercase">Entry {idx + 1}</span>
+        ) : <span/>}
+        {editable && (
+          <div className="flex items-center gap-1.5">
+            {!editing && (
+              <button type="button" onClick={() => { setDraftAmount(ed.amount); setDraftPurpose(ed.purpose); setEditing(true); }} className="text-muted-foreground hover:text-amber-600" title="Edit this entry">
+                <PencilIcon className="h-3 w-3"/>
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => ed.slashed ? void onToggleSlash(ed) : setSlashPrompt(true)}
+              className={cn("disabled:opacity-50", ed.slashed ? "text-red-500" : "text-muted-foreground hover:text-red-500")}
+              title={ed.slashed ? "Un-slash this entry" : "Slash this entry"}
+            >
+              <XIcon className="h-3 w-3"/>
+            </button>
+          </div>
+        )}
+      </div>
+      {[
+        ["Date", ed.eventDate],
+        ["Restaurant / Venue", ed.restaurantName],
+        ["Customer", ed.customerName],
+        ["Dept & Org", ed.departmentOrganization],
+      ].map(([label, value]) => (
+        <div key={label} className={cn("px-3 py-2 flex justify-between gap-4", arCls)}>
+          <span className="text-muted-foreground shrink-0 text-xs">{label}</span>
+          <span className="text-right text-xs font-medium">{value}</span>
+        </div>
+      ))}
+      <div className="px-3 py-2 flex justify-between gap-4 items-center">
+        <span className="text-muted-foreground shrink-0 text-xs">Purpose</span>
+        {editing ? (
+          <input value={draftPurpose} onChange={e => setDraftPurpose(e.target.value)} className="flex-1 h-6 border border-input rounded px-1.5 text-xs bg-background text-right"/>
+        ) : (
+          <span className={cn("text-right text-xs font-medium", arCls)}>{ed.purpose}</span>
+        )}
+      </div>
+      <div className="px-3 py-2 flex justify-between gap-4 items-center">
+        <span className="text-muted-foreground shrink-0 text-xs">Amount</span>
+        {editing ? (
+          <input type="number" step="0.01" value={draftAmount} onChange={e => setDraftAmount(e.target.value)} className="w-24 h-6 border border-input rounded px-1.5 text-xs bg-background text-right"/>
+        ) : (
+          <span className={cn("text-right text-xs font-medium", arCls)}>{fmtAmount(ed.amount)}</span>
+        )}
+      </div>
+
+      {editing && (
+        <div className="px-3 py-2 flex flex-col gap-1.5">
+          <Textarea value={editReason} onChange={e => setEditReason(e.target.value)} placeholder="Reason for edit (required)…" rows={2} className="text-xs"/>
+          <div className="flex gap-1.5">
+            <Button size="sm" className="h-6 text-[11px] px-2" disabled={saving || !editReason.trim()} onClick={handleSave}>Save</Button>
+            <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" disabled={saving} onClick={() => { setEditing(false); setEditReason(""); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+      {slashPrompt && (
+        <div className="px-3 py-2 flex flex-col gap-1.5">
+          <Textarea value={slashReason} onChange={e => setSlashReason(e.target.value)} placeholder="Reason for slashing this entry (required)…" rows={2} className="text-xs"/>
+          <div className="flex gap-1.5">
+            <Button
+              size="sm" variant="destructive" className="h-6 text-[11px] px-2"
+              disabled={saving || !slashReason.trim()}
+              onClick={async () => { await onToggleSlash(ed, slashReason); setSlashPrompt(false); setSlashReason(""); }}
+            >
+              Slash
+            </Button>
+            <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" disabled={saving} onClick={() => { setSlashPrompt(false); setSlashReason(""); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+      {ed.slashed && (
+        <div className="px-3 py-2">
+          <SlashBadge slashedByName={ed.slashedByName} slashedAt={ed.slashedAt} slashReason={ed.slashReason}/>
+        </div>
+      )}
+      {ed.editedBy && (
+        <div className="px-3 py-2">
+          <EditBadge
+            editedByName={ed.editedByName}
+            editedAt={ed.editedAt}
+            editReason={ed.editReason}
+            amountChange={ed.originalAmount ? { from: ed.originalAmount, to: ed.amount } : null}
+            descriptionChange={ed.originalPurpose !== null ? { from: ed.originalPurpose, to: ed.purpose } : null}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClaimDetailContent({
+  app, editable = false, savingId = null,
+  onSaveLineEdit, onToggleLineSlash, onSaveEntEdit, onToggleEntSlash,
+}: {
+  app: ClaimApplicationWithDetails;
+  editable?: boolean;
+  savingId?: string | null;
+  onSaveLineEdit?: (item: LineItem, patch: { amountMyr?: string; description?: string }, reason: string) => Promise<void>;
+  onToggleLineSlash?: (item: LineItem, reason?: string) => Promise<void>;
+  onSaveEntEdit?: (item: EntertainmentDetail, patch: { amount?: string; purpose?: string }, reason: string) => Promise<void>;
+  onToggleEntSlash?: (item: EntertainmentDetail, reason?: string) => Promise<void>;
+}) {
   const ft = getFormType(app);
   return (
     <div className="space-y-4">
@@ -183,31 +461,31 @@ function ClaimDetailContent({ app }: { app: ClaimApplicationWithDetails }) {
           </div>
         )}
       </div>
-      {app.lineItems.length > 0 && <LineItemDetail items={app.lineItems}/>}
+      {app.lineItems.length > 0 && (
+        <LineItemDetail
+          items={app.lineItems}
+          editable={editable}
+          savingId={savingId}
+          onSaveEdit={onSaveLineEdit}
+          onToggleSlash={onToggleLineSlash}
+        />
+      )}
       {app.entertainmentDetails && app.entertainmentDetails.length > 0 && (
         <div className="rounded-md border border-border overflow-hidden text-sm">
           <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-semibold text-muted-foreground">
             Entertainment Details ({app.entertainmentDetails.length})
           </div>
           {app.entertainmentDetails.map((ed, idx) => (
-            <div key={idx} className="divide-y divide-border border-t border-border first:border-t-0">
-              {app.entertainmentDetails.length > 1 && (
-                <div className="px-3 py-1.5 bg-muted/20 text-[10px] font-semibold text-muted-foreground uppercase">Entry {idx + 1}</div>
-              )}
-              {[
-                ["Date", ed.eventDate],
-                ["Restaurant / Venue", ed.restaurantName],
-                ["Customer", ed.customerName],
-                ["Dept & Org", ed.departmentOrganization],
-                ["Purpose", ed.purpose],
-                ["Amount", `RM ${parseFloat(ed.amount).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`],
-              ].map(([label, value]) => (
-                <div key={label} className="px-3 py-2 flex justify-between gap-4">
-                  <span className="text-muted-foreground shrink-0 text-xs">{label}</span>
-                  <span className="text-right text-xs font-medium">{value}</span>
-                </div>
-              ))}
-            </div>
+            <EntertainmentDetailRow
+              key={ed.id}
+              ed={ed}
+              idx={idx}
+              showLabel={app.entertainmentDetails.length > 1}
+              editable={editable}
+              saving={savingId === ed.id}
+              onSaveEdit={onSaveEntEdit ?? (async () => {})}
+              onToggleSlash={onToggleEntSlash ?? (async () => {})}
+            />
           ))}
         </div>
       )}
@@ -239,6 +517,108 @@ export function ClaimCheckerClient({ applications }: Props) {
   const [rejectTarget, setRejectTarget] = useState<ClaimApplicationWithDetails | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
+
+  const [savingItemId, setSavingItemId] = useState<string | null>(null);
+
+  // Patches a single line/entertainment item into whichever open sheet(s) reference it,
+  // so the checker sees the correction immediately without a full page reload.
+  function patchLineItem(appId: string, itemId: string, patch: Partial<LineItem>, newTotal: string) {
+    const updater = (prev: ClaimApplicationWithDetails | null) =>
+      prev && prev.id === appId
+        ? { ...prev, amount: newTotal, lineItems: prev.lineItems.map(li => (li.id === itemId ? { ...li, ...patch } : li)) }
+        : prev;
+    setViewTarget(updater);
+    setCheckTarget(updater);
+    setRejectTarget(updater);
+  }
+
+  function patchEntItem(appId: string, itemId: string, patch: Partial<EntertainmentDetail>, newTotal: string) {
+    const updater = (prev: ClaimApplicationWithDetails | null) =>
+      prev && prev.id === appId
+        ? { ...prev, amount: newTotal, entertainmentDetails: prev.entertainmentDetails.map(ed => (ed.id === itemId ? { ...ed, ...patch } : ed)) }
+        : prev;
+    setViewTarget(updater);
+    setCheckTarget(updater);
+    setRejectTarget(updater);
+  }
+
+  async function handleSaveLineEdit(item: LineItem, patch: { amountMyr?: string; description?: string }, reason: string) {
+    setSavingItemId(item.id);
+    try {
+      const result = await editClaimLineItem(item.id, patch, reason);
+      patchLineItem(item.applicationId, item.id, {
+        amountMyr: result.amountMyr,
+        description: result.description,
+        originalAmountMyr: item.originalAmountMyr ?? (patch.amountMyr !== undefined ? item.amountMyr : null),
+        originalDescription: item.originalDescription ?? (patch.description !== undefined ? item.description : null),
+        editedBy: "edited",
+        editedByName: result.editedByName,
+        editedAt: result.editedAt,
+        editReason: reason,
+      }, result.newTotal);
+      toast.success("Line item updated");
+      startTransition(() => router.refresh());
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to edit item");
+    } finally { setSavingItemId(null); }
+  }
+
+  async function handleToggleLineSlash(item: LineItem, reason?: string) {
+    setSavingItemId(item.id);
+    try {
+      const nowSlashed = !item.slashed;
+      const result = await toggleClaimLineItemSlash(item.id, nowSlashed, reason);
+      patchLineItem(item.applicationId, item.id, {
+        slashed: nowSlashed,
+        slashedByName: result.slashedByName,
+        slashedAt: result.slashedAt,
+        slashReason: nowSlashed ? (reason?.trim() ?? null) : null,
+      }, result.newTotal);
+      toast.success(nowSlashed ? "Line item slashed" : "Slash cleared");
+      startTransition(() => router.refresh());
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to update item");
+    } finally { setSavingItemId(null); }
+  }
+
+  async function handleSaveEntEdit(item: EntertainmentDetail, patch: { amount?: string; purpose?: string }, reason: string) {
+    setSavingItemId(item.id);
+    try {
+      const result = await editClaimEntertainmentDetail(item.id, patch, reason);
+      patchEntItem(item.applicationId, item.id, {
+        amount: result.amount,
+        purpose: result.purpose,
+        originalAmount: item.originalAmount ?? (patch.amount !== undefined ? item.amount : null),
+        originalPurpose: item.originalPurpose ?? (patch.purpose !== undefined ? item.purpose : null),
+        editedBy: "edited",
+        editedByName: result.editedByName,
+        editedAt: result.editedAt,
+        editReason: reason,
+      }, result.newTotal);
+      toast.success("Entry updated");
+      startTransition(() => router.refresh());
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to edit entry");
+    } finally { setSavingItemId(null); }
+  }
+
+  async function handleToggleEntSlash(item: EntertainmentDetail, reason?: string) {
+    setSavingItemId(item.id);
+    try {
+      const nowSlashed = !item.slashed;
+      const result = await toggleClaimEntertainmentDetailSlash(item.id, nowSlashed, reason);
+      patchEntItem(item.applicationId, item.id, {
+        slashed: nowSlashed,
+        slashedByName: result.slashedByName,
+        slashedAt: result.slashedAt,
+        slashReason: nowSlashed ? (reason?.trim() ?? null) : null,
+      }, result.newTotal);
+      toast.success(nowSlashed ? "Entry slashed" : "Slash cleared");
+      startTransition(() => router.refresh());
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to update entry");
+    } finally { setSavingItemId(null); }
+  }
 
   async function handleCheck() {
     if (!checkTarget) return;
@@ -361,7 +741,17 @@ export function ClaimCheckerClient({ applications }: Props) {
       <Sheet open={!!viewTarget} onOpenChange={open => !open && setViewTarget(null)}>
         <SheetContent className="w-full sm:max-w-xl max-w-full! overflow-y-auto px-8">
           <SheetHeader className="mb-5"><SheetTitle>Claim Details</SheetTitle></SheetHeader>
-          {viewTarget && <ClaimDetailContent app={viewTarget}/>}
+          {viewTarget && (
+            <ClaimDetailContent
+              app={viewTarget}
+              editable
+              savingId={savingItemId}
+              onSaveLineEdit={handleSaveLineEdit}
+              onToggleLineSlash={handleToggleLineSlash}
+              onSaveEntEdit={handleSaveEntEdit}
+              onToggleEntSlash={handleToggleEntSlash}
+            />
+          )}
           <div className="flex gap-2 pt-6">
             <Button
               className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
@@ -387,7 +777,15 @@ export function ClaimCheckerClient({ applications }: Props) {
           <SheetHeader className="mb-5"><SheetTitle>Check Claim</SheetTitle></SheetHeader>
           {checkTarget && (
             <div className="space-y-4">
-              <ClaimDetailContent app={checkTarget}/>
+              <ClaimDetailContent
+                app={checkTarget}
+                editable
+                savingId={savingItemId}
+                onSaveLineEdit={handleSaveLineEdit}
+                onToggleLineSlash={handleToggleLineSlash}
+                onSaveEntEdit={handleSaveEntEdit}
+                onToggleEntSlash={handleToggleEntSlash}
+              />
               <div className="space-y-1.5">
                 <Label htmlFor="checkComment">Comment <span className="text-muted-foreground font-normal text-xs">(optional)</span></Label>
                 <Textarea id="checkComment" value={checkComment} onChange={e => setCheckComment(e.target.value)} placeholder="Add an optional note for the approver…" rows={3}/>

@@ -32,6 +32,7 @@ import {
   AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon, LoaderIcon, RouteIcon,
   EyeIcon, TrashIcon,
 } from "lucide-react";
+import { EditBadge, SlashBadge } from "@/components/claim/line-item-annotations";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -271,6 +272,206 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge className={`border text-xs ${map[status] ?? "border-border"}`}>{labels[status] ?? status}</Badge>;
 }
 
+// ── Checker review changes (read-only) ──────────────────────────────────────
+
+const READ_ONLY_SECTION_LABELS: Record<string, string> = {
+  [LINE_CATEGORY.TRAVEL]:                "1.1 Travel Expenses",
+  [LINE_CATEGORY.TRAVEL_ACCOMMODATION]:  "1.1.1 Accommodation",
+  [LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE]:"1.1.2 Daily Allowance",
+  [LINE_CATEGORY.TRAVEL_ENTERTAINMENT]:  "1.1.3 Travel Entertainment",
+  [LINE_CATEGORY.TOLL]:                  "1.2.1 Toll / Touch N Go",
+  [LINE_CATEGORY.PARKING]:               "1.2.2 Parking",
+  [LINE_CATEGORY.MOBILE]:                "1.2.3 Mobile Phone",
+  [LINE_CATEGORY.IN_BASE_ENT]:           "1.3 In-Base Entertainment",
+  [LINE_CATEGORY.OTHER_LOCAL]:           "1.4 Other Expenses",
+  [LINE_CATEGORY.OVERSEAS_MYR]:          "2.1 Travel (MYR)",
+  [LINE_CATEGORY.OVERSEAS_FX]:           "2.2 Travel (Foreign Currency)",
+  [LINE_CATEGORY.OVERSEAS_OTHER]:        "2.3 Other Expenses",
+};
+
+function hasReviewChanges(app: ClaimApplicationWithDetails): boolean {
+  return app.lineItems.some(li => li.editedBy || li.slashed) || app.entertainmentDetails.some(ed => ed.editedBy || ed.slashed);
+}
+
+// Read-only view of a claim's line items / entertainment rows, including any
+// checker edits/slashes — visible regardless of the claim's current status.
+function ClaimReadOnlyDetail({ app }: { app: ClaimApplicationWithDetails }) {
+  const lineGroups: Record<string, typeof app.lineItems> = {};
+  for (const item of app.lineItems) {
+    if (!lineGroups[item.category]) lineGroups[item.category] = [];
+    lineGroups[item.category].push(item);
+  }
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md bg-muted/40 border border-border p-4 space-y-1.5 text-sm">
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Ref No.</span>
+          <span className="font-mono text-xs font-medium">{app.applicationNo}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Claim type</span>
+          <span className="font-medium">{app.claimTypeName}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Total Amount</span>
+          <span className="font-bold text-green-700 dark:text-green-400">{fmtAmount(app.amount)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Status</span>
+          <StatusBadge status={app.status}/>
+        </div>
+        {app.description && (
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground shrink-0">Note</span>
+            <span className="text-right text-xs">{app.description}</span>
+          </div>
+        )}
+      </div>
+
+      {app.lineItems.length > 0 && (
+        <div className="rounded-md border border-border overflow-hidden">
+          {Object.entries(lineGroups).map(([cat, rows]) => {
+            const subtotal = rows.reduce((s, r) => s + (r.slashed ? 0 : parseFloat(r.amountMyr)), 0);
+            return (
+              <div key={cat}>
+                <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground">{READ_ONLY_SECTION_LABELS[cat] ?? cat}</span>
+                  <span className="text-xs font-semibold">{fmtAmount(subtotal)}</span>
+                </div>
+                <div className="divide-y divide-border">
+                  {rows.map((item, i) => {
+                    const arCls = item.slashed ? "line-through opacity-50" : "";
+                    return (
+                      <div key={item.id} className="px-3 py-2.5 flex flex-col gap-1 text-xs">
+                        <div className="flex items-start gap-2">
+                          <span className="text-muted-foreground w-4 shrink-0">{i + 1}.</span>
+                          <div className={`flex-1 flex flex-col gap-0.5 min-w-0 ${arCls}`}>
+                            {item.category === LINE_CATEGORY.TRAVEL ? (
+                              <div className="flex items-center gap-1 text-foreground font-medium">
+                                <MapPinIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
+                                <span className="truncate">{item.fromLocation}</span>
+                                <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
+                                <span className="truncate">{item.toLocation}</span>
+                              </div>
+                            ) : item.category === LINE_CATEGORY.OVERSEAS_FX ? (
+                              <div className="text-foreground font-medium">
+                                {item.destination && <span className="mr-1">{item.destination}</span>}
+                                <span className="text-muted-foreground">{item.amountForeign} {item.currency} × {item.exchangeRate}</span>
+                              </div>
+                            ) : (
+                              <span className="text-foreground font-medium truncate">
+                                {item.venue
+                                  ? `${item.venue}${item.description ? ` — ${item.description}` : ""}`
+                                  : item.destination
+                                    ? `${item.destination}${item.description ? ` — ${item.description}` : ""}`
+                                    : item.description}
+                              </span>
+                            )}
+                            <span className="text-muted-foreground">{item.lineDate}</span>
+                          </div>
+                          <span className={`text-green-700 dark:text-green-400 font-medium shrink-0 ${arCls}`}>{fmtAmount(item.amountMyr)}</span>
+                        </div>
+                        {item.slashed && (
+                          <div className="pl-6">
+                            <SlashBadge slashedByName={item.slashedByName} slashedAt={item.slashedAt} slashReason={item.slashReason}/>
+                          </div>
+                        )}
+                        {item.editedBy && (
+                          <div className="pl-6">
+                            <EditBadge
+                              editedByName={item.editedByName}
+                              editedAt={item.editedAt}
+                              editReason={item.editReason}
+                              amountChange={item.originalAmountMyr ? { from: item.originalAmountMyr, to: item.amountMyr } : null}
+                              descriptionChange={item.originalDescription !== null ? { from: item.originalDescription, to: item.description } : null}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {app.entertainmentDetails.length > 0 && (
+        <div className="rounded-md border border-border overflow-hidden text-sm">
+          <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-semibold text-muted-foreground">
+            Entertainment Details ({app.entertainmentDetails.length})
+          </div>
+          {app.entertainmentDetails.map((ed, idx) => {
+            const arCls = ed.slashed ? "line-through opacity-50" : "";
+            return (
+              <div key={ed.id} className="divide-y divide-border border-t border-border first:border-t-0">
+                {app.entertainmentDetails.length > 1 && (
+                  <div className="px-3 py-1.5 bg-muted/20 text-[10px] font-semibold text-muted-foreground uppercase">Entry {idx + 1}</div>
+                )}
+                {[
+                  ["Date", ed.eventDate],
+                  ["Restaurant / Venue", ed.restaurantName],
+                  ["Customer", ed.customerName],
+                  ["Dept & Org", ed.departmentOrganization],
+                  ["Purpose", ed.purpose],
+                  ["Amount", fmtAmount(ed.amount)],
+                ].map(([label, value]) => (
+                  <div key={label} className={`px-3 py-2 flex justify-between gap-4 ${arCls}`}>
+                    <span className="text-muted-foreground shrink-0 text-xs">{label}</span>
+                    <span className="text-right text-xs font-medium">{value}</span>
+                  </div>
+                ))}
+                {ed.slashed && (
+                  <div className="px-3 py-2">
+                    <SlashBadge slashedByName={ed.slashedByName} slashedAt={ed.slashedAt} slashReason={ed.slashReason}/>
+                  </div>
+                )}
+                {ed.editedBy && (
+                  <div className="px-3 py-2">
+                    <EditBadge
+                      editedByName={ed.editedByName}
+                      editedAt={ed.editedAt}
+                      editReason={ed.editReason}
+                      amountChange={ed.originalAmount ? { from: ed.originalAmount, to: ed.amount } : null}
+                      descriptionChange={ed.originalPurpose !== null ? { from: ed.originalPurpose, to: ed.purpose } : null}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+          Receipts & Documents ({app.documents.length})
+        </p>
+        {app.documents.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No documents attached.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {app.documents.map(doc => (
+              <a
+                key={doc.id}
+                href={`/api/claim/download/${doc.fileKey}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs hover:bg-muted/50 transition-colors group"
+              >
+                <FileDownIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0 group-hover:text-primary"/>
+                <span className="flex-1 truncate text-foreground font-medium">{doc.fileName}</span>
+                <span className="text-blue-600 dark:text-blue-400 shrink-0 font-medium">Download</span>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Compact row field ──────────────────────────────────────────────────────
 
 function Field({ children, className="" }: { children: React.ReactNode; className?: string }) {
@@ -359,6 +560,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   // ── Action states ────────────────────────────────────────────────────────
   const [cancelTarget, setCancelTarget] = useState<ClaimApplicationWithDetails | null>(null);
   const [viewDocsApp, setViewDocsApp] = useState<ClaimApplicationWithDetails | null>(null);
+  const [viewClaimTarget, setViewClaimTarget] = useState<ClaimApplicationWithDetails | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [editingApp, setEditingApp] = useState<ClaimApplicationWithDetails | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -459,7 +661,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     setEditingApp(app);
     setSelectedTypeId(app.claimTypeId);
     const periodMatch = app.claimDate.match(/^(\d{4}-\d{2})-\d{2}$/);
-    setClaimPeriod(periodMatch ? periodMatch[1] : app.claimDate);
+    setClaimPeriod(periodMatch ? periodMatch[1] : "");
     setNote(app.description !== "Draft" ? app.description : "");
     setQueuedFiles([]);
     setUploadedFiles({});
@@ -592,6 +794,10 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     e.preventDefault();
     if (!selectedType || !formType) return;
     if (!claimPeriod) { toast.error("Select a claim period / date"); return; }
+    if ((formType === CLAIM_FORM.LOCAL || formType === CLAIM_FORM.OVERSEAS) && !/^\d{4}-\d{2}$/.test(claimPeriod)) {
+      toast.error("Claim period is invalid — please re-select it");
+      return;
+    }
     setSubmitting(true);
     try {
       let lineItems: ClaimLineItemInput[] | undefined;
@@ -664,10 +870,13 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
         entertainmentDetails = validEnt.map(r => ({ eventDate: r.eventDate, restaurantName: r.restaurantName, customerName: r.customerName, departmentOrganization: r.departmentOrganization, purpose: r.purpose, amount: r.amount }));
       }
 
+      const periodLabel = /^\d{4}-\d{2}$/.test(claimPeriod)
+        ? new Date(claimPeriod + "-02").toLocaleDateString("en-MY", { month: "long", year: "numeric" })
+        : null;
       const autoDesc = formType === CLAIM_FORM.LOCAL
-        ? (note.trim() || `Local Claim — ${new Date(claimPeriod+"-02").toLocaleDateString("en-MY",{month:"long",year:"numeric"})}`)
+        ? (note.trim() || (periodLabel ? `Local Claim — ${periodLabel}` : "Local Claim"))
         : formType === CLAIM_FORM.OVERSEAS
-        ? (note.trim() || `Overseas Claim — ${new Date(claimPeriod+"-02").toLocaleDateString("en-MY",{month:"long",year:"numeric"})}`)
+        ? (note.trim() || (periodLabel ? `Overseas Claim — ${periodLabel}` : "Overseas Claim"))
         : (entRows[0]?.purpose.trim() || "Entertainment");
 
       const claimData = { claimTypeId: selectedType.id, claimPeriod, description: autoDesc, lineItems, entertainmentDetails };
@@ -846,7 +1055,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                   <TableHead className="max-w-xs">Description</TableHead>
                   <TableHead className="w-28 text-right">Amount</TableHead>
                   <TableHead className="w-24">Status</TableHead>
-                  <TableHead className="w-20 text-right">Actions</TableHead>
+                  <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -860,6 +1069,11 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                           <span className="text-sm font-medium">{app.claimTypeName}</span>
                           {ct && <Badge variant="outline" className="text-xs px-1.5 py-0 h-5">{FORM_LABELS[ct.category] ?? ct.category}</Badge>}
                           {app.lineItems.length > 0 && <Badge variant="outline" className="text-xs px-1.5 py-0 h-5">{app.lineItems.length} items</Badge>}
+                          {hasReviewChanges(app) && (
+                            <Badge className="text-xs px-1.5 py-0 h-5 bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700">
+                              Reviewed with changes
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{fmtClaimDate(app.claimDate, ct?.category ?? "")}</TableCell>
@@ -868,6 +1082,9 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                       <TableCell><StatusBadge status={app.status} /></TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" title="View claim" onClick={() => setViewClaimTarget(app)}>
+                            <EyeIcon className="h-3.5 w-3.5"/>
+                          </Button>
                           {app.documents.length > 0 && (
                             <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" title="View documents" onClick={() => setViewDocsApp(app)}>
                               <EyeIcon className="h-3.5 w-3.5"/>
@@ -921,6 +1138,15 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               <Button variant="outline" onClick={() => setCancelTarget(null)} disabled={cancelling}>Keep</Button>
             </div>
           </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* View Claim Sheet — read-only, includes any checker edits/slashes */}
+      <Sheet open={!!viewClaimTarget} onOpenChange={open => !open && setViewClaimTarget(null)}>
+        <SheetContent className="w-full sm:max-w-xl max-w-full! overflow-y-auto px-8">
+          <SheetHeader className="mb-5"><SheetTitle>Claim Details</SheetTitle></SheetHeader>
+          {viewClaimTarget && <ClaimReadOnlyDetail app={viewClaimTarget}/>}
+          <Button variant="outline" className="w-full mt-6" onClick={() => setViewClaimTarget(null)}>Close</Button>
         </SheetContent>
       </Sheet>
 

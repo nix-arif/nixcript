@@ -74,11 +74,20 @@ export type ApplyClaimInput = {
   entertainmentDetails?: ClaimEntertainmentDetailInput[]; // ENTERTAINMENT_FORM (multiple rows)
 };
 
+export type ClaimLineItemWithMeta = ClaimLineItemRow & {
+  editedByName: string | null;
+  slashedByName: string | null;
+};
+export type ClaimEntertainmentDetailWithMeta = ClaimEntertainmentDetailRow & {
+  editedByName: string | null;
+  slashedByName: string | null;
+};
+
 export type ClaimApplicationWithDetails = ClaimApplicationRow & {
   applicantName: string | null;
   documents: ClaimDocumentRow[];
-  lineItems: ClaimLineItemRow[];
-  entertainmentDetails: ClaimEntertainmentDetailRow[];
+  lineItems: ClaimLineItemWithMeta[];
+  entertainmentDetails: ClaimEntertainmentDetailWithMeta[];
 };
 
 /* =========================
@@ -182,8 +191,8 @@ async function notifyUser(
 
 async function loadExtras(appIds: string[]): Promise<{
   docMap: Record<string, ClaimDocumentRow[]>;
-  lineMap: Record<string, ClaimLineItemRow[]>;
-  entMap: Record<string, ClaimEntertainmentDetailRow[]>;
+  lineMap: Record<string, ClaimLineItemWithMeta[]>;
+  entMap: Record<string, ClaimEntertainmentDetailWithMeta[]>;
 }> {
   const [docs, lines, ents] = await Promise.all([
     db.select().from(claimDocument).where(inArray(claimDocument.applicationId, appIds)),
@@ -198,20 +207,41 @@ async function loadExtras(appIds: string[]): Promise<{
       .where(inArray(claimEntertainmentDetail.applicationId, appIds))
       .orderBy(asc(claimEntertainmentDetail.sortOrder), asc(claimEntertainmentDetail.createdAt)),
   ]);
+
+  // Resolve editedBy/slashedBy user ids to display names in a single batch query
+  const userIds = [
+    ...new Set(
+      [...lines, ...ents].flatMap((r) => [r.editedBy, r.slashedBy]).filter((id): id is string => !!id),
+    ),
+  ];
+  const nameMap: Record<string, string | null> = {};
+  if (userIds.length > 0) {
+    const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds));
+    for (const u of users) nameMap[u.id] = u.name;
+  }
+
   const docMap: Record<string, ClaimDocumentRow[]> = {};
   for (const doc of docs) {
     if (!docMap[doc.applicationId]) docMap[doc.applicationId] = [];
     docMap[doc.applicationId].push(doc);
   }
-  const lineMap: Record<string, ClaimLineItemRow[]> = {};
+  const lineMap: Record<string, ClaimLineItemWithMeta[]> = {};
   for (const li of lines) {
     if (!lineMap[li.applicationId]) lineMap[li.applicationId] = [];
-    lineMap[li.applicationId].push(li);
+    lineMap[li.applicationId].push({
+      ...li,
+      editedByName: li.editedBy ? nameMap[li.editedBy] ?? null : null,
+      slashedByName: li.slashedBy ? nameMap[li.slashedBy] ?? null : null,
+    });
   }
-  const entMap: Record<string, ClaimEntertainmentDetailRow[]> = {};
+  const entMap: Record<string, ClaimEntertainmentDetailWithMeta[]> = {};
   for (const e of ents) {
     if (!entMap[e.applicationId]) entMap[e.applicationId] = [];
-    entMap[e.applicationId].push(e);
+    entMap[e.applicationId].push({
+      ...e,
+      editedByName: e.editedBy ? nameMap[e.editedBy] ?? null : null,
+      slashedByName: e.slashedBy ? nameMap[e.slashedBy] ?? null : null,
+    });
   }
   return { docMap, lineMap, entMap };
 }
@@ -694,17 +724,17 @@ export async function approveClaim(appId: string, comment?: string): Promise<voi
         .where(eq(claimCategoryAccount.organizationId, orgId));
       const catMap = Object.fromEntries(categoryMappings.map((m) => [m.category, m.ledgerAccountId]));
 
-      // Fetch the claim's line items
+      // Fetch the claim's line items (excluding any slashed by the checker)
       const lineItems = await db
         .select({ category: claimLineItem.category, amountMyr: claimLineItem.amountMyr })
         .from(claimLineItem)
-        .where(eq(claimLineItem.applicationId, appId));
+        .where(and(eq(claimLineItem.applicationId, appId), eq(claimLineItem.slashed, false)));
 
-      // Fetch entertainment detail if present
+      // Fetch entertainment detail if present (excluding any slashed by the checker)
       const [entDetail] = await db
         .select({ amount: claimEntertainmentDetail.amount })
         .from(claimEntertainmentDetail)
-        .where(eq(claimEntertainmentDetail.applicationId, appId))
+        .where(and(eq(claimEntertainmentDetail.applicationId, appId), eq(claimEntertainmentDetail.slashed, false)))
         .limit(1);
 
       // Build debit lines: group amount by resolved accountId
@@ -875,7 +905,10 @@ export async function cancelClaim(appId: string, reason?: string): Promise<void>
    DRAFT / EDIT / RESUBMIT
 ========================= */
 
-// Shared helper: replace line items + entertainment detail for an existing application
+// Shared helper: replace line items + entertainment detail for an existing application.
+// Deletes and reinserts every row with fresh ids, so any checker edit/slash annotations
+// (editedBy/editReason, slashed/slashReason) are intentionally wiped — a resubmission
+// starts a fresh review cycle, not a continuation of the prior one.
 async function replaceClaimItems(
   appId: string,
   orgId: string,
@@ -1129,6 +1162,172 @@ export async function getPendingClaimChecks(): Promise<ClaimApplicationWithDetai
     lineItems: lineMap[app.id] ?? [],
     entertainmentDetails: entMap[app.id] ?? [],
   }));
+}
+
+// Recomputes claimApplication.amount from all non-slashed line items + entertainment rows
+async function recomputeClaimTotal(appId: string): Promise<string> {
+  const [lineSum, entSum] = await Promise.all([
+    db
+      .select({ amt: sql<string>`coalesce(sum(${claimLineItem.amountMyr}::numeric), 0)` })
+      .from(claimLineItem)
+      .where(and(eq(claimLineItem.applicationId, appId), eq(claimLineItem.slashed, false))),
+    db
+      .select({ amt: sql<string>`coalesce(sum(${claimEntertainmentDetail.amount}::numeric), 0)` })
+      .from(claimEntertainmentDetail)
+      .where(and(eq(claimEntertainmentDetail.applicationId, appId), eq(claimEntertainmentDetail.slashed, false))),
+  ]);
+  const total = (parseFloat(lineSum[0]?.amt ?? "0") + parseFloat(entSum[0]?.amt ?? "0")).toFixed(2);
+  await db.update(claimApplication).set({ amount: total, updatedAt: new Date() }).where(eq(claimApplication.id, appId));
+  return total;
+}
+
+async function resolveUserName(userId: string): Promise<string | null> {
+  const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
+  return u?.name ?? null;
+}
+
+export async function editClaimLineItem(
+  itemId: string,
+  data: { amountMyr?: string; description?: string },
+  reason: string,
+): Promise<{ amountMyr: string; description: string | null; editedByName: string | null; editedAt: Date; newTotal: string }> {
+  const { orgId, userId } = await requireAccess("claim:check");
+  if (!reason.trim()) throw new Error("An edit reason is required");
+  const [item] = await db.select().from(claimLineItem).where(eq(claimLineItem.id, itemId)).limit(1);
+  if (!item) throw new Error("Line item not found");
+  const [app] = await db
+    .select()
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, item.applicationId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app) throw new Error("Application not found");
+  if (app.status !== "PENDING") throw new Error("Only pending applications can be edited");
+  if (app.userId === userId) throw new Error("You cannot edit your own claim");
+
+  const patch: { amountMyr?: string; description?: string | null; originalAmountMyr?: string; originalDescription?: string | null; editedBy: string; editedAt: Date; editReason: string } = {
+    editedBy: userId,
+    editedAt: new Date(),
+    editReason: reason.trim(),
+  };
+  if (data.amountMyr !== undefined) {
+    if (item.originalAmountMyr === null) patch.originalAmountMyr = item.amountMyr;
+    patch.amountMyr = data.amountMyr;
+  }
+  if (data.description !== undefined) {
+    if (item.originalDescription === null) patch.originalDescription = item.description;
+    patch.description = data.description.trim() || null;
+  }
+  await db.update(claimLineItem).set(patch).where(eq(claimLineItem.id, itemId));
+  const newTotal = await recomputeClaimTotal(item.applicationId);
+  const editedByName = await resolveUserName(userId);
+  return {
+    amountMyr: patch.amountMyr ?? item.amountMyr,
+    description: patch.description !== undefined ? patch.description : item.description,
+    editedByName,
+    editedAt: patch.editedAt,
+    newTotal,
+  };
+}
+
+export async function toggleClaimLineItemSlash(
+  itemId: string,
+  slashed: boolean,
+  reason?: string,
+): Promise<{ slashedByName: string | null; slashedAt: Date | null; newTotal: string }> {
+  const { orgId, userId } = await requireAccess("claim:check");
+  if (slashed && !reason?.trim()) throw new Error("A slash reason is required");
+  const [item] = await db.select().from(claimLineItem).where(eq(claimLineItem.id, itemId)).limit(1);
+  if (!item) throw new Error("Line item not found");
+  const [app] = await db
+    .select()
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, item.applicationId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app) throw new Error("Application not found");
+  if (app.status !== "PENDING") throw new Error("Only pending applications can be reviewed");
+  if (app.userId === userId) throw new Error("You cannot slash your own claim");
+
+  const now = slashed ? new Date() : null;
+  const by = slashed ? userId : null;
+  await db
+    .update(claimLineItem)
+    .set({ slashed, slashedBy: by, slashedAt: now, slashReason: slashed ? (reason?.trim() ?? null) : null })
+    .where(eq(claimLineItem.id, itemId));
+  const newTotal = await recomputeClaimTotal(item.applicationId);
+  const slashedByName = slashed ? await resolveUserName(userId) : null;
+  return { slashedByName, slashedAt: now, newTotal };
+}
+
+export async function editClaimEntertainmentDetail(
+  itemId: string,
+  data: { amount?: string; purpose?: string },
+  reason: string,
+): Promise<{ amount: string; purpose: string; editedByName: string | null; editedAt: Date; newTotal: string }> {
+  const { orgId, userId } = await requireAccess("claim:check");
+  if (!reason.trim()) throw new Error("An edit reason is required");
+  const [item] = await db.select().from(claimEntertainmentDetail).where(eq(claimEntertainmentDetail.id, itemId)).limit(1);
+  if (!item) throw new Error("Entertainment detail not found");
+  const [app] = await db
+    .select()
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, item.applicationId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app) throw new Error("Application not found");
+  if (app.status !== "PENDING") throw new Error("Only pending applications can be edited");
+  if (app.userId === userId) throw new Error("You cannot edit your own claim");
+
+  const patch: { amount?: string; purpose?: string; originalAmount?: string; originalPurpose?: string; editedBy: string; editedAt: Date; editReason: string } = {
+    editedBy: userId,
+    editedAt: new Date(),
+    editReason: reason.trim(),
+  };
+  if (data.amount !== undefined) {
+    if (item.originalAmount === null) patch.originalAmount = item.amount;
+    patch.amount = data.amount;
+  }
+  if (data.purpose !== undefined) {
+    if (item.originalPurpose === null) patch.originalPurpose = item.purpose;
+    patch.purpose = data.purpose.trim();
+  }
+  await db.update(claimEntertainmentDetail).set(patch).where(eq(claimEntertainmentDetail.id, itemId));
+  const newTotal = await recomputeClaimTotal(item.applicationId);
+  const editedByName = await resolveUserName(userId);
+  return {
+    amount: patch.amount ?? item.amount,
+    purpose: patch.purpose ?? item.purpose,
+    editedByName,
+    editedAt: patch.editedAt,
+    newTotal,
+  };
+}
+
+export async function toggleClaimEntertainmentDetailSlash(
+  itemId: string,
+  slashed: boolean,
+  reason?: string,
+): Promise<{ slashedByName: string | null; slashedAt: Date | null; newTotal: string }> {
+  const { orgId, userId } = await requireAccess("claim:check");
+  if (slashed && !reason?.trim()) throw new Error("A slash reason is required");
+  const [item] = await db.select().from(claimEntertainmentDetail).where(eq(claimEntertainmentDetail.id, itemId)).limit(1);
+  if (!item) throw new Error("Entertainment detail not found");
+  const [app] = await db
+    .select()
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, item.applicationId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app) throw new Error("Application not found");
+  if (app.status !== "PENDING") throw new Error("Only pending applications can be reviewed");
+  if (app.userId === userId) throw new Error("You cannot slash your own claim");
+
+  const now = slashed ? new Date() : null;
+  const by = slashed ? userId : null;
+  await db
+    .update(claimEntertainmentDetail)
+    .set({ slashed, slashedBy: by, slashedAt: now, slashReason: slashed ? (reason?.trim() ?? null) : null })
+    .where(eq(claimEntertainmentDetail.id, itemId));
+  const newTotal = await recomputeClaimTotal(item.applicationId);
+  const slashedByName = slashed ? await resolveUserName(userId) : null;
+  return { slashedByName, slashedAt: now, newTotal };
 }
 
 export async function checkClaim(appId: string, comment?: string): Promise<void> {

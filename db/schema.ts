@@ -2983,6 +2983,17 @@ export const claimLineItem = pgTable(
     amountMyr: text("amount_myr").notNull(),
     sortOrder: integer("sort_order").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    // Checker correction (edit) — frozen snapshot set only on first edit
+    originalAmountMyr: text("original_amount_myr"),
+    originalDescription: text("original_description"),
+    editedBy: text("edited_by").references(() => user.id),
+    editedAt: timestamp("edited_at"),
+    editReason: text("edit_reason"),
+    // Checker slash (reject this line) — toggle
+    slashed: boolean("slashed").notNull().default(false),
+    slashedBy: text("slashed_by").references(() => user.id),
+    slashedAt: timestamp("slashed_at"),
+    slashReason: text("slash_reason"),
   },
   (t) => [
     index("claim_line_item_app_idx").on(t.applicationId),
@@ -3004,6 +3015,17 @@ export const claimEntertainmentDetail = pgTable("claim_entertainment_detail", {
   amount: text("amount").notNull(),
   sortOrder: integer("sort_order").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // Checker correction (edit) — frozen snapshot set only on first edit
+  originalAmount: text("original_amount"),
+  originalPurpose: text("original_purpose"),
+  editedBy: text("edited_by").references(() => user.id),
+  editedAt: timestamp("edited_at"),
+  editReason: text("edit_reason"),
+  // Checker slash (reject this line) — toggle
+  slashed: boolean("slashed").notNull().default(false),
+  slashedBy: text("slashed_by").references(() => user.id),
+  slashedAt: timestamp("slashed_at"),
+  slashReason: text("slash_reason"),
 },
 (t) => [
   index("claim_ent_detail_app_idx").on(t.applicationId),
