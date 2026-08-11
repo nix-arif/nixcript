@@ -2747,6 +2747,10 @@ export const leaveEntitlement = pgTable(
     usedDays: text("used_days").notNull().default("0"),
     pendingDays: text("pending_days").notNull().default("0"),
     carryForwardDays: text("carry_forward_days").notNull().default("0"),
+    // Manual starting balance carried in from before this system (e.g. migrating a running company)
+    openingBalance: text("opening_balance").notNull().default("0"),
+    openingBalanceSetBy: text("opening_balance_set_by").references(() => user.id),
+    openingBalanceSetAt: timestamp("opening_balance_set_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },

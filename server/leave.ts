@@ -37,6 +37,7 @@ export type MyLeaveBalance = LeaveEntitlementRow & {
   isPaid: boolean;
   allowHalfDay: boolean;
   remainingDays: string;
+  openingBalanceSetByName: string | null;
 };
 
 export type ApplyLeaveInput = {
@@ -234,6 +235,9 @@ async function ensureEntitlement(
     usedDays: "0",
     pendingDays: "0",
     carryForwardDays: carryForwardDays.toString(),
+    openingBalance: "0",
+    openingBalanceSetBy: null,
+    openingBalanceSetAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -480,8 +484,7 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
    LEAVE BALANCES
 ========================= */
 
-export async function getMyLeaveBalances(): Promise<MyLeaveBalance[]> {
-  const { orgId, userId } = await requireAccess("leave:read:own");
+async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBalance[]> {
   const year = new Date().getFullYear();
   const types = await db
     .select()
@@ -489,24 +492,74 @@ export async function getMyLeaveBalances(): Promise<MyLeaveBalance[]> {
     .where(and(eq(leaveType.organizationId, orgId), eq(leaveType.isActive, true)))
     .orderBy(asc(leaveType.sortOrder));
 
-  const results: MyLeaveBalance[] = [];
+  const ents: (typeof leaveEntitlement.$inferSelect)[] = [];
   for (const type of types) {
-    const ent = await ensureEntitlement(orgId, userId, type, year);
+    ents.push(await ensureEntitlement(orgId, userId, type, year));
+  }
+
+  const setByIds = [...new Set(ents.map((e) => e.openingBalanceSetBy).filter((id): id is string => !!id))];
+  const nameMap: Record<string, string | null> = {};
+  if (setByIds.length > 0) {
+    const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, setByIds));
+    for (const u of users) nameMap[u.id] = u.name;
+  }
+
+  return types.map((type, i) => {
+    const ent = ents[i];
     const entitled = parseFloat(ent.entitledDays);
     const carry = parseFloat(ent.carryForwardDays);
+    const opening = parseFloat(ent.openingBalance);
     const used = parseFloat(ent.usedDays);
     const pending = parseFloat(ent.pendingDays);
-    const remaining = entitled + carry - used - pending;
-    results.push({
+    const remaining = entitled + carry + opening - used - pending;
+    return {
       ...ent,
       leaveTypeName: type.name,
       leaveTypeCode: type.code,
       isPaid: type.isPaid,
       allowHalfDay: type.allowHalfDay,
       remainingDays: remaining.toFixed(1),
-    });
-  }
-  return results;
+      openingBalanceSetByName: ent.openingBalanceSetBy ? nameMap[ent.openingBalanceSetBy] ?? null : null,
+    };
+  });
+}
+
+export async function getMyLeaveBalances(): Promise<MyLeaveBalance[]> {
+  const { orgId, userId } = await requireAccess("leave:read:own");
+  return computeBalances(orgId, userId);
+}
+
+export async function getMemberLeaveBalances(userId: string): Promise<MyLeaveBalance[]> {
+  const { orgId } = await requireAccess("leave:manage");
+  return computeBalances(orgId, userId);
+}
+
+export async function setOpeningBalance(
+  userId: string,
+  leaveTypeId: string,
+  year: number,
+  days: number,
+): Promise<void> {
+  const { orgId, userId: actorId } = await requireAccess("leave:manage");
+  if (!Number.isFinite(days) || days < 0) throw new Error("Opening balance must be a non-negative number");
+
+  const [type] = await db
+    .select()
+    .from(leaveType)
+    .where(and(eq(leaveType.id, leaveTypeId), eq(leaveType.organizationId, orgId)))
+    .limit(1);
+  if (!type) throw new Error("Leave type not found");
+
+  const ent = await ensureEntitlement(orgId, userId, type, year);
+  await db
+    .update(leaveEntitlement)
+    .set({
+      openingBalance: days.toFixed(1),
+      openingBalanceSetBy: actorId,
+      openingBalanceSetAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveEntitlement.id, ent.id));
 }
 
 /* =========================
@@ -666,9 +719,10 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
   const ent = await ensureEntitlement(orgId, userId, lt, year);
   const entitled = parseFloat(ent.entitledDays);
   const carry = parseFloat(ent.carryForwardDays);
+  const opening = parseFloat(ent.openingBalance);
   const used = parseFloat(ent.usedDays);
   const pending = parseFloat(ent.pendingDays);
-  const available = entitled + carry - used - pending;
+  const available = entitled + carry + opening - used - pending;
 
   if (totalDays > available) {
     throw new Error(

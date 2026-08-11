@@ -1191,7 +1191,7 @@ export async function editClaimLineItem(
   data: { amountMyr?: string; description?: string },
   reason: string,
 ): Promise<{ amountMyr: string; description: string | null; editedByName: string | null; editedAt: Date; newTotal: string }> {
-  const { orgId, userId } = await requireAccess("claim:check");
+  const { orgId, userId, userName } = await requireAccess("claim:check");
   if (!reason.trim()) throw new Error("An edit reason is required");
   const [item] = await db.select().from(claimLineItem).where(eq(claimLineItem.id, itemId)).limit(1);
   if (!item) throw new Error("Line item not found");
@@ -1220,6 +1220,17 @@ export async function editClaimLineItem(
   await db.update(claimLineItem).set(patch).where(eq(claimLineItem.id, itemId));
   const newTotal = await recomputeClaimTotal(item.applicationId);
   const editedByName = await resolveUserName(userId);
+
+  const changeDesc = patch.amountMyr !== undefined
+    ? `RM ${parseFloat(item.amountMyr).toFixed(2)} → RM ${parseFloat(patch.amountMyr).toFixed(2)}`
+    : "description";
+  await notifyUser(orgId, app.userId, {
+    type: "claim:line-edited",
+    title: `Claim Line Edited: ${app.claimTypeName}`,
+    body: `${userName} corrected a line item (${changeDesc}) on your ${app.claimTypeName} claim (${app.applicationNo}). Reason: ${reason.trim()}`,
+    link: `/dashboard/human-resources/claim`,
+  });
+
   return {
     amountMyr: patch.amountMyr ?? item.amountMyr,
     description: patch.description !== undefined ? patch.description : item.description,
@@ -1234,7 +1245,7 @@ export async function toggleClaimLineItemSlash(
   slashed: boolean,
   reason?: string,
 ): Promise<{ slashedByName: string | null; slashedAt: Date | null; newTotal: string }> {
-  const { orgId, userId } = await requireAccess("claim:check");
+  const { orgId, userId, userName } = await requireAccess("claim:check");
   if (slashed && !reason?.trim()) throw new Error("A slash reason is required");
   const [item] = await db.select().from(claimLineItem).where(eq(claimLineItem.id, itemId)).limit(1);
   if (!item) throw new Error("Line item not found");
@@ -1255,6 +1266,16 @@ export async function toggleClaimLineItemSlash(
     .where(eq(claimLineItem.id, itemId));
   const newTotal = await recomputeClaimTotal(item.applicationId);
   const slashedByName = slashed ? await resolveUserName(userId) : null;
+
+  if (slashed) {
+    await notifyUser(orgId, app.userId, {
+      type: "claim:line-slashed",
+      title: `Claim Line Slashed: ${app.claimTypeName}`,
+      body: `${userName} slashed a line item (RM ${parseFloat(item.amountMyr).toFixed(2)}) on your ${app.claimTypeName} claim (${app.applicationNo}). Reason: ${reason?.trim()}`,
+      link: `/dashboard/human-resources/claim`,
+    });
+  }
+
   return { slashedByName, slashedAt: now, newTotal };
 }
 
@@ -1263,7 +1284,7 @@ export async function editClaimEntertainmentDetail(
   data: { amount?: string; purpose?: string },
   reason: string,
 ): Promise<{ amount: string; purpose: string; editedByName: string | null; editedAt: Date; newTotal: string }> {
-  const { orgId, userId } = await requireAccess("claim:check");
+  const { orgId, userId, userName } = await requireAccess("claim:check");
   if (!reason.trim()) throw new Error("An edit reason is required");
   const [item] = await db.select().from(claimEntertainmentDetail).where(eq(claimEntertainmentDetail.id, itemId)).limit(1);
   if (!item) throw new Error("Entertainment detail not found");
@@ -1292,6 +1313,17 @@ export async function editClaimEntertainmentDetail(
   await db.update(claimEntertainmentDetail).set(patch).where(eq(claimEntertainmentDetail.id, itemId));
   const newTotal = await recomputeClaimTotal(item.applicationId);
   const editedByName = await resolveUserName(userId);
+
+  const changeDesc = patch.amount !== undefined
+    ? `RM ${parseFloat(item.amount).toFixed(2)} → RM ${parseFloat(patch.amount).toFixed(2)}`
+    : "purpose";
+  await notifyUser(orgId, app.userId, {
+    type: "claim:line-edited",
+    title: `Claim Entry Edited: ${app.claimTypeName}`,
+    body: `${userName} corrected an entertainment entry (${changeDesc}) on your ${app.claimTypeName} claim (${app.applicationNo}). Reason: ${reason.trim()}`,
+    link: `/dashboard/human-resources/claim`,
+  });
+
   return {
     amount: patch.amount ?? item.amount,
     purpose: patch.purpose ?? item.purpose,
@@ -1306,7 +1338,7 @@ export async function toggleClaimEntertainmentDetailSlash(
   slashed: boolean,
   reason?: string,
 ): Promise<{ slashedByName: string | null; slashedAt: Date | null; newTotal: string }> {
-  const { orgId, userId } = await requireAccess("claim:check");
+  const { orgId, userId, userName } = await requireAccess("claim:check");
   if (slashed && !reason?.trim()) throw new Error("A slash reason is required");
   const [item] = await db.select().from(claimEntertainmentDetail).where(eq(claimEntertainmentDetail.id, itemId)).limit(1);
   if (!item) throw new Error("Entertainment detail not found");
@@ -1327,6 +1359,16 @@ export async function toggleClaimEntertainmentDetailSlash(
     .where(eq(claimEntertainmentDetail.id, itemId));
   const newTotal = await recomputeClaimTotal(item.applicationId);
   const slashedByName = slashed ? await resolveUserName(userId) : null;
+
+  if (slashed) {
+    await notifyUser(orgId, app.userId, {
+      type: "claim:line-slashed",
+      title: `Claim Entry Slashed: ${app.claimTypeName}`,
+      body: `${userName} slashed an entertainment entry (RM ${parseFloat(item.amount).toFixed(2)}) on your ${app.claimTypeName} claim (${app.applicationNo}). Reason: ${reason?.trim()}`,
+      link: `/dashboard/human-resources/claim`,
+    });
+  }
+
   return { slashedByName, slashedAt: now, newTotal };
 }
 

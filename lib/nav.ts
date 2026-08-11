@@ -148,6 +148,7 @@ export const navConfig: NavGroup[] = [
       { title: "My Leave",       url: "/dashboard/human-resources/leave",                permission: "leave:read:own"   },
       { title: "Leave Approvals",url: "/dashboard/human-resources/leave/approvals",      permission: "leave:approve"    },
       { title: "Leave Types",    url: "/dashboard/human-resources/leave/types",          permission: "leave:manage"     },
+      { title: "Leave Balances", url: "/dashboard/human-resources/leave/balances",       permission: "leave:manage"     },
       { title: "My Claims",      url: "/dashboard/human-resources/claim",               permission: "claim:read:own"   },
       { title: "Claim Checker",  url: "/dashboard/human-resources/claim/checker",        permission: "claim:check"      },
       { title: "Claim Approvals",url: "/dashboard/human-resources/claim/approvals",      permission: "claim:approve"    },
