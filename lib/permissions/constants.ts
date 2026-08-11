@@ -453,7 +453,27 @@ export type PermissionBundle = {
   permissions: PermissionKey[];
 };
 
+// Baseline self-service access every regular employee should have —
+// matches the tail already duplicated across every DEPT_ROLE_PERMISSIONS[...].member array.
+export const BASIC_PERMISSIONS: PermissionKey[] = [
+  "member:read",
+  "department:read",
+  "profile:read",
+  "profile:update",
+  "payslip:read:own",
+  "claim:read:own",
+  "claim:apply",
+  "leave:read:own",
+  "leave:apply",
+];
+
 export const PERMISSION_BUNDLES: PermissionBundle[] = [
+  {
+    id: "basic-employee-access",
+    label: "Basic Employee Access",
+    description: "Baseline self-service access every employee should have: view own profile/payslip, apply for leave, and submit claims.",
+    permissions: BASIC_PERMISSIONS,
+  },
   {
     id: "quotation-creator",
     label: "Quotation Creator",
