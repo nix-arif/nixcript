@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import type { ClaimApplicationWithDetails } from "@/server/claim";
 import { CLAIM_FORM } from "@/lib/claim/constants";
-import { ClipboardListIcon, PrinterIcon, SearchIcon } from "lucide-react";
+import { ClipboardListIcon, PrinterIcon, SearchIcon, ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon } from "lucide-react";
 
 const FORM_LABELS: Record<string, string> = {
   LOCAL: "Local Reimbursement",
@@ -27,6 +27,37 @@ function fmtClaimDate(claimDate: string, formType: string | null): string {
     return new Date(parseInt(year), parseInt(month) - 1, 1).toLocaleDateString("en-MY", { month: "long", year: "numeric" });
   }
   return claimDate;
+}
+
+function fmtSubmittedDate(createdAt: string | Date): string {
+  return new Date(createdAt).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
+}
+
+type SortKey = "applicant" | "period" | "submitted";
+
+function sortApplications(apps: ClaimApplicationWithDetails[], sortKey: SortKey | null, sortDir: "asc" | "desc"): ClaimApplicationWithDetails[] {
+  if (!sortKey) return apps;
+  const sorted = [...apps].sort((a, b) => {
+    if (sortKey === "applicant") return (a.applicantName ?? "").localeCompare(b.applicantName ?? "");
+    if (sortKey === "period") return a.claimDate.localeCompare(b.claimDate);
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+  return sortDir === "asc" ? sorted : sorted.reverse();
+}
+
+function SortableHeader({ label, sortKey, activeKey, dir, onSort, className }: {
+  label: string; sortKey: SortKey; activeKey: SortKey | null; dir: "asc" | "desc";
+  onSort: (key: SortKey) => void; className?: string;
+}) {
+  const active = activeKey === sortKey;
+  return (
+    <TableHead className={className}>
+      <button type="button" onClick={() => onSort(sortKey)} className="flex items-center gap-1 hover:text-foreground">
+        {label}
+        {active ? (dir === "asc" ? <ArrowUpIcon className="h-3 w-3"/> : <ArrowDownIcon className="h-3 w-3"/>) : <ArrowUpDownIcon className="h-3 w-3 opacity-40"/>}
+      </button>
+    </TableHead>
+  );
 }
 
 function getFormType(app: ClaimApplicationWithDetails): string | null {
@@ -57,6 +88,13 @@ interface Props {
 export function AllClaimsClient({ applications }: Props) {
   const [search, setSearch] = useState("");
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
+
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  function handleSort(key: SortKey) {
+    if (sortKey === key) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
+    else { setSortKey(key); setSortDir("asc"); }
+  }
 
   // Downloads a claim's PDF, surfacing the server's actual error text on failure
   // instead of leaving the user with a blank tab or a silent failed download.
@@ -91,6 +129,7 @@ export function AllClaimsClient({ applications }: Props) {
       app.claimTypeName.toLowerCase().includes(q)
     );
   });
+  const sorted = sortApplications(filtered, sortKey, sortDir);
 
   return (
     <div className="p-6 flex flex-col gap-6">
@@ -114,7 +153,7 @@ export function AllClaimsClient({ applications }: Props) {
         />
       </div>
 
-      {filtered.length === 0 ? (
+      {sorted.length === 0 ? (
         <div className="rounded-lg border border-border py-14 flex items-center justify-center text-sm text-muted-foreground">
           No claims found.
         </div>
@@ -124,16 +163,17 @@ export function AllClaimsClient({ applications }: Props) {
             <TableHeader>
               <TableRow className="bg-muted/40">
                 <TableHead className="w-32">Ref No.</TableHead>
-                <TableHead>Applicant</TableHead>
+                <SortableHeader label="Applicant" sortKey="applicant" activeKey={sortKey} dir={sortDir} onSort={handleSort}/>
                 <TableHead>Claim Type</TableHead>
-                <TableHead className="w-32">Period / Date</TableHead>
+                <SortableHeader label="Period / Date" sortKey="period" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-32"/>
+                <SortableHeader label="Submitted" sortKey="submitted" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-28"/>
                 <TableHead className="w-28 text-right">Amount</TableHead>
                 <TableHead className="w-24">Status</TableHead>
                 <TableHead className="w-16 text-right">PDF</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((app) => {
+              {sorted.map((app) => {
                 const ft = getFormType(app);
                 return (
                   <TableRow key={app.id}>
@@ -146,6 +186,7 @@ export function AllClaimsClient({ applications }: Props) {
                       </div>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{fmtClaimDate(app.claimDate, ft)}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{fmtSubmittedDate(app.createdAt)}</TableCell>
                     <TableCell className="text-right text-sm font-semibold">{fmtAmount(app.amount)}</TableCell>
                     <TableCell><StatusBadge status={app.status} /></TableCell>
                     <TableCell className="text-right">

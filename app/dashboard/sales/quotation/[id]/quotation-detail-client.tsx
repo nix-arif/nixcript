@@ -235,13 +235,58 @@ export function QuotationDetailClient({ group, initialId }: Props) {
     }
   };
 
-  const downloadPdf = (url: string) => {
-    window.open(url, "_blank", "noopener,noreferrer");
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+
+  // Fetches the PDF and triggers a same-tab download via a temporary <a>,
+  // instead of window.open (which opens a new tab and leaves it dangling).
+  // Surfaces the server's actual error text on failure.
+  const downloadPdf = async (url: string, filename: string) => {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const text = (await res.text().catch(() => "")).trim();
+      throw new Error(text || `Failed to download (HTTP ${res.status})`);
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(objectUrl);
   };
 
-  const handleDownloadAll = () => {
-    for (const s of siblings) {
-      window.open(`/api/quotation/${s.id}/pdf`, "_blank", "noopener,noreferrer");
+  const handleDownloadPdfClick = async () => {
+    setDownloadingKey("pdf");
+    try {
+      await downloadPdf(`/api/quotation/${q.id}/pdf`, `${q.quotationNo}.pdf`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download PDF");
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
+  const handleDownloadMdaClick = async () => {
+    setDownloadingKey("mda");
+    try {
+      await downloadPdf(`/api/quotation/${q.id}/mda-certs`, `${q.quotationNo}-mda-certs.pdf`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download MDA certs");
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    setDownloadingKey("all");
+    try {
+      for (const s of siblings) {
+        await downloadPdf(`/api/quotation/${s.id}/pdf`, `${s.quotationNo}.pdf`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download all PDFs");
+    } finally {
+      setDownloadingKey(null);
     }
   };
 
@@ -346,18 +391,28 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                 variant="outline"
                 size="sm"
                 className="gap-1.5 h-8"
-                onClick={() => downloadPdf(`/api/quotation/${q.id}/pdf`)}
+                disabled={downloadingKey === "pdf"}
+                onClick={handleDownloadPdfClick}
               >
-                <PrinterIcon className="w-3.5 h-3.5" />
+                {downloadingKey === "pdf" ? (
+                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"/>
+                ) : (
+                  <PrinterIcon className="w-3.5 h-3.5" />
+                )}
                 Download PDF
               </Button>
               <Button
                 variant="outline"
                 size="sm"
                 className="gap-1.5 h-8"
-                onClick={() => downloadPdf(`/api/quotation/${q.id}/mda-certs`)}
+                disabled={downloadingKey === "mda"}
+                onClick={handleDownloadMdaClick}
               >
-                <ShieldCheckIcon className="w-3.5 h-3.5" />
+                {downloadingKey === "mda" ? (
+                  <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"/>
+                ) : (
+                  <ShieldCheckIcon className="w-3.5 h-3.5" />
+                )}
                 MDA Certs
               </Button>
               {siblings.length > 1 && (
@@ -365,9 +420,14 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                   variant="outline"
                   size="sm"
                   className="gap-1.5 h-8"
+                  disabled={downloadingKey === "all"}
                   onClick={handleDownloadAll}
                 >
-                  <PrinterIcon className="w-3.5 h-3.5" />
+                  {downloadingKey === "all" ? (
+                    <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"/>
+                  ) : (
+                    <PrinterIcon className="w-3.5 h-3.5" />
+                  )}
                   Download All ({siblings.length})
                 </Button>
               )}

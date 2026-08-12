@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import {
   CheckIcon, XIcon, FileDownIcon, ClipboardListIcon,
   ArrowRightIcon, MapPinIcon, EyeIcon, CheckCircle2Icon, PencilIcon, PrinterIcon,
+  ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon,
 } from "lucide-react";
 import { EditBadge, SlashBadge } from "@/components/claim/line-item-annotations";
 
@@ -43,6 +44,33 @@ function fmtClaimDate(claimDate: string, formType: string | null): string {
 
 function fmtSubmittedDate(createdAt: string | Date): string {
   return new Date(createdAt).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
+}
+
+type SortKey = "applicant" | "period" | "submitted";
+
+function sortApplications(apps: ClaimApplicationWithDetails[], sortKey: SortKey | null, sortDir: "asc" | "desc"): ClaimApplicationWithDetails[] {
+  if (!sortKey) return apps;
+  const sorted = [...apps].sort((a, b) => {
+    if (sortKey === "applicant") return (a.applicantName ?? "").localeCompare(b.applicantName ?? "");
+    if (sortKey === "period") return a.claimDate.localeCompare(b.claimDate);
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+  return sortDir === "asc" ? sorted : sorted.reverse();
+}
+
+function SortableHeader({ label, sortKey, activeKey, dir, onSort, className }: {
+  label: string; sortKey: SortKey; activeKey: SortKey | null; dir: "asc" | "desc";
+  onSort: (key: SortKey) => void; className?: string;
+}) {
+  const active = activeKey === sortKey;
+  return (
+    <TableHead className={className}>
+      <button type="button" onClick={() => onSort(sortKey)} className="flex items-center gap-1 hover:text-foreground">
+        {label}
+        {active ? (dir === "asc" ? <ArrowUpIcon className="h-3 w-3"/> : <ArrowDownIcon className="h-3 w-3"/>) : <ArrowUpDownIcon className="h-3 w-3 opacity-40"/>}
+      </button>
+    </TableHead>
+  );
 }
 
 function getFormType(app: ClaimApplicationWithDetails): string | null {
@@ -548,6 +576,14 @@ export function ClaimCheckerClient({ applications }: Props) {
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
 
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  function handleSort(key: SortKey) {
+    if (sortKey === key) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+  const sortedApplications = sortApplications(applications, sortKey, sortDir);
+
   // Downloads a claim's PDF, surfacing the server's actual error text on failure
   // instead of leaving the user with a blank tab or a silent failed download.
   async function handleDownloadPdf(appId: string, applicationNo: string) {
@@ -728,17 +764,17 @@ export function ClaimCheckerClient({ applications }: Props) {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/40">
-                <TableHead className="w-40">Applicant</TableHead>
+                <SortableHeader label="Applicant" sortKey="applicant" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-40"/>
                 <TableHead>Claim Type</TableHead>
-                <TableHead className="w-32">Period / Date</TableHead>
-                <TableHead className="w-28">Submitted</TableHead>
+                <SortableHeader label="Period / Date" sortKey="period" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-32"/>
+                <SortableHeader label="Submitted" sortKey="submitted" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-28"/>
                 <TableHead>Description</TableHead>
                 <TableHead className="w-28 text-right">Amount</TableHead>
                 <TableHead className="w-44 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {applications.map(app => {
+              {sortedApplications.map(app => {
                 const ft = getFormType(app);
                 return (
                   <TableRow key={app.id}>
