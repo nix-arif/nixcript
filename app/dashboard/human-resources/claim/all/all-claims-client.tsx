@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -55,6 +56,31 @@ interface Props {
 
 export function AllClaimsClient({ applications }: Props) {
   const [search, setSearch] = useState("");
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
+
+  // Downloads a claim's PDF, surfacing the server's actual error text on failure
+  // instead of leaving the user with a blank tab or a silent failed download.
+  async function handleDownloadPdf(appId: string, applicationNo: string) {
+    setDownloadingPdfId(appId);
+    try {
+      const res = await fetch(`/api/claim/${appId}/pdf`);
+      if (!res.ok) {
+        const text = (await res.text().catch(() => "")).trim();
+        throw new Error(text || `Failed to download PDF (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Claim-${applicationNo}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download PDF");
+    } finally {
+      setDownloadingPdfId(null);
+    }
+  }
 
   const filtered = applications.filter((app) => {
     if (!search.trim()) return true;
@@ -124,10 +150,12 @@ export function AllClaimsClient({ applications }: Props) {
                     <TableCell><StatusBadge status={app.status} /></TableCell>
                     <TableCell className="text-right">
                       {app.status !== "DRAFT" && (
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" title="Download PDF" asChild>
-                          <a href={`/api/claim/${app.id}/pdf`} target="_blank" rel="noopener noreferrer">
-                            <PrinterIcon className="h-3.5 w-3.5"/>
-                          </a>
+                        <Button
+                          variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                          title="Download PDF" disabled={downloadingPdfId === app.id}
+                          onClick={() => handleDownloadPdf(app.id, app.applicationNo)}
+                        >
+                          <PrinterIcon className="h-3.5 w-3.5"/>
                         </Button>
                       )}
                     </TableCell>

@@ -519,6 +519,31 @@ export function ClaimCheckerClient({ applications }: Props) {
   const [rejecting, setRejecting] = useState(false);
 
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
+
+  // Downloads a claim's PDF, surfacing the server's actual error text on failure
+  // instead of leaving the user with a blank tab or a silent failed download.
+  async function handleDownloadPdf(appId: string, applicationNo: string) {
+    setDownloadingPdfId(appId);
+    try {
+      const res = await fetch(`/api/claim/${appId}/pdf`);
+      if (!res.ok) {
+        const text = (await res.text().catch(() => "")).trim();
+        throw new Error(text || `Failed to download PDF (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Claim-${applicationNo}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download PDF");
+    } finally {
+      setDownloadingPdfId(null);
+    }
+  }
 
   // Patches a single line/entertainment item into whichever open sheet(s) reference it,
   // so the checker sees the correction immediately without a full page reload.
@@ -721,10 +746,12 @@ export function ClaimCheckerClient({ applications }: Props) {
                         <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setViewTarget(app)}>
                           <EyeIcon className="h-3 w-3"/>View
                         </Button>
-                        <Button size="sm" variant="outline" className="h-7 w-7 p-0" title="Download PDF" asChild>
-                          <a href={`/api/claim/${app.id}/pdf`} target="_blank" rel="noopener noreferrer">
-                            <PrinterIcon className="h-3 w-3"/>
-                          </a>
+                        <Button
+                          size="sm" variant="outline" className="h-7 w-7 p-0"
+                          title="Download PDF" disabled={downloadingPdfId === app.id}
+                          onClick={() => handleDownloadPdf(app.id, app.applicationNo)}
+                        >
+                          <PrinterIcon className="h-3 w-3"/>
                         </Button>
                         <Button size="sm" className="h-7 gap-1 bg-blue-600 hover:bg-blue-700 text-white text-xs" onClick={() => { setCheckTarget(app); setCheckComment(""); }}>
                           <CheckIcon className="h-3 w-3"/>Check

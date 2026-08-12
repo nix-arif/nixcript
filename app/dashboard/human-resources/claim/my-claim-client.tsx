@@ -562,6 +562,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   const [viewDocsApp, setViewDocsApp] = useState<ClaimApplicationWithDetails | null>(null);
   const [viewClaimTarget, setViewClaimTarget] = useState<ClaimApplicationWithDetails | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
   const [editingApp, setEditingApp] = useState<ClaimApplicationWithDetails | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   // Tracks files already uploaded to R2 (key → {docId, fileKey}) so we skip re-upload on submit
@@ -636,10 +637,13 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     setUploadingFields(prev => new Set(prev).add(fieldKey));
     try {
       const res = await fetch("/api/claim/upload-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ appId, fileName: file.name, mimeType: file.type, fileSize: file.size }) });
-      if (!res.ok) { toast.error(`Upload URL failed for ${file.name}`); return; }
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ? `${file.name}: ${body.error}` : `Could not prepare upload for ${file.name} (HTTP ${res.status})`);
+      }
       const { uploadUrl, key } = await res.json();
       const put = await fetch(uploadUrl, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
-      if (!put.ok) { toast.error(`Upload failed for ${file.name}`); return; }
+      if (!put.ok) throw new Error(`Upload to storage failed for ${file.name} (HTTP ${put.status}) — the upload link may have expired, try again`);
       const doc = await createClaimDocumentRecord({ applicationId: appId, lineItemId, fileName: file.name, fileKey: key, fileSize: file.size, mimeType: file.type });
       setUploadedFiles(prev => ({ ...prev, [fieldKey]: { docId: doc.id, fileKey: key } }));
     } catch (err) {
@@ -653,8 +657,37 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   async function removeOneUpload(fieldKey: string) {
     const uploaded = uploadedFiles[fieldKey];
     if (!uploaded) return;
-    try { await deleteClaimDocument(uploaded.docId); } catch { /* ignore */ }
+    try {
+      await deleteClaimDocument(uploaded.docId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove the attached file — it may still be attached");
+      return; // keep local state so the user knows removal did not actually succeed
+    }
     setUploadedFiles(prev => { const n = { ...prev }; delete n[fieldKey]; return n; });
+  }
+
+  // Downloads a claim's PDF, surfacing the server's actual error text on failure
+  // instead of leaving the user with a blank tab or a silent failed download.
+  async function handleDownloadPdf(appId: string, applicationNo: string) {
+    setDownloadingPdfId(appId);
+    try {
+      const res = await fetch(`/api/claim/${appId}/pdf`);
+      if (!res.ok) {
+        const text = (await res.text().catch(() => "")).trim();
+        throw new Error(text || `Failed to download PDF (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Claim-${applicationNo}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download PDF");
+    } finally {
+      setDownloadingPdfId(null);
+    }
   }
 
   function loadAppIntoForm(app: ClaimApplicationWithDetails) {
@@ -913,16 +946,30 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
         ...queuedFiles.filter(qf => !uploadedFiles[`qf:${qf.id}`]).map(qf => ({ file: qf.file, fieldKey: `qf:${qf.id}` })),
       ];
 
+      // Each job is isolated — the claim itself is already saved above, so an
+      // attachment failure here must not surface as a misleading "Failed to
+      // submit" (which would wrongly suggest the whole claim was lost).
+      const failedUploads: string[] = [];
       for (const job of uploadJobs) {
-        const res = await fetch("/api/claim/upload-url", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ appId, fileName:job.file.name, mimeType:job.file.type, fileSize:job.file.size }) });
-        if (!res.ok) { toast.error(`Upload URL failed for ${job.file.name}`); continue; }
-        const { uploadUrl, key } = await res.json();
-        const upload = await fetch(uploadUrl, { method:"PUT", headers:{"Content-Type":job.file.type}, body:job.file });
-        if (!upload.ok) { toast.error(`Upload failed for ${job.file.name}`); continue; }
-        await createClaimDocumentRecord({ applicationId:appId, lineItemId:job.lineItemId, fileName:job.file.name, fileKey:key, fileSize:job.file.size, mimeType:job.file.type });
+        try {
+          const res = await fetch("/api/claim/upload-url", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ appId, fileName:job.file.name, mimeType:job.file.type, fileSize:job.file.size }) });
+          if (!res.ok) {
+            const body = await res.json().catch(() => null);
+            throw new Error(body?.error ?? `HTTP ${res.status}`);
+          }
+          const { uploadUrl, key } = await res.json();
+          const upload = await fetch(uploadUrl, { method:"PUT", headers:{"Content-Type":job.file.type}, body:job.file });
+          if (!upload.ok) throw new Error(`upload to storage failed (HTTP ${upload.status})`);
+          await createClaimDocumentRecord({ applicationId:appId, lineItemId:job.lineItemId, fileName:job.file.name, fileKey:key, fileSize:job.file.size, mimeType:job.file.type });
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : "unknown error";
+          toast.error(`${job.file.name} could not be attached: ${reason}`);
+          failedUploads.push(job.file.name);
+        }
       }
 
-      toast.success(editingApp?.status === "DRAFT" ? "Draft submitted" : editingApp?.status === "REJECTED" ? "Claim resubmitted" : "Claim submitted");
+      const submitLabel = editingApp?.status === "DRAFT" ? "Draft submitted" : editingApp?.status === "REJECTED" ? "Claim resubmitted" : "Claim submitted";
+      toast.success(failedUploads.length > 0 ? `${submitLabel} — ${failedUploads.length} attachment(s) failed, see above` : submitLabel);
       setSubmitOpen(false); resetForm();
       startTransition(() => router.refresh());
     } catch (err: unknown) {
@@ -1097,10 +1144,12 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                             <EyeIcon className="h-3.5 w-3.5"/>
                           </Button>
                           {app.status !== "DRAFT" && (
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" title="Download PDF" asChild>
-                              <a href={`/api/claim/${app.id}/pdf`} target="_blank" rel="noopener noreferrer">
-                                <PrinterIcon className="h-3.5 w-3.5"/>
-                              </a>
+                            <Button
+                              variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                              title="Download PDF" disabled={downloadingPdfId === app.id}
+                              onClick={() => handleDownloadPdf(app.id, app.applicationNo)}
+                            >
+                              <PrinterIcon className="h-3.5 w-3.5"/>
                             </Button>
                           )}
                           {app.documents.length > 0 && (
