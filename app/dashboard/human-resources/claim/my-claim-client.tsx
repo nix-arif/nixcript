@@ -30,7 +30,7 @@ import { uid } from "@/lib/uid";
 import {
   PlusIcon, FileDownIcon, XIcon, ReceiptIcon,
   AlertTriangleIcon, UploadIcon, InfoIcon, ArrowRightIcon, MapPinIcon, LoaderIcon, RouteIcon,
-  EyeIcon, TrashIcon,
+  EyeIcon, TrashIcon, PrinterIcon,
 } from "lucide-react";
 import { EditBadge, SlashBadge } from "@/components/claim/line-item-annotations";
 
@@ -802,12 +802,17 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     try {
       let lineItems: ClaimLineItemInput[] | undefined;
       let entertainmentDetails: ClaimEntertainmentDetailInput[] | undefined;
+      // Hoisted so the upload-queue step below (shared across all claim types) can
+      // filter files down to the same rows that actually became line items.
+      let miscValid: typeof miscRows = [];
+      let inEntValid: typeof inEntRows = [];
+      let otherValid: typeof otherRows = [];
 
       if (formType === CLAIM_FORM.LOCAL) {
         // Validate receipt presence for misc / in-base-ent / other rows
-        const miscValid  = miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0);
-        const inEntValid = inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0);
-        const otherValid = otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0);
+        miscValid  = miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0);
+        inEntValid = inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0);
+        otherValid = otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0);
         const flightMissingReceipt = travelRows.find(r => r.mode === TRAVEL_MODE.FLIGHT && !r.flightFile);
         if (flightMissingReceipt) { toast.error("Flight receipt is required for flight travel"); setSubmitting(false); return; }
         const accomMissingReceipt = travelRows.find(r => parseFloat(r.accomAmount) > 0 && !r.accomFile);
@@ -892,15 +897,19 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
         appId = await submitClaim(claimData);
       }
 
-      // Build upload queue — skip files already uploaded via immediate upload
+      // Build upload queue — skip files already uploaded via immediate upload.
+      // Only queue files for rows that actually made it into `lineItems` above
+      // (same validity filters) — a file on a row that got excluded (e.g. no
+      // lineDate/amount) would otherwise be uploaded and linked to a
+      // lineItemId that was never inserted into claim_line_item.
       type UploadJob = { file: File; lineItemId?: string; fieldKey: string };
       const uploadJobs: UploadJob[] = [
-        ...travelRows.filter(r => r.flightFile && !uploadedFiles[`flightFile:${r.id}`]).map(r => ({ file: r.flightFile!, lineItemId: r.id, fieldKey: `flightFile:${r.id}` })),
-        ...travelRows.filter(r => r.accomFile && parseFloat(r.accomAmount) > 0 && !uploadedFiles[`accomFile:${r.id}`]).map(r => ({ file: r.accomFile!, lineItemId: r.accomId, fieldKey: `accomFile:${r.id}` })),
-        ...travelRows.filter(r => r.tEntFile && parseFloat(r.tEntAmount) > 0 && !uploadedFiles[`tEntFile:${r.id}`]).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId, fieldKey: `tEntFile:${r.id}` })),
-        ...miscRows.filter(r => r.file && !uploadedFiles[`misc:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `misc:${r.id}` })),
-        ...inEntRows.filter(r => r.file && !uploadedFiles[`inent:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `inent:${r.id}` })),
-        ...otherRows.filter(r => r.file && !uploadedFiles[`other:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `other:${r.id}` })),
+        ...travelRows.filter(r => r.lineDate && r.flightFile && !uploadedFiles[`flightFile:${r.id}`]).map(r => ({ file: r.flightFile!, lineItemId: r.id, fieldKey: `flightFile:${r.id}` })),
+        ...travelRows.filter(r => r.lineDate && r.accomFile && parseFloat(r.accomAmount) > 0 && !uploadedFiles[`accomFile:${r.id}`]).map(r => ({ file: r.accomFile!, lineItemId: r.accomId, fieldKey: `accomFile:${r.id}` })),
+        ...travelRows.filter(r => r.lineDate && r.tEntFile && parseFloat(r.tEntAmount) > 0 && !uploadedFiles[`tEntFile:${r.id}`]).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId, fieldKey: `tEntFile:${r.id}` })),
+        ...miscValid.filter(r => r.file && !uploadedFiles[`misc:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `misc:${r.id}` })),
+        ...inEntValid.filter(r => r.file && !uploadedFiles[`inent:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `inent:${r.id}` })),
+        ...otherValid.filter(r => r.file && !uploadedFiles[`other:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `other:${r.id}` })),
         ...queuedFiles.filter(qf => !uploadedFiles[`qf:${qf.id}`]).map(qf => ({ file: qf.file, fieldKey: `qf:${qf.id}` })),
       ];
 
@@ -987,14 +996,16 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
         appId = await saveDraftClaim(claimData);
       }
 
-      // Upload all attached receipts + queued files (skip already-uploaded ones)
+      // Upload all attached receipts + queued files (skip already-uploaded ones).
+      // Filters mirror draftLineItems above so a file never gets linked to a
+      // lineItemId that was excluded from the draft (never inserted into claim_line_item).
       const draftJobs: { file: File; lineItemId?: string; fieldKey: string }[] = [
-        ...travelRows.filter(r => r.flightFile && !uploadedFiles[`flightFile:${r.id}`]).map(r => ({ file: r.flightFile!, lineItemId: r.id, fieldKey: `flightFile:${r.id}` })),
-        ...travelRows.filter(r => r.accomFile && parseFloat(r.accomAmount) > 0 && !uploadedFiles[`accomFile:${r.id}`]).map(r => ({ file: r.accomFile!, lineItemId: r.accomId, fieldKey: `accomFile:${r.id}` })),
-        ...travelRows.filter(r => r.tEntFile && parseFloat(r.tEntAmount) > 0 && !uploadedFiles[`tEntFile:${r.id}`]).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId, fieldKey: `tEntFile:${r.id}` })),
-        ...miscRows.filter(r => r.file && !uploadedFiles[`misc:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `misc:${r.id}` })),
-        ...inEntRows.filter(r => r.file && !uploadedFiles[`inent:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `inent:${r.id}` })),
-        ...otherRows.filter(r => r.file && !uploadedFiles[`other:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `other:${r.id}` })),
+        ...travelRows.filter(r => r.lineDate && r.flightFile && !uploadedFiles[`flightFile:${r.id}`]).map(r => ({ file: r.flightFile!, lineItemId: r.id, fieldKey: `flightFile:${r.id}` })),
+        ...travelRows.filter(r => r.lineDate && r.accomFile && parseFloat(r.accomAmount) > 0 && !uploadedFiles[`accomFile:${r.id}`]).map(r => ({ file: r.accomFile!, lineItemId: r.accomId, fieldKey: `accomFile:${r.id}` })),
+        ...travelRows.filter(r => r.lineDate && r.tEntFile && parseFloat(r.tEntAmount) > 0 && !uploadedFiles[`tEntFile:${r.id}`]).map(r => ({ file: r.tEntFile!, lineItemId: r.tEntId, fieldKey: `tEntFile:${r.id}` })),
+        ...miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0 && r.file && !uploadedFiles[`misc:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `misc:${r.id}` })),
+        ...inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0 && r.file && !uploadedFiles[`inent:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `inent:${r.id}` })),
+        ...otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0 && r.file && !uploadedFiles[`other:${r.id}`]).map(r => ({ file: r.file!, lineItemId: r.id, fieldKey: `other:${r.id}` })),
         ...queuedFiles.filter(qf => !uploadedFiles[`qf:${qf.id}`]).map(qf => ({ file: qf.file, fieldKey: `qf:${qf.id}` })),
       ];
       for (const job of draftJobs) {
@@ -1085,6 +1096,13 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                           <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" title="View claim" onClick={() => setViewClaimTarget(app)}>
                             <EyeIcon className="h-3.5 w-3.5"/>
                           </Button>
+                          {app.status !== "DRAFT" && (
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" title="Download PDF" asChild>
+                              <a href={`/api/claim/${app.id}/pdf`} target="_blank" rel="noopener noreferrer">
+                                <PrinterIcon className="h-3.5 w-3.5"/>
+                              </a>
+                            </Button>
+                          )}
                           {app.documents.length > 0 && (
                             <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" title="View documents" onClick={() => setViewDocsApp(app)}>
                               <EyeIcon className="h-3.5 w-3.5"/>

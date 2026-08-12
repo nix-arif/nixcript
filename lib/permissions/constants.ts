@@ -127,6 +127,7 @@ export const ALL_PERMISSIONS = [
   { key: "claim:read:own", label: "View Own Claims" },
   { key: "claim:apply",    label: "Submit Claim Application" },
   { key: "claim:manage",   label: "Manage Claim Types" },
+  { key: "claim:read:all", label: "View All Employees' Claims" },
 ] as const;
 
 // Approval-only keys (managed exclusively via Org Approvals, not in ALL_PERMISSIONS)
@@ -308,7 +309,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update", "profile:read:all", "profile:update:all", "profile:delete:all",
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
       "organization-profile:read",
-      "claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage",
+      "claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage", "claim:read:all",
       "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all",
     ],
     member: [

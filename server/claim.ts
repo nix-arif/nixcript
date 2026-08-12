@@ -475,6 +475,55 @@ export async function getPendingClaimApprovals(): Promise<ClaimApplicationWithDe
   }));
 }
 
+export async function getClaimApplicationDetail(appId: string): Promise<ClaimApplicationWithDetails | null> {
+  const { orgId, userId } = await getSession();
+  const perms = await getUserPermissions(userId, orgId);
+
+  const [app] = await db
+    .select()
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app) return null;
+
+  const isOwner = app.userId === userId && hasAccess(perms, "claim:read:own");
+  const allowed = isOwner || hasAccess(perms, "claim:check") || hasAccess(perms, "claim:approve") || hasAccess(perms, "claim:read:all");
+  if (!allowed) throw new Error("You don't have permission to do this");
+
+  const { docMap, lineMap, entMap } = await loadExtras([appId]);
+  const userRow = await db.select({ name: user.name }).from(user).where(eq(user.id, app.userId)).limit(1);
+
+  return {
+    ...app,
+    applicantName: userRow[0]?.name ?? null,
+    documents: docMap[app.id] ?? [],
+    lineItems: lineMap[app.id] ?? [],
+    entertainmentDetails: entMap[app.id] ?? [],
+  };
+}
+
+export async function getAllClaimApplications(): Promise<ClaimApplicationWithDetails[]> {
+  const { orgId } = await requireAccess("claim:read:all");
+  const apps = await db
+    .select({ app: claimApplication, applicantName: user.name })
+    .from(claimApplication)
+    .leftJoin(user, eq(claimApplication.userId, user.id))
+    .where(eq(claimApplication.organizationId, orgId))
+    .orderBy(desc(claimApplication.createdAt));
+
+  if (apps.length === 0) return [];
+  const appIds = apps.map((a) => a.app.id);
+  const { docMap, lineMap, entMap } = await loadExtras(appIds);
+
+  return apps.map(({ app, applicantName }) => ({
+    ...app,
+    applicantName: applicantName ?? null,
+    documents: docMap[app.id] ?? [],
+    lineItems: lineMap[app.id] ?? [],
+    entertainmentDetails: entMap[app.id] ?? [],
+  }));
+}
+
 /* =========================
    CATEGORY → ACCOUNT MAPPING
 ========================= */
@@ -1433,10 +1482,25 @@ export async function createClaimDocumentRecord(data: {
     .where(and(eq(claimApplication.id, data.applicationId), eq(claimApplication.organizationId, orgId)))
     .limit(1);
   if (!app[0]) throw new Error("Application not found");
+
+  // A lineItemId can be stale (e.g. the client-generated row it pointed to
+  // never got persisted because it failed validation at submit time) — degrade
+  // to an unlinked document instead of throwing a foreign-key error and losing
+  // the whole request, including any other files in the same upload batch.
+  let lineItemId: string | null = data.lineItemId ?? null;
+  if (lineItemId) {
+    const [li] = await db
+      .select({ id: claimLineItem.id })
+      .from(claimLineItem)
+      .where(and(eq(claimLineItem.id, lineItemId), eq(claimLineItem.applicationId, data.applicationId)))
+      .limit(1);
+    if (!li) lineItemId = null;
+  }
+
   const row = {
     id: nanoid(),
     applicationId: data.applicationId,
-    lineItemId: data.lineItemId ?? null,
+    lineItemId,
     organizationId: orgId,
     fileName: data.fileName,
     fileKey: data.fileKey,

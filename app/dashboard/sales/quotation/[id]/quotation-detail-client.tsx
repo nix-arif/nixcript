@@ -275,18 +275,18 @@ export function QuotationDetailClient({ group, initialId }: Props) {
     <div className="p-6 space-y-4">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0"
+            className="h-8 w-8 p-0 shrink-0"
             onClick={() => router.push("/dashboard/sales/quotation")}
           >
             <ArrowLeftIcon className="w-4 h-4" />
           </Button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-semibold tracking-tight font-mono">
                 {q.quotationNo.startsWith("PENDING-") ? <span className="text-muted-foreground italic text-base">No. pending</span> : q.quotationNo}
               </h1>
@@ -326,7 +326,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 flex-wrap md:shrink-0">
           {isDraft && (
             <Button
               variant="outline"
@@ -481,7 +481,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
       )}
 
       {/* ── Main layout ──────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-[1fr_300px] gap-4 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_300px] gap-4 items-start">
         {/* ── Left: Items table ─────────────────────────────────────────────── */}
         <div className="bg-background border border-border rounded-xl overflow-hidden">
           <div className="px-4 py-3 bg-muted/20 border-b border-border flex items-center justify-between gap-4">
@@ -525,50 +525,33 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               set group
             </span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-muted/10">
-                  {[
-                    "#",
-                    "Code",
-                    "Description",
-                    "Qty/set",
-                    "Total qty",
-                    "UOM",
-                    "Unit Price (RM)",
-                    "Disc%",
-                    "Total (RM)",
-                    "",
-                  ].map((h) => (
-                    <th
-                      key={h}
-                      className={cn(
-                        "px-3 py-2 text-[10px] font-medium text-muted-foreground border-b border-border whitespace-nowrap uppercase tracking-wide",
-                        ["Unit Price (RM)", "Total (RM)"].includes(h)
-                          ? "text-right"
-                          : ["Qty/set", "Total qty", "UOM"].includes(h)
-                          ? "text-center"
-                          : "text-left",
-                      )}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  const seenGroupIds = new Set<string>();
-                  const groupOrder: string[] = [];
-                  for (const it of items) {
-                    if (it.setGroupId && !seenGroupIds.has(it.setGroupId)) {
-                      seenGroupIds.add(it.setGroupId);
-                      groupOrder.push(it.setGroupId);
-                    }
-                  }
+          {(() => {
+            type ItemEntry =
+              | { kind: "group"; gid: string; first: typeof items[number]; groupTotal: number }
+              | { kind: "item"; item: typeof items[number]; inSet: boolean };
 
-                  const renderItemRow = (item: typeof items[number], inSet: boolean) => {
+            const seenGroupIds = new Set<string>();
+            const groupOrder: string[] = [];
+            for (const it of items) {
+              if (it.setGroupId && !seenGroupIds.has(it.setGroupId)) {
+                seenGroupIds.add(it.setGroupId);
+                groupOrder.push(it.setGroupId);
+              }
+            }
+
+            const entries: ItemEntry[] = [];
+            for (const gid of groupOrder) {
+              const gItems = items.filter((it) => it.setGroupId === gid);
+              const first = gItems[0];
+              const groupTotal = gItems.reduce((s, it) => s + Number(it.totalPrice ?? 0), 0);
+              entries.push({ kind: "group", gid, first, groupTotal });
+              gItems.forEach((it) => entries.push({ kind: "item", item: it, inSet: true }));
+            }
+            items
+              .filter((it) => !it.setGroupId)
+              .forEach((it) => entries.push({ kind: "item", item: it, inSet: false }));
+
+            const renderItemRow = (item: typeof items[number], inSet: boolean) => {
                     const isRent = item.lineType === "rent";
                     return (
                       <tr
@@ -650,96 +633,248 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                     );
                   };
 
-                  const rows: React.ReactNode[] = [];
-
-                  // Set groups
-                  for (const gid of groupOrder) {
-                    const gItems = items.filter((it) => it.setGroupId === gid);
-                    const first = gItems[0];
-                    const groupTotal = gItems.reduce((s, it) => s + Number(it.totalPrice ?? 0), 0);
-                    rows.push(
-                      <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
-                        <td colSpan={3} className="px-3 py-1.5 align-top">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                            <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
-                              {first.setGroupLabel || "Set"}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground">
-                              × {Number(first.setQty || 1) * sets} {Number(first.setQty || 1) * sets === 1 ? "set" : "sets"}
-                            </span>
-                            {Number(q.showTotalPrice) && Number(first.setQty || 1) > 1 && (
-                              <>
-                                <span className="text-[10px] text-muted-foreground">·</span>
-                                <span className="text-[10px] text-blue-600 dark:text-blue-400 tabular-nums">
-                                  {acct(groupTotal / Number(first.setQty || 1))} / set
-                                </span>
-                              </>
-                            )}
-                          </div>
-                          {first.setQtySource === "user" && (
-                            <div className="mt-0.5"><SrcTag src="user" userName={createdByName} /></div>
+                  const renderGroupHeaderRow = (e: Extract<ItemEntry, { kind: "group" }>) => (
+                    <tr key={`hdr-${e.gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                      <td colSpan={3} className="px-3 py-1.5 align-top">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                            {e.first.setGroupLabel || "Set"}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            × {Number(e.first.setQty || 1) * sets} {Number(e.first.setQty || 1) * sets === 1 ? "set" : "sets"}
+                          </span>
+                          {Number(q.showTotalPrice) && Number(e.first.setQty || 1) > 1 && (
+                            <>
+                              <span className="text-[10px] text-muted-foreground">·</span>
+                              <span className="text-[10px] text-blue-600 dark:text-blue-400 tabular-nums">
+                                {acct(e.groupTotal / Number(e.first.setQty || 1))} / set
+                              </span>
+                            </>
                           )}
-                        </td>
-                        <td colSpan={5} />
-                        <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
-                          {Number(q.showTotalPrice) ? acct(groupTotal) : "—"}
-                        </td>
-                        <td />
-                      </tr>,
-                    );
-                    gItems.forEach((it) => rows.push(renderItemRow(it, true)));
-                  }
-
-                  // Standalone items
-                  items
-                    .filter((it) => !it.setGroupId)
-                    .forEach((it) => rows.push(renderItemRow(it, false)));
-
-                  return rows;
-                })()}
-              </tbody>
-              {!!Number(q.showTotalPrice) && (
-                <tfoot>
-                  {subtotalPerSet !== null && (
-                    <tr className="border-t border-border">
-                      <td colSpan={8} className="px-3 py-1.5 text-right text-xs text-muted-foreground">Subtotal (1 set)</td>
-                      <td className="px-3 py-1.5 text-right text-xs tabular-nums">{acct(subtotalPerSet)}</td>
-                      <td />
-                    </tr>
-                  )}
-                  <tr className={subtotalPerSet === null ? "border-t border-border" : ""}>
-                    <td colSpan={8} className="px-3 py-1.5 text-right text-xs text-muted-foreground">
-                      {subtotalPerSet !== null ? `× ${sets} sets` : "Subtotal"}
-                    </td>
-                    <td className="px-3 py-1.5 text-right text-xs tabular-nums">{acct(subtotal)}</td>
-                    <td />
-                  </tr>
-                  {overallDiscAmt > 0 && (
-                    <tr>
-                      <td colSpan={8} className="px-3 py-1 text-right text-xs text-muted-foreground">
-                        {Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount"}
+                        </div>
+                        {e.first.setQtySource === "user" && (
+                          <div className="mt-0.5"><SrcTag src="user" userName={createdByName} /></div>
+                        )}
                       </td>
-                      <td className="px-3 py-1 text-right text-xs tabular-nums text-red-600 dark:text-red-400">({acct(overallDiscAmt)})</td>
+                      <td colSpan={5} />
+                      <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
+                        {Number(q.showTotalPrice) ? acct(e.groupTotal) : "—"}
+                      </td>
                       <td />
                     </tr>
-                  )}
-                  {sstAmt > 0 && (
-                    <tr>
-                      <td colSpan={8} className="px-3 py-1 text-right text-xs text-muted-foreground">SST ({q.sstPct}%)</td>
-                      <td className="px-3 py-1 text-right text-xs tabular-nums">{acct(sstAmt)}</td>
-                      <td />
-                    </tr>
-                  )}
-                  <tr className="border-t border-border">
-                    <td colSpan={8} className="px-3 py-2 text-right text-xs font-semibold">Grand Total</td>
-                    <td className="px-3 py-2 text-right text-sm font-bold tabular-nums">{acct(grandTotal)}</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
+                  );
+
+                  const renderGroupHeaderCard = (e: Extract<ItemEntry, { kind: "group" }>) => (
+                    <div key={`hdr-${e.gid}`} className="px-3 py-2 bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                          {e.first.setGroupLabel || "Set"}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          × {Number(e.first.setQty || 1) * sets} {Number(e.first.setQty || 1) * sets === 1 ? "set" : "sets"}
+                        </span>
+                        <span className="ml-auto text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
+                          {Number(q.showTotalPrice) ? acct(e.groupTotal) : "—"}
+                        </span>
+                      </div>
+                      {e.first.setQtySource === "user" && (
+                        <div className="mt-1"><SrcTag src="user" userName={createdByName} /></div>
+                      )}
+                    </div>
+                  );
+
+                  const renderItemCard = (item: typeof items[number], inSet: boolean) => {
+                    const isRent = item.lineType === "rent";
+                    return (
+                      <div
+                        key={item.id}
+                        className={cn(
+                          "px-3 py-2.5 border-b border-border/60 last:border-0 space-y-1.5 text-xs",
+                          inSet && "bg-blue-50/20 dark:bg-blue-900/5",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-muted-foreground text-[10px]">#{item.rowNo}</span>
+                            <span className={cn(
+                              "text-[8px] font-bold px-1 py-0.5 rounded border",
+                              isRent
+                                ? "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-400"
+                                : "bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400",
+                            )}>
+                              {isRent ? "RENT" : "SELL"}
+                            </span>
+                          </div>
+                          <span className="text-right font-semibold tabular-nums shrink-0">
+                            {Number(q.showTotalPrice) ? acct(Number(item.totalPrice ?? 0)) : "—"}
+                          </span>
+                        </div>
+
+                        <div>
+                          <div className="font-mono text-[11px]">{item.productCode ?? "—"}</div>
+                          <SrcTag src={item.productCode ? "sheet" : undefined} userName={createdByName} />
+                        </div>
+
+                        <div>
+                          <div className="whitespace-normal">{item.description ?? "—"}</div>
+                          <SrcTag src={item.descriptionSource} userName={createdByName} />
+                          {isRent && item.rentalDuration && (
+                            <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+                              rental for {item.rentalDuration} {item.rentalUnit ?? "case"}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between text-muted-foreground">
+                          <span>
+                            Qty: {item.qty}{inSet && "/set"} · {(Number(item.qty ?? 1) * Number(item.setQty || 1) * sets).toLocaleString("en-MY")} total · {item.uom || "—"}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <span>Unit: {acct(Number(item.unitPrice ?? 0))}</span>
+                            <SrcTag src={item.priceSource} userName={createdByName} />
+                          </div>
+                          <span className="text-muted-foreground shrink-0">
+                            Disc: {Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {item.hasCert ? (
+                            <ShieldCheckIcon className="w-3.5 h-3.5 text-green-500" />
+                          ) : (
+                            <AlertCircleIcon className="w-3.5 h-3.5 text-orange-400" />
+                          )}
+                          {item.imageKey && <ImageIcon className="w-3.5 h-3.5 text-blue-400" />}
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  const mobileTotals = !!Number(q.showTotalPrice) && (
+                    <div className="p-3 space-y-1.5 text-xs border-t border-border">
+                      {subtotalPerSet !== null && (
+                        <Row label="Subtotal (1 set)" value={acct(subtotalPerSet)} mono />
+                      )}
+                      <Row
+                        label={subtotalPerSet !== null ? `× ${sets} sets` : "Subtotal"}
+                        value={acct(subtotal)}
+                        mono
+                      />
+                      {overallDiscAmt > 0 && (
+                        <Row
+                          label={Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount"}
+                          value={`(${acct(overallDiscAmt)})`}
+                          className="text-red-600 dark:text-red-400"
+                          mono
+                        />
+                      )}
+                      {sstAmt > 0 && (
+                        <Row label={`SST (${q.sstPct}%)`} value={acct(sstAmt)} mono />
+                      )}
+                      <div className="pt-1.5 border-t border-border flex justify-between items-center">
+                        <span className="font-semibold">Grand Total</span>
+                        <span className="font-bold text-sm tabular-nums">{acct(grandTotal)}</span>
+                      </div>
+                    </div>
+                  );
+
+                  return (
+                    <>
+                      {/* Desktop: table */}
+                      <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-muted/10">
+                              {[
+                                "#",
+                                "Code",
+                                "Description",
+                                "Qty/set",
+                                "Total qty",
+                                "UOM",
+                                "Unit Price (RM)",
+                                "Disc%",
+                                "Total (RM)",
+                                "",
+                              ].map((h) => (
+                                <th
+                                  key={h}
+                                  className={cn(
+                                    "px-3 py-2 text-[10px] font-medium text-muted-foreground border-b border-border whitespace-nowrap uppercase tracking-wide",
+                                    ["Unit Price (RM)", "Total (RM)"].includes(h)
+                                      ? "text-right"
+                                      : ["Qty/set", "Total qty", "UOM"].includes(h)
+                                      ? "text-center"
+                                      : "text-left",
+                                  )}
+                                >
+                                  {h}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {entries.map((e) =>
+                              e.kind === "group" ? renderGroupHeaderRow(e) : renderItemRow(e.item, e.inSet),
+                            )}
+                          </tbody>
+                          {!!Number(q.showTotalPrice) && (
+                            <tfoot>
+                              {subtotalPerSet !== null && (
+                                <tr className="border-t border-border">
+                                  <td colSpan={8} className="px-3 py-1.5 text-right text-xs text-muted-foreground">Subtotal (1 set)</td>
+                                  <td className="px-3 py-1.5 text-right text-xs tabular-nums">{acct(subtotalPerSet)}</td>
+                                  <td />
+                                </tr>
+                              )}
+                              <tr className={subtotalPerSet === null ? "border-t border-border" : ""}>
+                                <td colSpan={8} className="px-3 py-1.5 text-right text-xs text-muted-foreground">
+                                  {subtotalPerSet !== null ? `× ${sets} sets` : "Subtotal"}
+                                </td>
+                                <td className="px-3 py-1.5 text-right text-xs tabular-nums">{acct(subtotal)}</td>
+                                <td />
+                              </tr>
+                              {overallDiscAmt > 0 && (
+                                <tr>
+                                  <td colSpan={8} className="px-3 py-1 text-right text-xs text-muted-foreground">
+                                    {Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Special Discount"}
+                                  </td>
+                                  <td className="px-3 py-1 text-right text-xs tabular-nums text-red-600 dark:text-red-400">({acct(overallDiscAmt)})</td>
+                                  <td />
+                                </tr>
+                              )}
+                              {sstAmt > 0 && (
+                                <tr>
+                                  <td colSpan={8} className="px-3 py-1 text-right text-xs text-muted-foreground">SST ({q.sstPct}%)</td>
+                                  <td className="px-3 py-1 text-right text-xs tabular-nums">{acct(sstAmt)}</td>
+                                  <td />
+                                </tr>
+                              )}
+                              <tr className="border-t border-border">
+                                <td colSpan={8} className="px-3 py-2 text-right text-xs font-semibold">Grand Total</td>
+                                <td className="px-3 py-2 text-right text-sm font-bold tabular-nums">{acct(grandTotal)}</td>
+                                <td />
+                              </tr>
+                            </tfoot>
+                          )}
+                        </table>
+                      </div>
+
+                      {/* Mobile: stacked cards */}
+                      <div className="md:hidden">
+                        {entries.map((e) =>
+                          e.kind === "group" ? renderGroupHeaderCard(e) : renderItemCard(e.item, e.inSet),
+                        )}
+                        {mobileTotals}
+                      </div>
+                    </>
+                  );
+                })()}
         </div>
 
         {/* ── Right sidebar ──────────────────────────────────────────────────── */}

@@ -153,6 +153,7 @@ export const navConfig: NavGroup[] = [
       { title: "Claim Checker",  url: "/dashboard/human-resources/claim/checker",        permission: "claim:check"      },
       { title: "Claim Approvals",url: "/dashboard/human-resources/claim/approvals",      permission: "claim:approve"    },
       { title: "Claim Types",    url: "/dashboard/human-resources/claim/types",          permission: "claim:manage"     },
+      { title: "All Claims",     url: "/dashboard/human-resources/claim/all",            permission: "claim:read:all"   },
     ],
   },
   {

@@ -18,7 +18,7 @@ import { approveClaim, rejectClaim } from "@/server/claim";
 import { CLAIM_FORM, LINE_CATEGORY } from "@/lib/claim/constants";
 import {
   CheckIcon, XIcon, FileDownIcon, CheckCircle2Icon, ClipboardCheckIcon,
-  ArrowRightIcon, MapPinIcon, EyeIcon,
+  ArrowRightIcon, MapPinIcon, EyeIcon, PrinterIcon,
 } from "lucide-react";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -360,6 +360,11 @@ export function ClaimApprovalsClient({ applications, permissions: _permissions }
                       <div className="flex items-center justify-end gap-1.5">
                         <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setViewTarget(app)}>
                           <EyeIcon className="h-3 w-3"/>View
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-7 w-7 p-0" title="Download PDF" asChild>
+                          <a href={`/api/claim/${app.id}/pdf`} target="_blank" rel="noopener noreferrer">
+                            <PrinterIcon className="h-3 w-3"/>
+                          </a>
                         </Button>
                         <Button size="sm" className="h-7 gap-1 bg-green-600 hover:bg-green-700 text-white text-xs" onClick={() => { setApproveTarget(app); setApproveComment(""); }}>
                           <CheckIcon className="h-3 w-3"/>Approve

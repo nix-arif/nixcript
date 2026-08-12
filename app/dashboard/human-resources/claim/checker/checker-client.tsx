@@ -23,7 +23,7 @@ import { CLAIM_FORM, LINE_CATEGORY } from "@/lib/claim/constants";
 import { cn } from "@/lib/utils";
 import {
   CheckIcon, XIcon, FileDownIcon, ClipboardListIcon,
-  ArrowRightIcon, MapPinIcon, EyeIcon, CheckCircle2Icon, PencilIcon,
+  ArrowRightIcon, MapPinIcon, EyeIcon, CheckCircle2Icon, PencilIcon, PrinterIcon,
 } from "lucide-react";
 import { EditBadge, SlashBadge } from "@/components/claim/line-item-annotations";
 
@@ -720,6 +720,11 @@ export function ClaimCheckerClient({ applications }: Props) {
                       <div className="flex items-center justify-end gap-1.5">
                         <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setViewTarget(app)}>
                           <EyeIcon className="h-3 w-3"/>View
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-7 w-7 p-0" title="Download PDF" asChild>
+                          <a href={`/api/claim/${app.id}/pdf`} target="_blank" rel="noopener noreferrer">
+                            <PrinterIcon className="h-3 w-3"/>
+                          </a>
                         </Button>
                         <Button size="sm" className="h-7 gap-1 bg-blue-600 hover:bg-blue-700 text-white text-xs" onClick={() => { setCheckTarget(app); setCheckComment(""); }}>
                           <CheckIcon className="h-3 w-3"/>Check
