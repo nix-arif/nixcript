@@ -41,6 +41,10 @@ function fmtClaimDate(claimDate: string, formType: string | null): string {
   return claimDate;
 }
 
+function fmtSubmittedDate(createdAt: string | Date): string {
+  return new Date(createdAt).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
+}
+
 function getFormType(app: ClaimApplicationWithDetails): string | null {
   if (app.entertainmentDetails && app.entertainmentDetails.length > 0) return CLAIM_FORM.ENTERTAINMENT_FORM;
   if (app.lineItems.length === 0) return null;
@@ -232,6 +236,8 @@ function LineItemDetail({
     if (!groups[item.category]) groups[item.category] = [];
     groups[item.category].push(item);
   }
+  const grandTotal = items.reduce((s, r) => s + (r.slashed ? 0 : parseFloat(r.amountMyr)), 0);
+  const hasSlashed = items.some((r) => r.slashed);
   return (
     <div className="rounded-md border border-border overflow-hidden">
       {Object.entries(groups).map(([cat, rows]) => {
@@ -259,6 +265,12 @@ function LineItemDetail({
           </div>
         );
       })}
+      <div className="px-3 py-2 border-t-2 border-border bg-muted/20 flex items-center justify-between">
+        <span className="text-xs font-semibold">
+          Items Total{hasSlashed && <span className="text-muted-foreground font-normal"> (excludes slashed)</span>}
+        </span>
+        <span className="text-sm font-bold text-green-700 dark:text-green-400">{fmtAmount(grandTotal)}</span>
+      </div>
     </div>
   );
 }
@@ -451,6 +463,10 @@ function ClaimDetailContent({
           <span className="font-medium">{fmtClaimDate(app.claimDate, ft)}</span>
         </div>
         <div className="flex justify-between">
+          <span className="text-muted-foreground">Submitted</span>
+          <span className="font-medium">{fmtSubmittedDate(app.createdAt)}</span>
+        </div>
+        <div className="flex justify-between">
           <span className="text-muted-foreground">Total Amount</span>
           <span className="font-bold text-green-700 dark:text-green-400">{fmtAmount(app.amount)}</span>
         </div>
@@ -487,6 +503,17 @@ function ClaimDetailContent({
               onToggleSlash={onToggleEntSlash ?? (async () => {})}
             />
           ))}
+          {app.entertainmentDetails.length > 1 && (
+            <div className="px-3 py-2 border-t-2 border-border bg-muted/20 flex items-center justify-between">
+              <span className="text-xs font-semibold">
+                Entries Total
+                {app.entertainmentDetails.some((ed) => ed.slashed) && <span className="text-muted-foreground font-normal"> (excludes slashed)</span>}
+              </span>
+              <span className="text-sm font-bold text-green-700 dark:text-green-400">
+                {fmtAmount(app.entertainmentDetails.reduce((s, ed) => s + (ed.slashed ? 0 : parseFloat(ed.amount)), 0))}
+              </span>
+            </div>
+          )}
         </div>
       )}
       <div>
@@ -704,6 +731,7 @@ export function ClaimCheckerClient({ applications }: Props) {
                 <TableHead className="w-40">Applicant</TableHead>
                 <TableHead>Claim Type</TableHead>
                 <TableHead className="w-32">Period / Date</TableHead>
+                <TableHead className="w-28">Submitted</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead className="w-28 text-right">Amount</TableHead>
                 <TableHead className="w-44 text-right">Actions</TableHead>
@@ -737,6 +765,9 @@ export function ClaimCheckerClient({ applications }: Props) {
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {fmtClaimDate(app.claimDate, ft)}
                     </TableCell>
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                      {fmtSubmittedDate(app.createdAt)}
+                    </TableCell>
                     <TableCell className="max-w-xs">
                       <p className="text-sm text-muted-foreground truncate" title={app.description ?? ""}>{app.description}</p>
                     </TableCell>
@@ -748,10 +779,15 @@ export function ClaimCheckerClient({ applications }: Props) {
                         </Button>
                         <Button
                           size="sm" variant="outline" className="h-7 w-7 p-0"
-                          title="Download PDF" disabled={downloadingPdfId === app.id}
+                          title={downloadingPdfId === app.id ? "Generating PDF…" : "Download PDF"}
+                          disabled={downloadingPdfId === app.id}
                           onClick={() => handleDownloadPdf(app.id, app.applicationNo)}
                         >
-                          <PrinterIcon className="h-3 w-3"/>
+                          {downloadingPdfId === app.id ? (
+                            <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"/>
+                          ) : (
+                            <PrinterIcon className="h-3 w-3"/>
+                          )}
                         </Button>
                         <Button size="sm" className="h-7 gap-1 bg-blue-600 hover:bg-blue-700 text-white text-xs" onClick={() => { setCheckTarget(app); setCheckComment(""); }}>
                           <CheckIcon className="h-3 w-3"/>Check

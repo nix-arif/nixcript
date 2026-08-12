@@ -13,7 +13,7 @@
 
 import { PDFDocument, PDFPage, PDFFont, PDFImage, rgb, StandardFonts } from "pdf-lib";
 import { type FullOrganizationProfile } from "@/server/organization-profile";
-import { type ClaimApplicationWithDetails } from "@/server/claim";
+import { type ClaimApplicationDetailForPdf } from "@/server/claim";
 import { CLAIM_FORM, LINE_CATEGORY } from "@/lib/claim/constants";
 
 // ── A4 ──────────────────────────────────────────────────────────────────────
@@ -64,8 +64,35 @@ const SECTION_LABELS: Record<string, string> = {
 };
 
 // ── String / format helpers ───────────────────────────────────────────────────
+// pdf-lib's Standard fonts (Helvetica/HelveticaBold) use WinAnsi (Windows-1252)
+// encoding and THROW on any character outside it — not just exotic ones like "→",
+// but anything a user might type or paste into a name/comment/reason: emoji,
+// CJK/Arabic/etc. script, or even "smart" punctuation outside the small set
+// Windows-1252 happens to support. A single bad character anywhere in a claim's
+// free text (or even someone's display name) would 500 the whole PDF. Every
+// string that reaches drawText must go through this first.
+// Codepoints above U+00FF that Windows-1252 still maps to a real glyph (smart
+// quotes, em/en dash, ellipsis, trademark, etc.) — pdf-lib renders these fine,
+// so they pass through unchanged rather than being degraded to ASCII.
+const WINANSI_SAFE_HIGH = new Set([
+  0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
+  0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+  0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x017E, 0x0178,
+]);
+// Everything else gets a readable ASCII substitute where one makes sense, else "?"
+const ASCII_FALLBACK: Record<number, string> = {
+  0x2192: "->", 0x2190: "<-", 0x2194: "<->", 0x2713: "v", 0x2717: "x", 0x00D7: "x",
+};
+
 function san(t: string | null | undefined): string {
-  return String(t ?? "").replace(/[\x00-\x1F\x7F]/g, " ");
+  const s = String(t ?? "").replace(/[\x00-\x1F\x7F]/g, " ");
+  let out = "";
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    if (cp <= 0xFF || WINANSI_SAFE_HIGH.has(cp)) out += ch; // ASCII + Latin-1 supplement are byte-identical to WinAnsi
+    else out += ASCII_FALLBACK[cp] ?? "?";
+  }
+  return out;
 }
 
 function trunc(text: string | null | undefined, font: PDFFont, size: number, maxW: number): string {
@@ -122,7 +149,7 @@ function fmtPeriod(claimDate: string): string {
   return claimDate;
 }
 
-function getFormType(claim: ClaimApplicationWithDetails): string {
+function getFormType(claim: ClaimApplicationDetailForPdf): string {
   if (claim.entertainmentDetails.length > 0) return CLAIM_FORM.ENTERTAINMENT_FORM;
   const cat = claim.lineItems[0]?.category ?? "";
   return cat.startsWith("OVERSEAS") ? CLAIM_FORM.OVERSEAS : CLAIM_FORM.LOCAL;
@@ -193,7 +220,7 @@ async function buildContext(pdfDoc: PDFDocument, orgProfile: FullOrganizationPro
 }
 
 // ── Letterhead ──────────────────────────────────────────────────────────────
-function drawPageHeader(ctx: Ctx, claim: ClaimApplicationWithDetails): void {
+function drawPageHeader(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
   const { fontR, fontB, logoImg, orgProfile } = ctx;
   const { companyName, companyAddress, phone, email, website, newSsmNo, oldSsmNo, taxNo } = orgProfile;
 
@@ -278,17 +305,16 @@ function stampFooters(ctx: Ctx): void {
 }
 
 // ── Claim info block ───────────────────────────────────────────────────────
-function drawClaimInfo(ctx: Ctx, claim: ClaimApplicationWithDetails, formType: string): void {
+function drawClaimInfo(ctx: Ctx, claim: ClaimApplicationDetailForPdf, formType: string): void {
   const { fontR, fontB } = ctx;
   ensureSpace(ctx, 90);
   const y0 = ctx.curY;
 
-  const FORM_LABELS: Record<string, string> = { LOCAL: "Local Reimbursement", OVERSEAS: "Overseas Expenses", ENTERTAINMENT_FORM: "Entertainment" };
   const period = formType === CLAIM_FORM.ENTERTAINMENT_FORM ? fmtDate(claim.claimDate) : fmtPeriod(claim.claimDate);
 
   const rows: Array<[string, string]> = [
     ["Applicant", claim.applicantName ?? "—"],
-    ["Claim Type", `${claim.claimTypeName} (${FORM_LABELS[formType] ?? formType})`],
+    ["Claim Type", claim.claimTypeName],
     ["Period", period],
     ["Submitted", fmtDate(claim.createdAt)],
   ];
@@ -348,16 +374,35 @@ function drawTableHeader(ctx: Ctx): void {
   ctx.curY -= TBL_HDR_H;
 }
 
-function measureItemRowHeight(item: ClaimApplicationWithDetails["lineItems"][number], descLines: string[]): number {
+function measureItemRowHeight(item: ClaimApplicationDetailForPdf["lineItems"][number], descLines: string[]): number {
   let h = Math.max(ROW_BASE_H, descLines.length * 9 + 6);
   if (item.slashed) h += NOTE_LINE_H;
   if (item.editedBy) h += NOTE_LINE_H;
   return h;
 }
 
-function drawLineItemRow(ctx: Ctx, item: ClaimApplicationWithDetails["lineItems"][number], idx: number, isAlt: boolean): void {
+// Mirrors the in-app rendering (checker/approvals/my-claim views): a TRAVEL row's
+// route (from → to, + distance) is far more useful than its fallback description
+// ("Own Vehicle" etc.), and OVERSEAS_FX rows are better read as destination + FX math.
+function lineItemDisplayText(item: ClaimApplicationDetailForPdf["lineItems"][number], cat: string): string {
+  if (cat === LINE_CATEGORY.TRAVEL && (item.fromLocation || item.toLocation)) {
+    // "->" not "→" — pdf-lib's Standard fonts use WinAnsi encoding, which cannot render U+2192
+    const route = `${item.fromLocation || "—"} -> ${item.toLocation || "—"}`;
+    return item.distanceKm ? `${route} (${item.distanceKm} km)` : route;
+  }
+  if (cat === LINE_CATEGORY.OVERSEAS_FX && item.destination) {
+    const fx = [item.amountForeign, item.currency, item.exchangeRate && `× ${item.exchangeRate}`].filter(Boolean).join(" ");
+    return fx ? `${item.destination} — ${fx}` : item.destination;
+  }
+  if (item.venue) return item.description ? `${item.venue} — ${item.description}` : item.venue;
+  if (item.destination) return item.description ? `${item.destination} — ${item.description}` : item.destination;
+  return item.description ?? "";
+}
+
+function drawLineItemRow(ctx: Ctx, item: ClaimApplicationDetailForPdf["lineItems"][number], idx: number, isAlt: boolean): void {
   const { fontR, fontB } = ctx;
-  const descLines = wrapLines(item.description, fontR, 8, C_DESC - COL_PAD * 2, 2);
+  const cat = item.category;
+  const descLines = wrapLines(lineItemDisplayText(item, cat), fontR, 8, C_DESC - COL_PAD * 2, 2);
   const rowH = measureItemRowHeight(item, descLines);
   const y = ctx.curY;
 
@@ -403,11 +448,11 @@ function drawLineItemRow(ctx: Ctx, item: ClaimApplicationWithDetails["lineItems"
   ctx.curY -= rowH;
 }
 
-function drawLineItemsSection(ctx: Ctx, claim: ClaimApplicationWithDetails): void {
+function drawLineItemsSection(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
   ensureSpace(ctx, TBL_HDR_H + ROW_BASE_H * 2);
   drawTableHeader(ctx);
   claim.lineItems.forEach((item, idx) => {
-    const descLines = wrapLines(item.description, ctx.fontR, 8, C_DESC - COL_PAD * 2, 2);
+    const descLines = wrapLines(lineItemDisplayText(item, item.category), ctx.fontR, 8, C_DESC - COL_PAD * 2, 2);
     const rowH = measureItemRowHeight(item, descLines);
     if (ctx.curY - rowH < MB + PAGE_FTR_H) {
       addPage(ctx);
@@ -420,7 +465,7 @@ function drawLineItemsSection(ctx: Ctx, claim: ClaimApplicationWithDetails): voi
 }
 
 // ── Entertainment details table ───────────────────────────────────────────
-function drawEntertainmentSection(ctx: Ctx, claim: ClaimApplicationWithDetails): void {
+function drawEntertainmentSection(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
   const cols: Array<[string, number]> = [["DATE", 55], ["RESTAURANT / VENUE", 105], ["CUSTOMER", 90], ["DEPT & ORG", 90], ["PURPOSE", CW - 55 - 105 - 90 - 90 - 75], ["AMOUNT (RM)", 75]];
   const xs: number[] = [];
   let cx = ML;
@@ -488,7 +533,7 @@ function drawEntertainmentSection(ctx: Ctx, claim: ClaimApplicationWithDetails):
 }
 
 // ── Totals ─────────────────────────────────────────────────────────────────
-function drawTotals(ctx: Ctx, claim: ClaimApplicationWithDetails): void {
+function drawTotals(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
   ensureSpace(ctx, 30);
   ctx.curY -= 6;
   const label = "Grand Total";
@@ -501,22 +546,28 @@ function drawTotals(ctx: Ctx, claim: ClaimApplicationWithDetails): void {
 }
 
 // ── Approval trail ─────────────────────────────────────────────────────────
-function drawApprovalTrail(ctx: Ctx, claim: ClaimApplicationWithDetails): void {
+function drawApprovalTrail(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
   const rows: Array<{ label: string; name: string | null; at: Date | string | null; note: string | null; color: ReturnType<typeof rgb> }> = [
     { label: "Submitted by", name: claim.applicantName, at: claim.createdAt, note: null, color: C_TEXT },
   ];
   if (claim.checkedAt) {
     rows.push({
       label: claim.status === "REJECTED" && !claim.reviewedAt ? "Rejected by checker" : "Checked by",
-      name: null, at: claim.checkedAt, note: claim.checkerComment,
+      name: claim.checkedByName, at: claim.checkedAt, note: claim.checkerComment,
       color: claim.status === "REJECTED" ? C_RED : C_BLUE,
     });
   }
   if (claim.reviewedAt) {
     rows.push({
       label: claim.status === "APPROVED" ? "Approved by" : "Rejected by",
-      name: null, at: claim.reviewedAt, note: claim.reviewComment,
+      name: claim.reviewedByName, at: claim.reviewedAt, note: claim.reviewComment,
       color: claim.status === "APPROVED" ? C_GREEN : C_RED,
+    });
+  }
+  if (claim.cancelledAt) {
+    rows.push({
+      label: "Cancelled by", name: claim.cancelledByName, at: claim.cancelledAt, note: claim.cancelReason,
+      color: C_FAINT,
     });
   }
 
@@ -531,6 +582,11 @@ function drawApprovalTrail(ctx: Ctx, claim: ClaimApplicationWithDetails): void {
     ctx.page.drawText(r.label, { x: ML, y: y - 10, size: 8.5, font: ctx.fontB, color: r.color });
     const atStr = fmtDate(r.at);
     const atW = ctx.fontR.widthOfTextAtSize(atStr, 8);
+    if (r.name) {
+      const labelW = ctx.fontB.widthOfTextAtSize(`${r.label} `, 8.5);
+      const nameMaxW = W - MR - atW - 10 - (ML + labelW);
+      ctx.page.drawText(trunc(r.name, ctx.fontR, 8.5, nameMaxW), { x: ML + labelW, y: y - 10, size: 8.5, font: ctx.fontR, color: C_TEXT });
+    }
     ctx.page.drawText(atStr, { x: W - MR - atW, y: y - 10, size: 8, font: ctx.fontR, color: C_MUTED });
     if (r.note) {
       ctx.page.drawText(trunc(r.note, ctx.fontR, 8, CW), { x: ML, y: y - 21, size: 8, font: ctx.fontR, color: C_MUTED });
@@ -542,7 +598,7 @@ function drawApprovalTrail(ctx: Ctx, claim: ClaimApplicationWithDetails): void {
 
 // ── Public ──────────────────────────────────────────────────────────────────
 export async function generateClaimPdf(
-  claim: ClaimApplicationWithDetails,
+  claim: ClaimApplicationDetailForPdf,
   orgProfile: FullOrganizationProfile,
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();

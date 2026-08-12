@@ -20,6 +20,7 @@ import {
   CheckIcon, XIcon, FileDownIcon, CheckCircle2Icon, ClipboardCheckIcon,
   ArrowRightIcon, MapPinIcon, EyeIcon, PrinterIcon,
 } from "lucide-react";
+import { EditBadge, SlashBadge } from "@/components/claim/line-item-annotations";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,10 @@ function fmtClaimDate(claimDate: string, formType: string | null): string {
     return new Date(parseInt(year), parseInt(month) - 1, 1).toLocaleDateString("en-MY", { month: "long", year: "numeric" });
   }
   return claimDate;
+}
+
+function fmtSubmittedDate(createdAt: string | Date): string {
+  return new Date(createdAt).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
 }
 
 function getFormType(app: ClaimApplicationWithDetails): string | null {
@@ -74,11 +79,13 @@ function LineItemDetail({ items }: { items: ClaimApplicationWithDetails["lineIte
     if (!groups[item.category]) groups[item.category] = [];
     groups[item.category].push(item);
   }
+  const grandTotal = items.reduce((s, r) => s + (r.slashed ? 0 : parseFloat(r.amountMyr)), 0);
+  const hasSlashed = items.some((r) => r.slashed);
 
   return (
     <div className="rounded-md border border-border overflow-hidden">
       {Object.entries(groups).map(([cat, rows]) => {
-        const subtotal = rows.reduce((s, r) => s + parseFloat(r.amountMyr), 0);
+        const subtotal = rows.reduce((s, r) => s + (r.slashed ? 0 : parseFloat(r.amountMyr)), 0);
         return (
           <div key={cat}>
             <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
@@ -86,45 +93,72 @@ function LineItemDetail({ items }: { items: ClaimApplicationWithDetails["lineIte
               <span className="text-xs font-semibold">{fmtAmount(subtotal)}</span>
             </div>
             <div className="divide-y divide-border">
-              {rows.map((item, i) => (
-                <div key={item.id} className="px-3 py-2.5 flex items-start gap-2 text-xs">
-                  <span className="text-muted-foreground w-4 shrink-0">{i + 1}.</span>
-                  <div className="flex-1 flex flex-col gap-0.5 min-w-0">
-                    {cat === LINE_CATEGORY.TRAVEL ? (
-                      <div className="flex items-center gap-1 text-foreground font-medium">
-                        <MapPinIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
-                        <span className="truncate">{item.fromLocation}</span>
-                        <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
-                        <span className="truncate">{item.toLocation}</span>
-                      </div>
-                    ) : cat === LINE_CATEGORY.OVERSEAS_FX ? (
-                      <div className="text-foreground font-medium">
-                        {item.destination && <span className="mr-1">{item.destination}</span>}
+              {rows.map((item, i) => {
+                const arCls = item.slashed ? "line-through opacity-50" : "";
+                return (
+                  <div key={item.id} className="px-3 py-2.5 flex flex-col gap-1 text-xs">
+                    <div className="flex items-start gap-2">
+                      <span className="text-muted-foreground w-4 shrink-0">{i + 1}.</span>
+                      <div className={`flex-1 flex flex-col gap-0.5 min-w-0 ${arCls}`}>
+                        {cat === LINE_CATEGORY.TRAVEL ? (
+                          <div className="flex items-center gap-1 text-foreground font-medium">
+                            <MapPinIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
+                            <span className="truncate">{item.fromLocation}</span>
+                            <ArrowRightIcon className="h-3 w-3 text-muted-foreground shrink-0"/>
+                            <span className="truncate">{item.toLocation}</span>
+                          </div>
+                        ) : cat === LINE_CATEGORY.OVERSEAS_FX ? (
+                          <div className="text-foreground font-medium">
+                            {item.destination && <span className="mr-1">{item.destination}</span>}
+                            <span className="text-muted-foreground">
+                              {item.amountForeign} {item.currency} × {item.exchangeRate}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-foreground font-medium truncate">
+                            {item.venue
+                              ? `${item.venue}${item.description ? ` — ${item.description}` : ""}`
+                              : item.destination
+                                ? `${item.destination}${item.description ? ` — ${item.description}` : ""}`
+                                : item.description}
+                          </span>
+                        )}
                         <span className="text-muted-foreground">
-                          {item.amountForeign} {item.currency} × {item.exchangeRate}
+                          {item.lineDate}
+                          {cat === LINE_CATEGORY.TRAVEL && item.distanceKm && ` · ${item.distanceKm} km`}
                         </span>
                       </div>
-                    ) : (
-                      <span className="text-foreground font-medium truncate">
-                        {item.venue
-                          ? `${item.venue}${item.description ? ` — ${item.description}` : ""}`
-                          : item.destination
-                            ? `${item.destination}${item.description ? ` — ${item.description}` : ""}`
-                            : item.description}
-                      </span>
+                      <span className={`text-green-700 dark:text-green-400 font-medium shrink-0 ${arCls}`}>{fmtAmount(item.amountMyr)}</span>
+                    </div>
+                    {item.slashed && (
+                      <div className="pl-6">
+                        <SlashBadge slashedByName={item.slashedByName} slashedAt={item.slashedAt} slashReason={item.slashReason}/>
+                      </div>
                     )}
-                    <span className="text-muted-foreground">
-                      {item.lineDate}
-                      {cat === LINE_CATEGORY.TRAVEL && item.distanceKm && ` · ${item.distanceKm} km`}
-                    </span>
+                    {item.editedBy && (
+                      <div className="pl-6">
+                        <EditBadge
+                          editedByName={item.editedByName}
+                          editedAt={item.editedAt}
+                          editReason={item.editReason}
+                          amountChange={item.originalAmountMyr ? { from: item.originalAmountMyr, to: item.amountMyr } : null}
+                          descriptionChange={item.originalDescription !== null ? { from: item.originalDescription, to: item.description } : null}
+                        />
+                      </div>
+                    )}
                   </div>
-                  <span className="text-green-700 dark:text-green-400 font-medium shrink-0">{fmtAmount(item.amountMyr)}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
       })}
+      <div className="px-3 py-2 border-t-2 border-border bg-muted/20 flex items-center justify-between">
+        <span className="text-xs font-semibold">
+          Items Total{hasSlashed && <span className="text-muted-foreground font-normal"> (excludes slashed)</span>}
+        </span>
+        <span className="text-sm font-bold text-green-700 dark:text-green-400">{fmtAmount(grandTotal)}</span>
+      </div>
     </div>
   );
 }
@@ -182,6 +216,10 @@ function ClaimDetailContent({ app }: { app: ClaimApplicationWithDetails }) {
           <span className="font-medium">{fmtClaimDate(app.claimDate, ft)}</span>
         </div>
         <div className="flex justify-between">
+          <span className="text-muted-foreground">Submitted</span>
+          <span className="font-medium">{fmtSubmittedDate(app.createdAt)}</span>
+        </div>
+        <div className="flex justify-between">
           <span className="text-muted-foreground">Total Amount</span>
           <span className="font-bold text-green-700 dark:text-green-400">{fmtAmount(app.amount)}</span>
         </div>
@@ -202,26 +240,56 @@ function ClaimDetailContent({ app }: { app: ClaimApplicationWithDetails }) {
           <div className="px-3 py-2 bg-muted/40 border-b border-border text-xs font-semibold text-muted-foreground">
             Entertainment Details ({app.entertainmentDetails.length})
           </div>
-          {app.entertainmentDetails.map((ed, idx) => (
-            <div key={idx} className="divide-y divide-border border-t border-border first:border-t-0">
-              {app.entertainmentDetails.length > 1 && (
-                <div className="px-3 py-1.5 bg-muted/20 text-[10px] font-semibold text-muted-foreground uppercase">Entry {idx + 1}</div>
-              )}
-              {[
-                ["Date", ed.eventDate],
-                ["Restaurant / Venue", ed.restaurantName],
-                ["Customer", ed.customerName],
-                ["Dept & Org", ed.departmentOrganization],
-                ["Purpose", ed.purpose],
-                ["Amount", `RM ${parseFloat(ed.amount).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`],
-              ].map(([label, value]) => (
-                <div key={label} className="px-3 py-2 flex justify-between gap-4">
-                  <span className="text-muted-foreground shrink-0 text-xs">{label}</span>
-                  <span className="text-right text-xs font-medium">{value}</span>
-                </div>
-              ))}
+          {app.entertainmentDetails.map((ed, idx) => {
+            const arCls = ed.slashed ? "line-through opacity-50" : "";
+            return (
+              <div key={ed.id} className="divide-y divide-border border-t border-border first:border-t-0">
+                {app.entertainmentDetails.length > 1 && (
+                  <div className="px-3 py-1.5 bg-muted/20 text-[10px] font-semibold text-muted-foreground uppercase">Entry {idx + 1}</div>
+                )}
+                {[
+                  ["Date", ed.eventDate],
+                  ["Restaurant / Venue", ed.restaurantName],
+                  ["Customer", ed.customerName],
+                  ["Dept & Org", ed.departmentOrganization],
+                  ["Purpose", ed.purpose],
+                  ["Amount", fmtAmount(ed.amount)],
+                ].map(([label, value]) => (
+                  <div key={label} className={`px-3 py-2 flex justify-between gap-4 ${arCls}`}>
+                    <span className="text-muted-foreground shrink-0 text-xs">{label}</span>
+                    <span className="text-right text-xs font-medium">{value}</span>
+                  </div>
+                ))}
+                {ed.slashed && (
+                  <div className="px-3 py-2">
+                    <SlashBadge slashedByName={ed.slashedByName} slashedAt={ed.slashedAt} slashReason={ed.slashReason}/>
+                  </div>
+                )}
+                {ed.editedBy && (
+                  <div className="px-3 py-2">
+                    <EditBadge
+                      editedByName={ed.editedByName}
+                      editedAt={ed.editedAt}
+                      editReason={ed.editReason}
+                      amountChange={ed.originalAmount ? { from: ed.originalAmount, to: ed.amount } : null}
+                      descriptionChange={ed.originalPurpose !== null ? { from: ed.originalPurpose, to: ed.purpose } : null}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {app.entertainmentDetails.length > 1 && (
+            <div className="px-3 py-2 border-t-2 border-border bg-muted/20 flex items-center justify-between">
+              <span className="text-xs font-semibold">
+                Entries Total
+                {app.entertainmentDetails.some((ed) => ed.slashed) && <span className="text-muted-foreground font-normal"> (excludes slashed)</span>}
+              </span>
+              <span className="text-sm font-bold text-green-700 dark:text-green-400">
+                {fmtAmount(app.entertainmentDetails.reduce((s, ed) => s + (ed.slashed ? 0 : parseFloat(ed.amount)), 0))}
+              </span>
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -342,6 +410,7 @@ export function ClaimApprovalsClient({ applications, permissions: _permissions }
                 <TableHead className="w-40">Applicant</TableHead>
                 <TableHead>Claim Type</TableHead>
                 <TableHead className="w-32">Period / Date</TableHead>
+                <TableHead className="w-28">Submitted</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead className="w-28 text-right">Amount</TableHead>
                 <TableHead className="w-44 text-right">Actions</TableHead>
@@ -377,6 +446,9 @@ export function ClaimApprovalsClient({ applications, permissions: _permissions }
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {fmtClaimDate(app.claimDate, ft)}
                     </TableCell>
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                      {fmtSubmittedDate(app.createdAt)}
+                    </TableCell>
                     <TableCell className="max-w-xs">
                       <p className="text-sm text-muted-foreground truncate" title={app.description ?? ""}>{app.description}</p>
                     </TableCell>
@@ -388,10 +460,15 @@ export function ClaimApprovalsClient({ applications, permissions: _permissions }
                         </Button>
                         <Button
                           size="sm" variant="outline" className="h-7 w-7 p-0"
-                          title="Download PDF" disabled={downloadingPdfId === app.id}
+                          title={downloadingPdfId === app.id ? "Generating PDF…" : "Download PDF"}
+                          disabled={downloadingPdfId === app.id}
                           onClick={() => handleDownloadPdf(app.id, app.applicationNo)}
                         >
-                          <PrinterIcon className="h-3 w-3"/>
+                          {downloadingPdfId === app.id ? (
+                            <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"/>
+                          ) : (
+                            <PrinterIcon className="h-3 w-3"/>
+                          )}
                         </Button>
                         <Button size="sm" className="h-7 gap-1 bg-green-600 hover:bg-green-700 text-white text-xs" onClick={() => { setApproveTarget(app); setApproveComment(""); }}>
                           <CheckIcon className="h-3 w-3"/>Approve

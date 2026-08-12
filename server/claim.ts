@@ -38,6 +38,7 @@ export type ClaimEntertainmentDetailRow = typeof claimEntertainmentDetail.$infer
 
 export type ClaimLineItemInput = {
   id?: string;               // pre-generated client-side when a receipt file is attached
+  docId?: string;            // id of a claim_document already uploaded for this row — re-linked to the row's final id once inserted
   category: LineCategoryType;
   lineDate: string;
   // TRAVEL
@@ -460,7 +461,7 @@ export async function getPendingClaimApprovals(): Promise<ClaimApplicationWithDe
     .from(claimApplication)
     .leftJoin(user, eq(claimApplication.userId, user.id))
     .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "CHECKED")))
-    .orderBy(asc(claimApplication.claimDate));
+    .orderBy(desc(claimApplication.createdAt));
 
   if (apps.length === 0) return [];
   const appIds = apps.map((a) => a.app.id);
@@ -475,7 +476,13 @@ export async function getPendingClaimApprovals(): Promise<ClaimApplicationWithDe
   }));
 }
 
-export async function getClaimApplicationDetail(appId: string): Promise<ClaimApplicationWithDetails | null> {
+export type ClaimApplicationDetailForPdf = ClaimApplicationWithDetails & {
+  checkedByName: string | null;
+  reviewedByName: string | null;
+  cancelledByName: string | null;
+};
+
+export async function getClaimApplicationDetail(appId: string): Promise<ClaimApplicationDetailForPdf | null> {
   const { orgId, userId } = await getSession();
   const perms = await getUserPermissions(userId, orgId);
 
@@ -491,11 +498,22 @@ export async function getClaimApplicationDetail(appId: string): Promise<ClaimApp
   if (!allowed) throw new Error("You don't have permission to do this");
 
   const { docMap, lineMap, entMap } = await loadExtras([appId]);
-  const userRow = await db.select({ name: user.name }).from(user).where(eq(user.id, app.userId)).limit(1);
+
+  // Resolve every actor's display name in one batch query — the applicant plus
+  // whoever checked/approved/cancelled (each stored only as a user id on the row).
+  const actorIds = [...new Set([app.userId, app.checkedBy, app.reviewedBy, app.cancelledBy].filter((id): id is string => !!id))];
+  const actorNameMap: Record<string, string | null> = {};
+  if (actorIds.length > 0) {
+    const rows = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, actorIds));
+    for (const r of rows) actorNameMap[r.id] = r.name;
+  }
 
   return {
     ...app,
-    applicantName: userRow[0]?.name ?? null,
+    applicantName: actorNameMap[app.userId] ?? null,
+    checkedByName: app.checkedBy ? actorNameMap[app.checkedBy] ?? null : null,
+    reviewedByName: app.reviewedBy ? actorNameMap[app.reviewedBy] ?? null : null,
+    cancelledByName: app.cancelledBy ? actorNameMap[app.cancelledBy] ?? null : null,
     documents: docMap[app.id] ?? [],
     lineItems: lineMap[app.id] ?? [],
     entertainmentDetails: entMap[app.id] ?? [],
@@ -997,6 +1015,18 @@ async function replaceClaimItems(
       createdAt: new Date(),
     }));
     await db.insert(claimLineItem).values(rows);
+
+    // Re-link each row's already-uploaded receipt (if any) to its final
+    // line-item id. A receipt uploads immediately on file-pick — often
+    // before the row it belongs to is ever saved as a real claim_line_item
+    // row — so the client tracks the docId <-> row association itself and
+    // passes it through here rather than us trying to infer it after the
+    // fact from stale FK state.
+    for (let idx = 0; idx < data.lineItems.length; idx++) {
+      const docId = data.lineItems[idx].docId;
+      if (!docId) continue;
+      await db.update(claimDocument).set({ lineItemId: rows[idx].id }).where(and(eq(claimDocument.id, docId), eq(claimDocument.applicationId, appId)));
+    }
   }
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetails && data.entertainmentDetails.length > 0) {
     await db.insert(claimEntertainmentDetail).values(
@@ -1200,7 +1230,7 @@ export async function getPendingClaimChecks(): Promise<ClaimApplicationWithDetai
     .from(claimApplication)
     .leftJoin(user, eq(claimApplication.userId, user.id))
     .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "PENDING")))
-    .orderBy(asc(claimApplication.claimDate));
+    .orderBy(desc(claimApplication.createdAt));
   if (apps.length === 0) return [];
   const appIds = apps.map((a) => a.app.id);
   const { docMap, lineMap, entMap } = await loadExtras(appIds);

@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type {
-  ClaimApplicationWithDetails, ClaimTypeRow, ClaimLineItemRow,
+  ClaimApplicationWithDetails, ClaimTypeRow, ClaimLineItemRow, ClaimDocumentRow,
   ClaimLineItemInput, ClaimEntertainmentDetailInput, ClaimCustomerOption,
 } from "@/server/claim";
 import {
@@ -57,17 +57,18 @@ interface TravelRow {
   mode:string;          // TRAVEL_MODE value or ""
   purpose:string;
   flightFile?: File;    // required when mode = FLIGHT
+  existingFlightFileName?: string; // receipt already attached from a prior submission
   resolvedFrom?: string; resolvedTo?: string; // display names from geocoding
   // Daily allowance (meal)
   dailyId:string; breakfastDays:string; lunchDays:string; dinnerDays:string;
   // Accommodation
-  accomId:string; accomAmount:string; accomFile?:File;
+  accomId:string; accomAmount:string; accomFile?:File; existingAccomFileName?: string;
   // Travel entertainment
-  tEntId:string; tEntAmount:string; tEntFile?:File;
+  tEntId:string; tEntAmount:string; tEntFile?:File; existingTEntFileName?: string;
 }
-interface MiscRow     { id:string; subType:"TOLL"|"PARKING"|"MOBILE"; lineDate:string; description:string; amountMyr:string; file?:File }
-interface InEntRow    { id:string; lineDate:string; venue:string; description:string; amountMyr:string; file?:File }
-interface OtherLocalRow { id:string; lineDate:string; description:string; amountMyr:string; file?:File }
+interface MiscRow     { id:string; subType:"TOLL"|"PARKING"|"MOBILE"; lineDate:string; description:string; amountMyr:string; file?:File; existingFileName?:string }
+interface InEntRow    { id:string; lineDate:string; venue:string; description:string; amountMyr:string; file?:File; existingFileName?:string }
+interface OtherLocalRow { id:string; lineDate:string; description:string; amountMyr:string; file?:File; existingFileName?:string }
 
 interface OvMyrRow    { id:string; lineDate:string; destination:string; description:string; amountMyr:string }
 interface OvFxRow     { id:string; lineDate:string; destination:string; currency:string; amountForeign:string; exchangeRate:string }
@@ -75,29 +76,43 @@ interface OvOtherRow  { id:string; lineDate:string; description:string; amountMy
 interface QueuedFile  { file:File; id:string }
 
 const newId = () => uid();
-const emptyTravel = (): TravelRow => ({
-  id:newId(), lineDate:"", fromLocation:"", toLocation:"", distanceKm:"", mode:"", purpose:"",
+const emptyTravel = (lineDate = ""): TravelRow => ({
+  id:newId(), lineDate, fromLocation:"", toLocation:"", distanceKm:"", mode:"", purpose:"",
   dailyId:newId(), breakfastDays:"", lunchDays:"", dinnerDays:"",
   accomId:newId(), accomAmount:"", accomFile:undefined,
   tEntId:newId(), tEntAmount:"", tEntFile:undefined,
 });
-const emptyMisc     = (): MiscRow       => ({ id:newId(), subType:"TOLL", lineDate:"", description:"", amountMyr:"" });
-const emptyInEnt    = (): InEntRow      => ({ id:newId(), lineDate:"", venue:"", description:"", amountMyr:"" });
-const emptyOther    = (): OtherLocalRow => ({ id:newId(), lineDate:"", description:"", amountMyr:"" });
+const emptyMisc     = (lineDate = ""): MiscRow       => ({ id:newId(), subType:"TOLL", lineDate, description:"", amountMyr:"" });
+const emptyInEnt    = (lineDate = ""): InEntRow      => ({ id:newId(), lineDate, venue:"", description:"", amountMyr:"" });
+const emptyOther    = (lineDate = ""): OtherLocalRow => ({ id:newId(), lineDate, description:"", amountMyr:"" });
 
 // ── Form reconstruction from existing claim ───────────────────────────────────
 
-function lineItemsToTravelRows(items: ClaimLineItemRow[]): TravelRow[] {
+// Restores a best-effort `mode` for a reloaded travel row: `mode` isn't a
+// stored column, only ever inferred from the description text at submit
+// time (see the `TRAVEL_MODE_LABELS[r.mode]` fallback in handleSubmit), so
+// this exactly reverses that encoding when possible.
+function inferTravelMode(description: string | null, distanceKm: string | null): { mode: string; purpose: string } {
+  const desc = (description ?? "").trim();
+  const labelMatch = Object.entries(TRAVEL_MODE_LABELS).find(([, label]) => label === desc);
+  if (labelMatch) return { mode: labelMatch[0], purpose: "" };
+  if (distanceKm && parseFloat(distanceKm) > 0) return { mode: TRAVEL_MODE.OWN_VEHICLE, purpose: desc };
+  return { mode: "", purpose: desc };
+}
+
+function lineItemsToTravelRows(items: ClaimLineItemRow[], docsByLineItemId?: Map<string, ClaimDocumentRow>): TravelRow[] {
   const sorted = [...items].sort((a, b) => a.sortOrder - b.sortOrder);
   const rows: TravelRow[] = [];
   let current: TravelRow | null = null;
   for (const item of sorted) {
     if (item.category === LINE_CATEGORY.TRAVEL) {
       if (current) rows.push(current);
+      const { mode, purpose } = inferTravelMode(item.description, item.distanceKm);
       current = {
         id: item.id, lineDate: item.lineDate,
         fromLocation: item.fromLocation ?? "", toLocation: item.toLocation ?? "",
-        distanceKm: item.distanceKm ?? "", mode: "", purpose: item.description ?? "",
+        distanceKm: item.distanceKm ?? "", mode, purpose,
+        existingFlightFileName: docsByLineItemId?.get(item.id)?.fileName,
         dailyId: newId(), breakfastDays: "", lunchDays: "", dinnerDays: "",
         accomId: newId(), accomAmount: "",
         tEntId: newId(), tEntAmount: "",
@@ -113,31 +128,33 @@ function lineItemsToTravelRows(items: ClaimLineItemRow[]): TravelRow[] {
     } else if (current && item.category === LINE_CATEGORY.TRAVEL_ACCOMMODATION) {
       current.accomId = item.id;
       current.accomAmount = item.amountMyr;
+      current.existingAccomFileName = docsByLineItemId?.get(item.id)?.fileName;
     } else if (current && item.category === LINE_CATEGORY.TRAVEL_ENTERTAINMENT) {
       current.tEntId = item.id;
       current.tEntAmount = item.amountMyr;
+      current.existingTEntFileName = docsByLineItemId?.get(item.id)?.fileName;
     }
   }
   if (current) rows.push(current);
   return rows.length > 0 ? rows : [emptyTravel()];
 }
 
-function buildFormRows(items: ClaimLineItemRow[]) {
+function buildFormRows(items: ClaimLineItemRow[], docsByLineItemId?: Map<string, ClaimDocumentRow>) {
   const travelCats = new Set<string>([
     LINE_CATEGORY.TRAVEL, LINE_CATEGORY.TRAVEL_ACCOMMODATION,
     LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, LINE_CATEGORY.TRAVEL_ENTERTAINMENT,
   ]);
   const travelItems = items.filter(i => travelCats.has(i.category as string));
-  const travelRows  = lineItemsToTravelRows(travelItems);
+  const travelRows  = lineItemsToTravelRows(travelItems, docsByLineItemId);
   const miscRows: MiscRow[] = items
     .filter(i => i.category === LINE_CATEGORY.TOLL || i.category === LINE_CATEGORY.PARKING || i.category === LINE_CATEGORY.MOBILE)
-    .map(i => ({ id: i.id, subType: i.category as "TOLL"|"PARKING"|"MOBILE", lineDate: i.lineDate, description: i.description ?? "", amountMyr: i.amountMyr }));
+    .map(i => ({ id: i.id, subType: i.category as "TOLL"|"PARKING"|"MOBILE", lineDate: i.lineDate, description: i.description ?? "", amountMyr: i.amountMyr, existingFileName: docsByLineItemId?.get(i.id)?.fileName }));
   const inEntRows: InEntRow[] = items
     .filter(i => i.category === LINE_CATEGORY.IN_BASE_ENT)
-    .map(i => ({ id: i.id, lineDate: i.lineDate, venue: i.venue ?? "", description: i.description ?? "", amountMyr: i.amountMyr }));
+    .map(i => ({ id: i.id, lineDate: i.lineDate, venue: i.venue ?? "", description: i.description ?? "", amountMyr: i.amountMyr, existingFileName: docsByLineItemId?.get(i.id)?.fileName }));
   const otherRows: OtherLocalRow[] = items
     .filter(i => i.category === LINE_CATEGORY.OTHER_LOCAL)
-    .map(i => ({ id: i.id, lineDate: i.lineDate, description: i.description ?? "", amountMyr: i.amountMyr }));
+    .map(i => ({ id: i.id, lineDate: i.lineDate, description: i.description ?? "", amountMyr: i.amountMyr, existingFileName: docsByLineItemId?.get(i.id)?.fileName }));
   const ovMyrRows: OvMyrRow[] = items
     .filter(i => i.category === LINE_CATEGORY.OVERSEAS_MYR)
     .map(i => ({ id: i.id, lineDate: i.lineDate, destination: i.destination ?? "", description: i.description ?? "", amountMyr: i.amountMyr }));
@@ -162,7 +179,7 @@ function pickReceiptFile(e: React.ChangeEvent<HTMLInputElement>): File | null {
   return f;
 }
 
-function TravelSubFilePicker({ file, onPick, onRemove, uploading }: { file?: File; onPick:(f:File)=>void; onRemove:()=>void; uploading?: boolean }) {
+function TravelSubFilePicker({ file, existingFileName, onPick, onRemove, uploading }: { file?: File; existingFileName?: string; onPick:(f:File)=>void; onRemove:()=>void; uploading?: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <div className="flex items-center gap-1 shrink-0">
@@ -178,6 +195,11 @@ function TravelSubFilePicker({ file, onPick, onRemove, uploading }: { file?: Fil
           <span className="text-xs text-green-700 dark:text-green-400 truncate" title={file.name}>{file.name}</span>
           <button type="button" onClick={onRemove} className="text-green-600 hover:text-destructive shrink-0"><XIcon className="h-3 w-3"/></button>
         </div>
+      ) : existingFileName ? (
+        <div className="flex items-center gap-1 rounded border border-blue-400/40 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 max-w-30" title="Already attached from before">
+          <span className="text-xs text-blue-700 dark:text-blue-400 truncate" title={existingFileName}>{existingFileName}</span>
+          <button type="button" onClick={onRemove} className="text-blue-600 hover:text-destructive shrink-0"><XIcon className="h-3 w-3"/></button>
+        </div>
       ) : (
         <button type="button" onClick={() => ref.current?.click()}
           className="flex items-center gap-1 rounded border border-dashed border-muted-foreground/40 px-1.5 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary shrink-0">
@@ -188,7 +210,7 @@ function TravelSubFilePicker({ file, onPick, onRemove, uploading }: { file?: Fil
   );
 }
 
-function ReceiptPicker<T extends { id: string; file?: File }>({
+function ReceiptPicker<T extends { id: string; file?: File; existingFileName?: string }>({
   row, setter, afterPick, afterRemove, uploading,
 }: {
   row: T;
@@ -222,6 +244,13 @@ function ReceiptPicker<T extends { id: string; file?: File }>({
             <XIcon className="h-3 w-3"/>
           </button>
         </div>
+      ) : row.existingFileName ? (
+        <div className="flex items-center gap-1 rounded border border-blue-400/40 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 max-w-30" title="Already attached from before">
+          <span className="text-xs text-blue-700 dark:text-blue-400 truncate" title={row.existingFileName}>{row.existingFileName}</span>
+          <button type="button" onClick={() => { afterRemove?.(); setter(prev => prev.map(r => r.id === row.id ? { ...r, existingFileName: undefined } : r)); }} className="text-blue-600 hover:text-destructive shrink-0">
+            <XIcon className="h-3 w-3"/>
+          </button>
+        </div>
       ) : (
         <button
           type="button"
@@ -236,9 +265,9 @@ function ReceiptPicker<T extends { id: string; file?: File }>({
   );
 }
 
-const emptyOvMyr    = (): OvMyrRow      => ({ id:newId(), lineDate:"", destination:"", description:"", amountMyr:"" });
-const emptyOvFx     = (): OvFxRow       => ({ id:newId(), lineDate:"", destination:"", currency:"USD", amountForeign:"", exchangeRate:"" });
-const emptyOvOther  = (): OvOtherRow    => ({ id:newId(), lineDate:"", description:"", amountMyr:"" });
+const emptyOvMyr    = (lineDate = ""): OvMyrRow      => ({ id:newId(), lineDate, destination:"", description:"", amountMyr:"" });
+const emptyOvFx     = (lineDate = ""): OvFxRow       => ({ id:newId(), lineDate, destination:"", currency:"USD", amountForeign:"", exchangeRate:"" });
+const emptyOvOther  = (lineDate = ""): OvOtherRow    => ({ id:newId(), lineDate, description:"", amountMyr:"" });
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -252,6 +281,15 @@ function fmtClaimDate(claimDate: string, category: string): string {
     return new Date(parseInt(year), parseInt(month) - 1, 1).toLocaleDateString("en-MY", { month: "long", year: "numeric" });
   }
   return claimDate;
+}
+
+// Sensible default for a new line item's date: the last day of the selected
+// claim period, so a freshly-added row isn't blocked on submit for a date
+// the user simply hasn't noticed yet.
+function lastDayOfPeriod(period: string): string {
+  if (!/^\d{4}-\d{2}$/.test(period)) return "";
+  const [y, m] = period.split("-").map(Number);
+  return `${period}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
 }
 
 function fxMyr(fc: string, rate: string): number {
@@ -394,6 +432,15 @@ function ClaimReadOnlyDetail({ app }: { app: ClaimApplicationWithDetails }) {
               </div>
             );
           })}
+          <div className="px-3 py-2 border-t-2 border-border bg-muted/20 flex items-center justify-between">
+            <span className="text-xs font-semibold">
+              Items Total
+              {app.lineItems.some((r) => r.slashed) && <span className="text-muted-foreground font-normal"> (excludes slashed)</span>}
+            </span>
+            <span className="text-sm font-bold text-green-700 dark:text-green-400">
+              {fmtAmount(app.lineItems.reduce((s, r) => s + (r.slashed ? 0 : parseFloat(r.amountMyr)), 0))}
+            </span>
+          </div>
         </div>
       )}
 
@@ -441,6 +488,17 @@ function ClaimReadOnlyDetail({ app }: { app: ClaimApplicationWithDetails }) {
               </div>
             );
           })}
+          {app.entertainmentDetails.length > 1 && (
+            <div className="px-3 py-2 border-t-2 border-border bg-muted/20 flex items-center justify-between">
+              <span className="text-xs font-semibold">
+                Entries Total
+                {app.entertainmentDetails.some((ed) => ed.slashed) && <span className="text-muted-foreground font-normal"> (excludes slashed)</span>}
+              </span>
+              <span className="text-sm font-bold text-green-700 dark:text-green-400">
+                {fmtAmount(app.entertainmentDetails.reduce((s, ed) => s + (ed.slashed ? 0 : parseFloat(ed.amount)), 0))}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -548,8 +606,8 @@ type EntRow = {
   custSearch: string;
 };
 
-function emptyEntRow(): EntRow {
-  return { id: Math.random().toString(36).slice(2), eventDate: "", restaurantName: "", customerName: "", departmentOrganization: "", purpose: "", amount: "", custSearch: "" };
+function emptyEntRow(eventDate = ""): EntRow {
+  return { id: Math.random().toString(36).slice(2), eventDate, restaurantName: "", customerName: "", departmentOrganization: "", purpose: "", amount: "", custSearch: "" };
 }
 
 export function MyClaimClient({ applications, claimTypes, permissions, customers }: Props) {
@@ -563,6 +621,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   const [viewClaimTarget, setViewClaimTarget] = useState<ClaimApplicationWithDetails | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
   const [editingApp, setEditingApp] = useState<ClaimApplicationWithDetails | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   // Tracks files already uploaded to R2 (key → {docId, fileKey}) so we skip re-upload on submit
@@ -666,6 +725,35 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     setUploadedFiles(prev => { const n = { ...prev }; delete n[fieldKey]; return n; });
   }
 
+  // Removes a document straight from the "Currently Attached Documents" list
+  // in the edit form — the self-service way to clean up a stray/orphaned
+  // receipt (e.g. one left behind by an incomplete row that never made it
+  // into a line item) without needing DB access.
+  async function handleDeleteDocument(docId: string) {
+    setDeletingDocId(docId);
+    try {
+      await deleteClaimDocument(docId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove document");
+      setDeletingDocId(null);
+      return;
+    }
+    setEditingApp(prev => prev ? { ...prev, documents: prev.documents.filter(d => d.id !== docId) } : prev);
+    const fieldKey = Object.entries(uploadedFiles).find(([, v]) => v.docId === docId)?.[0];
+    if (fieldKey) {
+      setUploadedFiles(prev => { const n = { ...prev }; delete n[fieldKey]; return n; });
+      const [field, rowId] = fieldKey.split(":");
+      if (field === "flightFile") setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, existingFlightFileName: undefined } : r));
+      else if (field === "accomFile") setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, existingAccomFileName: undefined } : r));
+      else if (field === "tEntFile") setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, existingTEntFileName: undefined } : r));
+      else if (field === "misc") setMiscRows(prev => prev.map(r => r.id === rowId ? { ...r, existingFileName: undefined } : r));
+      else if (field === "inent") setInEntRows(prev => prev.map(r => r.id === rowId ? { ...r, existingFileName: undefined } : r));
+      else if (field === "other") setOtherRows(prev => prev.map(r => r.id === rowId ? { ...r, existingFileName: undefined } : r));
+    }
+    toast.success("Document removed");
+    setDeletingDocId(null);
+  }
+
   // Downloads a claim's PDF, surfacing the server's actual error text on failure
   // instead of leaving the user with a blank tab or a silent failed download.
   async function handleDownloadPdf(appId: string, applicationNo: string) {
@@ -695,11 +783,16 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     setSelectedTypeId(app.claimTypeId);
     const periodMatch = app.claimDate.match(/^(\d{4}-\d{2})-\d{2}$/);
     setClaimPeriod(periodMatch ? periodMatch[1] : "");
-    setNote(app.description !== "Draft" ? app.description : "");
+    // "Draft" is the server's placeholder description for an unfinished draft
+    // (server/claim.ts: `description: data.description.trim() || "Draft"`) —
+    // only strip it while the claim is still a DRAFT. A REJECTED claim's
+    // description was always genuine submitted content, even if it happens
+    // to literally read "Draft".
+    setNote(app.status === "DRAFT" && app.description === "Draft" ? "" : app.description);
     setQueuedFiles([]);
-    setUploadedFiles({});
     setUploadingFields(new Set());
     if (app.entertainmentDetails && app.entertainmentDetails.length > 0) {
+      setUploadedFiles({});
       setEntRows(app.entertainmentDetails.map(ed => ({
         id: Math.random().toString(36).slice(2),
         eventDate: ed.eventDate,
@@ -713,7 +806,9 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
       setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
       setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     } else {
-      const { travelRows, miscRows, inEntRows, otherRows, ovMyrRows, ovFxRows, ovOtherRows } = buildFormRows(app.lineItems);
+      const docsByLineItemId = new Map<string, ClaimDocumentRow>();
+      for (const doc of app.documents) if (doc.lineItemId) docsByLineItemId.set(doc.lineItemId, doc);
+      const { travelRows, miscRows, inEntRows, otherRows, ovMyrRows, ovFxRows, ovOtherRows } = buildFormRows(app.lineItems, docsByLineItemId);
       setTravelRows(travelRows);
       setMiscRows(miscRows);
       setInEntRows(inEntRows);
@@ -722,6 +817,31 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
       setOvFxRows(ovFxRows);
       setOvOtherRows(ovOtherRows);
       setEntRows([emptyEntRow()]);
+
+      // Re-key the matched documents by their fieldKey so removing/replacing
+      // one goes through the existing uploadedFiles → deleteClaimDocument path.
+      const restoredUploads: Record<string, { docId: string; fileKey: string }> = {};
+      for (const row of travelRows) {
+        const flightDoc = docsByLineItemId.get(row.id);
+        if (flightDoc && row.existingFlightFileName) restoredUploads[`flightFile:${row.id}`] = { docId: flightDoc.id, fileKey: flightDoc.fileKey };
+        const accomDoc = docsByLineItemId.get(row.accomId);
+        if (accomDoc && row.existingAccomFileName) restoredUploads[`accomFile:${row.id}`] = { docId: accomDoc.id, fileKey: accomDoc.fileKey };
+        const tEntDoc = docsByLineItemId.get(row.tEntId);
+        if (tEntDoc && row.existingTEntFileName) restoredUploads[`tEntFile:${row.id}`] = { docId: tEntDoc.id, fileKey: tEntDoc.fileKey };
+      }
+      for (const row of miscRows) {
+        const doc = docsByLineItemId.get(row.id);
+        if (doc && row.existingFileName) restoredUploads[`misc:${row.id}`] = { docId: doc.id, fileKey: doc.fileKey };
+      }
+      for (const row of inEntRows) {
+        const doc = docsByLineItemId.get(row.id);
+        if (doc && row.existingFileName) restoredUploads[`inent:${row.id}`] = { docId: doc.id, fileKey: doc.fileKey };
+      }
+      for (const row of otherRows) {
+        const doc = docsByLineItemId.get(row.id);
+        if (doc && row.existingFileName) restoredUploads[`other:${row.id}`] = { docId: doc.id, fileKey: doc.fileKey };
+      }
+      setUploadedFiles(restoredUploads);
     }
     setSubmitOpen(true);
   }
@@ -734,6 +854,23 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     setEntRows([emptyEntRow()]);
   }
 
+  // Backfills the default (end-of-period) date onto any row the user hasn't
+  // touched yet, so picking the period after adding a row still helps —
+  // not just rows added after the period is already set.
+  function handlePeriodChange(period: string) {
+    setClaimPeriod(period);
+    const d = lastDayOfPeriod(period);
+    if (!d) return;
+    setTravelRows(prev => prev.map(r => r.lineDate ? r : { ...r, lineDate: d }));
+    setMiscRows(prev => prev.map(r => r.lineDate ? r : { ...r, lineDate: d }));
+    setInEntRows(prev => prev.map(r => r.lineDate ? r : { ...r, lineDate: d }));
+    setOtherRows(prev => prev.map(r => r.lineDate ? r : { ...r, lineDate: d }));
+    setOvMyrRows(prev => prev.map(r => r.lineDate ? r : { ...r, lineDate: d }));
+    setOvFxRows(prev => prev.map(r => r.lineDate ? r : { ...r, lineDate: d }));
+    setOvOtherRows(prev => prev.map(r => r.lineDate ? r : { ...r, lineDate: d }));
+    setEntRows(prev => prev.map(r => r.eventDate ? r : { ...r, eventDate: d }));
+  }
+
   // generic updater factory
   function updater<T extends { id: string }>(set: React.Dispatch<React.SetStateAction<T[]>>) {
     return (id: string, field: keyof T, value: string) =>
@@ -744,10 +881,11 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   }
 
   const updateTravel   = updater(setTravelRows);
+  const EXISTING_FILE_FIELD = { flightFile: "existingFlightFileName", accomFile: "existingAccomFileName", tEntFile: "existingTEntFileName" } as const;
   async function setTravelFile(rowId: string, field: "accomFile" | "tEntFile" | "flightFile", file: File | undefined) {
     const fieldKey = `${field}:${rowId}`;
     if (file === undefined) {
-      setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, [field]: undefined } : r));
+      setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, [field]: undefined, [EXISTING_FILE_FIELD[field]]: undefined } : r));
       await removeOneUpload(fieldKey);
       return;
     }
@@ -825,7 +963,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedType || !formType) return;
+    if (!selectedType || !formType) { toast.error("This claim's type is no longer available — contact HR"); return; }
     if (!claimPeriod) { toast.error("Select a claim period / date"); return; }
     if ((formType === CLAIM_FORM.LOCAL || formType === CLAIM_FORM.OVERSEAS) && !/^\d{4}-\d{2}$/.test(claimPeriod)) {
       toast.error("Claim period is invalid — please re-select it");
@@ -846,14 +984,31 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
         miscValid  = miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0);
         inEntValid = inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0);
         otherValid = otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0);
-        const flightMissingReceipt = travelRows.find(r => r.mode === TRAVEL_MODE.FLIGHT && !r.flightFile);
+        const flightMissingReceipt = travelRows.find(r => r.mode === TRAVEL_MODE.FLIGHT && !r.flightFile && !r.existingFlightFileName);
         if (flightMissingReceipt) { toast.error("Flight receipt is required for flight travel"); setSubmitting(false); return; }
-        const accomMissingReceipt = travelRows.find(r => parseFloat(r.accomAmount) > 0 && !r.accomFile);
+        const accomMissingReceipt = travelRows.find(r => parseFloat(r.accomAmount) > 0 && !r.accomFile && !r.existingAccomFileName);
         if (accomMissingReceipt) { toast.error("Accommodation receipt is required"); setSubmitting(false); return; }
-        const tEntMissingReceipt = travelRows.find(r => parseFloat(r.tEntAmount) > 0 && !r.tEntFile);
+        const tEntMissingReceipt = travelRows.find(r => parseFloat(r.tEntAmount) > 0 && !r.tEntFile && !r.existingTEntFileName);
         if (tEntMissingReceipt) { toast.error("Travel entertainment receipt is required"); setSubmitting(false); return; }
-        const missingReceipt = [...miscValid, ...inEntValid, ...otherValid].find(r => !r.file);
+        const missingReceipt = [...miscValid, ...inEntValid, ...otherValid].find(r => !r.file && !r.existingFileName);
         if (missingReceipt) { toast.error("Each expense item requires an attached receipt"); setSubmitting(false); return; }
+
+        // Catch the reverse case: a row has a receipt attached (so the user
+        // clearly meant to submit it) but is missing another required field
+        // (date/amount/etc). Without this check the row silently fails the
+        // *Valid filters below and never becomes a line item — the receipt
+        // still uploads (it's sent immediately on pick) and ends up orphaned
+        // with no line item to show for it, with zero feedback to the user.
+        const incompleteAccom = travelRows.find(r => (r.accomFile || r.existingAccomFileName) && !(parseFloat(r.accomAmount) > 0));
+        if (incompleteAccom) { toast.error("Accommodation has a receipt attached but no amount entered — fill in the amount or remove the receipt"); setSubmitting(false); return; }
+        const incompleteTEnt = travelRows.find(r => (r.tEntFile || r.existingTEntFileName) && !(parseFloat(r.tEntAmount) > 0));
+        if (incompleteTEnt) { toast.error("Travel entertainment has a receipt attached but no amount entered — fill in the amount or remove the receipt"); setSubmitting(false); return; }
+        const incompleteMisc = miscRows.find(r => (r.file || r.existingFileName) && !(r.lineDate && parseFloat(r.amountMyr) > 0));
+        if (incompleteMisc) { toast.error(`A ${MISC_SUB_LABELS[incompleteMisc.subType]} expense has a receipt attached but is missing a date or amount — complete the row or remove the receipt`); setSubmitting(false); return; }
+        const incompleteInEnt = inEntRows.find(r => (r.file || r.existingFileName) && !(r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0));
+        if (incompleteInEnt) { toast.error("An In-Base Entertainment expense has a receipt attached but is missing a date, venue, or amount — complete the row or remove the receipt"); setSubmitting(false); return; }
+        const incompleteOther = otherRows.find(r => (r.file || r.existingFileName) && !(r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0));
+        if (incompleteOther) { toast.error("An Other Expenses item has a receipt attached but is missing a date, description, or amount — complete the row or remove the receipt"); setSubmitting(false); return; }
 
         lineItems = [
           ...travelRows.flatMap(r => {
@@ -864,7 +1019,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
             const mileageAmt = usesMileage && km > 0 ? km * ratePerKm : 0;
             // Always create a TRAVEL line item so documents (e.g. flight receipt) have an anchor
             if (r.lineDate && (r.fromLocation.trim() || r.toLocation.trim() || r.purpose.trim() || r.mode)) {
-              items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
+              items.push({ id: r.id, docId: uploadedFiles[`flightFile:${r.id}`]?.docId, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
             }
             const bf = parseFloat(r.breakfastDays)||0;
             const ln = parseFloat(r.lunchDays)||0;
@@ -878,26 +1033,26 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               items.push({ id: r.dailyId, category: LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, lineDate: r.lineDate, description: parts.join(", "), amountMyr: dailyTotal.toFixed(2) });
             }
             if (parseFloat(r.accomAmount) > 0) {
-              items.push({ id: r.accomId, category: LINE_CATEGORY.TRAVEL_ACCOMMODATION, lineDate: r.lineDate, amountMyr: r.accomAmount });
+              items.push({ id: r.accomId, docId: uploadedFiles[`accomFile:${r.id}`]?.docId, category: LINE_CATEGORY.TRAVEL_ACCOMMODATION, lineDate: r.lineDate, amountMyr: r.accomAmount });
             }
             if (parseFloat(r.tEntAmount) > 0) {
-              items.push({ id: r.tEntId, category: LINE_CATEGORY.TRAVEL_ENTERTAINMENT, lineDate: r.lineDate, amountMyr: r.tEntAmount });
+              items.push({ id: r.tEntId, docId: uploadedFiles[`tEntFile:${r.id}`]?.docId, category: LINE_CATEGORY.TRAVEL_ENTERTAINMENT, lineDate: r.lineDate, amountMyr: r.tEntAmount });
             }
             return items;
           }),
-          ...miscValid.map(r => ({ id: r.id, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
-          ...inEntValid.map(r => ({ id: r.id, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
-          ...otherValid.map(r => ({ id: r.id, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...miscValid.map(r => ({ id: r.id, docId: uploadedFiles[`misc:${r.id}`]?.docId, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...inEntValid.map(r => ({ id: r.id, docId: uploadedFiles[`inent:${r.id}`]?.docId, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...otherValid.map(r => ({ id: r.id, docId: uploadedFiles[`other:${r.id}`]?.docId, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
         ];
         if (lineItems.length === 0) { toast.error("Add at least one expense item"); setSubmitting(false); return; }
       } else if (formType === CLAIM_FORM.OVERSEAS) {
         lineItems = [
           ...ovMyrRows.filter(r => r.lineDate && r.destination.trim() && parseFloat(r.amountMyr) > 0)
-            .map(r => ({ category: LINE_CATEGORY.OVERSEAS_MYR, lineDate: r.lineDate, destination: r.destination, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+            .map(r => ({ id: r.id, category: LINE_CATEGORY.OVERSEAS_MYR, lineDate: r.lineDate, destination: r.destination, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
           ...ovFxRows.filter(r => r.lineDate && r.destination.trim() && parseFloat(r.amountForeign) > 0 && parseFloat(r.exchangeRate) > 0)
-            .map(r => ({ category: LINE_CATEGORY.OVERSEAS_FX, lineDate: r.lineDate, destination: r.destination, currency: r.currency, amountForeign: r.amountForeign, exchangeRate: r.exchangeRate, amountMyr: fxMyr(r.amountForeign, r.exchangeRate).toFixed(2) } satisfies ClaimLineItemInput)),
+            .map(r => ({ id: r.id, category: LINE_CATEGORY.OVERSEAS_FX, lineDate: r.lineDate, destination: r.destination, currency: r.currency, amountForeign: r.amountForeign, exchangeRate: r.exchangeRate, amountMyr: fxMyr(r.amountForeign, r.exchangeRate).toFixed(2) } satisfies ClaimLineItemInput)),
           ...ovOtherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0)
-            .map(r => ({ category: LINE_CATEGORY.OVERSEAS_OTHER, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+            .map(r => ({ id: r.id, category: LINE_CATEGORY.OVERSEAS_OTHER, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
         ];
         if (lineItems.length === 0) { toast.error("Add at least one expense item"); setSubmitting(false); return; }
       } else {
@@ -992,7 +1147,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
             const usesMileage = r.mode !== TRAVEL_MODE.FLIGHT && r.mode !== TRAVEL_MODE.COMPANY_CAR;
             const mileageAmt = usesMileage && km > 0 ? km * ratePerKm : 0;
             if (r.fromLocation.trim() || r.toLocation.trim() || r.purpose.trim() || r.mode) {
-              items.push({ id: r.id, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
+              items.push({ id: r.id, docId: uploadedFiles[`flightFile:${r.id}`]?.docId, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
             }
             const bf = parseFloat(r.breakfastDays)||0;
             const ln = parseFloat(r.lunchDays)||0;
@@ -1005,13 +1160,13 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               if (dn > 0) parts.push(`Dinner ×${dn}d`);
               items.push({ id: r.dailyId, category: LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, lineDate: r.lineDate, description: parts.join(", "), amountMyr: dailyTotal.toFixed(2) });
             }
-            if (parseFloat(r.accomAmount) > 0) items.push({ id: r.accomId, category: LINE_CATEGORY.TRAVEL_ACCOMMODATION, lineDate: r.lineDate, amountMyr: r.accomAmount });
-            if (parseFloat(r.tEntAmount) > 0) items.push({ id: r.tEntId, category: LINE_CATEGORY.TRAVEL_ENTERTAINMENT, lineDate: r.lineDate, amountMyr: r.tEntAmount });
+            if (parseFloat(r.accomAmount) > 0) items.push({ id: r.accomId, docId: uploadedFiles[`accomFile:${r.id}`]?.docId, category: LINE_CATEGORY.TRAVEL_ACCOMMODATION, lineDate: r.lineDate, amountMyr: r.accomAmount });
+            if (parseFloat(r.tEntAmount) > 0) items.push({ id: r.tEntId, docId: uploadedFiles[`tEntFile:${r.id}`]?.docId, category: LINE_CATEGORY.TRAVEL_ENTERTAINMENT, lineDate: r.lineDate, amountMyr: r.tEntAmount });
             return items;
           }),
-          ...miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
-          ...inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
-          ...otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...miscRows.filter(r => r.lineDate && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, docId: uploadedFiles[`misc:${r.id}`]?.docId, category: r.subType as typeof LINE_CATEGORY[keyof typeof LINE_CATEGORY], lineDate: r.lineDate, description: r.description || MISC_SUB_LABELS[r.subType], amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...inEntRows.filter(r => r.lineDate && r.venue.trim() && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, docId: uploadedFiles[`inent:${r.id}`]?.docId, category: LINE_CATEGORY.IN_BASE_ENT, lineDate: r.lineDate, venue: r.venue, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
+          ...otherRows.filter(r => r.lineDate && r.description.trim() && parseFloat(r.amountMyr) > 0).map(r => ({ id: r.id, docId: uploadedFiles[`other:${r.id}`]?.docId, category: LINE_CATEGORY.OTHER_LOCAL, lineDate: r.lineDate, description: r.description, amountMyr: r.amountMyr } satisfies ClaimLineItemInput)),
         ];
       } else if (formType === CLAIM_FORM.OVERSEAS) {
         draftLineItems = [
@@ -1146,10 +1301,15 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                           {app.status !== "DRAFT" && (
                             <Button
                               variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                              title="Download PDF" disabled={downloadingPdfId === app.id}
+                              title={downloadingPdfId === app.id ? "Generating PDF…" : "Download PDF"}
+                              disabled={downloadingPdfId === app.id}
                               onClick={() => handleDownloadPdf(app.id, app.applicationNo)}
                             >
-                              <PrinterIcon className="h-3.5 w-3.5"/>
+                              {downloadingPdfId === app.id ? (
+                                <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"/>
+                              ) : (
+                                <PrinterIcon className="h-3.5 w-3.5"/>
+                              )}
                             </Button>
                           )}
                           {app.documents.length > 0 && (
@@ -1277,6 +1437,41 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               Continuing draft <span className="font-mono font-semibold">{editingApp.applicationNo}</span>. Files must be re-attached before submitting.
             </div>
           )}
+          {editingApp?.status === "REJECTED" && (
+            <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-700 px-4 py-3 text-sm text-blue-700 dark:text-blue-400">
+              Previously attached documents are kept automatically — only newly added items need new receipts.
+            </div>
+          )}
+          {editingApp && editingApp.documents.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                Currently Attached Documents ({editingApp.documents.length})
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {editingApp.documents.map(doc => {
+                  const linked = doc.lineItemId !== null;
+                  return (
+                    <div key={doc.id} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs hover:bg-muted/50 transition-colors group">
+                      <FileDownIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0 group-hover:text-primary"/>
+                      <a href={`/api/claim/download/${doc.fileKey}`} target="_blank" rel="noopener noreferrer" className="flex-1 truncate text-foreground font-medium hover:underline">
+                        {doc.fileName}
+                      </a>
+                      {!linked && <span className="text-amber-600 dark:text-amber-400 shrink-0 text-[10px] font-semibold uppercase tracking-wide" title="Not linked to any expense row on this claim">Unlinked</span>}
+                      <button
+                        type="button"
+                        onClick={() => { void handleDeleteDocument(doc.id); }}
+                        disabled={deletingDocId === doc.id}
+                        className="text-muted-foreground hover:text-destructive shrink-0 disabled:opacity-50"
+                        title="Remove this document"
+                      >
+                        {deletingDocId === doc.id ? <LoaderIcon className="h-3.5 w-3.5 animate-spin"/> : <TrashIcon className="h-3.5 w-3.5"/>}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-5 pb-6">
             {/* Claim Type */}
@@ -1309,7 +1504,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               <Section title="Claim Period">
                 <div className="flex flex-col gap-1.5 w-48">
                   <Label>Month / Year <span className="text-destructive">*</span></Label>
-                  <input type="month" value={claimPeriod} onChange={e => setClaimPeriod(e.target.value)} className={inputCls+" w-48"} required/>
+                  <input type="month" value={claimPeriod} onChange={e => handlePeriodChange(e.target.value)} className={inputCls+" w-48"} required/>
                 </div>
               </Section>
 
@@ -1404,6 +1599,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                                 <span className="text-xs text-muted-foreground">Flight receipt <span className="text-destructive">*</span></span>
                                 <TravelSubFilePicker
                                   file={row.flightFile}
+                                  existingFileName={row.existingFlightFileName}
                                   onPick={f => { void setTravelFile(row.id,"flightFile",f); }}
                                   onRemove={() => { void setTravelFile(row.id,"flightFile",undefined); }}
                                   uploading={uploadingFields.has(`flightFile:${row.id}`)}
@@ -1460,9 +1656,9 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                                 <span className="text-xs text-muted-foreground">RM</span>
                                 <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.accomAmount} onChange={e => updateTravel(row.id,"accomAmount",e.target.value)} className={inputCls+" w-28"}/>
                               </div>
-                              <TravelSubFilePicker file={row.accomFile} onPick={f => { void setTravelFile(row.id,"accomFile",f); }} onRemove={() => { void setTravelFile(row.id,"accomFile",undefined); }} uploading={uploadingFields.has(`accomFile:${row.id}`)}/>
-                              {accomAmt > 0 && !row.accomFile && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
-                              {accomAmt > 0 && row.accomFile && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
+                              <TravelSubFilePicker file={row.accomFile} existingFileName={row.existingAccomFileName} onPick={f => { void setTravelFile(row.id,"accomFile",f); }} onRemove={() => { void setTravelFile(row.id,"accomFile",undefined); }} uploading={uploadingFields.has(`accomFile:${row.id}`)}/>
+                              {accomAmt > 0 && !row.accomFile && !row.existingAccomFileName && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
+                              {accomAmt > 0 && (row.accomFile || row.existingAccomFileName) && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
                             </div>
 
                             {/* Travel entertainment */}
@@ -1472,9 +1668,9 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                                 <span className="text-xs text-muted-foreground">RM</span>
                                 <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.tEntAmount} onChange={e => updateTravel(row.id,"tEntAmount",e.target.value)} className={inputCls+" w-28"}/>
                               </div>
-                              <TravelSubFilePicker file={row.tEntFile} onPick={f => { void setTravelFile(row.id,"tEntFile",f); }} onRemove={() => { void setTravelFile(row.id,"tEntFile",undefined); }} uploading={uploadingFields.has(`tEntFile:${row.id}`)}/>
-                              {tEntAmt > 0 && !row.tEntFile && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
-                              {tEntAmt > 0 && row.tEntFile && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tEntAmt)}</span>}
+                              <TravelSubFilePicker file={row.tEntFile} existingFileName={row.existingTEntFileName} onPick={f => { void setTravelFile(row.id,"tEntFile",f); }} onRemove={() => { void setTravelFile(row.id,"tEntFile",undefined); }} uploading={uploadingFields.has(`tEntFile:${row.id}`)}/>
+                              {tEntAmt > 0 && !row.tEntFile && !row.existingTEntFileName && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
+                              {tEntAmt > 0 && (row.tEntFile || row.existingTEntFileName) && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tEntAmt)}</span>}
                             </div>
                           </div>
                         </div>
@@ -1482,7 +1678,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                     );
                   })}
                 </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setTravelRows(p => [...p,emptyTravel()])}><PlusIcon className="h-3.5 w-3.5"/>Add Trip</Button>
+                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setTravelRows(p => [...p,emptyTravel(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add Trip</Button>
               </Section>
 
               {/* 1.2 Miscellaneous */}
@@ -1530,8 +1726,8 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                             <div className="flex flex-col gap-1">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">Receipt <span className="text-destructive">*</span></span>
-                                {amt > 0 && !row.file && <span className="text-xs text-destructive">Receipt required *</span>}
-                                {amt > 0 && row.file && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
+                                {amt > 0 && !row.file && !row.existingFileName && <span className="text-xs text-destructive">Receipt required *</span>}
+                                {amt > 0 && (row.file || row.existingFileName) && <span className="text-xs font-medium text-green-700 dark:text-green-400">{fmtAmount(amt)}</span>}
                               </div>
                               <ReceiptPicker row={row} setter={setMiscRows} uploading={uploadingFields.has(`misc:${row.id}`)} afterPick={editingApp ? f => { void uploadOneFile(f, editingApp.id, `misc:${row.id}`, row.id); } : undefined} afterRemove={editingApp ? () => { void removeOneUpload(`misc:${row.id}`); } : undefined}/>
                             </div>
@@ -1541,7 +1737,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                     );
                   })}
                 </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setMiscRows(p => [...p,emptyMisc()])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
+                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setMiscRows(p => [...p,emptyMisc(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
               </Section>
 
               {/* 1.3 In-Base Entertainment */}
@@ -1591,7 +1787,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                     );
                   })}
                 </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setInEntRows(p => [...p,emptyInEnt()])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
+                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setInEntRows(p => [...p,emptyInEnt(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
               </Section>
 
               {/* 1.4 Other Expenses */}
@@ -1635,7 +1831,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                     );
                   })}
                 </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOtherRows(p => [...p,emptyOther()])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
+                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOtherRows(p => [...p,emptyOther(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add Item</Button>
               </Section>
 
               {/* 1.5 Outstation Hotel */}
@@ -1653,7 +1849,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               <Section title="Claim Period">
                 <div className="flex flex-col gap-1.5 w-48">
                   <Label>Month / Year <span className="text-destructive">*</span></Label>
-                  <input type="month" value={claimPeriod} onChange={e => setClaimPeriod(e.target.value)} className={inputCls+" w-48"} required/>
+                  <input type="month" value={claimPeriod} onChange={e => handlePeriodChange(e.target.value)} className={inputCls+" w-48"} required/>
                 </div>
               </Section>
 
@@ -1673,7 +1869,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                     </div>
                   ))}
                 </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOvMyrRows(p => [...p,emptyOvMyr()])}><PlusIcon className="h-3.5 w-3.5"/>Add</Button>
+                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOvMyrRows(p => [...p,emptyOvMyr(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add</Button>
               </Section>
 
               {/* 2.2 Travel Foreign Currency */}
@@ -1702,7 +1898,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                     );
                   })}
                 </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOvFxRows(p => [...p,emptyOvFx()])}><PlusIcon className="h-3.5 w-3.5"/>Add</Button>
+                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOvFxRows(p => [...p,emptyOvFx(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add</Button>
               </Section>
 
               {/* 2.3 Other */}
@@ -1720,7 +1916,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                     </div>
                   ))}
                 </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOvOtherRows(p => [...p,emptyOvOther()])}><PlusIcon className="h-3.5 w-3.5"/>Add</Button>
+                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setOvOtherRows(p => [...p,emptyOvOther(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add</Button>
               </Section>
 
               {overseasTotal > 0 && (
@@ -1736,7 +1932,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               <Section title="Claim Period">
                 <div className="flex flex-col gap-1.5 w-48">
                   <Label>Month / Year <span className="text-destructive">*</span></Label>
-                  <input type="month" value={claimPeriod} onChange={e => setClaimPeriod(e.target.value)} className={inputCls+" w-48"} required/>
+                  <input type="month" value={claimPeriod} onChange={e => handlePeriodChange(e.target.value)} className={inputCls+" w-48"} required/>
                 </div>
               </Section>
             </>)}
@@ -1811,7 +2007,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                 })}
                 <div className="flex items-center justify-between pt-1">
                   <Button type="button" variant="outline" size="sm" className="gap-1.5"
-                    onClick={() => setEntRows(prev => [...prev, emptyEntRow()])}>
+                    onClick={() => setEntRows(prev => [...prev, emptyEntRow(lastDayOfPeriod(claimPeriod))])}>
                     <PlusIcon className="h-3.5 w-3.5"/>Add Entry
                   </Button>
                   {entRows.length > 0 && (

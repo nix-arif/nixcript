@@ -152,10 +152,15 @@ export function AllClaimsClient({ applications }: Props) {
                       {app.status !== "DRAFT" && (
                         <Button
                           variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                          title="Download PDF" disabled={downloadingPdfId === app.id}
+                          title={downloadingPdfId === app.id ? "Generating PDF…" : "Download PDF"}
+                          disabled={downloadingPdfId === app.id}
                           onClick={() => handleDownloadPdf(app.id, app.applicationNo)}
                         >
-                          <PrinterIcon className="h-3.5 w-3.5"/>
+                          {downloadingPdfId === app.id ? (
+                            <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"/>
+                          ) : (
+                            <PrinterIcon className="h-3.5 w-3.5"/>
+                          )}
                         </Button>
                       )}
                     </TableCell>
