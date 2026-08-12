@@ -33,7 +33,11 @@
       "Bash(mkdir -p /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/customer-po/\\\\[id\\\\])",
       "Bash(sed -i '' 's/orgQuotationLabelUppercase: orgRow?.quotationLabelUppercase ?? 1,/orgQuotationLabelUppercase: orgRow?.quotationLabelUppercase ?? 1,\\\\n    orgQuotationLabelAlign:     orgRow?.quotationLabelAlign     ?? \"right\",/' /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/server/quotation.ts)",
       "Bash(sed -i '' 's/orgQuotationLabelUppercase: org?.quotationLabelUppercase ?? 1,/orgQuotationLabelUppercase: org?.quotationLabelUppercase ?? 1,\\\\n      orgQuotationLabelAlign:     org?.quotationLabelAlign     ?? \"right\",/' /Users/nix_arif/Desktop/learn/programming/rbac/nixcript/server/quotation.ts)",
-      "Bash(npx playwright *)"
+      "Bash(npx playwright *)",
+      "Bash(node scripts/_fetch-claim-pdf.mjs)",
+      "Bash(pdftoppm -png -r 150 claude-claim-current.pdf claude-current-page)",
+      "Bash(sed -i '' 's/ORG_ID = \"QusOPrvsoRVuJ3FFGVZ50B2fDraiYnFG\"/ORG_ID = \"g63wYhdti8elZdv8yfaU00YQ2xYpP8DU\"/' scripts/_fetch-claim-pdf.mjs)",
+      "Bash(node scripts/_fetch-claim-pdf.mjs nJjEqyJSrqDVSmpVWHEac /tmp/claude-claim-ent.pdf)"
     ],
     "additionalDirectories": [
       "/Users/nix_arif/Desktop/learn/programming/rbac/nixcript/app/dashboard/sales/order",

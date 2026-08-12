@@ -15,6 +15,8 @@ import {
   ledgerEntry,
   ledgerLine,
   member,
+  memberDepartment,
+  department,
   customer,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -480,6 +482,7 @@ export type ClaimApplicationDetailForPdf = ClaimApplicationWithDetails & {
   checkedByName: string | null;
   reviewedByName: string | null;
   cancelledByName: string | null;
+  applicantDepartment: string | null;
 };
 
 export async function getClaimApplicationDetail(appId: string): Promise<ClaimApplicationDetailForPdf | null> {
@@ -508,9 +511,18 @@ export async function getClaimApplicationDetail(appId: string): Promise<ClaimApp
     for (const r of rows) actorNameMap[r.id] = r.name;
   }
 
+  const deptRows = await db
+    .select({ deptName: department.name })
+    .from(member)
+    .innerJoin(memberDepartment, eq(memberDepartment.memberId, member.id))
+    .innerJoin(department, eq(memberDepartment.departmentId, department.id))
+    .where(and(eq(member.userId, app.userId), eq(member.organizationId, orgId)));
+  const applicantDepartment = deptRows.length > 0 ? deptRows.map((d) => d.deptName).join(", ") : null;
+
   return {
     ...app,
     applicantName: actorNameMap[app.userId] ?? null,
+    applicantDepartment,
     checkedByName: app.checkedBy ? actorNameMap[app.checkedBy] ?? null : null,
     reviewedByName: app.reviewedBy ? actorNameMap[app.reviewedBy] ?? null : null,
     cancelledByName: app.cancelledBy ? actorNameMap[app.cancelledBy] ?? null : null,

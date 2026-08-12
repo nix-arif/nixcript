@@ -9,6 +9,11 @@
  * Structure mirrors app/dashboard/fulfillment/soa/_pdf-soa.ts: a Ctx object
  * threaded through draw functions, addPage/ensureSpace for pagination, and a
  * two-pass stampFooters() once total page count is known.
+ *
+ * Line items are grouped by category (1.1 Travel Expenses, 1.2.1 Toll, etc.)
+ * with a per-section subtotal, mirroring the numbering and grouping the
+ * submitter/checker already see in the in-app claim views — the PDF should
+ * look like the form they filled in, not a generic invoice table.
  */
 
 import { PDFDocument, PDFPage, PDFFont, PDFImage, rgb, StandardFonts } from "pdf-lib";
@@ -38,6 +43,12 @@ const C_AMBER  = rgb(0.62, 0.42, 0.02);
 const C_GREEN  = rgb(0.09, 0.40, 0.20);
 const C_BLUE   = rgb(0.09, 0.29, 0.65);
 const C_ROW_ALT = rgb(0.975, 0.975, 0.975);
+const C_CARD_BG     = rgb(0.975, 0.98, 0.985);
+const C_CARD_BORDER = rgb(0.84, 0.87, 0.90);
+const C_GROUP_BG    = rgb(0.93, 0.94, 0.96);
+const C_SLASH_BG    = rgb(0.99, 0.93, 0.93);
+const C_EDIT_BG     = rgb(0.995, 0.97, 0.90);
+const C_TOTAL_BG    = rgb(0.91, 0.96, 0.93);
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Draft", PENDING: "Pending", CHECKED: "Checked",
@@ -48,19 +59,37 @@ const STATUS_COLOR: Record<string, ReturnType<typeof rgb>> = {
   APPROVED: C_GREEN, REJECTED: C_RED, CANCELLED: C_FAINT,
 };
 
+// Display order + numbering for line-item groups — mirrors the section
+// numbering used in the in-app claim form / read-only views (my-claim-client,
+// checker-client) so the PDF reads as the same document the submitter filled
+// in, not a re-invented table.
+const SECTION_ORDER: string[] = [
+  LINE_CATEGORY.TRAVEL,
+  LINE_CATEGORY.TRAVEL_ACCOMMODATION,
+  LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE,
+  LINE_CATEGORY.TRAVEL_ENTERTAINMENT,
+  LINE_CATEGORY.TOLL,
+  LINE_CATEGORY.PARKING,
+  LINE_CATEGORY.MOBILE,
+  LINE_CATEGORY.IN_BASE_ENT,
+  LINE_CATEGORY.OTHER_LOCAL,
+  LINE_CATEGORY.OVERSEAS_MYR,
+  LINE_CATEGORY.OVERSEAS_FX,
+  LINE_CATEGORY.OVERSEAS_OTHER,
+];
 const SECTION_LABELS: Record<string, string> = {
-  [LINE_CATEGORY.TRAVEL]:                "Travel",
-  [LINE_CATEGORY.TRAVEL_ACCOMMODATION]:  "Accommodation",
-  [LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE]:"Daily Allowance",
-  [LINE_CATEGORY.TRAVEL_ENTERTAINMENT]:  "Travel Entertainment",
-  [LINE_CATEGORY.TOLL]:                  "Toll / Touch N Go",
-  [LINE_CATEGORY.PARKING]:               "Parking",
-  [LINE_CATEGORY.MOBILE]:                "Mobile Phone",
-  [LINE_CATEGORY.IN_BASE_ENT]:           "In-Base Entertainment",
-  [LINE_CATEGORY.OTHER_LOCAL]:           "Other Expenses",
-  [LINE_CATEGORY.OVERSEAS_MYR]:          "Travel (MYR)",
-  [LINE_CATEGORY.OVERSEAS_FX]:           "Travel (Foreign Currency)",
-  [LINE_CATEGORY.OVERSEAS_OTHER]:        "Other Expenses",
+  [LINE_CATEGORY.TRAVEL]:                "1.1   Travel Expenses",
+  [LINE_CATEGORY.TRAVEL_ACCOMMODATION]:  "1.1.1   Accommodation",
+  [LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE]:"1.1.2   Daily Allowance",
+  [LINE_CATEGORY.TRAVEL_ENTERTAINMENT]:  "1.1.3   Travel Entertainment",
+  [LINE_CATEGORY.TOLL]:                  "1.2.1   Toll / Touch N Go",
+  [LINE_CATEGORY.PARKING]:               "1.2.2   Parking",
+  [LINE_CATEGORY.MOBILE]:                "1.2.3   Mobile Phone",
+  [LINE_CATEGORY.IN_BASE_ENT]:           "1.3   In-Base Entertainment",
+  [LINE_CATEGORY.OTHER_LOCAL]:           "1.4   Other Expenses",
+  [LINE_CATEGORY.OVERSEAS_MYR]:          "2.1   Travel (MYR)",
+  [LINE_CATEGORY.OVERSEAS_FX]:           "2.2   Travel (Foreign Currency)",
+  [LINE_CATEGORY.OVERSEAS_OTHER]:        "2.3   Other Expenses",
 };
 
 // ── String / format helpers ───────────────────────────────────────────────────
@@ -156,18 +185,19 @@ function getFormType(claim: ClaimApplicationDetailForPdf): string {
 }
 
 // ── Column layout (line items table) ──────────────────────────────────────────
+// No category column — the row's group header already says what section it's
+// in, so that space goes to a wider description column instead.
 const C_NO   = 20;
-const C_DATE = 55;
-const C_CAT  = 92;
-const C_AMT  = 75;
-const C_DESC = CW - C_NO - C_DATE - C_CAT - C_AMT;
+const C_DATE = 62;
+const C_AMT  = 80;
+const C_DESC = CW - C_NO - C_DATE - C_AMT;
 const X_NO   = ML;
 const X_DATE = X_NO + C_NO;
-const X_CAT  = X_DATE + C_DATE;
-const X_DESC = X_CAT + C_CAT;
+const X_DESC = X_DATE + C_DATE;
 const X_AMT  = X_DESC + C_DESC;
 
 const TBL_HDR_H  = 16;
+const GROUP_HDR_H = 17;
 const ROW_BASE_H = 15;
 const NOTE_LINE_H = 10;
 const PAGE_FTR_H = 24;
@@ -281,7 +311,7 @@ function drawPageHeader(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
   ctx.curY = Math.min(leftBottom, rightBottom) - 8;
 
   ctx.page.drawLine({ start: { x: ML, y: ctx.curY }, end: { x: W - MR, y: ctx.curY }, thickness: 0.9, color: C_BLACK });
-  ctx.curY -= 10;
+  ctx.curY -= 14;
 }
 
 function drawPageFooter(ctx: Ctx, totalPages: number): void {
@@ -304,74 +334,91 @@ function stampFooters(ctx: Ctx): void {
   ctx.page = savedPage; ctx.curY = savedY; ctx.pageNo = savedNo;
 }
 
-// ── Claim info block ───────────────────────────────────────────────────────
+// ── Claim summary card ──────────────────────────────────────────────────────
+// A bordered card (status-colored accent bar, divider between the detail
+// fields and the status/amount block) instead of bare label:value text — the
+// single most important facts (status, total) should read at a glance.
 function drawClaimInfo(ctx: Ctx, claim: ClaimApplicationDetailForPdf, formType: string): void {
   const { fontR, fontB } = ctx;
-  ensureSpace(ctx, 90);
-  const y0 = ctx.curY;
-
   const period = formType === CLAIM_FORM.ENTERTAINMENT_FORM ? fmtDate(claim.claimDate) : fmtPeriod(claim.claimDate);
 
   const rows: Array<[string, string]> = [
     ["Applicant", claim.applicantName ?? "—"],
+    ["Department", claim.applicantDepartment ?? "—"],
     ["Claim Type", claim.claimTypeName],
     ["Period", period],
     ["Submitted", fmtDate(claim.createdAt)],
   ];
+  if (claim.description) rows.push(["Note", claim.description]);
 
-  const rowH = 13;
-  let y = y0;
-  const labelW = 90;
+  const PAD = 12;
+  const ROWH = 14;
+  const leftColW = CW * 0.58;
+  const rightBlockH = 54; // status badge + total amount stack
+  const cardH = Math.max(rows.length * ROWH, rightBlockH) + PAD * 2;
+
+  ensureSpace(ctx, cardH + 14);
+  const cardTop = ctx.curY;
+  const cardBottom = cardTop - cardH;
+
+  const statusColor = STATUS_COLOR[claim.status] ?? C_MUTED;
+  ctx.page.drawRectangle({ x: ML, y: cardBottom, width: CW, height: cardH, color: C_CARD_BG, borderColor: C_CARD_BORDER, borderWidth: 0.75 });
+  ctx.page.drawRectangle({ x: ML, y: cardBottom, width: 3, height: cardH, color: statusColor });
+
+  const dividerX = ML + leftColW;
+  ctx.page.drawLine({ start: { x: dividerX, y: cardTop - 6 }, end: { x: dividerX, y: cardBottom + 6 }, thickness: 0.5, color: C_CARD_BORDER });
+
+  let ty = cardTop - PAD;
+  const labelW = 74;
   for (const [label, value] of rows) {
-    ctx.page.drawText(label, { x: ML, y: y - 9, size: 8, font: fontR, color: C_MUTED });
-    ctx.page.drawText(trunc(value, fontB, 9, CW * 0.55 - labelW), { x: ML + labelW, y: y - 9, size: 9, font: fontB, color: C_TEXT });
-    y -= rowH;
+    ctx.page.drawText(label, { x: ML + PAD, y: ty - 9, size: 8, font: fontR, color: C_MUTED });
+    ctx.page.drawText(trunc(value, fontB, 9, leftColW - PAD - labelW - 8), { x: ML + PAD + labelW, y: ty - 9, size: 9, font: fontB, color: C_TEXT });
+    ty -= ROWH;
   }
 
-  // Right column: status badge + amount
-  const statusLabel = STATUS_LABEL[claim.status] ?? claim.status;
-  const statusColor = STATUS_COLOR[claim.status] ?? C_MUTED;
+  // Right block: status badge (top) + total amount (below), right-aligned.
+  const statusLabel = (STATUS_LABEL[claim.status] ?? claim.status).toUpperCase();
   const badgeSz = 9;
-  const badgeW = fontB.widthOfTextAtSize(statusLabel.toUpperCase(), badgeSz) + 12;
-  ctx.page.drawRectangle({ x: W - MR - badgeW, y: y0 - 12, width: badgeW, height: 16, color: statusColor, opacity: 0.15 });
-  ctx.page.drawText(statusLabel.toUpperCase(), { x: W - MR - badgeW + 6, y: y0 - 8.5, size: badgeSz, font: fontB, color: statusColor });
+  const badgeW = fontB.widthOfTextAtSize(statusLabel, badgeSz) + 16;
+  const badgeH = 17;
+  const badgeX = ML + CW - PAD - badgeW;
+  const badgeY = cardTop - PAD - badgeH;
+  ctx.page.drawRectangle({ x: badgeX, y: badgeY, width: badgeW, height: badgeH, color: statusColor, opacity: 0.15, borderColor: statusColor, borderWidth: 0.75, borderOpacity: 0.55 });
+  ctx.page.drawText(statusLabel, { x: badgeX + 8, y: badgeY + 5.5, size: badgeSz, font: fontB, color: statusColor });
 
   const amtLabel = "Total Amount";
   const amtStr = `RM ${fmtMoney(claim.amount)}`;
-  ctx.page.drawText(amtLabel, { x: W - MR - fontR.widthOfTextAtSize(amtLabel, 8), y: y0 - 30, size: 8, font: fontR, color: C_MUTED });
-  const amtSz = 15;
-  ctx.page.drawText(amtStr, { x: W - MR - fontB.widthOfTextAtSize(amtStr, amtSz), y: y0 - 48, size: amtSz, font: fontB, color: C_GREEN });
+  const amtSz = 16;
+  ctx.page.drawText(amtLabel, { x: ML + CW - PAD - fontR.widthOfTextAtSize(amtLabel, 8), y: badgeY - 13, size: 8, font: fontR, color: C_MUTED });
+  ctx.page.drawText(amtStr, { x: ML + CW - PAD - fontB.widthOfTextAtSize(amtStr, amtSz), y: badgeY - 32, size: amtSz, font: fontB, color: C_GREEN });
 
-  if (claim.description) {
-    y -= 3;
-    ctx.page.drawText("Note", { x: ML, y: y - 9, size: 8, font: fontR, color: C_MUTED });
-    ctx.page.drawText(trunc(claim.description, fontR, 8.5, CW * 0.55 - labelW), { x: ML + labelW, y: y - 9, size: 8.5, font: fontR, color: C_TEXT });
-    y -= rowH;
-  }
-
-  ctx.curY = Math.min(y, y0 - 60) - 8;
-  ctx.page.drawLine({ start: { x: ML, y: ctx.curY }, end: { x: W - MR, y: ctx.curY }, thickness: 0.5, color: C_LINE });
-  ctx.curY -= 12;
+  ctx.curY = cardBottom - 16;
 }
 
-// ── Line items table ───────────────────────────────────────────────────────
-function drawTableHeader(ctx: Ctx): void {
+// ── Line items — grouped table ────────────────────────────────────────────
+// Lightweight column-label row (not a heavy black bar) — the group headers
+// below carry the visual weight; this just orients DATE / DESCRIPTION / AMOUNT.
+function drawColumnLabels(ctx: Ctx): void {
   const y = ctx.curY;
-  ctx.page.drawRectangle({ x: ML, y: y - TBL_HDR_H, width: CW, height: TBL_HDR_H, color: C_THDR });
-  const cols: Array<[string, number, number, "left" | "right" | "center"]> = [
-    ["#", X_NO, C_NO, "center"],
-    ["DATE", X_DATE, C_DATE, "left"],
-    ["CATEGORY", X_CAT, C_CAT, "left"],
-    ["DESCRIPTION", X_DESC, C_DESC, "left"],
-    ["AMOUNT (RM)", X_AMT, C_AMT, "right"],
-  ];
   const sz = 6.5;
-  for (const [label, x, w, align] of cols) {
-    const tw = ctx.fontB.widthOfTextAtSize(label, sz);
-    const tx = align === "center" ? x + (w - tw) / 2 : align === "right" ? x + w - COL_PAD - tw : x + COL_PAD;
-    ctx.page.drawText(label, { x: tx, y: y - TBL_HDR_H + 5, size: sz, font: ctx.fontB, color: C_WHITE });
+  ctx.page.drawText("DATE", { x: X_DATE + COL_PAD, y: y - 8, size: sz, font: ctx.fontB, color: C_FAINT });
+  ctx.page.drawText("DESCRIPTION", { x: X_DESC + COL_PAD, y: y - 8, size: sz, font: ctx.fontB, color: C_FAINT });
+  const amtLabelW = ctx.fontB.widthOfTextAtSize("AMOUNT (RM)", sz);
+  ctx.page.drawText("AMOUNT (RM)", { x: X_AMT + C_AMT - COL_PAD - amtLabelW, y: y - 8, size: sz, font: ctx.fontB, color: C_FAINT });
+  ctx.page.drawLine({ start: { x: ML, y: y - 11 }, end: { x: W - MR, y: y - 11 }, thickness: 0.5, color: C_LINE });
+  ctx.curY -= 13;
+}
+
+function drawGroupHeader(ctx: Ctx, label: string, subtotal: number | null): void {
+  const y = ctx.curY;
+  ctx.page.drawRectangle({ x: ML, y: y - GROUP_HDR_H, width: CW, height: GROUP_HDR_H, color: C_GROUP_BG });
+  ctx.page.drawText(san(label), { x: ML + COL_PAD, y: y - GROUP_HDR_H + 5.5, size: 8, font: ctx.fontB, color: C_TEXT });
+  if (subtotal !== null) {
+    const amtStr = `RM ${fmtMoney(subtotal)}`;
+    const amtW = ctx.fontB.widthOfTextAtSize(amtStr, 8);
+    ctx.page.drawText(amtStr, { x: X_AMT + C_AMT - COL_PAD - amtW, y: y - GROUP_HDR_H + 5.5, size: 8, font: ctx.fontB, color: C_TEXT });
   }
-  ctx.curY -= TBL_HDR_H;
+  ctx.curY -= GROUP_HDR_H;
 }
 
 function measureItemRowHeight(item: ClaimApplicationDetailForPdf["lineItems"][number], descLines: string[]): number {
@@ -406,12 +453,14 @@ function drawLineItemRow(ctx: Ctx, item: ClaimApplicationDetailForPdf["lineItems
   const rowH = measureItemRowHeight(item, descLines);
   const y = ctx.curY;
 
-  if (isAlt) ctx.page.drawRectangle({ x: ML, y: y - rowH, width: CW, height: rowH, color: C_ROW_ALT });
+  // Slashed/edited rows get a tinted background so a reviewer spots them
+  // without reading every note — a stronger signal than the inline text alone.
+  const bg = item.slashed ? C_SLASH_BG : item.editedBy ? C_EDIT_BG : isAlt ? C_ROW_ALT : null;
+  if (bg) ctx.page.drawRectangle({ x: ML, y: y - rowH, width: CW, height: rowH, color: bg });
 
   const textColor = item.slashed ? C_FAINT : C_TEXT;
   ctx.page.drawText(String(idx + 1), { x: X_NO + (C_NO - fontR.widthOfTextAtSize(String(idx + 1), 8)) / 2, y: y - 10, size: 8, font: fontR, color: textColor });
   ctx.page.drawText(fmtDate(item.lineDate), { x: X_DATE + COL_PAD, y: y - 10, size: 7.5, font: fontR, color: textColor });
-  ctx.page.drawText(trunc(SECTION_LABELS[item.category] ?? item.category, fontR, 7.5, C_CAT - COL_PAD * 2), { x: X_CAT + COL_PAD, y: y - 10, size: 7.5, font: fontR, color: textColor });
 
   let dy = y - 10;
   for (const line of descLines) {
@@ -449,24 +498,43 @@ function drawLineItemRow(ctx: Ctx, item: ClaimApplicationDetailForPdf["lineItems
 }
 
 function drawLineItemsSection(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
-  ensureSpace(ctx, TBL_HDR_H + ROW_BASE_H * 2);
-  drawTableHeader(ctx);
-  claim.lineItems.forEach((item, idx) => {
-    const descLines = wrapLines(lineItemDisplayText(item, item.category), ctx.fontR, 8, C_DESC - COL_PAD * 2, 2);
-    const rowH = measureItemRowHeight(item, descLines);
-    if (ctx.curY - rowH < MB + PAGE_FTR_H) {
-      addPage(ctx);
-      ctx.page.drawText("Line Items (continued)", { x: ML, y: ctx.curY - 11, size: 7.5, font: ctx.fontB, color: C_MUTED });
-      ctx.curY -= 15;
-      drawTableHeader(ctx);
-    }
-    drawLineItemRow(ctx, item, idx, idx % 2 === 1);
-  });
+  const byCategory = new Map<string, ClaimApplicationDetailForPdf["lineItems"]>();
+  for (const item of claim.lineItems) {
+    if (!byCategory.has(item.category)) byCategory.set(item.category, []);
+    byCategory.get(item.category)!.push(item);
+  }
+  // Any category not in the known display order still gets shown, just after the known ones.
+  const order = [...SECTION_ORDER, ...[...byCategory.keys()].filter((c) => !SECTION_ORDER.includes(c))];
+
+  ensureSpace(ctx, GROUP_HDR_H + 13 + ROW_BASE_H);
+  drawColumnLabels(ctx);
+
+  for (const cat of order) {
+    const items = byCategory.get(cat);
+    if (!items || items.length === 0) continue;
+    const subtotal = items.reduce((s, i) => s + (i.slashed ? 0 : parseFloat(i.amountMyr)), 0);
+    const label = SECTION_LABELS[cat] ?? cat;
+
+    ensureSpace(ctx, GROUP_HDR_H + ROW_BASE_H);
+    drawGroupHeader(ctx, label, subtotal);
+
+    items.forEach((item, idx) => {
+      const descLines = wrapLines(lineItemDisplayText(item, item.category), ctx.fontR, 8, C_DESC - COL_PAD * 2, 2);
+      const rowH = measureItemRowHeight(item, descLines);
+      if (ctx.curY - rowH < MB + PAGE_FTR_H) {
+        addPage(ctx);
+        ctx.page.drawText(`${san(label)} — continued`, { x: ML, y: ctx.curY - 11, size: 7.5, font: ctx.fontB, color: C_MUTED });
+        ctx.curY -= 15;
+        drawColumnLabels(ctx);
+      }
+      drawLineItemRow(ctx, item, idx, idx % 2 === 1);
+    });
+  }
 }
 
 // ── Entertainment details table ───────────────────────────────────────────
 function drawEntertainmentSection(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
-  const cols: Array<[string, number]> = [["DATE", 55], ["RESTAURANT / VENUE", 105], ["CUSTOMER", 90], ["DEPT & ORG", 90], ["PURPOSE", CW - 55 - 105 - 90 - 90 - 75], ["AMOUNT (RM)", 75]];
+  const cols: Array<[string, number]> = [["DATE", 55], ["RESTAURANT / VENUE", 100], ["CUSTOMER", 85], ["DEPT & ORG", 85], ["PURPOSE", CW - 55 - 100 - 85 - 85 - 75], ["AMOUNT (RM)", 75]];
   const xs: number[] = [];
   let cx = ML;
   for (const [, w] of cols) { xs.push(cx); cx += w; }
@@ -485,9 +553,22 @@ function drawEntertainmentSection(ctx: Ctx, claim: ClaimApplicationDetailForPdf)
   };
   drawHdr();
 
+  // Draws a wrapped column's lines top-anchored at (x, y), one per 9pt step.
+  const drawCol = (lines: string[], x: number, y: number, color: ReturnType<typeof rgb>) => {
+    let cy = y;
+    for (const line of lines) {
+      ctx.page.drawText(line, { x, y: cy, size: 7.5, font: ctx.fontR, color });
+      cy -= 9;
+    }
+  };
+
   claim.entertainmentDetails.forEach((ed, idx) => {
+    const restLines = wrapLines(ed.restaurantName, ctx.fontR, 7.5, cols[1][1] - COL_PAD * 2, 2);
+    const custLines = wrapLines(ed.customerName, ctx.fontR, 7.5, cols[2][1] - COL_PAD * 2, 2);
+    const deptLines = wrapLines(ed.departmentOrganization, ctx.fontR, 7.5, cols[3][1] - COL_PAD * 2, 2);
     const purposeLines = wrapLines(ed.purpose, ctx.fontR, 7.5, cols[4][1] - COL_PAD * 2, 2);
-    let rowH = Math.max(ROW_BASE_H, purposeLines.length * 9 + 6);
+    const maxLines = Math.max(1, restLines.length, custLines.length, deptLines.length, purposeLines.length);
+    let rowH = Math.max(ROW_BASE_H, maxLines * 9 + 6);
     if (ed.slashed) rowH += NOTE_LINE_H;
     if (ed.editedBy) rowH += NOTE_LINE_H;
 
@@ -500,14 +581,14 @@ function drawEntertainmentSection(ctx: Ctx, claim: ClaimApplicationDetailForPdf)
 
     const y = ctx.curY;
     const textColor = ed.slashed ? C_FAINT : C_TEXT;
-    if (idx % 2 === 1) ctx.page.drawRectangle({ x: ML, y: y - rowH, width: CW, height: rowH, color: C_ROW_ALT });
+    const bg = ed.slashed ? C_SLASH_BG : ed.editedBy ? C_EDIT_BG : idx % 2 === 1 ? C_ROW_ALT : null;
+    if (bg) ctx.page.drawRectangle({ x: ML, y: y - rowH, width: CW, height: rowH, color: bg });
 
     ctx.page.drawText(fmtDate(ed.eventDate), { x: xs[0] + COL_PAD, y: y - 10, size: 7.5, font: ctx.fontR, color: textColor });
-    ctx.page.drawText(trunc(ed.restaurantName, ctx.fontR, 7.5, cols[1][1] - COL_PAD * 2), { x: xs[1] + COL_PAD, y: y - 10, size: 7.5, font: ctx.fontR, color: textColor });
-    ctx.page.drawText(trunc(ed.customerName, ctx.fontR, 7.5, cols[2][1] - COL_PAD * 2), { x: xs[2] + COL_PAD, y: y - 10, size: 7.5, font: ctx.fontR, color: textColor });
-    ctx.page.drawText(trunc(ed.departmentOrganization, ctx.fontR, 7.5, cols[3][1] - COL_PAD * 2), { x: xs[3] + COL_PAD, y: y - 10, size: 7.5, font: ctx.fontR, color: textColor });
-    let py = y - 10;
-    for (const line of purposeLines) { ctx.page.drawText(line, { x: xs[4] + COL_PAD, y: py, size: 7.5, font: ctx.fontR, color: textColor }); py -= 9; }
+    drawCol(restLines, xs[1] + COL_PAD, y - 10, textColor);
+    drawCol(custLines, xs[2] + COL_PAD, y - 10, textColor);
+    drawCol(deptLines, xs[3] + COL_PAD, y - 10, textColor);
+    drawCol(purposeLines, xs[4] + COL_PAD, y - 10, textColor);
     const amtStr = fmtMoney(ed.amount);
     const amtW = ctx.fontB.widthOfTextAtSize(amtStr, 8);
     ctx.page.drawText(amtStr, { x: xs[5] + cols[5][1] - COL_PAD - amtW, y: y - 10, size: 8, font: ctx.fontB, color: textColor });
@@ -515,7 +596,7 @@ function drawEntertainmentSection(ctx: Ctx, claim: ClaimApplicationDetailForPdf)
     if (ed.slashed) {
       ctx.page.drawLine({ start: { x: xs[0], y: y - 7 }, end: { x: xs[5] + cols[5][1] - COL_PAD, y: y - 7 }, thickness: 0.6, color: C_RED });
     }
-    let noteY = y - 10 - Math.max(purposeLines.length * 9, 9) - 2;
+    let noteY = y - 10 - Math.max(maxLines * 9, 9) - 2;
     if (ed.slashed) {
       const note = `SLASHED by ${ed.slashedByName ?? "checker"}${ed.slashReason ? ` — ${ed.slashReason}` : ""}`;
       ctx.page.drawText(trunc(note, ctx.fontR, 7, CW - COL_PAD * 2), { x: xs[0], y: noteY, size: 7, font: ctx.fontR, color: C_RED });
@@ -532,20 +613,352 @@ function drawEntertainmentSection(ctx: Ctx, claim: ClaimApplicationDetailForPdf)
   });
 }
 
+// ── LOCAL claim form — modelled on the org's own paper reimbursement form ──
+// (Appendix I travel grid, Miscellaneous/In-Base/Other tables, Totals block)
+// so the PDF matches the document the applicant already knows, rather than
+// the generic grouped-table layout used for Overseas / Entertainment claims.
+type LineItem = ClaimApplicationDetailForPdf["lineItems"][number];
+
+const MISC_FIXED_LABELS: Record<string, string> = {
+  [LINE_CATEGORY.TOLL]:   "Toll / Touch N' Go",
+  [LINE_CATEGORY.PARKING]:"Parking",
+  [LINE_CATEGORY.MOBILE]: "Mobile Phone",
+};
+
+// Short remark summarising a checker slash/edit — shown in the Remarks
+// column instead of the multi-line note style used by the grouped layout,
+// since this form's Remarks column is narrow and shared across all sections.
+function itemRemark(item: LineItem): string {
+  if (item.slashed) return `SLASHED${item.slashReason ? ` — ${item.slashReason}` : ""}`;
+  if (item.editedBy) {
+    const orig = item.originalAmountMyr ? ` (was RM ${fmtMoney(item.originalAmountMyr)})` : "";
+    return `Edited${orig}${item.editReason ? ` — ${item.editReason}` : ""}`;
+  }
+  return "";
+}
+
+interface TripRow {
+  lineDate: string;
+  travelItem: LineItem | null;
+  dailyItem: LineItem | null;
+  accomItem: LineItem | null;
+  tEntItem: LineItem | null;
+}
+
+// Reconstructs one grid row per "trip" by walking the sorted line items and
+// starting a new row whenever a TRAVEL item appears — mirroring exactly how
+// the in-app form builds a TravelRow's sub-items (daily/accommodation/travel
+// entertainment) under one shared lineDate. Falls back to starting a row on
+// whichever sub-item appears first if a TRAVEL item is missing (the app only
+// creates one when a route/mode was actually filled in).
+function buildTripRows(items: LineItem[]): TripRow[] {
+  const travelCats = new Set<string>([
+    LINE_CATEGORY.TRAVEL, LINE_CATEGORY.TRAVEL_ACCOMMODATION,
+    LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, LINE_CATEGORY.TRAVEL_ENTERTAINMENT,
+  ]);
+  const sorted = items.filter((i) => travelCats.has(i.category));
+  const rows: TripRow[] = [];
+  let current: TripRow | null = null;
+  for (const item of sorted) {
+    if (item.category === LINE_CATEGORY.TRAVEL) {
+      current = { lineDate: item.lineDate, travelItem: item, dailyItem: null, accomItem: null, tEntItem: null };
+      rows.push(current);
+      continue;
+    }
+    if (!current) {
+      current = { lineDate: item.lineDate, travelItem: null, dailyItem: null, accomItem: null, tEntItem: null };
+      rows.push(current);
+    }
+    if (item.category === LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE) current.dailyItem = item;
+    else if (item.category === LINE_CATEGORY.TRAVEL_ACCOMMODATION) current.accomItem = item;
+    else if (item.category === LINE_CATEGORY.TRAVEL_ENTERTAINMENT) current.tEntItem = item;
+  }
+  return rows;
+}
+
+function tripDestination(travelItem: LineItem | null): string {
+  if (!travelItem) return "—";
+  if (travelItem.fromLocation || travelItem.toLocation) {
+    const route = `${travelItem.fromLocation || "—"} -> ${travelItem.toLocation || "—"}`;
+    return travelItem.distanceKm ? `${route} (${travelItem.distanceKm} km)` : route;
+  }
+  return travelItem.description || "—";
+}
+
+// amt(x): 0 if slashed (excluded from totals, matching the rest of the app), else the stored amount.
+function amt(item: LineItem | null): number {
+  return item && !item.slashed ? parseFloat(item.amountMyr) : 0;
+}
+
+const TG_DATE  = 48;
+const TG_DEST  = 152;
+const TG_NUM   = 48; // Travel / Daily Allowance / Accommodation / Travel Entertainment
+const TG_REM   = CW - TG_DATE - TG_DEST - TG_NUM * 4;
+const TG_COLS: Array<[string, number]> = [
+  ["DATE", TG_DATE], ["DESTINATION", TG_DEST], ["TRAVEL", TG_NUM],
+  ["DAILY", TG_NUM], ["ACCOM.", TG_NUM], ["ENTERT.", TG_NUM], ["PURPOSE", TG_REM],
+];
+
+function tgColX(idx: number): number {
+  let x = ML;
+  for (let i = 0; i < idx; i++) x += TG_COLS[i][1];
+  return x;
+}
+
+function drawTravelGridHeader(ctx: Ctx): void {
+  const y = ctx.curY;
+  ctx.page.drawRectangle({ x: ML, y: y - TBL_HDR_H, width: CW, height: TBL_HDR_H, color: C_THDR });
+  TG_COLS.forEach(([label, w], i) => {
+    const x = tgColX(i);
+    const align = label === "PURPOSE" || label === "DESTINATION" ? "left" : label === "DATE" ? "left" : "right";
+    const sz = 6;
+    const text = trunc(label, ctx.fontB, sz, w - COL_PAD * 2);
+    const tw = ctx.fontB.widthOfTextAtSize(text, sz);
+    const tx = align === "right" ? x + w - COL_PAD - tw : x + COL_PAD;
+    ctx.page.drawText(text, { x: tx, y: y - TBL_HDR_H + 5, size: sz, font: ctx.fontB, color: C_WHITE });
+  });
+  ctx.curY -= TBL_HDR_H;
+}
+
+// Returns the total travel expenses (sum of all four buckets, slashed excluded).
+function drawTravelGrid(ctx: Ctx, claim: ClaimApplicationDetailForPdf): number {
+  const rows = buildTripRows(claim.lineItems);
+  if (rows.length === 0) return 0;
+
+  ctx.page.drawText("1.1   Travel Expenses", { x: ML, y: ctx.curY - 9, size: 9, font: ctx.fontB, color: C_TEXT });
+  ctx.curY -= 15;
+  ensureSpace(ctx, TBL_HDR_H + ROW_BASE_H);
+  drawTravelGridHeader(ctx);
+
+  let total = 0;
+  rows.forEach((r) => {
+    const remarks = r.travelItem?.description ?? "";
+    const remarksLines = wrapLines(remarks, ctx.fontR, 6.5, TG_REM - COL_PAD * 2, 2);
+    const destLines = wrapLines(tripDestination(r.travelItem), ctx.fontR, 7, TG_DEST - COL_PAD * 2, 2);
+    const rowH = Math.max(ROW_BASE_H, Math.max(remarksLines.length, destLines.length) * 8.5 + 6);
+
+    if (ctx.curY - rowH < MB + PAGE_FTR_H) {
+      addPage(ctx);
+      ctx.page.drawText("1.1   Travel Expenses — continued", { x: ML, y: ctx.curY - 11, size: 7.5, font: ctx.fontB, color: C_MUTED });
+      ctx.curY -= 15;
+      drawTravelGridHeader(ctx);
+    }
+
+    const y = ctx.curY;
+    const anySlashed = [r.travelItem, r.dailyItem, r.accomItem, r.tEntItem].some((i) => i?.slashed);
+    const anyEdited = [r.travelItem, r.dailyItem, r.accomItem, r.tEntItem].some((i) => i?.editedBy);
+    const bg = anySlashed ? C_SLASH_BG : anyEdited ? C_EDIT_BG : null;
+    if (bg) ctx.page.drawRectangle({ x: ML, y: y - rowH, width: CW, height: rowH, color: bg });
+
+    ctx.page.drawText(fmtDate(r.lineDate), { x: tgColX(0) + COL_PAD, y: y - 10, size: 7, font: ctx.fontR, color: C_TEXT });
+    let dy = y - 10;
+    for (const line of destLines) { ctx.page.drawText(line, { x: tgColX(1) + COL_PAD, y: dy, size: 7, font: ctx.fontR, color: C_TEXT }); dy -= 8.5; }
+
+    const vals = [amt(r.travelItem), amt(r.dailyItem), amt(r.accomItem), amt(r.tEntItem)];
+    vals.forEach((v, i) => {
+      const s = v > 0 ? fmtMoney(v) : "-";
+      const w = ctx.fontR.widthOfTextAtSize(s, 7.5);
+      ctx.page.drawText(s, { x: tgColX(2 + i) + TG_NUM - COL_PAD - w, y: y - 10, size: 7.5, font: ctx.fontR, color: C_TEXT });
+    });
+    let ry = y - 10;
+    for (const line of remarksLines) { ctx.page.drawText(line, { x: tgColX(6) + COL_PAD, y: ry, size: 6.5, font: ctx.fontR, color: C_TEXT }); ry -= 8; }
+
+    ctx.page.drawLine({ start: { x: ML, y: y - rowH }, end: { x: W - MR, y: y - rowH }, thickness: 0.4, color: C_LINE });
+    ctx.curY -= rowH;
+    total += vals.reduce((s, v) => s + v, 0);
+  });
+
+  // Sub-Total row, one figure per numeric column.
+  ensureSpace(ctx, ROW_BASE_H);
+  const y = ctx.curY;
+  ctx.page.drawRectangle({ x: ML, y: y - ROW_BASE_H, width: CW, height: ROW_BASE_H, color: C_GROUP_BG });
+  ctx.page.drawText("Sub-Total", { x: tgColX(1) + COL_PAD, y: y - 10, size: 7.5, font: ctx.fontB, color: C_TEXT });
+  const colTotals = [
+    rows.reduce((s, r) => s + amt(r.travelItem), 0),
+    rows.reduce((s, r) => s + amt(r.dailyItem), 0),
+    rows.reduce((s, r) => s + amt(r.accomItem), 0),
+    rows.reduce((s, r) => s + amt(r.tEntItem), 0),
+  ];
+  colTotals.forEach((v, i) => {
+    const s = fmtMoney(v);
+    const w = ctx.fontB.widthOfTextAtSize(s, 7.5);
+    ctx.page.drawText(s, { x: tgColX(2 + i) + TG_NUM - COL_PAD - w, y: y - 10, size: 7.5, font: ctx.fontB, color: C_TEXT });
+  });
+  ctx.curY -= ROW_BASE_H + 12;
+
+  return total;
+}
+
+// ── Generic Description / RM / Remarks table (Misc, In-Base, Other) ────────
+interface ExpenseRow {
+  letter?: string;
+  date?: string;
+  description: string;
+  amountMyr: number;
+  remarks: string;
+  slashed: boolean;
+  edited: boolean;
+}
+
+function drawSimpleExpenseTable(
+  ctx: Ctx,
+  title: string,
+  rows: ExpenseRow[],
+  opts: { showDate: boolean; showLetter: boolean },
+): number {
+  if (rows.length === 0) return 0;
+
+  const letterW = opts.showLetter ? 20 : 0;
+  const dateW = opts.showDate ? 55 : 0;
+  const amtW = 65;
+  const remW = 110;
+  const descW = CW - letterW - dateW - amtW - remW;
+  const cols: Array<[string, number]> = [
+    ...(opts.showLetter ? [["NO", letterW] as [string, number]] : []),
+    ...(opts.showDate ? [["DATE", dateW] as [string, number]] : []),
+    ["DESCRIPTION", descW], ["RM", amtW], ["REMARKS", remW],
+  ];
+  const colX = (idx: number) => { let x = ML; for (let i = 0; i < idx; i++) x += cols[i][1]; return x; };
+
+  ctx.page.drawText(title, { x: ML, y: ctx.curY - 9, size: 9, font: ctx.fontB, color: C_TEXT });
+  ctx.curY -= 15;
+
+  const drawHdr = () => {
+    const y = ctx.curY;
+    ctx.page.drawRectangle({ x: ML, y: y - TBL_HDR_H, width: CW, height: TBL_HDR_H, color: C_THDR });
+    cols.forEach(([label], i) => {
+      const align = label === "RM" ? "right" : "left";
+      const w = cols[i][1];
+      const sz = 6.5;
+      const tw = ctx.fontB.widthOfTextAtSize(label, sz);
+      const tx = align === "right" ? colX(i) + w - COL_PAD - tw : colX(i) + COL_PAD;
+      ctx.page.drawText(label, { x: tx, y: y - TBL_HDR_H + 5, size: sz, font: ctx.fontB, color: C_WHITE });
+    });
+    ctx.curY -= TBL_HDR_H;
+  };
+  ensureSpace(ctx, TBL_HDR_H + ROW_BASE_H);
+  drawHdr();
+
+  const descColIdx = cols.length - 3;
+  const remColIdx = cols.length - 1;
+  let total = 0;
+  rows.forEach((r, idx) => {
+    const descLines = wrapLines(r.description, ctx.fontR, 7.5, descW - COL_PAD * 2, 2);
+    const remarksLines = wrapLines(r.remarks, ctx.fontR, 6.5, remW - COL_PAD * 2, 2);
+    const rowH = Math.max(ROW_BASE_H, Math.max(descLines.length, remarksLines.length) * 9 + 6);
+
+    if (ctx.curY - rowH < MB + PAGE_FTR_H) {
+      addPage(ctx);
+      ctx.page.drawText(`${san(title)} — continued`, { x: ML, y: ctx.curY - 11, size: 7.5, font: ctx.fontB, color: C_MUTED });
+      ctx.curY -= 15;
+      drawHdr();
+    }
+
+    const y = ctx.curY;
+    const bg = r.slashed ? C_SLASH_BG : r.edited ? C_EDIT_BG : idx % 2 === 1 ? C_ROW_ALT : null;
+    if (bg) ctx.page.drawRectangle({ x: ML, y: y - rowH, width: CW, height: rowH, color: bg });
+
+    let ci = 0;
+    if (opts.showLetter) { ctx.page.drawText(r.letter ?? "", { x: colX(ci) + COL_PAD, y: y - 10, size: 7.5, font: ctx.fontR, color: C_TEXT }); ci++; }
+    if (opts.showDate) { ctx.page.drawText(fmtDate(r.date), { x: colX(ci) + COL_PAD, y: y - 10, size: 7.5, font: ctx.fontR, color: C_TEXT }); ci++; }
+    let dy = y - 10;
+    for (const line of descLines) { ctx.page.drawText(line, { x: colX(descColIdx) + COL_PAD, y: dy, size: 7.5, font: ctx.fontR, color: C_TEXT }); dy -= 9; }
+    if (descLines.length === 0) ctx.page.drawText("—", { x: colX(descColIdx) + COL_PAD, y: y - 10, size: 7.5, font: ctx.fontR, color: C_FAINT });
+
+    const amtStr = fmtMoney(r.amountMyr);
+    const amtColIdx = cols.length - 2;
+    const aw = ctx.fontB.widthOfTextAtSize(amtStr, 8);
+    ctx.page.drawText(amtStr, { x: colX(amtColIdx) + cols[amtColIdx][1] - COL_PAD - aw, y: y - 10, size: 8, font: ctx.fontB, color: C_TEXT });
+
+    let ry = y - 10;
+    for (const line of remarksLines) { ctx.page.drawText(line, { x: colX(remColIdx) + COL_PAD, y: ry, size: 6.5, font: ctx.fontR, color: C_AMBER }); ry -= 8; }
+
+    ctx.page.drawLine({ start: { x: ML, y: y - rowH }, end: { x: W - MR, y: y - rowH }, thickness: 0.4, color: C_LINE });
+    ctx.curY -= rowH;
+    total += r.amountMyr;
+  });
+
+  ctx.curY -= 12;
+  return total;
+}
+
+function localExpenseRows(items: LineItem[], category: string, useLetters: boolean): ExpenseRow[] {
+  const matches = items.filter((i) => i.category === category);
+  const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  return matches.map((item, idx) => ({
+    letter: useLetters ? LETTERS[idx] ?? String(idx + 1) : undefined,
+    date: item.lineDate,
+    description: item.venue
+      ? (item.description ? `${item.venue} — ${item.description}` : item.venue)
+      : (item.description ?? MISC_FIXED_LABELS[category] ?? ""),
+    amountMyr: amt(item),
+    remarks: itemRemark(item),
+    slashed: item.slashed,
+    edited: !!item.editedBy,
+  }));
+}
+
+// ── Totals block — mirrors the org's paper form's bottom summary ──────────
+function drawLocalTotalsBlock(ctx: Ctx, claim: ClaimApplicationDetailForPdf, travelTotal: number, miscTotal: number): void {
+  const rows: Array<[string, string, boolean]> = [
+    ["Total Travel Expenses", `RM ${fmtMoney(travelTotal)}`, false],
+    ["Total Miscellaneous Expenses", `RM ${fmtMoney(miscTotal)}`, false],
+    ["Total Expenses", `RM ${fmtMoney(travelTotal + miscTotal)}`, false],
+    ["Less Cash Advance (If Any)", "—", false],
+    ["Total Reimbursement", `RM ${fmtMoney(claim.amount)}`, true],
+  ];
+  const rowH = 16;
+  const boxH = rows.length * rowH + 12;
+  ensureSpace(ctx, boxH + 10);
+  const y0 = ctx.curY;
+  ctx.page.drawRectangle({ x: ML + CW * 0.42, y: y0 - boxH, width: CW * 0.58, height: boxH, color: C_TOTAL_BG, borderColor: C_GREEN, borderWidth: 0.75, borderOpacity: 0.4 });
+
+  let y = y0 - 10;
+  for (const [label, value, emphasize] of rows) {
+    ctx.page.drawText(label, { x: ML + CW * 0.42 + 10, y: y - 8, size: emphasize ? 9.5 : 8.5, font: emphasize ? ctx.fontB : ctx.fontR, color: emphasize ? C_TEXT : C_MUTED });
+    const font = emphasize ? ctx.fontB : ctx.fontR;
+    const sz = emphasize ? 11 : 9;
+    const vw = font.widthOfTextAtSize(value, sz);
+    ctx.page.drawText(value, { x: ML + CW - 10 - vw, y: y - (emphasize ? 9 : 8), size: sz, font, color: emphasize ? C_GREEN : C_TEXT });
+    y -= rowH;
+  }
+  ctx.curY = y0 - boxH - 16;
+}
+
+function drawLocalClaimBody(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
+  const travelTotal = drawTravelGrid(ctx, claim);
+
+  const miscCats = [LINE_CATEGORY.TOLL, LINE_CATEGORY.PARKING, LINE_CATEGORY.MOBILE];
+  const miscRows = miscCats.flatMap((cat) => localExpenseRows(claim.lineItems, cat, false));
+  const miscSubtotal = miscRows.length > 0 ? drawSimpleExpenseTable(ctx, "1.2   Miscellaneous Expenses", miscRows, { showDate: false, showLetter: false }) : 0;
+
+  const inBaseRows = localExpenseRows(claim.lineItems, LINE_CATEGORY.IN_BASE_ENT, false);
+  const inBaseSubtotal = inBaseRows.length > 0 ? drawSimpleExpenseTable(ctx, "1.3   In-Base Entertainment", inBaseRows, { showDate: true, showLetter: false }) : 0;
+
+  const otherRows = localExpenseRows(claim.lineItems, LINE_CATEGORY.OTHER_LOCAL, true);
+  const otherSubtotal = otherRows.length > 0 ? drawSimpleExpenseTable(ctx, "1.4   Other Expenses", otherRows, { showDate: true, showLetter: true }) : 0;
+
+  drawLocalTotalsBlock(ctx, claim, travelTotal, miscSubtotal + inBaseSubtotal + otherSubtotal);
+}
+
 // ── Totals ─────────────────────────────────────────────────────────────────
 function drawTotals(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
-  ensureSpace(ctx, 30);
+  const h = 30;
+  ensureSpace(ctx, h + 16);
   ctx.curY -= 6;
-  const label = "Grand Total";
+  const y = ctx.curY;
+  ctx.page.drawRectangle({ x: ML, y: y - h, width: CW, height: h, color: C_TOTAL_BG, borderColor: C_GREEN, borderWidth: 0.75, borderOpacity: 0.45 });
+  const label = "GRAND TOTAL";
+  ctx.page.drawText(label, { x: ML + 12, y: y - h / 2 - 4, size: 10, font: ctx.fontB, color: C_TEXT });
   const value = `RM ${fmtMoney(claim.amount)}`;
-  ctx.page.drawLine({ start: { x: ML, y: ctx.curY + 4 }, end: { x: W - MR, y: ctx.curY + 4 }, thickness: 0.8, color: C_TEXT });
-  ctx.page.drawText(label, { x: W - MR - 140, y: ctx.curY - 10, size: 10, font: ctx.fontB, color: C_TEXT });
-  const vw = ctx.fontB.widthOfTextAtSize(value, 12);
-  ctx.page.drawText(value, { x: W - MR - vw, y: ctx.curY - 11, size: 12, font: ctx.fontB, color: C_GREEN });
-  ctx.curY -= 26;
+  const vw = ctx.fontB.widthOfTextAtSize(value, 14);
+  ctx.page.drawText(value, { x: ML + CW - 12 - vw, y: y - h / 2 - 5, size: 14, font: ctx.fontB, color: C_GREEN });
+  ctx.curY -= h + 16;
 }
 
 // ── Approval trail ─────────────────────────────────────────────────────────
+// A vertical timeline (dot marker + connecting line per step) reads as a
+// process at a glance, rather than a flat stack of label/name/date lines.
 function drawApprovalTrail(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void {
   const rows: Array<{ label: string; name: string | null; at: Date | string | null; note: string | null; color: ReturnType<typeof rgb> }> = [
     { label: "Submitted by", name: claim.applicantName, at: claim.createdAt, note: null, color: C_TEXT },
@@ -571,29 +984,37 @@ function drawApprovalTrail(ctx: Ctx, claim: ClaimApplicationDetailForPdf): void 
     });
   }
 
-  const rowH = 26;
-  ensureSpace(ctx, 16 + rows.length * rowH);
+  const rowH = 28;
+  ensureSpace(ctx, 20 + rows.length * rowH);
   ctx.page.drawText("APPROVAL TRAIL", { x: ML, y: ctx.curY - 9, size: 8, font: ctx.fontB, color: C_MUTED });
-  ctx.curY -= 16;
+  ctx.curY -= 20;
 
-  for (const r of rows) {
+  const dotX = ML + 4;
+  const textX = dotX + 12;
+  rows.forEach((r, i) => {
     if (ctx.curY - rowH < MB + PAGE_FTR_H) addPage(ctx);
     const y = ctx.curY;
-    ctx.page.drawText(r.label, { x: ML, y: y - 10, size: 8.5, font: ctx.fontB, color: r.color });
+    const dotY = y - 9;
+
+    if (i < rows.length - 1) {
+      ctx.page.drawLine({ start: { x: dotX, y: dotY - 3.5 }, end: { x: dotX, y: y - rowH + 3 }, thickness: 1, color: C_LINE });
+    }
+    ctx.page.drawCircle({ x: dotX, y: dotY, size: 3, color: r.color });
+
+    ctx.page.drawText(r.label, { x: textX, y: y - 10, size: 8.5, font: ctx.fontB, color: r.color });
     const atStr = fmtDate(r.at);
     const atW = ctx.fontR.widthOfTextAtSize(atStr, 8);
     if (r.name) {
       const labelW = ctx.fontB.widthOfTextAtSize(`${r.label} `, 8.5);
-      const nameMaxW = W - MR - atW - 10 - (ML + labelW);
-      ctx.page.drawText(trunc(r.name, ctx.fontR, 8.5, nameMaxW), { x: ML + labelW, y: y - 10, size: 8.5, font: ctx.fontR, color: C_TEXT });
+      const nameMaxW = W - MR - atW - 10 - (textX + labelW);
+      ctx.page.drawText(trunc(r.name, ctx.fontR, 8.5, nameMaxW), { x: textX + labelW, y: y - 10, size: 8.5, font: ctx.fontR, color: C_TEXT });
     }
     ctx.page.drawText(atStr, { x: W - MR - atW, y: y - 10, size: 8, font: ctx.fontR, color: C_MUTED });
     if (r.note) {
-      ctx.page.drawText(trunc(r.note, ctx.fontR, 8, CW), { x: ML, y: y - 21, size: 8, font: ctx.fontR, color: C_MUTED });
+      ctx.page.drawText(trunc(r.note, ctx.fontR, 8, W - MR - textX), { x: textX, y: y - 21, size: 8, font: ctx.fontR, color: C_MUTED });
     }
-    ctx.page.drawLine({ start: { x: ML, y: y - rowH + 6 }, end: { x: W - MR, y: y - rowH + 6 }, thickness: 0.4, color: C_LINE });
     ctx.curY -= rowH;
-  }
+  });
 }
 
 // ── Public ──────────────────────────────────────────────────────────────────
@@ -609,12 +1030,19 @@ export async function generateClaimPdf(
   drawPageHeader(ctx, claim);
   drawClaimInfo(ctx, claim, formType);
 
-  if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
-    drawEntertainmentSection(ctx, claim);
+  if (formType === CLAIM_FORM.LOCAL) {
+    // Modelled on the org's own paper reimbursement form (Appendix I travel
+    // grid + Misc/In-Base/Other tables + Totals block) — its own totals
+    // block replaces the generic Grand Total box below.
+    drawLocalClaimBody(ctx, claim);
   } else {
-    drawLineItemsSection(ctx, claim);
+    if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
+      drawEntertainmentSection(ctx, claim);
+    } else {
+      drawLineItemsSection(ctx, claim);
+    }
+    drawTotals(ctx, claim);
   }
-  drawTotals(ctx, claim);
   drawApprovalTrail(ctx, claim);
 
   stampFooters(ctx);
