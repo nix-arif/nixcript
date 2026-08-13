@@ -403,7 +403,7 @@ export interface SoItemsForPoResult {
 }
 
 export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForPoResult> {
-  await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("purchase-order:read");
 
   // Find active (non-cancelled) POs already linked to this SO
   const activePOs = await db
@@ -412,6 +412,7 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForP
     .where(
       and(
         eq(purchaseOrder.salesOrderId, soId),
+        eq(purchaseOrder.organizationId, orgId),
         sql`${purchaseOrder.status} != 'cancelled'`,
       ),
     );
@@ -433,9 +434,17 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForP
   }
 
   const allItems = await db
-    .select()
+    .select({
+      rowNo: salesOrderItem.rowNo,
+      productId: salesOrderItem.productId,
+      productCode: salesOrderItem.productCode,
+      description: salesOrderItem.description,
+      qty: salesOrderItem.qty,
+      uom: salesOrderItem.uom,
+    })
     .from(salesOrderItem)
-    .where(eq(salesOrderItem.salesOrderId, soId))
+    .innerJoin(salesOrder, eq(salesOrder.id, salesOrderItem.salesOrderId))
+    .where(and(eq(salesOrderItem.salesOrderId, soId), eq(salesOrder.organizationId, orgId)))
     .orderBy(asc(salesOrderItem.rowNo));
 
   if (allItems.length === 0) return { items: [], orderedProductCodes, orderedSupplierIds };
@@ -453,7 +462,7 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForP
     const prods = await db
       .select({ productCode: product.productCode, imageKey: product.imageKey, costUnitPrice: product.costUnitPrice, costPriceCurrency: product.costPriceCurrency })
       .from(product)
-      .where(inArray(product.productCode, codes));
+      .where(and(inArray(product.productCode, codes), eq(product.organizationId, orgId)));
     for (const p of prods) {
       imageMap[p.productCode] = p.imageKey ?? null;
       costMap[p.productCode] = p.costUnitPrice ?? null;
@@ -824,6 +833,15 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
   // When converting from a PR, link PR items to this PO (match by productCode)
   // and update the PR's status to reflect ordering progress
   if (fromPr && poNo) {
+    // Confirm the referenced PR actually belongs to this org before touching
+    // its items/status — input.purchaseRequisitionId is client-supplied.
+    const [prOwned] = await db
+      .select({ id: purchaseRequisition.id })
+      .from(purchaseRequisition)
+      .where(and(eq(purchaseRequisition.id, input.purchaseRequisitionId!), eq(purchaseRequisition.organizationId, orgId)))
+      .limit(1);
+    if (!prOwned) throw new Error("Purchase requisition not found");
+
     const poProductCodes = new Set(input.items.map((i) => i.productCode).filter(Boolean));
 
     const prItemsFull = await db
@@ -1017,15 +1035,6 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
   }
 
   await db.delete(purchaseOrder).where(eq(purchaseOrder.id, id));
-}
-
-export async function updatePurchaseOrderStatus(id: string, status: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-order:update");
-
-  await db
-    .update(purchaseOrder)
-    .set({ status })
-    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
 }
 
 // ── Workflow actions ───────────────────────────────────────────────────────

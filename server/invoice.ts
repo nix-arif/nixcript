@@ -614,9 +614,9 @@ async function refreshInvoiceStats(orgId: string): Promise<void> {
     });
 }
 
-export async function getInvoiceStats(orgId?: string): Promise<InvoiceStatsRow | null> {
-  const resolved = orgId ?? (await requireAccess("invoice:read")).orgId;
-  const [row] = await db.select().from(invoiceStats).where(eq(invoiceStats.organizationId, resolved));
+export async function getInvoiceStats(): Promise<InvoiceStatsRow | null> {
+  const { orgId } = await requireAccess("invoice:read");
+  const [row] = await db.select().from(invoiceStats).where(eq(invoiceStats.organizationId, orgId));
   return row ?? null;
 }
 
@@ -625,7 +625,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
 
   // Customer snapshot
   const customerSnapshot: InvoiceRow["customerSnapshot"] = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
     : null;
 
   // Supplier snapshot
@@ -923,11 +923,11 @@ export interface CreateInvoiceManualInput extends CreateInvoiceInput {
 }
 
 export async function createInvoiceManual(input: CreateInvoiceManualInput): Promise<InvoiceRow> {
-  const { orgId, userId } = await requireAccess("organization-profile:update");
+  const { orgId, userId } = await requireAccess("invoice:create");
 
   // Customer snapshot
   const customerSnapshot: InvoiceRow["customerSnapshot"] = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
     : null;
 
   // Supplier snapshot

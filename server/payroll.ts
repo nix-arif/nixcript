@@ -342,6 +342,16 @@ export async function createPayslip(data: {
   if (existing)
     throw new Error("Payslip for this employee already exists in this period");
 
+  // data.userId is client-supplied and `user` is a global, non-org-scoped
+  // table — confirm the target is actually a member of this org before
+  // creating a payslip for them.
+  const [targetMember] = await db
+    .select({ id: member.id })
+    .from(member)
+    .where(and(eq(member.userId, data.userId), eq(member.organizationId, orgId)))
+    .limit(1);
+  if (!targetMember) throw new Error("Employee is not a member of this organization");
+
   // Get employee profile
   const [emp] = await db
     .select({
@@ -522,7 +532,7 @@ export async function deletePayslip(payslipId: string) {
 }
 
 export async function getMyPayslips() {
-  const { session, orgId, userId } = await getSession();
+  const { orgId, userId } = await requireAccess("payslip:read:own");
 
   const rows = await db
     .select({
@@ -562,7 +572,7 @@ export async function getMyPayslips() {
     .from(payslip)
     .innerJoin(payrollPeriod, eq(payrollPeriod.id, payslip.periodId))
     .leftJoin(profile, eq(profile.userId, payslip.userId)) // ← must be here
-    .where(and(eq(payslip.userId, userId), eq(payslip.status, "published")))
+    .where(and(eq(payslip.userId, userId), eq(payslip.organizationId, orgId), eq(payslip.status, "published")))
     .orderBy(desc(payrollPeriod.year), desc(payrollPeriod.month));
 
   return rows;
@@ -594,10 +604,19 @@ async function getOwnerOrgId(
 }
 
 export async function getPayslipYtd(
-  userId: string,
+  targetUserId: string,
   year: number,
   upToMonth: number,
 ) {
+  const { orgId, userId } = await getSession();
+
+  // Pulling someone else's YTD requires the same permission that gates
+  // seeing anyone's payslip beyond your own.
+  if (targetUserId !== userId) {
+    const perms = await getUserPermissions(userId, orgId);
+    if (!hasAccess(perms, "payslip:read:all")) throw new Error("You don't have permission to do this");
+  }
+
   const rows = await db
     .select({
       grossPay: payslip.grossPay,
@@ -620,7 +639,8 @@ export async function getPayslipYtd(
     .innerJoin(payrollPeriod, eq(payrollPeriod.id, payslip.periodId))
     .where(
       and(
-        eq(payslip.userId, userId),
+        eq(payslip.userId, targetUserId),
+        eq(payrollPeriod.organizationId, orgId),
         eq(payslip.status, "published"),
         eq(payrollPeriod.year, year),
         lte(payrollPeriod.month, upToMonth),

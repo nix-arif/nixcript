@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, member, user, product } from "@/db/schema";
+import { stockLevel, stockMovement, member, user, product, staffStockLimit } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -255,6 +255,26 @@ export async function transferToRep(input: FieldTransferInput): Promise<string> 
       .where(and(eq(product.id, item.productId), eq(product.organizationId, orgId)))
       .limit(1);
     if (!prod) continue;
+
+    // Same per-person holding cap stock-request.ts enforces on staff
+    // warehouse requests — a rep's field warehouse is the same kind of
+    // personal holding, so it's checked against the same limit table.
+    const [limit] = await db
+      .select({ maxQty: staffStockLimit.maxQty })
+      .from(staffStockLimit)
+      .where(and(eq(staffStockLimit.organizationId, orgId), eq(staffStockLimit.userId, input.repId), eq(staffStockLimit.productId, item.productId)))
+      .limit(1);
+    if (limit) {
+      const [currentField] = await db
+        .select({ quantity: stockLevel.quantity })
+        .from(stockLevel)
+        .where(and(eq(stockLevel.organizationId, orgId), eq(stockLevel.productId, item.productId), eq(stockLevel.warehouseLabel, fieldLabel)))
+        .limit(1);
+      const currentQty = parseFloat(currentField?.quantity ?? "0");
+      if (currentQty + item.qty > parseFloat(limit.maxQty)) {
+        throw new Error(`Transfer would exceed ${input.repName}'s holding limit of ${limit.maxQty} units for ${prod.productCode}. They currently hold ${currentQty} units.`);
+      }
+    }
 
     const srcBalance = await updateStockLevel(orgId, item.productId, "Default", -item.qty, null, now);
     await updateStockLevel(orgId, item.productId, fieldLabel, item.qty, prod.unitCost, now);

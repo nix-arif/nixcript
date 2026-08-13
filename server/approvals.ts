@@ -3,6 +3,7 @@
 import { db } from "@/db";
 import { member, user, userPermission } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { revalidatePath } from "next/cache";
@@ -41,6 +42,19 @@ async function requireOwnerOrAdmin() {
 
   if (!m || !["owner", "admin"].includes(m.role)) throw new Error("Only owners and admins can manage approvals");
   return { orgId, actorId: session.user.id };
+}
+
+// Nobody — including an admin with access to this page — can hand out an
+// approval key they don't currently hold themselves. Same guard as
+// server/permissions.ts and server/default-permissions.ts. Owners bypass
+// via the "*" marker. Only checked on the grant path; revoking is a
+// reduction in access, never an escalation.
+async function assertCanGrant(actorId: string, orgId: string, key: string) {
+  const perms = await getUserPermissions(actorId, orgId);
+  if (perms.includes("*")) return;
+  if (!perms.includes(key)) {
+    throw new Error(`You cannot grant permissions you don't have yourself: ${key}`);
+  }
 }
 
 /* =========================
@@ -94,9 +108,10 @@ export async function setApprovalPermission(
   permissionKey: string,
   allowed: boolean,
 ): Promise<void> {
-  const { orgId } = await requireOwnerOrAdmin();
+  const { orgId, actorId } = await requireOwnerOrAdmin();
 
   if (!ALL_APPROVAL_KEYS.includes(permissionKey as never)) throw new Error("Invalid permission key");
+  if (allowed) await assertCanGrant(actorId, orgId, permissionKey);
 
   await db
     .insert(userPermission)

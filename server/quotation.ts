@@ -191,7 +191,24 @@ function formatQuotationNo(
   return `${prefix}-QT-${year}-${String(num).padStart(4, "0")}`;
 }
 
+// Callers may pass an org other than the caller's single active org — the
+// government-batch and finalize flows number quotations across every org
+// one owner controls (see getAllOwnerOrgs) — so this checks org membership
+// generally rather than requiring an exact match to the active org.
+async function assertOrgMember(orgId: string): Promise<void> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const [m] = await db
+    .select({ id: member.id })
+    .from(member)
+    .where(and(eq(member.userId, session.user.id), eq(member.organizationId, orgId), isNull(member.deletedAt)))
+    .limit(1);
+  if (!m) throw new Error("Unauthorized");
+}
+
 export async function generateQuotationNo(orgId: string): Promise<string> {
+  await assertOrgMember(orgId);
+
   const year = new Date().getFullYear();
 
   const [org] = await db
@@ -230,6 +247,8 @@ export async function generateQuotationNo(orgId: string): Promise<string> {
 
 // Read-only preview — does NOT increment the counter.
 export async function peekNextQuotationNo(orgId: string): Promise<string> {
+  await assertOrgMember(orgId);
+
   const year = new Date().getFullYear();
 
   const [[org], [existing]] = await Promise.all([
@@ -512,7 +531,7 @@ export async function createQuotation(input: CreateQuotationInput) {
 
   // Get customer snapshot using the shared helper
   const customerSnapshot = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
     : null;
 
   // Calculate shared pricing — set items use setQty multiplier; global sets multiplies the rest
@@ -1823,9 +1842,11 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
   if (!q) throw new Error("Quotation not found");
   if (q.status !== "draft") throw new Error("Cannot edit a finalized quotation");
 
-  // Snapshot customer using the shared helper
+  // Snapshot customer using the shared helper. Scoped to every org this
+  // owner controls (ownerOrgIds), matching the scope already used to look
+  // up the quotation itself above.
   const customerSnapshot = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, ownerOrgIds, input.customerOrgMemberId)
     : null;
 
   // Recalculate totals — set items use setQty multiplier; global sets multiplies all
@@ -2218,14 +2239,17 @@ export async function createGovernmentBatch(
   const customerIds = [...new Set(files.map((f) => f.customerId).filter(Boolean))];
   const customerRows =
     customerIds.length > 0
-      ? await db.select().from(customer).where(inArray(customer.id, customerIds))
+      ? await db
+          .select()
+          .from(customer)
+          .where(and(inArray(customer.id, customerIds), inArray(customer.organizationId, ownerOrgIds)))
       : [];
   const customerMap = new Map(customerRows.map((c) => [c.id, c]));
 
   // Build snapshots that include org address from M2M tables
   const snapshotMap = new Map<string, Awaited<ReturnType<typeof buildCustomerSnapshot>>>();
   for (const cid of customerIds) {
-    snapshotMap.set(cid, await buildCustomerSnapshot(cid));
+    snapshotMap.set(cid, await buildCustomerSnapshot(cid, ownerOrgIds));
   }
 
   const govBatchId = nanoid(); // single ID shared by all quotations in this batch call
@@ -2384,12 +2408,12 @@ export async function updateQuotationSettings(
     showItemizeDiscount?: boolean;
   },
 ) {
-  await requireAccess("quotation:update");
+  const { orgId } = await requireAccess("quotation:update");
 
   const [q] = await db
     .select({ status: quotation.status, subtotal: quotation.subtotal })
     .from(quotation)
-    .where(eq(quotation.id, id))
+    .where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)))
     .limit(1);
 
   if (!q) throw new Error("Quotation not found");
@@ -2422,7 +2446,7 @@ export async function updateQuotationSettings(
     inclLampiran12: input.inclLampiran12 ? 1 : 0,
     inclLampiran13: input.inclLampiran13 ? 1 : 0,
     showItemizeDiscount: input.showItemizeDiscount ? 1 : 0,
-  }).where(eq(quotation.id, id));
+  }).where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)));
 }
 
 export async function updateQuotationDocumentOptions(
@@ -2443,12 +2467,12 @@ export async function updateQuotationDocumentOptions(
     inclLampiran13: boolean;
   },
 ) {
-  await requireAccess("quotation:update");
+  const { orgId } = await requireAccess("quotation:update");
 
   const [q] = await db
     .select({ id: quotation.id })
     .from(quotation)
-    .where(eq(quotation.id, id))
+    .where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)))
     .limit(1);
 
   if (!q) throw new Error("Quotation not found");
@@ -2467,7 +2491,7 @@ export async function updateQuotationDocumentOptions(
     inclMdaEstablishment: input.inclMdaEstablishment ? 1 : 0,
     inclLampiran12: input.inclLampiran12 ? 1 : 0,
     inclLampiran13: input.inclLampiran13 ? 1 : 0,
-  }).where(eq(quotation.id, id));
+  }).where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)));
 }
 
 export async function deleteQuotation(id: string) {
@@ -2508,6 +2532,7 @@ export async function deleteQuotation(id: string) {
 async function rebuildSnapshotForRevision(
   customerId: string | null,
   existingSnapshot: { organizationName?: string | null } | null,
+  orgId: string,
 ) {
   if (!customerId) return null;
   const snapshotOrg = existingSnapshot?.organizationName;
@@ -2524,7 +2549,7 @@ async function rebuildSnapshotForRevision(
       .limit(1);
     customerOrgMemberId = mem?.id ?? null;
   }
-  return buildCustomerSnapshot(customerId, customerOrgMemberId);
+  return buildCustomerSnapshot(customerId, orgId, customerOrgMemberId);
 }
 
 export async function reviseQuotation(quotationId: string): Promise<string> {
@@ -2571,6 +2596,7 @@ export async function reviseQuotation(quotationId: string): Promise<string> {
       rebuildSnapshotForRevision(
         source.customerId,
         source.customerSnapshot as { organizationName?: string } | null,
+        orgId,
       ),
     ]);
 
@@ -2614,6 +2640,7 @@ export async function reviseQuotation(quotationId: string): Promise<string> {
   const newCustomerSnapshot = await rebuildSnapshotForRevision(
     anchorMember?.customerId ?? null,
     (anchorMember?.customerSnapshot as { organizationName?: string } | null) ?? null,
+    orgId,
   );
 
   // Load all items for the whole group in one query

@@ -49,13 +49,35 @@ function assertCanGrant(callerPerms: string[], keysToGrant: string[]) {
 }
 
 // ── Permissions ──────────────────────────────────────────
+//
+// `permission` is a global catalog table, not scoped to any one org — so
+// there's no org to authorize against the way every other function in this
+// file does. None of these three have a live caller today (see
+// /test-boundary), but as a "use server" export each is still a directly
+// invokable endpoint, so it's gated defensively: caller must be an owner of
+// their active org, the closest available proxy for "trusted admin" when
+// the resource itself has no owning org.
+async function requireOwner() {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) throw new Error("No active organization");
+  const [m] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, session.user.id), eq(member.organizationId, orgId), isNull(member.deletedAt)))
+    .limit(1);
+  if (!m || m.role !== "owner") throw new Error("Only owners can do this");
+}
 
 export const getPermissions = async () => {
+  await requireOwner();
   return await db.select().from(permission);
 };
 
 export const createPermission = async (key: string, label: string) => {
   try {
+    await requireOwner();
     await db
       .insert(permission)
       .values({ id: nanoid(), key, label })
@@ -68,6 +90,7 @@ export const createPermission = async (key: string, label: string) => {
 
 export const deletePermission = async (id: string) => {
   try {
+    await requireOwner();
     // Fetch the permission first to check if it's a default one
     const [existing] = await db
       .select()

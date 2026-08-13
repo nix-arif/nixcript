@@ -166,7 +166,7 @@ export async function getConsignmentDetail(id: string): Promise<ConsignmentDetai
   const [items, usageRows, soRow] = await Promise.all([
     db.select().from(consignmentItem).where(eq(consignmentItem.consignmentId, id)).orderBy(asc(consignmentItem.id)),
     db.select().from(consignmentUsage).where(eq(consignmentUsage.consignmentId, id)).orderBy(desc(consignmentUsage.createdAt)),
-    db.select({ status: salesOrder.status }).from(salesOrder).where(eq(salesOrder.id, row.soId)).limit(1),
+    db.select({ status: salesOrder.status }).from(salesOrder).where(and(eq(salesOrder.id, row.soId), eq(salesOrder.organizationId, orgId))).limit(1),
   ]);
 
   const recorderIds = [...new Set(usageRows.map((u) => u.recordedBy))];
@@ -246,9 +246,18 @@ export async function getActiveConsignmentItems(): Promise<{
 export async function createConsignment(input: CreateConsignmentInput): Promise<ConsignmentRow> {
   const { orgId, userId } = await requireAccess("sales-order:update");
 
+  // soId is client-supplied — confirm it belongs to the caller's org before
+  // storing it on the consignment.
+  const [so] = await db
+    .select({ id: salesOrder.id })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, input.soId), eq(salesOrder.organizationId, orgId)))
+    .limit(1);
+  if (!so) throw new Error("Sales order not found");
+
   // Build customer snapshot
   const customerSnapshot: ConsignmentRow["customerSnapshot"] = input.customerId
-    ? await buildCustomerSnapshot(input.customerId)
+    ? await buildCustomerSnapshot(input.customerId, orgId)
     : null;
 
   const consignmentNo = await generateConsignmentNo(orgId);

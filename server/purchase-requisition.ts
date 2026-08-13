@@ -357,12 +357,13 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
 }
 
 export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<PrRow> {
-  const { orgId } = await requireAccess("purchase-requisition:update");
+  const { orgId, userId } = await requireAccess("purchase-requisition:update");
   const [existing] = await db
     .select()
     .from(purchaseRequisition)
     .where(and(eq(purchaseRequisition.id, input.id), eq(purchaseRequisition.organizationId, orgId)));
   if (!existing) throw new Error("Purchase requisition not found");
+  if (existing.requestedBy !== userId) throw new Error("Only the creator can edit this purchase requisition");
   if (!["draft"].includes(existing.status)) throw new Error("Only draft requisitions can be edited");
 
   let resolvedSoNo = input.salesOrderNo ?? null;
@@ -880,6 +881,10 @@ export async function checkAndTriggerReplenishment(
   userId: string,
   productIds: string[],
 ): Promise<void> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  if (session.session.activeOrganizationId !== orgId) throw new Error("Unauthorized");
+
   const unique = [...new Set(productIds.filter(Boolean))];
   if (unique.length === 0) return;
 

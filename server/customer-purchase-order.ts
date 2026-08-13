@@ -279,7 +279,7 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
   const { orgId, userId } = await requireAccess("customer-po:create");
 
   const customerSnapshot: CustomerPo["customerSnapshot"] = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
     : null;
 
   const [row] = await db

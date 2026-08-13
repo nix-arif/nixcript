@@ -39,8 +39,14 @@ export async function getDocumentNumberingSettings(): Promise<NumberingSetting[]
     .where(eq(documentNumberingSetting.organizationId, orgId));
 }
 
-// Used inside other server actions — no auth check, orgId already resolved.
+// Used inside other server actions, which have already resolved and
+// authorized orgId themselves — this only adds a floor check that some
+// authenticated session exists, since the config itself (a numbering
+// prefix, not sensitive data) doesn't need a permission check on top.
 export async function getNumberingConfig(orgId: string, docType: DocType): Promise<NumberingConfig> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+
   const [row] = await db
     .select()
     .from(documentNumberingSetting)

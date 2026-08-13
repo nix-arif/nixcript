@@ -5,10 +5,35 @@ import { organizationRole, member, userPermission } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { ROLE_PERMISSIONS } from "@/lib/permissions/constants";
+import { getCachedSession } from "@/lib/auth/cached-session";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 
 const SYSTEM_ROLES = ["owner", "admin", "member"];
 
+// This whole file has no live callers today (the one prior consumer,
+// create-new-role-form.tsx, imports it commented out) — but every exported
+// function in a "use server" file is still a directly-invokable action
+// endpoint, so it's gated the same as any live one rather than left open
+// for whenever a UI gets wired back up to it.
+async function assertOrgMember(organizationId: string): Promise<string> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId || orgId !== organizationId) throw new Error("Unauthorized");
+  return session.user.id;
+}
+
+async function requireAccess(organizationId: string, permission: string): Promise<string> {
+  const userId = await assertOrgMember(organizationId);
+  const perms = await getUserPermissions(userId, organizationId);
+  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
+  return userId;
+}
+
 export const getRoles = async (organizationId: string) => {
+  await assertOrgMember(organizationId);
+
   const roles = await db
     .select()
     .from(organizationRole)
@@ -22,6 +47,8 @@ export const getRoles = async (organizationId: string) => {
 };
 
 export const getMemberCountPerRole = async (organizationId: string) => {
+  await assertOrgMember(organizationId);
+
   const members = await db
     .select({ role: member.role })
     .from(member)
@@ -42,6 +69,15 @@ export const createRole = async (
   permissions: string[],
 ) => {
   try {
+    const callerId = await requireAccess(organizationId, "organization-role:create");
+    const callerPerms = await getUserPermissions(callerId, organizationId);
+    if (!callerPerms.includes("*")) {
+      const missing = permissions.filter((k) => !callerPerms.includes(k));
+      if (missing.length > 0) {
+        return { success: false, message: `You cannot grant permissions you don't have yourself: ${missing.join(", ")}` };
+      }
+    }
+
     const existing = await db
       .select()
       .from(organizationRole)
@@ -79,6 +115,15 @@ export const updateRole = async (
   permissions: string[],
 ) => {
   try {
+    const callerId = await requireAccess(organizationId, "organization-role:update");
+    const callerPerms = await getUserPermissions(callerId, organizationId);
+    if (!callerPerms.includes("*")) {
+      const missing = permissions.filter((k) => !callerPerms.includes(k));
+      if (missing.length > 0) {
+        return { success: false, message: `You cannot grant permissions you don't have yourself: ${missing.join(", ")}` };
+      }
+    }
+
     await db
       .update(organizationRole)
       .set({ permission: JSON.stringify(permissions) })
@@ -101,6 +146,8 @@ export const deleteRole = async (
   roleName: string,
 ) => {
   try {
+    await requireAccess(organizationId, "organization-role:delete");
+
     // 1. Reassign members with this role to "member"
     await db
       .update(member)

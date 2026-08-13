@@ -12,8 +12,15 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
 import { notifyOwners } from "@/server/member-approvals";
 
+const assertOrgMatches = async (organizationId: string) => {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  if (session.session.activeOrganizationId !== organizationId) throw new Error("Unauthorized");
+};
+
 export const getInvitations = async (organizationId: string) => {
   noStore();
+  await assertOrgMatches(organizationId);
   return db
     .select({
       id: invitation.id,
@@ -33,6 +40,7 @@ export const getInvitations = async (organizationId: string) => {
 };
 
 export const getMemberCount = async (organizationId: string) => {
+  await assertOrgMatches(organizationId);
   const members = await db
     .select()
     .from(member)
@@ -136,6 +144,23 @@ export const sendInvitations = async (
 
 export const revokeInvitation = async (invitationId: string) => {
   try {
+    const session = await getCachedSession();
+    if (!session) throw new Error("Unauthorized");
+    const organizationId = session.session.activeOrganizationId;
+    if (!organizationId) throw new Error("No active organization");
+
+    const perms = await getUserPermissions(session.user.id, organizationId);
+    if (!hasAccess(perms, "member:invite")) throw new Error("You don't have permission to do this");
+
+    // Confirm the invitation actually belongs to the caller's org before
+    // letting them cancel it — invitationId is client-supplied.
+    const [inv] = await db
+      .select({ id: invitation.id })
+      .from(invitation)
+      .where(and(eq(invitation.id, invitationId), eq(invitation.organizationId, organizationId)))
+      .limit(1);
+    if (!inv) throw new Error("Invitation not found");
+
     await auth.api.cancelInvitation({
       body: { invitationId },
       headers: await headers(),
@@ -155,10 +180,54 @@ export const resendInvitation = async (
   oldInvitationId: string,
 ) => {
   try {
+    const session = await getCachedSession();
+    if (!session) throw new Error("Unauthorized");
+    if (session.session.activeOrganizationId !== organizationId) throw new Error("Unauthorized");
+
+    const perms = await getUserPermissions(session.user.id, organizationId);
+    if (!hasAccess(perms, "member:invite")) throw new Error("You don't have permission to do this");
+
+    const [me] = await db
+      .select({ role: member.role })
+      .from(member)
+      .where(and(eq(member.userId, session.user.id), eq(member.organizationId, organizationId), isNull(member.deletedAt)))
+      .limit(1);
+    const isOwner = me?.role === "owner";
+
+    // oldInvitationId is client-supplied — confirm it's actually this org's
+    // invitation before cancelling it.
+    const [oldInv] = await db
+      .select({ id: invitation.id })
+      .from(invitation)
+      .where(and(eq(invitation.id, oldInvitationId), eq(invitation.organizationId, organizationId)))
+      .limit(1);
+    if (!oldInv) throw new Error("Invitation not found");
+
     await auth.api.cancelInvitation({
       body: { invitationId: oldInvitationId },
       headers: await headers(),
     });
+
+    if (!isOwner) {
+      // Same rule as sendInvitations: a non-owner can cancel (reduce
+      // access), but minting the replacement invitation with a chosen
+      // role/department is a grant, and grants go through owner approval.
+      await db.insert(pendingInvitation).values({
+        id: nanoid(),
+        organizationId,
+        email,
+        role,
+        departmentId: departmentId ?? null,
+        requestedBy: session.user.id,
+      });
+      await notifyOwners(organizationId, {
+        type: "invitation:pending_approval",
+        title: "New invitation awaiting approval",
+        body: `${session.user.name} requested to resend an invitation to ${email}.`,
+        link: "/dashboard/admin/member-approvals",
+      });
+      return { success: true, pending: true };
+    }
 
     const created = await auth.api.createInvitation({
       body: { email, role: "member" as any, organizationId },
@@ -176,7 +245,7 @@ export const resendInvitation = async (
         .where(eq(invitation.id, created.id));
     }
 
-    return { success: true };
+    return { success: true, pending: false };
   } catch (e) {
     return { success: false, message: (e as Error).message };
   }

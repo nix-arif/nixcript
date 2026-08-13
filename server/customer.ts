@@ -738,12 +738,16 @@ export type CustomerSnapshot = {
 
 export async function buildCustomerSnapshot(
   customerId: string,
+  orgId: string | string[],
   customerOrgMemberId?: string | null,
 ): Promise<CustomerSnapshot | null> {
+  const orgFilter = Array.isArray(orgId)
+    ? inArray(customer.organizationId, orgId)
+    : eq(customer.organizationId, orgId);
   const [cust] = await db
     .select()
     .from(customer)
-    .where(eq(customer.id, customerId))
+    .where(and(eq(customer.id, customerId), orgFilter))
     .limit(1);
   if (!cust) return null;
 

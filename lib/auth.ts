@@ -5,7 +5,7 @@ import { admin, organization, customSession } from "better-auth/plugins";
 import { db } from "@/db";
 import { profile, schema, session } from "@/db/schema";
 import { nextCookies } from "better-auth/next-js";
-import { getActiveOrganization } from "@/server/organizations";
+import { getActiveOrganization } from "@/lib/auth/get-active-organization";
 import OrganizationInvitationEmail from "@/components/emails/organization-invitation";
 import ResetPasswordEmail from "@/components/emails/reset-password";
 import { Resend } from "resend";

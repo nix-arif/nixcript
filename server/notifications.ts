@@ -27,6 +27,14 @@ export async function createNotification(params: {
   body?: string;
   link?: string;
 }) {
+  // Every caller today is another already-authenticated server action
+  // notifying someone other than itself (an approver, a requester, etc.),
+  // so this can't require the target to be the caller. It can at least
+  // require *some* authenticated session, so this can't be spammed by a
+  // fully anonymous request if it's ever reachable client-side.
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+
   await db.insert(notification).values({
     id: nanoid(),
     organizationId: params.organizationId,
@@ -43,6 +51,9 @@ export async function createNotification(params: {
 // Owners always can. Managers of sales/management departments also can.
 
 export async function getSoApprovers(organizationId: string): Promise<string[]> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+
   // 1. Owners
   const owners = await db
     .select({ userId: member.userId })
@@ -87,6 +98,9 @@ export async function getSoApprovers(organizationId: string): Promise<string[]> 
 // Owners always can. Managers of procurement/management departments also can.
 
 export async function getPoApprovers(organizationId: string): Promise<string[]> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+
   const owners = await db
     .select({ userId: member.userId })
     .from(member)
@@ -135,6 +149,9 @@ export async function notifyUsersWithPermission(
   permKey: string,
   notifData: { type: string; title: string; body: string; link: string },
 ): Promise<boolean> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+
   const approvers = await db
     .select({ userId: userPermission.userId })
     .from(userPermission)

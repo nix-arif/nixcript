@@ -496,7 +496,7 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
 
   // Build customer snapshot
   const customerSnapshot: SalesOrderRow["customerSnapshot"] = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
     : null;
 
   const soNo = await generateSoNo(orgId);
@@ -628,7 +628,7 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
   let customerSnapshot: SalesOrderRow["customerSnapshot"] = existing.customerSnapshot;
   if (input.customerId !== undefined) {
     customerSnapshot = input.customerId
-      ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+      ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
       : null;
   }
 
@@ -1126,11 +1126,12 @@ export async function toggleSoItemApprovalRejected(itemId: string, rejected: boo
   if (!item) throw new Error("Item not found");
 
   const [so] = await db
-    .select({ id: salesOrder.id, status: salesOrder.status })
+    .select({ id: salesOrder.id, status: salesOrder.status, createdBy: salesOrder.createdBy })
     .from(salesOrder)
     .where(and(eq(salesOrder.id, item.salesOrderId), eq(salesOrder.organizationId, orgId)));
   if (!so) throw new Error("Not authorised");
   if (so.status !== "submitted") throw new Error("Can only reject items on a submitted order");
+  await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, rejected ? "reject" : "un-reject");
 
   const now = rejected ? new Date() : null;
   const by  = rejected ? userId : null;

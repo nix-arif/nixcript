@@ -12,6 +12,18 @@ import { revalidatePath } from "next/cache";
 
 const ALL_PERMISSION_KEYS = new Set(ALL_PERMISSIONS.map((p) => p.key));
 
+// Nobody — including an admin with access to this page — can hand out a
+// permission they don't currently hold themselves, otherwise this screen
+// becomes a master key: flip one default on and every admin, including the
+// one who flipped it, gets it too. Same guard as server/permissions.ts.
+// Owners bypass via the "*" marker.
+function assertCanGrant(callerPerms: string[], key: string) {
+  if (callerPerms.includes("*")) return;
+  if (!callerPerms.includes(key)) {
+    throw new Error(`You cannot grant permissions you don't have yourself: ${key}`);
+  }
+}
+
 async function requireOwnerOrAdmin() {
   const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
@@ -121,7 +133,7 @@ async function applyDefaultToAllMembers(orgId: string, permissionKey: string): P
 // Permissions page copy). Revoking from everyone is a separate, deliberate
 // action via Access Control, not a side effect of unchecking a box here.
 export async function setDefaultPermission(permissionKey: string, enabled: boolean): Promise<{ appliedToMembers: number }> {
-  const { orgId } = await requireOwnerOrAdmin();
+  const { orgId, session } = await requireOwnerOrAdmin();
   if (!ALL_PERMISSION_KEYS.has(permissionKey as never)) throw new Error("Invalid permission key");
 
   if (!enabled) {
@@ -131,6 +143,9 @@ export async function setDefaultPermission(permissionKey: string, enabled: boole
     revalidatePath("/dashboard/admin/default-permissions");
     return { appliedToMembers: 0 };
   }
+
+  const callerPerms = await getUserPermissions(session.user.id, orgId);
+  assertCanGrant(callerPerms, permissionKey);
 
   const [flagged] = await db
     .select({ id: sensitivePermission.id })
@@ -149,6 +164,9 @@ export async function setDefaultPermission(permissionKey: string, enabled: boole
 export async function enableSensitiveDefaultPermission(permissionKey: string, password: string): Promise<{ appliedToMembers: number }> {
   const { orgId, session } = await requireOwnerOrAdmin();
   if (!ALL_PERMISSION_KEYS.has(permissionKey as never)) throw new Error("Invalid permission key");
+
+  const callerPerms = await getUserPermissions(session.user.id, orgId);
+  assertCanGrant(callerPerms, permissionKey);
 
   try {
     await auth.api.signInEmail({ body: { email: session.user.email, password } });

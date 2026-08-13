@@ -174,14 +174,22 @@ async function checkAndFulfillSo(soId: string, orgId: string): Promise<void> {
 
 // Returns per-item remaining quantities for the create-DO form.
 export async function getSoRemainingItems(soId: string): Promise<SoItemRemaining[]> {
-  const session = await getCachedSession();
-  if (!session?.session?.activeOrganizationId) throw new Error("Unauthorized");
-  const orgId = session.session.activeOrganizationId;
+  const { orgId } = await requireAccess("delivery-order:read");
 
   const items = await db
-    .select()
+    .select({
+      id: salesOrderItem.id,
+      rowNo: salesOrderItem.rowNo,
+      productId: salesOrderItem.productId,
+      productCode: salesOrderItem.productCode,
+      description: salesOrderItem.description,
+      qty: salesOrderItem.qty,
+      uom: salesOrderItem.uom,
+      sourceCustomerPoId: salesOrderItem.sourceCustomerPoId,
+    })
     .from(salesOrderItem)
-    .where(eq(salesOrderItem.salesOrderId, soId))
+    .innerJoin(salesOrder, eq(salesOrder.id, salesOrderItem.salesOrderId))
+    .where(and(eq(salesOrderItem.salesOrderId, soId), eq(salesOrder.organizationId, orgId)))
     .orderBy(asc(salesOrderItem.rowNo));
 
   if (items.length === 0) return [];
@@ -602,7 +610,7 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
   const { orgId, userId } = await requireAccess("delivery-order:create");
 
   const customerSnapshot: DeliveryOrderRow["customerSnapshot"] = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
     : null;
 
   const doNo = await generateDoNo(orgId);
@@ -768,14 +776,6 @@ export async function deleteDeliveryOrder(id: string): Promise<void> {
   await db.delete(deliveryOrder).where(eq(deliveryOrder.id, id));
   revalidatePath("/dashboard/fulfillment/delivery");
   revalidatePath("/dashboard");
-}
-
-export async function updateDeliveryOrderStatus(id: string, status: string): Promise<void> {
-  const { orgId } = await requireAccess("delivery-order:update");
-  await db
-    .update(deliveryOrder)
-    .set({ status })
-    .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
 }
 
 export async function deliverDeliveryOrder(id: string, warehouseLabel = "Default"): Promise<void> {

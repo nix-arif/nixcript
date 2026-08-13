@@ -234,6 +234,10 @@ export async function recheckAllInsufficientSos(): Promise<{ resolved: number }>
  * Safe to call at creation time (after items have been inserted).
  */
 export async function getSoStockStatus(orgId: string, soId: string): Promise<"pending-do" | "pending-pr"> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("You must be signed in to continue");
+  if (session.session.activeOrganizationId !== orgId) throw new Error("Unauthorized");
+
   const { productItems, result, hasUnresolvableItems } = await computeStockCheckItems(orgId, soId);
   if (productItems.length === 0) {
     return hasUnresolvableItems ? "pending-pr" : "pending-do";

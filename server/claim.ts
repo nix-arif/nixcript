@@ -716,6 +716,7 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
           and(
             eq(travelForm.id, li.travelFormId),
             eq(travelForm.userId, userId),
+            eq(travelForm.organizationId, orgId),
             eq(travelForm.status, "APPROVED"),
             isNull(travelForm.claimedAt),
           ),
@@ -1069,6 +1070,7 @@ async function replaceClaimItems(
           and(
             eq(travelForm.id, li.travelFormId),
             eq(travelForm.userId, userId),
+            eq(travelForm.organizationId, orgId),
             eq(travelForm.status, "APPROVED"),
             wasAlreadyClaimedByThisClaim ? undefined : isNull(travelForm.claimedAt),
           ),
@@ -1081,7 +1083,7 @@ async function replaceClaimItems(
   // longer referenced by any row (the trip was removed/edited away).
   for (const oldId of previouslyLinkedIds) {
     if (newlyLinkedIds.has(oldId)) continue;
-    await db.update(travelForm).set({ claimedAt: null, updatedAt: new Date() }).where(eq(travelForm.id, oldId));
+    await db.update(travelForm).set({ claimedAt: null, updatedAt: new Date() }).where(and(eq(travelForm.id, oldId), eq(travelForm.userId, userId), eq(travelForm.organizationId, orgId)));
   }
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetails && data.entertainmentDetails.length > 0) {
     await db.insert(claimEntertainmentDetail).values(
@@ -1140,7 +1142,7 @@ export async function updateDraftClaim(draftId: string, data: ApplyClaimInput): 
   if (app[0].status !== "DRAFT") throw new Error("Only drafts can be updated this way");
   const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
   const ct = app[0];
-  const type = await db.select().from(claimType).where(eq(claimType.id, data.claimTypeId)).limit(1);
+  const type = await db.select().from(claimType).where(and(eq(claimType.id, data.claimTypeId), eq(claimType.organizationId, orgId))).limit(1);
   if (!type[0]) throw new Error("Claim type not found");
   const totalAmount = await replaceClaimItems(draftId, orgId, userId, data, type[0]);
   await db.update(claimApplication).set({

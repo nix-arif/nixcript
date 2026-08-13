@@ -177,8 +177,13 @@ export async function getPresignedUrl(
   key: string,
   expiresIn = 3600,
 ): Promise<string> {
-  const session = await getCachedSession();
-  if (!session) throw new Error("Unauthorized");
+  const orgId = await getOrgId();
+
+  // Keys are always "org-certificates/<orgId>/...": confirm the caller's own
+  // org before signing, so a foreign org's certificate key never gets a
+  // usable URL even if it leaks.
+  const [, keyOrgId] = key.split("/");
+  if (keyOrgId !== orgId) throw new Error("Unauthorized");
 
   const command = new GetObjectCommand({
     Bucket: process.env.R2_CERTIFICATES_BUCKET!,

@@ -523,14 +523,23 @@ export async function editStockLevel(data: {
   const currentQty = parseFloat(sl.quantity);
   const delta = data.targetQty - currentQty;
 
-  // Update metadata regardless
+  // Update metadata regardless — reorder point / max stock / unit cost carry
+  // no risk of silently moving inventory, so they're not subject to review.
   await db.update(stockLevel)
     .set({ reorderPoint: data.reorderPoint, maxStock: data.maxStock, unitCost: data.unitCost, updatedAt: new Date() })
     .where(eq(stockLevel.id, sl.id));
 
-  // If qty changed, record an adjustment movement (auto-approved)
+  // If qty changed, record an adjustment movement — same auto-approve rule
+  // as adjustStock: only commit immediately if the caller also holds
+  // inventory:approve (and self-approval isn't disabled for this org).
+  // inventory:manage alone (e.g. the logistic manager role) is not enough
+  // to bypass the two-person review the rest of inventory enforces.
   if (Math.abs(delta) > 0.00001) {
     const [prod] = await db.select({ productCode: product.productCode }).from(product).where(eq(product.id, sl.productId)).limit(1);
+
+    const perms = await getUserPermissions(userId, orgId);
+    const canApprove = hasAccess(perms, "inventory:approve") && (await isSelfActionAllowed(orgId, "inventory:approve"));
+
     const movementId = nanoid();
     await db.insert(stockMovement).values({
       id: movementId,
@@ -541,7 +550,7 @@ export async function editStockLevel(data: {
       warehouseTo: null,
       movementType: MOVEMENT_TYPE.ADJUSTMENT,
       quantity: delta.toFixed(4),
-      balanceAfter: data.targetQty.toFixed(4),
+      balanceAfter: canApprove ? data.targetQty.toFixed(4) : null,
       unitCost: data.unitCost,
       referenceType: REF_TYPE.MANUAL,
       referenceId: null,
@@ -550,15 +559,25 @@ export async function editStockLevel(data: {
       lotNo: null,
       expiryDate: null,
       lotId: null,
-      status: "APPROVED",
-      reviewedBy: userId,
-      reviewedAt: new Date(),
+      status: canApprove ? "APPROVED" : "PENDING",
+      reviewedBy: canApprove ? userId : null,
+      reviewedAt: canApprove ? new Date() : null,
       createdBy: userId,
       createdAt: new Date(),
     });
-    await db.update(stockLevel)
-      .set({ quantity: data.targetQty.toFixed(4), updatedAt: new Date() })
-      .where(eq(stockLevel.id, sl.id));
+
+    if (canApprove) {
+      await db.update(stockLevel)
+        .set({ quantity: data.targetQty.toFixed(4), updatedAt: new Date() })
+        .where(eq(stockLevel.id, sl.id));
+    } else {
+      await notifyUsersWithPermission(orgId, "inventory:approve", {
+        type: "inventory:submitted",
+        title: `Stock Balance Correction Pending Approval`,
+        body: `A correction of ${delta > 0 ? "+" : ""}${delta.toFixed(2)} × ${prod?.productCode ?? sl.productId} in ${sl.warehouseLabel} needs review`,
+        link: `/dashboard/inventory/approvals`,
+      });
+    }
   }
 
   revalidatePath("/dashboard/inventory");
@@ -867,7 +886,7 @@ export async function editStockMovement(id: string, data: {
   quantity?: number;
   unitCost?: string | null;
 }): Promise<void> {
-  const { orgId } = await requireAccess("inventory:manage");
+  const { orgId, userId } = await requireAccess("inventory:manage");
 
   const [mv] = await db
     .select()
@@ -909,9 +928,28 @@ export async function editStockMovement(id: string, data: {
   const isOut = ["STOCK_OUT", "TRANSFER_OUT"].includes(movementType);
   const signed = isOut ? -Math.abs(qty) : Math.abs(qty);
 
+  // A pending movement's core fields (what/where/how much) can be
+  // corrected by anyone holding inventory:manage before an inventory:approve
+  // reviewer signs off — not just the movement's own creator, and there's
+  // no dedicated audit-trail column on stock_movement. Leave a textual
+  // trail in notes so the reviewer can see it was edited, and by whom.
+  const coreFieldsChanged =
+    (data.productId !== undefined && data.productId !== mv.productId) ||
+    (data.warehouseLabel !== undefined && data.warehouseLabel !== mv.warehouseLabel) ||
+    (data.movementType !== undefined && data.movementType !== mv.movementType) ||
+    (data.quantity !== undefined && signed.toFixed(4) !== mv.quantity);
+
+  let notes = safeFields.notes;
+  if (coreFieldsChanged && mv.createdBy !== userId) {
+    const [editor] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
+    const auditLine = `[Edited by ${editor?.name ?? userId} before approval]`;
+    notes = notes ? `${notes}\n${auditLine}` : auditLine;
+  }
+
   await db.update(stockMovement)
     .set({
       ...safeFields,
+      notes,
       productId: data.productId ?? mv.productId,
       productCode,
       warehouseLabel: data.warehouseLabel ?? mv.warehouseLabel,

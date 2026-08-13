@@ -368,7 +368,8 @@ export async function createLedgerEntry(data: CreateLedgerEntryInput): Promise<s
 
   // Fetch account snapshots
   const accountIds = [...new Set(data.lines.map((l) => l.accountId))];
-  const accounts = await db.select().from(ledgerAccount).where(inArray(ledgerAccount.id, accountIds));
+  const accounts = await db.select().from(ledgerAccount).where(and(inArray(ledgerAccount.id, accountIds), eq(ledgerAccount.organizationId, orgId)));
+  if (accounts.length !== accountIds.length) throw new Error("One or more ledger accounts not found");
   const accountMap = Object.fromEntries(accounts.map((a) => [a.id, a]));
 
   // neon-http driver has no transaction support — insert sequentially.

@@ -230,7 +230,11 @@ export function InviteClient({
       inv.id,
     );
     if (res.success) {
-      toast.success("Invitation resent.");
+      if ("pending" in res && res.pending) {
+        toast.success("Resend submitted for owner approval — nothing is sent until approved.");
+      } else {
+        toast.success("Invitation resent.");
+      }
       await refreshInvitations();
     } else {
       toast.error(res.message);
