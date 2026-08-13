@@ -7,6 +7,8 @@ import {
   travelFormStop,
   user,
   notification,
+  claimLineItem,
+  claimApplication,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -30,6 +32,7 @@ export type TravelFormWithDetails = TravelFormRow & {
   applicantName: string | null;
   documents: TravelFormDocumentRow[];
   stops: TravelFormStopRow[];
+  claimApplicationNo?: string | null;
 };
 
 export type TravelStopInput = {
@@ -132,6 +135,24 @@ async function loadStops(formIds: string[]): Promise<Record<string, TravelFormSt
   return stopMap;
 }
 
+// A claimed travel form is linked via claim_line_item.travel_form_id — there's
+// no direct FK on travel_form itself. At most one claim application should
+// reference a given form at a time (claimedAt is exclusive), so the first
+// match is authoritative.
+async function loadClaimApplicationNos(formIds: string[]): Promise<Record<string, string>> {
+  if (formIds.length === 0) return {};
+  const rows = await db
+    .selectDistinct({ travelFormId: claimLineItem.travelFormId, applicationNo: claimApplication.applicationNo })
+    .from(claimLineItem)
+    .innerJoin(claimApplication, eq(claimApplication.id, claimLineItem.applicationId))
+    .where(inArray(claimLineItem.travelFormId, formIds));
+  const map: Record<string, string> = {};
+  for (const r of rows) {
+    if (r.travelFormId) map[r.travelFormId] = r.applicationNo;
+  }
+  return map;
+}
+
 /* =========================
    READ
 ========================= */
@@ -145,11 +166,22 @@ export async function getMyTravelForms(): Promise<TravelFormWithDetails[]> {
     .orderBy(desc(travelForm.createdAt));
   if (forms.length === 0) return [];
 
-  const [docMap, stopMap] = await Promise.all([loadDocuments(forms.map((f) => f.id)), loadStops(forms.map((f) => f.id))]);
+  const claimedFormIds = forms.filter((f) => f.claimedAt).map((f) => f.id);
+  const [docMap, stopMap, claimNoMap] = await Promise.all([
+    loadDocuments(forms.map((f) => f.id)),
+    loadStops(forms.map((f) => f.id)),
+    loadClaimApplicationNos(claimedFormIds),
+  ]);
   const userRow = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
   const applicantName = userRow[0]?.name ?? null;
 
-  return forms.map((f) => ({ ...f, applicantName, documents: docMap[f.id] ?? [], stops: stopMap[f.id] ?? [] }));
+  return forms.map((f) => ({
+    ...f,
+    applicantName,
+    documents: docMap[f.id] ?? [],
+    stops: stopMap[f.id] ?? [],
+    claimApplicationNo: claimNoMap[f.id] ?? null,
+  }));
 }
 
 export async function getMyApprovedUnclaimedTravelForms(): Promise<TravelFormWithDetails[]> {

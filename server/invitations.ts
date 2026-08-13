@@ -1,11 +1,16 @@
 "use server";
 
 import { db } from "@/db";
-import { invitation, member, user } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import { invitation, member, user, pendingInvitation } from "@/db/schema";
+import { and, eq, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { unstable_noStore as noStore } from "next/cache";
+import { getCachedSession } from "@/lib/auth/cached-session";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
+import { nanoid } from "nanoid";
+import { notifyOwners } from "@/server/member-approvals";
 
 export const getInvitations = async (organizationId: string) => {
   noStore();
@@ -44,10 +49,40 @@ export const sendInvitations = async (
     departmentId?: string;
   }[],
 ) => {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  if (session.session.activeOrganizationId !== organizationId) throw new Error("Unauthorized");
+
+  const perms = await getUserPermissions(session.user.id, organizationId);
+  if (!hasAccess(perms, "member:invite")) throw new Error("You don't have permission to do this");
+
+  const [me] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, session.user.id), eq(member.organizationId, organizationId), isNull(member.deletedAt)))
+    .limit(1);
+  const isOwner = me?.role === "owner";
+
   const results = [];
 
   for (const invite of invites) {
     try {
+      if (!isOwner) {
+        // Non-owners never get to create a real invitation directly — it
+        // goes into the approval queue and no email is sent until the owner
+        // approves it. See server/member-approvals.ts.
+        await db.insert(pendingInvitation).values({
+          id: nanoid(),
+          organizationId,
+          email: invite.email,
+          role: invite.role,
+          departmentId: invite.departmentId ?? null,
+          requestedBy: session.user.id,
+        });
+        results.push({ email: invite.email, success: true, pending: true });
+        continue;
+      }
+
       // Map UI role → Better Auth role
       // BA only understands "owner" | "admin" | "member"; we use "member" for
       // both manager and member; stakeholder also maps to "member" in BA.
@@ -81,10 +116,19 @@ export const sendInvitations = async (
           .where(eq(invitation.id, created.id));
       }
 
-      results.push({ email: invite.email, success: true });
+      results.push({ email: invite.email, success: true, pending: false });
     } catch (e) {
       results.push({ email: invite.email, success: false, message: (e as Error).message });
     }
+  }
+
+  if (!isOwner && results.some((r) => r.success)) {
+    await notifyOwners(organizationId, {
+      type: "invitation:pending_approval",
+      title: "New invitation awaiting approval",
+      body: `${session.user.name} requested to invite ${invites.length} ${invites.length === 1 ? "person" : "people"}.`,
+      link: "/dashboard/admin/member-approvals",
+    });
   }
 
   return results;

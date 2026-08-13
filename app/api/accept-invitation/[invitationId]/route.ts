@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { invitation, member } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { grantDefaultPermissions } from "@/lib/permissions/grant-defaults";
+import { grantDefaultPermissions, applyOrgDefaultPermissionsToMember } from "@/lib/permissions/grant-defaults";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -43,6 +43,10 @@ export async function GET(
         departmentId,
         deptRole,
       );
+
+      if (memberRole !== "owner") {
+        await applyOrgDefaultPermissionsToMember(data.member.userId, organizationId);
+      }
     }
 
     return NextResponse.redirect(new URL("/dashboard", request.url));

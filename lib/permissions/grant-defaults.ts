@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { department, member, memberDepartment, userPermission } from "@/db/schema";
+import { department, member, memberDepartment, userPermission, orgDefaultPermission } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { DEPT_ROLE_PERMISSIONS, ROLE_PERMISSIONS, type PermissionKey } from "./constants";
@@ -184,4 +184,35 @@ export async function grantDepartmentPermissions(
       )
       .onConflictDoNothing();
   }
+}
+
+// Call this once, right after grantDefaultPermissions(), when a brand-new
+// member accepts their invite. Grants whatever the org has configured as a
+// default permission baseline (see /dashboard/admin/default-permissions),
+// on top of whatever their department/role already gave them. No "zero
+// explicit rows" edge case to worry about here — the member is new, so
+// there's no prior fallback-derived access that could be lost.
+export async function applyOrgDefaultPermissionsToMember(userId: string, organizationId: string): Promise<void> {
+  const defaults = await db
+    .select({ permissionKey: orgDefaultPermission.permissionKey })
+    .from(orgDefaultPermission)
+    .where(eq(orgDefaultPermission.organizationId, organizationId));
+
+  if (defaults.length === 0) return;
+
+  await db
+    .insert(userPermission)
+    .values(
+      defaults.map((d) => ({
+        id: nanoid(),
+        userId,
+        organizationId,
+        permissionKey: d.permissionKey,
+        allowed: true,
+      })),
+    )
+    .onConflictDoUpdate({
+      target: [userPermission.userId, userPermission.organizationId, userPermission.permissionKey],
+      set: { allowed: true },
+    });
 }

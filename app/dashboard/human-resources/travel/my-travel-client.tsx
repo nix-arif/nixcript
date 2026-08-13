@@ -109,7 +109,9 @@ export function MyTravelClient({ travelForms, permissions }: Props) {
                           <Badge variant="outline" className="text-xs px-1.5 py-0 h-5">{f.stops.length} legs</Badge>
                         )}
                         {f.status === "APPROVED" && f.claimedAt && (
-                          <Badge variant="outline" className="text-xs px-1.5 py-0 h-5 text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-700">Claimed</Badge>
+                          <Badge variant="outline" className="text-xs px-1.5 py-0 h-5 text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-700">
+                            Claimed{f.claimApplicationNo ? ` · ${f.claimApplicationNo}` : ""}
+                          </Badge>
                         )}
                       </div>
                     )}

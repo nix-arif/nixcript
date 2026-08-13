@@ -189,8 +189,17 @@ export function InviteClient({
     );
     const succeeded = results.filter((r) => r.success);
     const failed    = results.filter((r) => !r.success);
+    const pendingCount = succeeded.filter((r) => "pending" in r && r.pending).length;
+    const sentCount = succeeded.length - pendingCount;
+    if (sentCount > 0) {
+      toast.success(`${sentCount} invitation${sentCount > 1 ? "s" : ""} sent.`);
+    }
+    if (pendingCount > 0) {
+      toast.success(
+        `${pendingCount} invitation${pendingCount > 1 ? "s" : ""} submitted for owner approval — nothing is sent until approved.`,
+      );
+    }
     if (succeeded.length > 0) {
-      toast.success(`${succeeded.length} invitation${succeeded.length > 1 ? "s" : ""} sent.`);
       setRows([{ id: uid(), email: "", role: "", departmentId: "" }]);
       await refreshInvitations();
     }

@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { department, member, memberDepartment, user, userPermission } from "@/db/schema";
+import { department, member, memberDepartment, user, userPermission, pendingDepartmentAssignment } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -10,6 +10,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { revalidatePath } from "next/cache";
 import { grantDepartmentPermissions, resyncAllMemberPermissions } from "@/lib/permissions/grant-defaults";
 import { nanoid } from "nanoid";
+import { notifyOwners } from "@/server/member-approvals";
 
 async function requireAccess(permission: string) {
   const session = await getCachedSession();
@@ -125,8 +126,8 @@ export async function addMemberToDepartment(
   memberId: string,
   departmentId: string,
   deptRole: "manager" | "member",
-) {
-  const { orgId } = await requireAccess("member:invite");
+): Promise<{ pending: boolean }> {
+  const { orgId, userId } = await requireAccess("member:invite");
 
   const [m] = await db
     .select({ userId: member.userId })
@@ -136,9 +137,40 @@ export async function addMemberToDepartment(
 
   if (!m) throw new Error("Member not found");
 
+  const [me] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId), isNull(member.deletedAt)))
+    .limit(1);
+
+  if (me?.role !== "owner") {
+    // Assigning a department+role can hand out a large permission bundle
+    // (see DEPT_ROLE_PERMISSIONS) — only the owner can approve that, same as
+    // invitations. See server/member-approvals.ts.
+    await db.insert(pendingDepartmentAssignment).values({
+      id: nanoid(),
+      organizationId: orgId,
+      memberId,
+      departmentId,
+      departmentRole: deptRole,
+      requestedBy: userId,
+    });
+
+    await notifyOwners(orgId, {
+      type: "department-assignment:pending_approval",
+      title: "New department assignment awaiting approval",
+      body: "A request to assign a member to a department needs your approval.",
+      link: "/dashboard/admin/member-approvals",
+    });
+
+    revalidatePath("/dashboard/organization/members");
+    return { pending: true };
+  }
+
   await grantDepartmentPermissions(m.userId, memberId, orgId, departmentId, deptRole);
 
   revalidatePath("/dashboard/organization/members");
+  return { pending: false };
 }
 
 export async function removeMemberFromDepartment(memberId: string, departmentId: string) {

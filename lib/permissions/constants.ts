@@ -108,6 +108,7 @@ export const ALL_PERMISSIONS = [
   // Permission management (admin-only)
   { key: "permission:read",   label: "View Permissions" },
   { key: "permission:create", label: "Create Permission" },
+  { key: "permission:update", label: "Update Permissions" },
   { key: "permission:delete", label: "Delete Permission" },
 
   // Inventory

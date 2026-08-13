@@ -8,6 +8,45 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { nanoid } from "nanoid";
 import { ALL_PERMISSIONS } from "@/lib/permissions/constants";
+import { getCachedSession } from "@/lib/auth/cached-session";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
+
+// Resolves the caller's own session + active org and checks the given
+// permission — never trusts a client-supplied organizationId for the
+// authorization decision itself. Callers still pass organizationId to say
+// *which* org's data to read/write, but callOrgMatches() below makes sure
+// that argument can't be spoofed to target an org the caller isn't in.
+async function requireAccess(permKey: string) {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) throw new Error("No active organization");
+
+  const perms = await getUserPermissions(session.user.id, orgId);
+  if (!hasAccess(perms, permKey)) throw new Error("You don't have permission to do this");
+
+  return { orgId, userId: session.user.id, perms };
+}
+
+function assertOrgMatches(claimedOrgId: string, actualOrgId: string) {
+  if (claimedOrgId !== actualOrgId) throw new Error("Unauthorized");
+}
+
+// Nobody — including someone who holds permission:update — can hand out a
+// permission they don't currently hold themselves. Without this, having
+// permission:update becomes a master key: grant it to one person and they
+// can bootstrap themselves (or anyone else) up to full access one toggle at
+// a time. Owners bypass via the "*" marker. Only checked on the grant path
+// (allowed = true) — revoking is a reduction in access, never an escalation,
+// so it doesn't need this guard.
+function assertCanGrant(callerPerms: string[], keysToGrant: string[]) {
+  if (callerPerms.includes("*")) return;
+  const missing = keysToGrant.filter((k) => !callerPerms.includes(k));
+  if (missing.length > 0) {
+    throw new Error(`You cannot grant permissions you don't have yourself: ${missing.join(", ")}`);
+  }
+}
 
 // ── Permissions ──────────────────────────────────────────
 
@@ -56,6 +95,9 @@ export const deletePermission = async (id: string) => {
 // ── Members + their permissions ───────────────────────────
 
 export const getMembersWithPermissions = async (organizationId: string) => {
+  const { orgId } = await requireAccess("permission:read");
+  assertOrgMatches(organizationId, orgId);
+
   const rows = await db
     .select({
       memberId: member.id,
@@ -120,6 +162,9 @@ export const getUserPermissionsForOrg = async (
   userId: string,
   organizationId: string,
 ) => {
+  const { orgId } = await requireAccess("permission:read");
+  assertOrgMatches(organizationId, orgId);
+
   return await db
     .select()
     .from(userPermission)
@@ -137,6 +182,10 @@ export const bulkGrantPermissions = async (
   permissionKeys: string[],
 ) => {
   try {
+    const { orgId, perms } = await requireAccess("permission:update");
+    assertOrgMatches(organizationId, orgId);
+    assertCanGrant(perms, permissionKeys);
+
     await Promise.all(
       permissionKeys.map((key) =>
         db
@@ -160,6 +209,9 @@ export const bulkRevokePermissions = async (
   permissionKeys: string[],
 ) => {
   try {
+    const { orgId } = await requireAccess("permission:update");
+    assertOrgMatches(organizationId, orgId);
+
     await Promise.all(
       permissionKeys.map((key) =>
         db
@@ -184,6 +236,10 @@ export const upsertUserPermission = async (
   allowed: boolean,
 ) => {
   try {
+    const { orgId, perms } = await requireAccess("permission:update");
+    assertOrgMatches(organizationId, orgId);
+    if (allowed) assertCanGrant(perms, [permissionKey]);
+
     await db
       .insert(userPermission)
       .values({

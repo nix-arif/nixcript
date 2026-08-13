@@ -701,8 +701,26 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
       amountMyr: li.amountMyr,
       sortOrder: idx,
       createdAt: new Date(),
+      travelFormId: li.travelFormId ?? null,
     }));
     await db.insert(claimLineItem).values(rows);
+
+    // Lock each linked travel form so it drops out of the "unclaimed" import
+    // picker — mirrors the stamping in replaceClaimItems() for draft/resubmit.
+    for (const li of data.lineItems) {
+      if (!li.travelFormId) continue;
+      await db
+        .update(travelForm)
+        .set({ claimedAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(travelForm.id, li.travelFormId),
+            eq(travelForm.userId, userId),
+            eq(travelForm.status, "APPROVED"),
+            isNull(travelForm.claimedAt),
+          ),
+        );
+    }
   }
 
   // ── Insert entertainment details ──────────────────────────────────────────

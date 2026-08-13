@@ -259,6 +259,72 @@ export const memberDepartment = pgTable(
   ],
 );
 
+// A member-invite request from anyone other than the owner. Nothing is sent
+// yet — no Better Auth invitation row exists, no email goes out — until the
+// owner approves it (approvePendingInvitation in server/member-approvals.ts),
+// at which point the real invitation is created for the first time. This is
+// deliberately a separate table rather than a status on `invitation` itself:
+// `invitation` is Better Auth's own table (its accept-invitation flow creates
+// the member the moment the row exists), so staging the request anywhere
+// inside it would mean the invite could be accepted before anyone approved it.
+export const pendingInvitation = pgTable(
+  "pending_invitation",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").notNull(), // "manager" | "member" | "stakeholder" (UI role)
+    departmentId: text("department_id").references(() => department.id, { onDelete: "set null" }),
+    requestedBy: text("requested_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("PENDING"), // PENDING | APPROVED | REJECTED
+    reviewedBy: text("reviewed_by").references(() => user.id),
+    reviewedAt: timestamp("reviewed_at"),
+    reviewComment: text("review_comment"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("pending_invitation_org_idx").on(table.organizationId),
+    index("pending_invitation_status_idx").on(table.status, table.organizationId),
+  ],
+);
+
+// A request to add an EXISTING member to a department (with a dept role)
+// from anyone other than the owner. Same reasoning as pendingInvitation:
+// grantDepartmentPermissions() only runs once the owner approves, so the
+// member gains nothing from the request itself.
+export const pendingDepartmentAssignment = pgTable(
+  "pending_department_assignment",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => member.id, { onDelete: "cascade" }),
+    departmentId: text("department_id")
+      .notNull()
+      .references(() => department.id, { onDelete: "cascade" }),
+    departmentRole: text("department_role").notNull(), // "manager" | "member"
+    requestedBy: text("requested_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("PENDING"), // PENDING | APPROVED | REJECTED
+    reviewedBy: text("reviewed_by").references(() => user.id),
+    reviewedAt: timestamp("reviewed_at"),
+    reviewComment: text("review_comment"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("pending_dept_assignment_org_idx").on(table.organizationId),
+    index("pending_dept_assignment_status_idx").on(table.status, table.organizationId),
+  ],
+);
+
 /* =========================
    TEAM
 ========================= */
@@ -372,6 +438,50 @@ export const approvalSetting = pgTable(
   (table) => [
     index("approval_setting_org_idx").on(table.organizationId),
     uniqueIndex("approval_setting_org_key_uidx").on(table.organizationId, table.permissionKey),
+  ],
+);
+
+// The set of permission keys an org has designated as a default baseline —
+// granted to every current member when checked (via /dashboard/admin/default-permissions)
+// and to every future member automatically at invite-accept time. Presence
+// of a row means "checked"; unchecking deletes the row. Unchecking never
+// retroactively revokes the permission from members who already have it —
+// see lib/permissions/grant-defaults.ts.
+export const orgDefaultPermission = pgTable(
+  "org_default_permission",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    permissionKey: text("permission_key").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("org_default_permission_org_idx").on(table.organizationId),
+    uniqueIndex("org_default_permission_org_key_uidx").on(table.organizationId, table.permissionKey),
+  ],
+);
+
+// Permission keys an org has flagged as sensitive (e.g. Delete Supplier,
+// Remove Members) on /dashboard/admin/default-permissions. Purely a UI/UX
+// gate: turning a flagged permission ON as a default requires the acting
+// admin to re-enter their account password first (see setSensitiveDefaultPermission
+// in server/default-permissions.ts). Turning it off, and marking/unmarking
+// the flag itself, need no password — only granting a sensitive permission does.
+export const sensitivePermission = pgTable(
+  "sensitive_permission",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    permissionKey: text("permission_key").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("sensitive_permission_org_idx").on(table.organizationId),
+    uniqueIndex("sensitive_permission_org_key_uidx").on(table.organizationId, table.permissionKey),
   ],
 );
 
@@ -3375,6 +3485,8 @@ export const schema = {
   userPermission,
   userPermissionRelations,
   approvalSetting,
+  orgDefaultPermission,
+  sensitivePermission,
   permission,
   permissionRelations,
   teamRelations,
@@ -3452,6 +3564,9 @@ export const schema = {
   department,
   // member department assignments (junction)
   memberDepartment,
+  // owner-approval queue for invites / department assignments made by non-owners
+  pendingInvitation,
+  pendingDepartmentAssignment,
   // notifications
   notification,
   notificationRelations,

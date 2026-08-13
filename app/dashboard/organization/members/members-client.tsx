@@ -105,8 +105,12 @@ function AddDeptRow({
     if (!deptId) return;
     setSaving(true);
     try {
-      await addMemberToDepartment(memberId, deptId, role);
-      toast.success("Department assignment added.");
+      const result = await addMemberToDepartment(memberId, deptId, role);
+      toast.success(
+        result.pending
+          ? "Submitted for owner approval — nothing changes until it's approved."
+          : "Department assignment added.",
+      );
       router.refresh();
       onDone();
     } catch (e: any) {
