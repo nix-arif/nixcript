@@ -65,6 +65,13 @@ function formatDays(days: string | number): string {
   return n % 1 === 0 ? String(Math.round(n)) : n.toFixed(1);
 }
 
+// Matches the existing "Medical/Sick Leave" naming convention — one shared
+// trailing "Leave", not "Annual Leave/Emergency Leave".
+function withEmergencyLabel(name: string, hasThreshold: boolean): string {
+  if (!hasThreshold) return name;
+  return `${name.replace(/\s*Leave$/i, "")}/Emergency Leave`;
+}
+
 interface QueuedFile {
   file: File;
   id: string;
@@ -130,7 +137,9 @@ function BalanceCard({ balance }: { balance: MyLeaveBalance }) {
           {balance.isPaid ? "Paid" : "Unpaid"}
         </Badge>
       </div>
-      <p className="text-sm font-semibold leading-snug">{balance.leaveTypeName}</p>
+      <p className="text-sm font-semibold leading-snug">
+        {withEmergencyLabel(balance.leaveTypeName, balance.emergencyThresholdDays != null)}
+      </p>
       <div className={`text-3xl font-bold leading-none ${numCls}`}>
         {formatDays(remaining)}
         <span className="text-sm font-normal text-muted-foreground ml-1.5">days left</span>
@@ -151,6 +160,21 @@ function BalanceCard({ balance }: { balance: MyLeaveBalance }) {
           <span>Used</span>
           <span className="font-medium text-foreground">{formatDays(used)}d</span>
         </div>
+        {balance.breakdown.length > 1 && (
+          <div className="pl-3 space-y-1 border-l border-border/60 ml-0.5">
+            {balance.breakdown.map((b) => (
+              <div key={b.code} className="flex justify-between">
+                <span>{b.name}</span>
+                <span className="font-medium text-foreground">
+                  {formatDays(b.usedDays)}d
+                  {parseFloat(b.pendingDays) > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400"> (+{formatDays(b.pendingDays)}d pending)</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {pending > 0 && (
           <div className="flex justify-between">
             <span>Pending</span>
@@ -509,7 +533,9 @@ export function MyLeaveClient({ balances, applications, leaveTypes, permissions 
                           const rem = bal ? parseFloat(bal.remainingDays) : null;
                           return (
                             <SelectItem key={t.id} value={t.id}>
-                              <span className="font-medium">{t.name}</span>
+                              <span className="font-medium">
+                                {withEmergencyLabel(t.name, t.emergencyThresholdDays != null)}
+                              </span>
                               <span className="text-muted-foreground ml-1.5 text-xs">
                                 {rem !== null ? `— ${formatDays(rem)} days left` : ""}
                               </span>
@@ -525,7 +551,7 @@ export function MyLeaveClient({ balances, applications, leaveTypes, permissions 
                       <div className="flex items-center gap-2">
                         <InfoIcon className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
                         <span className="text-sm font-medium text-blue-800 dark:text-blue-300">
-                          {selectedType.name}
+                          {withEmergencyLabel(selectedType.name, selectedType.emergencyThresholdDays != null)}
                         </span>
                         <div className="flex gap-1.5 ml-auto flex-wrap justify-end">
                           <Badge

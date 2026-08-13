@@ -46,6 +46,13 @@ interface EntitlementRule {
   days: number;
 }
 
+// Matches the existing "Medical/Sick Leave" naming convention — one shared
+// trailing "Leave", not "Annual Leave/Emergency Leave".
+function withEmergencyLabel(name: string, hasThreshold: boolean): string {
+  if (!hasThreshold) return name;
+  return `${name.replace(/\s*Leave$/i, "")}/Emergency Leave`;
+}
+
 function formatEntitlementRules(
   rules: Array<{ minYears: number; maxYears: number | null; days: number }>,
 ): string {
@@ -382,7 +389,9 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                   {/* Name + description */}
                   <TableCell>
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{lt.name}</span>
+                      <span className="text-sm font-medium">
+                        {withEmergencyLabel(lt.name, lt.emergencyThresholdDays != null)}
+                      </span>
                       {lt.description && (
                         <span
                           className="text-xs text-muted-foreground truncate max-w-56"

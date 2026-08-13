@@ -49,6 +49,13 @@ function formatDays(n: number | string): string {
   return v % 1 === 0 ? String(Math.round(v)) : v.toFixed(1);
 }
 
+// Matches the existing "Medical/Sick Leave" naming convention — one shared
+// trailing "Leave", not "Annual Leave/Emergency Leave".
+function withEmergencyLabel(name: string, hasThreshold: boolean): string {
+  if (!hasThreshold) return name;
+  return `${name.replace(/\s*Leave$/i, "")}/Emergency Leave`;
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface QueuedFile {
@@ -203,7 +210,9 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                       const rem = bal ? parseFloat(bal.remainingDays) : null;
                       return (
                         <SelectItem key={t.id} value={t.id}>
-                          <span className="font-medium">{t.name}</span>
+                          <span className="font-medium">
+                            {withEmergencyLabel(t.name, t.emergencyThresholdDays != null)}
+                          </span>
                           <span className="text-muted-foreground ml-1.5 text-xs">
                             {rem !== null ? `— ${formatDays(rem)} days left` : ""}
                           </span>
@@ -219,7 +228,7 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                   <div className="flex items-center gap-2">
                     <InfoIcon className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
                     <span className="text-sm font-medium text-blue-800 dark:text-blue-300">
-                      {selectedType.name}
+                      {withEmergencyLabel(selectedType.name, selectedType.emergencyThresholdDays != null)}
                     </span>
                     <div className="flex gap-1.5 ml-auto flex-wrap justify-end">
                       <Badge

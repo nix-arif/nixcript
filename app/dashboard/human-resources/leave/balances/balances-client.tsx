@@ -25,6 +25,13 @@ function fmtDate(v: string | Date | null): string | null {
   return new Date(v).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+// Matches the existing "Medical/Sick Leave" naming convention — one shared
+// trailing "Leave", not "Annual Leave/Emergency Leave".
+function withEmergencyLabel(name: string, hasThreshold: boolean): string {
+  if (!hasThreshold) return name;
+  return `${name.replace(/\s*Leave$/i, "")}/Emergency Leave`;
+}
+
 export function LeaveBalancesClient({ members, leaveTypes }: Props) {
   const [search, setSearch] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -163,7 +170,9 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
                       const dirty = draftValues[b.leaveTypeId] !== undefined && draftValues[b.leaveTypeId] !== b.openingBalance;
                       return (
                         <TableRow key={b.leaveTypeId}>
-                          <TableCell className="text-sm font-medium">{b.leaveTypeName}</TableCell>
+                          <TableCell className="text-sm font-medium">
+                            {withEmergencyLabel(b.leaveTypeName, b.emergencyThresholdDays != null)}
+                          </TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">{fmtDays(b.entitledDays)}</TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">{fmtDays(b.carryForwardDays)}</TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">

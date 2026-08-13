@@ -16,7 +16,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import { notifyUsersWithPermission } from "@/server/notifications";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, sql, ne, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, sql, ne, isNull, gte, lte } from "drizzle-orm";
 
 /* =========================
    TYPES
@@ -32,13 +32,28 @@ export type LeaveApplicationWithDetails = LeaveApplicationRow & {
   documents: LeaveDocumentRow[];
 };
 
+export type LeaveBalanceBreakdownItem = {
+  code: string;
+  name: string;
+  usedDays: string;
+  pendingDays: string;
+};
+
 export type MyLeaveBalance = LeaveEntitlementRow & {
   leaveTypeName: string;
   leaveTypeCode: string;
   isPaid: boolean;
   allowHalfDay: boolean;
+  emergencyThresholdDays: number | null;
   remainingDays: string;
   openingBalanceSetByName: string | null;
+  // Splits usedDays/pendingDays by the label actually recorded on each
+  // application (leaveApplication.leaveTypeCode/Name) rather than this
+  // type's own code — so Annual Leave's card can show how much of its
+  // usage was auto-classified as Emergency Leave, even though both draw
+  // from this same entitlement. Length 1 (matching the type itself) when
+  // nothing has ever split off it.
+  breakdown: LeaveBalanceBreakdownItem[];
 };
 
 export type ApplyLeaveInput = {
@@ -485,6 +500,39 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
     for (const u of users) nameMap[u.id] = u.name;
   }
 
+  // Split each type's used/pending by the label actually recorded on each
+  // application — a type with emergencyThresholdDays set (normally Annual
+  // Leave) draws from one pool but some applications are labeled Emergency
+  // Leave, and that split should still be visible per-type.
+  const apps = await db
+    .select({
+      leaveTypeId: leaveApplication.leaveTypeId,
+      code: leaveApplication.leaveTypeCode,
+      name: leaveApplication.leaveTypeName,
+      status: leaveApplication.status,
+      totalDays: leaveApplication.totalDays,
+    })
+    .from(leaveApplication)
+    .where(
+      and(
+        eq(leaveApplication.organizationId, orgId),
+        eq(leaveApplication.userId, userId),
+        inArray(leaveApplication.status, ["APPROVED", "PENDING"]),
+        gte(leaveApplication.startDate, `${year}-01-01`),
+        lte(leaveApplication.startDate, `${year}-12-31`),
+      ),
+    );
+
+  const breakdownByType = new Map<string, Map<string, LeaveBalanceBreakdownItem>>();
+  for (const a of apps) {
+    if (!breakdownByType.has(a.leaveTypeId)) breakdownByType.set(a.leaveTypeId, new Map());
+    const byLabel = breakdownByType.get(a.leaveTypeId)!;
+    if (!byLabel.has(a.code)) byLabel.set(a.code, { code: a.code, name: a.name, usedDays: "0", pendingDays: "0" });
+    const item = byLabel.get(a.code)!;
+    if (a.status === "APPROVED") item.usedDays = (parseFloat(item.usedDays) + parseFloat(a.totalDays)).toFixed(2);
+    else item.pendingDays = (parseFloat(item.pendingDays) + parseFloat(a.totalDays)).toFixed(2);
+  }
+
   return types.map((type, i) => {
     const ent = ents[i];
     const entitled = parseFloat(ent.entitledDays);
@@ -493,14 +541,20 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
     const used = parseFloat(ent.usedDays);
     const pending = parseFloat(ent.pendingDays);
     const remaining = entitled + carry + opening - used - pending;
+    const byLabel = breakdownByType.get(type.id);
+    const breakdown = byLabel && byLabel.size > 0
+      ? [...byLabel.values()].sort((a, b) => (a.code === type.code ? -1 : b.code === type.code ? 1 : 0))
+      : [{ code: type.code, name: type.name, usedDays: ent.usedDays, pendingDays: ent.pendingDays }];
     return {
       ...ent,
       leaveTypeName: type.name,
       leaveTypeCode: type.code,
       isPaid: type.isPaid,
       allowHalfDay: type.allowHalfDay,
+      emergencyThresholdDays: type.emergencyThresholdDays,
       remainingDays: remaining.toFixed(1),
       openingBalanceSetByName: ent.openingBalanceSetBy ? nameMap[ent.openingBalanceSetBy] ?? null : null,
+      breakdown,
     };
   });
 }
@@ -613,6 +667,126 @@ export async function getPendingApprovals(): Promise<LeaveApplicationWithDetails
   }));
 }
 
+/* =========================
+   REPORT
+========================= */
+
+// Matches the existing "Medical/Sick Leave" naming convention — one shared
+// trailing "Leave", not "Annual Leave/Emergency Leave".
+function withEmergencyLabel(name: string, hasThreshold: boolean): string {
+  if (!hasThreshold) return name;
+  return `${name.replace(/\s*Leave$/i, "")}/Emergency Leave`;
+}
+
+export type LeaveReportColumn = {
+  code: string;
+  name: string;
+  // Set when this column is a subset label drawn from another column's
+  // pool (e.g. "Emergency Leave" under "Annual Leave") — lets the UI show
+  // it as a sub-column of its parent rather than an unrelated type.
+  parentCode?: string;
+};
+export type LeaveReportRow = {
+  userId: string;
+  memberName: string;
+  // code -> total days taken (APPROVED only) for the report year
+  totals: Record<string, string>;
+  grandTotal: string;
+};
+
+// One row per org member, one column per leave-type LABEL actually used
+// (leaveApplication.leaveTypeCode/Name as recorded at apply time). This is
+// deliberately keyed by label rather than leaveTypeId — a type like Annual
+// Leave that auto-splits short applications into an "Emergency Leave" label
+// (see leaveType.emergencyThresholdDays) shares one entitlement pool but
+// should still show as two separate columns here, since that split is
+// exactly what a leave-taken report needs to answer.
+export async function getLeaveReport(year?: number): Promise<{
+  year: number;
+  columns: LeaveReportColumn[];
+  rows: LeaveReportRow[];
+}> {
+  const { orgId } = await requireAccess("leave:read:all");
+  const y = year ?? new Date().getFullYear();
+
+  const [types, apps, members] = await Promise.all([
+    db
+      .select({ id: leaveType.id, code: leaveType.code, name: leaveType.name, emergencyThresholdDays: leaveType.emergencyThresholdDays })
+      .from(leaveType)
+      .where(and(eq(leaveType.organizationId, orgId), eq(leaveType.isActive, true)))
+      .orderBy(asc(leaveType.sortOrder)),
+    db
+      .select({
+        userId: leaveApplication.userId,
+        leaveTypeId: leaveApplication.leaveTypeId,
+        code: leaveApplication.leaveTypeCode,
+        name: leaveApplication.leaveTypeName,
+        totalDays: leaveApplication.totalDays,
+      })
+      .from(leaveApplication)
+      .where(
+        and(
+          eq(leaveApplication.organizationId, orgId),
+          eq(leaveApplication.status, "APPROVED"),
+          gte(leaveApplication.startDate, `${y}-01-01`),
+          lte(leaveApplication.startDate, `${y}-12-31`),
+        ),
+      ),
+    db
+      .select({ userId: member.userId, name: user.name })
+      .from(member)
+      .innerJoin(user, eq(user.id, member.userId))
+      .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt))),
+  ]);
+
+  // Columns: one per active leave type, immediately followed by any subset
+  // label drawn from that same type's pool (e.g. Emergency Leave applications
+  // carry leaveTypeId = Annual Leave's id but a different recorded code) —
+  // keeps the subset visually attached to its parent instead of trailing at
+  // the end of the table next to unrelated types. Any application whose
+  // leaveTypeId doesn't match an active type (e.g. the type was since
+  // deactivated) falls back to its own trailing column.
+  const columns: LeaveReportColumn[] = [];
+  const seenCodes = new Set<string>();
+  for (const type of types) {
+    columns.push({ code: type.code, name: withEmergencyLabel(type.name, type.emergencyThresholdDays != null) });
+    seenCodes.add(type.code);
+    const subsetCodes = new Set(
+      apps.filter((a) => a.leaveTypeId === type.id && a.code !== type.code).map((a) => a.code),
+    );
+    for (const code of subsetCodes) {
+      if (seenCodes.has(code)) continue;
+      const sample = apps.find((a) => a.code === code)!;
+      columns.push({ code, name: sample.name, parentCode: type.code });
+      seenCodes.add(code);
+    }
+  }
+  for (const a of apps) {
+    if (seenCodes.has(a.code)) continue;
+    columns.push({ code: a.code, name: a.name });
+    seenCodes.add(a.code);
+  }
+
+  // Rows: every current member, so people who took zero leave still appear.
+  const rowMap = new Map<string, LeaveReportRow>();
+  for (const m of members) {
+    rowMap.set(m.userId, { userId: m.userId, memberName: m.name ?? "—", totals: {}, grandTotal: "0" });
+  }
+  for (const a of apps) {
+    if (!rowMap.has(a.userId)) continue; // application from a member who has since left the org
+    const row = rowMap.get(a.userId)!;
+    const cur = parseFloat(row.totals[a.code] ?? "0");
+    row.totals[a.code] = (cur + parseFloat(a.totalDays)).toFixed(2);
+  }
+  for (const row of rowMap.values()) {
+    const sum = Object.values(row.totals).reduce((s, v) => s + parseFloat(v), 0);
+    row.grandTotal = sum.toFixed(2);
+  }
+
+  const rows = [...rowMap.values()].sort((a, b) => a.memberName.localeCompare(b.memberName));
+  return { year: y, columns, rows };
+}
+
 export async function getAllLeaveApplications(filters?: {
   status?: string;
   leaveTypeId?: string;
@@ -723,33 +897,33 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
   const applicationNo = await generateApplicationNo(orgId);
   const appId = nanoid();
 
-  await db.transaction(async (tx) => {
-    await tx.insert(leaveApplication).values({
-      id: appId,
-      organizationId: orgId,
-      applicationNo,
-      userId,
-      leaveTypeId: data.leaveTypeId,
-      leaveTypeName: appliedName,
-      leaveTypeCode: appliedCode,
-      startDate: data.startDate,
-      endDate: data.endDate,
-      totalDays: totalDays.toString(),
-      isHalfDay: data.isHalfDay,
-      halfDayPeriod: data.halfDayPeriod ?? null,
-      reason: data.reason?.trim() ?? null,
-      status: "PENDING",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    await tx
-      .update(leaveEntitlement)
-      .set({
-        pendingDays: (pending + totalDays).toFixed(2),
-        updatedAt: new Date(),
-      })
-      .where(eq(leaveEntitlement.id, ent.id));
+  // neon-http driver has no transaction support — insert then update
+  // sequentially, matching the pattern already used in ledger.ts.
+  await db.insert(leaveApplication).values({
+    id: appId,
+    organizationId: orgId,
+    applicationNo,
+    userId,
+    leaveTypeId: data.leaveTypeId,
+    leaveTypeName: appliedName,
+    leaveTypeCode: appliedCode,
+    startDate: data.startDate,
+    endDate: data.endDate,
+    totalDays: totalDays.toString(),
+    isHalfDay: data.isHalfDay,
+    halfDayPeriod: data.halfDayPeriod ?? null,
+    reason: data.reason?.trim() ?? null,
+    status: "PENDING",
+    createdAt: new Date(),
+    updatedAt: new Date(),
   });
+  await db
+    .update(leaveEntitlement)
+    .set({
+      pendingDays: (pending + totalDays).toFixed(2),
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveEntitlement.id, ent.id));
 
   await notifyUsersWithPermission(orgId, "leave:approve", {
     type: "leave:submitted",
@@ -789,29 +963,28 @@ export async function approveLeave(appId: string, comment?: string): Promise<voi
     .limit(1);
   if (!ent[0]) throw new Error("Entitlement record not found");
 
-  await db.transaction(async (tx) => {
-    await tx
-      .update(leaveApplication)
-      .set({
-        status: "APPROVED",
-        reviewedBy: userId,
-        reviewedAt: new Date(),
-        reviewComment: comment?.trim() ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(leaveApplication.id, appId));
+  // neon-http driver has no transaction support — update sequentially.
+  await db
+    .update(leaveApplication)
+    .set({
+      status: "APPROVED",
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      reviewComment: comment?.trim() ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveApplication.id, appId));
 
-    const newUsed = parseFloat(ent[0].usedDays) + totalDays;
-    const newPending = Math.max(0, parseFloat(ent[0].pendingDays) - totalDays);
-    await tx
-      .update(leaveEntitlement)
-      .set({
-        usedDays: newUsed.toFixed(2),
-        pendingDays: newPending.toFixed(2),
-        updatedAt: new Date(),
-      })
-      .where(eq(leaveEntitlement.id, ent[0].id));
-  });
+  const newUsed = parseFloat(ent[0].usedDays) + totalDays;
+  const newPending = Math.max(0, parseFloat(ent[0].pendingDays) - totalDays);
+  await db
+    .update(leaveEntitlement)
+    .set({
+      usedDays: newUsed.toFixed(2),
+      pendingDays: newPending.toFixed(2),
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveEntitlement.id, ent[0].id));
 
   await notifyUser(orgId, app[0].userId, {
     type: "leave:approved",
@@ -848,29 +1021,28 @@ export async function rejectLeave(appId: string, reason: string): Promise<void> 
     )
     .limit(1);
 
-  await db.transaction(async (tx) => {
-    await tx
-      .update(leaveApplication)
+  // neon-http driver has no transaction support — update sequentially.
+  await db
+    .update(leaveApplication)
+    .set({
+      status: "REJECTED",
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      reviewComment: reason.trim(),
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveApplication.id, appId));
+
+  if (ent[0]) {
+    const newPending = Math.max(0, parseFloat(ent[0].pendingDays) - totalDays);
+    await db
+      .update(leaveEntitlement)
       .set({
-        status: "REJECTED",
-        reviewedBy: userId,
-        reviewedAt: new Date(),
-        reviewComment: reason.trim(),
+        pendingDays: newPending.toFixed(2),
         updatedAt: new Date(),
       })
-      .where(eq(leaveApplication.id, appId));
-
-    if (ent[0]) {
-      const newPending = Math.max(0, parseFloat(ent[0].pendingDays) - totalDays);
-      await tx
-        .update(leaveEntitlement)
-        .set({
-          pendingDays: newPending.toFixed(2),
-          updatedAt: new Date(),
-        })
-        .where(eq(leaveEntitlement.id, ent[0].id));
-    }
-  });
+      .where(eq(leaveEntitlement.id, ent[0].id));
+  }
 
   await notifyUser(orgId, app[0].userId, {
     type: "leave:rejected",
@@ -909,31 +1081,30 @@ export async function cancelLeave(appId: string, reason?: string): Promise<void>
     )
     .limit(1);
 
-  await db.transaction(async (tx) => {
-    await tx
-      .update(leaveApplication)
-      .set({
-        status: "CANCELLED",
-        cancelledBy: userId,
-        cancelledAt: new Date(),
-        cancelReason: reason?.trim() ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(leaveApplication.id, appId));
+  // neon-http driver has no transaction support — update sequentially.
+  await db
+    .update(leaveApplication)
+    .set({
+      status: "CANCELLED",
+      cancelledBy: userId,
+      cancelledAt: new Date(),
+      cancelReason: reason?.trim() ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveApplication.id, appId));
 
-    if (ent[0]) {
-      const update: Record<string, string | Date> = { updatedAt: new Date() };
-      if (app[0].status === "PENDING") {
-        update.pendingDays = Math.max(0, parseFloat(ent[0].pendingDays) - totalDays).toFixed(2);
-      } else if (app[0].status === "APPROVED") {
-        update.usedDays = Math.max(0, parseFloat(ent[0].usedDays) - totalDays).toFixed(2);
-      }
-      await tx
-        .update(leaveEntitlement)
-        .set(update)
-        .where(eq(leaveEntitlement.id, ent[0].id));
+  if (ent[0]) {
+    const update: Record<string, string | Date> = { updatedAt: new Date() };
+    if (app[0].status === "PENDING") {
+      update.pendingDays = Math.max(0, parseFloat(ent[0].pendingDays) - totalDays).toFixed(2);
+    } else if (app[0].status === "APPROVED") {
+      update.usedDays = Math.max(0, parseFloat(ent[0].usedDays) - totalDays).toFixed(2);
     }
-  });
+    await db
+      .update(leaveEntitlement)
+      .set(update)
+      .where(eq(leaveEntitlement.id, ent[0].id));
+  }
 }
 
 /* =========================
