@@ -44,7 +44,6 @@ export const ALL_PERMISSIONS = [
   { key: "purchase-requisition:create",  label: "Create Purchase Requisition" },
   { key: "purchase-requisition:update",  label: "Update Purchase Requisition" },
   { key: "purchase-requisition:delete",  label: "Delete Purchase Requisition" },
-  { key: "purchase-requisition:approve", label: "Approve Purchase Requisitions" },
 
   // Purchase Order
   { key: "purchase-order:read",   label: "View Purchase Orders" },
@@ -128,6 +127,12 @@ export const ALL_PERMISSIONS = [
   { key: "claim:apply",    label: "Submit Claim Application" },
   { key: "claim:manage",   label: "Manage Claim Types" },
   { key: "claim:read:all", label: "View All Employees' Claims" },
+
+  // Travel form (pre-trip authorization)
+  { key: "travel:read:own", label: "View Own Travel Forms" },
+  { key: "travel:apply",    label: "Submit Travel Form" },
+  { key: "travel:manage",   label: "Manage Travel Forms" },
+  { key: "travel:read:all", label: "View All Employees' Travel Forms" },
 ] as const;
 
 // Approval-only keys (managed exclusively via Org Approvals, not in ALL_PERMISSIONS)
@@ -135,9 +140,11 @@ export const APPROVAL_ONLY_KEYS = [
   "leave:approve",
   "claim:check",
   "claim:approve",
+  "travel:approve",
   "payslip:approve",
   "payslip:publish",
   "sales-order:approve",
+  "purchase-requisition:approve",
   "purchase-order:approve",
   "inventory:approve",
 ] as const;
@@ -212,6 +219,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "account:read", "account:create", "account:update", "account:delete",
       "claim:read:own", "claim:apply", "claim:approve",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
     member: [
       "quotation:read", "quotation:create", "quotation:update",
@@ -232,6 +240,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "organization-profile:read",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
   },
 
@@ -251,6 +260,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
     member: [
       "quotation:read", "quotation:create", "quotation:update",
@@ -266,6 +276,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
   },
 
@@ -286,6 +297,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "organization-profile:read",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
     member: [
       "invoice:read", "invoice:create",
@@ -299,6 +311,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
   },
 
@@ -311,6 +324,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "organization-profile:read",
       "claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage", "claim:read:all",
       "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all",
+      "travel:read:own", "travel:apply", "travel:approve", "travel:manage", "travel:read:all",
     ],
     member: [
       "member:read",
@@ -319,6 +333,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
   },
 
@@ -334,6 +349,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
     member: [
       "product:read",
@@ -344,6 +360,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
   },
 
@@ -363,6 +380,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
     member: [
       "delivery-order:read", "delivery-order:create", "delivery-order:update",
@@ -379,6 +397,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
   },
 
@@ -394,6 +413,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
     member: [
       "customer:read",
@@ -405,6 +425,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
   },
 
@@ -422,6 +443,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
     member: [
       "quotation:read",
@@ -434,6 +456,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own",
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
+      "travel:read:own", "travel:apply",
     ],
   },
 };
@@ -466,6 +489,8 @@ export const BASIC_PERMISSIONS: PermissionKey[] = [
   "claim:apply",
   "leave:read:own",
   "leave:apply",
+  "travel:read:own",
+  "travel:apply",
 ];
 
 export const PERMISSION_BUNDLES: PermissionBundle[] = [
@@ -527,15 +552,6 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     permissions: [
       "purchase-requisition:read", "purchase-requisition:create", "purchase-requisition:update",
       "sales-order:read", "product:read", "supplier:read",
-    ],
-  },
-  {
-    id: "purchase-requisition-approver",
-    label: "Purchase Requisition Approver",
-    description: "Approve or return purchase requisitions for revision.",
-    permissions: [
-      "purchase-requisition:approve",
-      "purchase-requisition:read",
     ],
   },
   {
@@ -601,15 +617,9 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     permissions: ["claim:read:own", "claim:apply"],
   },
   {
-    id: "claim-checker",
-    label: "Claim Checker",
-    description: "First-level review of submitted claims before forwarding to approver.",
-    permissions: ["claim:read:own", "claim:apply", "claim:check"],
-  },
-  {
     id: "claim-manager",
     label: "Claim Manager",
-    description: "Full claim management: submit, check, approve/reject, and manage claim types.",
-    permissions: ["claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage"],
+    description: "Submit claims and manage claim types. Checker/approver access is granted separately via Admin → Approvals.",
+    permissions: ["claim:read:own", "claim:apply", "claim:manage"],
   },
 ];

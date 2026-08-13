@@ -32,6 +32,7 @@ import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
 import { performStockCheckAndReserve, getSoStockStatus } from "@/server/stock-reservation";
 import { Resend } from "resend";
 import { createNotification, getSoApprovers } from "@/server/notifications";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import SoNotificationEmail from "@/components/emails/so-notification";
 
 const resend = new Resend(process.env.RESEND_API_KEY as string);
@@ -954,6 +955,7 @@ export async function approveSalesOrder(id: string): Promise<void> {
 
   if (!so) throw new Error("Sales order not found");
   if (so.status !== "submitted") throw new Error("Only submitted orders can be approved");
+  await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, "approve");
 
   await db.update(salesOrder).set({ status: "confirmed", approvedBy: userId, approvedAt: new Date() }).where(eq(salesOrder.id, id));
 
@@ -995,7 +997,7 @@ export async function approveSalesOrder(id: string): Promise<void> {
 // ── Reject (submitted → draft) ────────────────────────────────────────────
 
 export async function rejectSalesOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("sales-order:approve");
+  const { orgId, userId, session } = await requireAccess("sales-order:approve");
 
   const [so] = await db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
@@ -1004,6 +1006,7 @@ export async function rejectSalesOrder(id: string): Promise<void> {
 
   if (!so) throw new Error("Sales order not found");
   if (so.status !== "submitted") throw new Error("Only submitted orders can be rejected");
+  await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, "reject");
 
   await db.update(salesOrder).set({ status: "draft" }).where(eq(salesOrder.id, id));
 
@@ -1032,7 +1035,7 @@ export async function rejectSalesOrder(id: string): Promise<void> {
 // ── Recall (confirmed → draft) ────────────────────────────────────────────
 
 export async function recallSalesOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("sales-order:approve");
+  const { orgId, userId, session } = await requireAccess("sales-order:approve");
 
   const [so] = await db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy, stockReservationStatus: salesOrder.stockReservationStatus })
@@ -1041,6 +1044,7 @@ export async function recallSalesOrder(id: string): Promise<void> {
 
   if (!so) throw new Error("Sales order not found");
   if (so.status !== "confirmed") throw new Error("Only confirmed orders can be recalled");
+  await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, "recall");
 
   await db.update(salesOrder).set({ status: "draft", approvedBy: null, approvedAt: null, stockReservationStatus: null, stockReservedAt: null, stockReservedBy: null }).where(eq(salesOrder.id, id));
 

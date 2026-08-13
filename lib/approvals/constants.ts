@@ -57,6 +57,33 @@ export const APPROVAL_MODULES = [
       { key: "inventory:approve", label: "Approve / Reject Stock Movements" },
     ],
   },
+  {
+    id: "travel",
+    title: "Travel Authorization",
+    description: "Who can approve travel forms before a trip.",
+    permissions: [
+      { key: "travel:approve", label: "Approve / Reject Travel Forms" },
+    ],
+  },
 ] as const;
 
 export type ApprovalModule = typeof APPROVAL_MODULES[number];
+
+// Whether a given approval key allows the record owner to act on their own
+// submission, when no per-org override exists in the approval_setting
+// table. Preserves each workflow's existing behavior: the 3 HR workflows
+// (claim/leave/travel) have always hard-blocked self-action, so they
+// default to false; everything else had no guard at all before this
+// setting existed, so they default to true.
+export const DEFAULT_SELF_ACTION_ALLOWED: Record<string, boolean> = {
+  "leave:approve": false,
+  "claim:check": false,
+  "claim:approve": false,
+  "travel:approve": false,
+  "payslip:approve": true,
+  "payslip:publish": true,
+  "sales-order:approve": true,
+  "purchase-requisition:approve": true,
+  "purchase-order:approve": true,
+  "inventory:approve": true,
+};

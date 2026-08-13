@@ -349,6 +349,32 @@ export const userPermission = pgTable(
   ],
 );
 
+// Per-org override of whether a given approval-type permission key allows
+// the record owner to act on their own submission (e.g. approve their own
+// claim). Absence of a row for an org+key means "use the hardcoded default"
+// in lib/approvals/constants.ts — only an explicit admin change ever
+// inserts a row here.
+export const approvalSetting = pgTable(
+  "approval_setting",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    permissionKey: text("permission_key").notNull(), // e.g. "claim:approve"
+    selfActionAllowed: boolean("self_action_allowed").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("approval_setting_org_idx").on(table.organizationId),
+    uniqueIndex("approval_setting_org_key_uidx").on(table.organizationId, table.permissionKey),
+  ],
+);
+
 /* =========================
    RELATIONS
 ========================= */
@@ -2998,6 +3024,8 @@ export const claimLineItem = pgTable(
     slashedBy: text("slashed_by").references(() => user.id),
     slashedAt: timestamp("slashed_at"),
     slashReason: text("slash_reason"),
+    // Set only on TRAVEL-category rows created from an approved travel form
+    travelFormId: text("travel_form_id").references(() => travelForm.id, { onDelete: "set null" }),
   },
   (t) => [
     index("claim_line_item_app_idx").on(t.applicationId),
@@ -3089,10 +3117,132 @@ export const claimDocumentRelations = relations(claimDocument, ({ one }) => ({
 
 export const claimLineItemRelations = relations(claimLineItem, ({ one }) => ({
   application: one(claimApplication, { fields: [claimLineItem.applicationId], references: [claimApplication.id] }),
+  travelForm: one(travelForm, { fields: [claimLineItem.travelFormId], references: [travelForm.id] }),
 }));
 
 export const claimEntertainmentDetailRelations = relations(claimEntertainmentDetail, ({ one }) => ({
   application: one(claimApplication, { fields: [claimEntertainmentDetail.applicationId], references: [claimApplication.id] }),
+}));
+
+
+/* =========================
+   TRAVEL FORM (pre-trip authorization)
+========================= */
+
+export const travelForm = pgTable(
+  "travel_form",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    applicationNo: text("application_no").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // Derived server-side from travel_form_stop rows at write time: earliest/
+    // latest stop date and the sum of each stop's estimated cost. Purpose is
+    // per-journey, stored on each travel_form_stop row instead of here.
+    startDate: text("start_date").notNull(),
+    endDate: text("end_date").notNull(),
+    estimatedCost: text("estimated_cost"),
+    notes: text("notes"),
+    status: text("status").notNull().default("PENDING"), // PENDING | APPROVED | REJECTED | CANCELLED
+    reviewedBy: text("reviewed_by").references(() => user.id),
+    reviewedAt: timestamp("reviewed_at"),
+    reviewComment: text("review_comment"),
+    cancelledBy: text("cancelled_by").references(() => user.id),
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    // Set once linked into a submitted claim line item — hides it from the picker
+    claimedAt: timestamp("claimed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("travel_form_no_org_uidx").on(t.organizationId, t.applicationNo),
+    index("travel_form_user_idx").on(t.userId, t.organizationId),
+    index("travel_form_status_idx").on(t.status, t.organizationId),
+  ],
+);
+
+export const travelFormDocument = pgTable(
+  "travel_form_document",
+  {
+    id: text("id").primaryKey(),
+    travelFormId: text("travel_form_id")
+      .notNull()
+      .references(() => travelForm.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    fileKey: text("file_key").notNull(),
+    fileSize: integer("file_size").notNull(),
+    mimeType: text("mime_type").notNull(),
+    uploadedBy: text("uploaded_by").notNull().references(() => user.id),
+    uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("travel_form_document_form_idx").on(t.travelFormId),
+    index("travel_form_document_org_idx").on(t.organizationId),
+  ],
+);
+
+export const travelFormStop = pgTable(
+  "travel_form_stop",
+  {
+    id: text("id").primaryKey(),
+    travelFormId: text("travel_form_id")
+      .notNull()
+      .references(() => travelForm.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    stopDate: text("stop_date").notNull(),
+    fromLocation: text("from_location").notNull(),
+    toLocation: text("to_location").notNull(),
+    // Explicit "this leg starts a new journey" marker (set via "Add Separate
+    // Journey"). Journey grouping normally infers breaks from route
+    // continuity alone, but that's fooled when two genuinely separate trips
+    // happen to share a location (e.g. both start from the same home base)
+    // — this flag overrides that inference and is the source of truth once
+    // persisted, rather than only living in client state during editing.
+    journeyBreak: boolean("journey_break").notNull().default(false),
+    mode: text("mode").notNull().default("OWN_VEHICLE"), // TRAVEL_MODE value, required, per-leg
+    // Shared across every leg of the same journey (a "separate journey"
+    // added on the form gets its own purpose; legs chained onto one journey
+    // via Add Stop / Add Return Leg carry the same purpose forward).
+    purpose: text("purpose").notNull(),
+    distanceKm: text("distance_km"),
+    estimatedCost: text("estimated_cost"), // per-leg, auto-filled then editable
+  },
+  (t) => [
+    index("travel_form_stop_form_idx").on(t.travelFormId),
+    index("travel_form_stop_org_idx").on(t.organizationId),
+  ],
+);
+
+export const travelFormRelations = relations(travelForm, ({ one, many }) => ({
+  organization: one(organization, { fields: [travelForm.organizationId], references: [organization.id] }),
+  user: one(user, { fields: [travelForm.userId], references: [user.id] }),
+  reviewedByUser: one(user, { fields: [travelForm.reviewedBy], references: [user.id], relationName: "travel_form_reviewedBy" }),
+  cancelledByUser: one(user, { fields: [travelForm.cancelledBy], references: [user.id], relationName: "travel_form_cancelledBy" }),
+  documents: many(travelFormDocument),
+  stops: many(travelFormStop),
+  claimLineItems: many(claimLineItem),
+}));
+
+export const travelFormDocumentRelations = relations(travelFormDocument, ({ one }) => ({
+  travelForm: one(travelForm, { fields: [travelFormDocument.travelFormId], references: [travelForm.id] }),
+  organization: one(organization, { fields: [travelFormDocument.organizationId], references: [organization.id] }),
+  uploadedByUser: one(user, { fields: [travelFormDocument.uploadedBy], references: [user.id] }),
+}));
+
+export const travelFormStopRelations = relations(travelFormStop, ({ one }) => ({
+  travelForm: one(travelForm, { fields: [travelFormStop.travelFormId], references: [travelForm.id] }),
+  organization: one(organization, { fields: [travelFormStop.organizationId], references: [organization.id] }),
 }));
 
 
@@ -3224,6 +3374,7 @@ export const schema = {
   // Custom Schema
   userPermission,
   userPermissionRelations,
+  approvalSetting,
   permission,
   permissionRelations,
   teamRelations,
@@ -3336,6 +3487,13 @@ export const schema = {
   claimLineItemRelations,
   claimEntertainmentDetailRelations,
   claimCategoryAccountRelations,
+  // travel form
+  travelForm,
+  travelFormDocument,
+  travelFormStop,
+  travelFormRelations,
+  travelFormDocumentRelations,
+  travelFormStopRelations,
   // inventory
   stockLevel,
   stockMovement,

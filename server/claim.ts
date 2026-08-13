@@ -9,7 +9,6 @@ import {
   claimEntertainmentDetail,
   claimCategoryAccount,
   notification,
-  userPermission,
   user,
   ledgerAccount,
   ledgerEntry,
@@ -18,10 +17,13 @@ import {
   memberDepartment,
   department,
   customer,
+  travelForm,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
+import { notifyUsersWithPermission } from "@/server/notifications";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, sql, isNull } from "drizzle-orm";
 import { CLAIM_FORM, LINE_CATEGORY, type ClaimFormType, type LineCategoryType } from "@/lib/claim/constants";
@@ -48,6 +50,7 @@ export type ClaimLineItemInput = {
   toLocation?: string;
   distanceKm?: number;
   ratePerUnit?: string;
+  travelFormId?: string;     // approved travel form this TRAVEL row was pre-filled from
   // IN_BASE_ENT
   venue?: string;
   // OVERSEAS_MYR, OVERSEAS_FX, OVERSEAS_OTHER
@@ -80,6 +83,7 @@ export type ApplyClaimInput = {
 export type ClaimLineItemWithMeta = ClaimLineItemRow & {
   editedByName: string | null;
   slashedByName: string | null;
+  travelFormNo: string | null;
 };
 export type ClaimEntertainmentDetailWithMeta = ClaimEntertainmentDetailRow & {
   editedByName: string | null;
@@ -149,34 +153,6 @@ async function generateApplicationNo(orgId: string): Promise<string> {
   return `CR-${year}-${String(next).padStart(4, "0")}`;
 }
 
-async function notifyUsersWithPermission(
-  orgId: string,
-  permKey: string,
-  notifData: { type: string; title: string; body: string; link: string },
-): Promise<boolean> {
-  const approvers = await db
-    .select({ userId: userPermission.userId })
-    .from(userPermission)
-    .where(
-      and(
-        eq(userPermission.organizationId, orgId),
-        eq(userPermission.permissionKey, permKey),
-        eq(userPermission.allowed, true),
-      ),
-    );
-  if (approvers.length === 0) return false;
-  const notifs = approvers.map((a) => ({
-    id: nanoid(),
-    organizationId: orgId,
-    userId: a.userId,
-    ...notifData,
-    isRead: 0,
-    createdAt: new Date(),
-  }));
-  await db.insert(notification).values(notifs);
-  return true;
-}
-
 async function notifyUser(
   orgId: string,
   userId: string,
@@ -223,6 +199,14 @@ async function loadExtras(appIds: string[]): Promise<{
     for (const u of users) nameMap[u.id] = u.name;
   }
 
+  // Resolve linked travel form ids to their application numbers, for the "Linked: TF-2026-0003" badge.
+  const travelFormIds = [...new Set(lines.map((r) => r.travelFormId).filter((id): id is string => !!id))];
+  const travelFormNoMap: Record<string, string> = {};
+  if (travelFormIds.length > 0) {
+    const forms = await db.select({ id: travelForm.id, applicationNo: travelForm.applicationNo }).from(travelForm).where(inArray(travelForm.id, travelFormIds));
+    for (const f of forms) travelFormNoMap[f.id] = f.applicationNo;
+  }
+
   const docMap: Record<string, ClaimDocumentRow[]> = {};
   for (const doc of docs) {
     if (!docMap[doc.applicationId]) docMap[doc.applicationId] = [];
@@ -235,6 +219,7 @@ async function loadExtras(appIds: string[]): Promise<{
       ...li,
       editedByName: li.editedBy ? nameMap[li.editedBy] ?? null : null,
       slashedByName: li.slashedBy ? nameMap[li.slashedBy] ?? null : null,
+      travelFormNo: li.travelFormId ? travelFormNoMap[li.travelFormId] ?? null : null,
     });
   }
   const entMap: Record<string, ClaimEntertainmentDetailWithMeta[]> = {};
@@ -767,7 +752,7 @@ export async function approveClaim(appId: string, comment?: string): Promise<voi
     .limit(1);
   if (!app[0]) throw new Error("Application not found");
   if (app[0].status !== "CHECKED" && app[0].status !== "PENDING") throw new Error("Only checked applications can be approved");
-  if (app[0].userId === userId) throw new Error("You cannot approve your own claim");
+  await assertSelfActionAllowed(orgId, "claim:approve", app[0].userId, userId, "approve");
 
   await db
     .update(claimApplication)
@@ -947,6 +932,7 @@ export async function rejectClaim(appId: string, reason: string): Promise<void> 
     .limit(1);
   if (!app[0]) throw new Error("Application not found");
   if (app[0].status !== "CHECKED" && app[0].status !== "PENDING") throw new Error("Only checked or pending applications can be rejected");
+  await assertSelfActionAllowed(orgId, "claim:approve", app[0].userId, userId, "reject");
 
   await db
     .update(claimApplication)
@@ -991,6 +977,7 @@ export async function cancelClaim(appId: string, reason?: string): Promise<void>
 async function replaceClaimItems(
   appId: string,
   orgId: string,
+  userId: string,
   data: ApplyClaimInput,
   ct: ClaimTypeRow,
 ): Promise<number> {
@@ -1002,9 +989,19 @@ async function replaceClaimItems(
     totalAmount = (data.lineItems ?? []).reduce((s, li) => s + parseFloat(li.amountMyr), 0);
   }
 
+  // Snapshot which travel forms were linked before the delete below clears
+  // claim_line_item.travel_form_id — used afterward to release any travel
+  // form whose row was dropped from this edit (so it becomes claimable again).
+  const previouslyLinked = await db
+    .select({ travelFormId: claimLineItem.travelFormId })
+    .from(claimLineItem)
+    .where(and(eq(claimLineItem.applicationId, appId), sql`${claimLineItem.travelFormId} is not null`));
+  const previouslyLinkedIds = new Set(previouslyLinked.map((r) => r.travelFormId!));
+
   await db.delete(claimLineItem).where(eq(claimLineItem.applicationId, appId));
   await db.delete(claimEntertainmentDetail).where(eq(claimEntertainmentDetail.applicationId, appId));
 
+  const newlyLinkedIds = new Set<string>();
   if (data.lineItems && data.lineItems.length > 0) {
     const rows = data.lineItems.map((li, idx) => ({
       id: li.id ?? nanoid(),
@@ -1025,6 +1022,7 @@ async function replaceClaimItems(
       amountMyr: li.amountMyr,
       sortOrder: idx,
       createdAt: new Date(),
+      travelFormId: li.travelFormId ?? null,
     }));
     await db.insert(claimLineItem).values(rows);
 
@@ -1039,6 +1037,33 @@ async function replaceClaimItems(
       if (!docId) continue;
       await db.update(claimDocument).set({ lineItemId: rows[idx].id }).where(and(eq(claimDocument.id, docId), eq(claimDocument.applicationId, appId)));
     }
+
+    // Stamp claimedAt on each freshly-linked travel form (idempotent if it
+    // was already claimed by this same claim on a prior submit) — only if
+    // it's this user's own approved, not-yet-claimed-elsewhere form.
+    for (const li of data.lineItems) {
+      if (!li.travelFormId) continue;
+      const wasAlreadyClaimedByThisClaim = previouslyLinkedIds.has(li.travelFormId);
+      await db
+        .update(travelForm)
+        .set({ claimedAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(travelForm.id, li.travelFormId),
+            eq(travelForm.userId, userId),
+            eq(travelForm.status, "APPROVED"),
+            wasAlreadyClaimedByThisClaim ? undefined : isNull(travelForm.claimedAt),
+          ),
+        );
+      newlyLinkedIds.add(li.travelFormId);
+    }
+  }
+
+  // Release any travel form that was linked before this edit but is no
+  // longer referenced by any row (the trip was removed/edited away).
+  for (const oldId of previouslyLinkedIds) {
+    if (newlyLinkedIds.has(oldId)) continue;
+    await db.update(travelForm).set({ claimedAt: null, updatedAt: new Date() }).where(eq(travelForm.id, oldId));
   }
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM && data.entertainmentDetails && data.entertainmentDetails.length > 0) {
     await db.insert(claimEntertainmentDetail).values(
@@ -1086,7 +1111,7 @@ export async function saveDraftClaim(data: ApplyClaimInput): Promise<string> {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
-  await replaceClaimItems(appId, orgId, data, ct);
+  await replaceClaimItems(appId, orgId, userId, data, ct);
   return appId;
 }
 
@@ -1099,7 +1124,7 @@ export async function updateDraftClaim(draftId: string, data: ApplyClaimInput): 
   const ct = app[0];
   const type = await db.select().from(claimType).where(eq(claimType.id, data.claimTypeId)).limit(1);
   if (!type[0]) throw new Error("Claim type not found");
-  const totalAmount = await replaceClaimItems(draftId, orgId, data, type[0]);
+  const totalAmount = await replaceClaimItems(draftId, orgId, userId, data, type[0]);
   await db.update(claimApplication).set({
     claimTypeId: data.claimTypeId,
     claimTypeName: type[0].name,
@@ -1130,7 +1155,7 @@ export async function finalizeDraftClaim(draftId: string, data: ApplyClaimInput)
   }
   if (isNaN(totalAmount) || totalAmount <= 0) throw new Error("Total amount must be greater than 0");
   const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
-  const totalAmountFinal = await replaceClaimItems(draftId, orgId, data, ct);
+  const totalAmountFinal = await replaceClaimItems(draftId, orgId, userId, data, ct);
   await db.update(claimApplication).set({
     claimTypeId: ct.id,
     claimTypeName: ct.name,
@@ -1176,7 +1201,7 @@ export async function resubmitRejectedClaim(appId: string, data: ApplyClaimInput
   }
   if (isNaN(totalAmount) || totalAmount <= 0) throw new Error("Total amount must be greater than 0");
   const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
-  const totalAmountFinal = await replaceClaimItems(appId, orgId, data, ct);
+  const totalAmountFinal = await replaceClaimItems(appId, orgId, userId, data, ct);
   await db.update(claimApplication).set({
     claimDate,
     description: data.description.trim(),
@@ -1212,6 +1237,19 @@ export async function deleteClaim(appId: string): Promise<void> {
   if (!app[0]) throw new Error("Application not found");
   if (app[0].userId !== userId) throw new Error("You can only delete your own claims");
   if (app[0].status === "APPROVED") throw new Error("Approved claims cannot be deleted");
+
+  // Release any travel form(s) this claim's trips were linked to — a fully
+  // withdrawn/cancelled claim never got reimbursed, so the trip is still
+  // available to back a future claim.
+  const linkedTravelForms = await db
+    .select({ travelFormId: claimLineItem.travelFormId })
+    .from(claimLineItem)
+    .where(and(eq(claimLineItem.applicationId, appId), sql`${claimLineItem.travelFormId} is not null`));
+  for (const { travelFormId } of linkedTravelForms) {
+    if (!travelFormId) continue;
+    await db.update(travelForm).set({ claimedAt: null, updatedAt: new Date() }).where(eq(travelForm.id, travelFormId));
+  }
+
   if (app[0].status === "DRAFT" || app[0].status === "CANCELLED") {
     // Fetch docs first so we can clean up R2 after the cascade
     const docs = await db.select({ fileKey: claimDocument.fileKey }).from(claimDocument).where(eq(claimDocument.applicationId, appId));
@@ -1293,7 +1331,7 @@ export async function editClaimLineItem(
     .limit(1);
   if (!app) throw new Error("Application not found");
   if (app.status !== "PENDING") throw new Error("Only pending applications can be edited");
-  if (app.userId === userId) throw new Error("You cannot edit your own claim");
+  await assertSelfActionAllowed(orgId, "claim:check", app.userId, userId, "edit");
 
   const patch: { amountMyr?: string; description?: string | null; originalAmountMyr?: string; originalDescription?: string | null; editedBy: string; editedAt: Date; editReason: string } = {
     editedBy: userId,
@@ -1347,7 +1385,7 @@ export async function toggleClaimLineItemSlash(
     .limit(1);
   if (!app) throw new Error("Application not found");
   if (app.status !== "PENDING") throw new Error("Only pending applications can be reviewed");
-  if (app.userId === userId) throw new Error("You cannot slash your own claim");
+  await assertSelfActionAllowed(orgId, "claim:check", app.userId, userId, "slash");
 
   const now = slashed ? new Date() : null;
   const by = slashed ? userId : null;
@@ -1386,7 +1424,7 @@ export async function editClaimEntertainmentDetail(
     .limit(1);
   if (!app) throw new Error("Application not found");
   if (app.status !== "PENDING") throw new Error("Only pending applications can be edited");
-  if (app.userId === userId) throw new Error("You cannot edit your own claim");
+  await assertSelfActionAllowed(orgId, "claim:check", app.userId, userId, "edit");
 
   const patch: { amount?: string; purpose?: string; originalAmount?: string; originalPurpose?: string; editedBy: string; editedAt: Date; editReason: string } = {
     editedBy: userId,
@@ -1440,7 +1478,7 @@ export async function toggleClaimEntertainmentDetailSlash(
     .limit(1);
   if (!app) throw new Error("Application not found");
   if (app.status !== "PENDING") throw new Error("Only pending applications can be reviewed");
-  if (app.userId === userId) throw new Error("You cannot slash your own claim");
+  await assertSelfActionAllowed(orgId, "claim:check", app.userId, userId, "slash");
 
   const now = slashed ? new Date() : null;
   const by = slashed ? userId : null;
@@ -1468,7 +1506,7 @@ export async function checkClaim(appId: string, comment?: string): Promise<void>
   const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId))).limit(1);
   if (!app[0]) throw new Error("Application not found");
   if (app[0].status !== "PENDING") throw new Error("Only pending applications can be checked");
-  if (app[0].userId === userId) throw new Error("You cannot check your own claim");
+  await assertSelfActionAllowed(orgId, "claim:check", app[0].userId, userId, "check");
   await db.update(claimApplication).set({
     status: "CHECKED",
     checkedBy: userId,
@@ -1489,7 +1527,7 @@ export async function rejectByChecker(appId: string, reason: string): Promise<vo
   const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId))).limit(1);
   if (!app[0]) throw new Error("Application not found");
   if (app[0].status !== "PENDING") throw new Error("Only pending applications can be rejected by checker");
-  if (app[0].userId === userId) throw new Error("You cannot reject your own claim");
+  await assertSelfActionAllowed(orgId, "claim:check", app[0].userId, userId, "reject");
   await db.update(claimApplication).set({
     status: "REJECTED",
     checkedBy: userId,

@@ -5,6 +5,9 @@ import { stockLevel, stockMovement, stockLot, product, user, organizationProfile
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
+import { isSelfActionAllowed } from "@/server/approval-settings";
+import { notifyUsersWithPermission } from "@/server/notifications";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, ilike, or, inArray, notInArray, isNull, isNotNull, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -302,8 +305,10 @@ export async function adjustStock(data: {
   const signed = isOut ? -Math.abs(data.quantity) : Math.abs(data.quantity);
 
   // Auto-approve if the creator also has approve rights — no extra step needed
+  // — unless the org has explicitly disabled self-approval for this key, in
+  // which case it must go through proper review by someone else.
   const perms = await getUserPermissions(userId, orgId);
-  const canApprove = hasAccess(perms, "inventory:approve");
+  const canApprove = hasAccess(perms, "inventory:approve") && (await isSelfActionAllowed(orgId, "inventory:approve"));
 
   const movementId = nanoid();
   await db.insert(stockMovement).values({
@@ -368,6 +373,13 @@ export async function adjustStock(data: {
     await db.update(stockMovement)
       .set({ balanceAfter: newBalance.toFixed(4), lotId })
       .where(eq(stockMovement.id, movementId));
+  } else {
+    await notifyUsersWithPermission(orgId, "inventory:approve", {
+      type: "inventory:submitted",
+      title: `Stock Movement Pending Approval`,
+      body: `A ${data.movementType} of ${Math.abs(data.quantity)} × ${prod.productCode} in ${data.warehouseLabel} needs review`,
+      link: `/dashboard/inventory/approvals`,
+    });
   }
 
   revalidatePath("/dashboard/inventory");
@@ -408,6 +420,13 @@ export async function transferStock(data: {
     { id: nanoid(), organizationId: orgId, productId: data.productId, productCode: prod.productCode, warehouseLabel: data.toWarehouse, warehouseTo: null, movementType: MOVEMENT_TYPE.TRANSFER, quantity: data.quantity.toFixed(4), balanceAfter: null, unitCost: null, referenceType: REF_TYPE.MANUAL, referenceId: null, referenceNo, serialNo, lotNo, expiryDate, notes: data.notes?.trim() || null, status: "PENDING", createdBy: userId, createdAt: now },
   ]);
 
+  await notifyUsersWithPermission(orgId, "inventory:approve", {
+    type: "inventory:submitted",
+    title: `Stock Transfer Pending Approval`,
+    body: `A transfer of ${data.quantity} × ${prod.productCode} from ${data.fromWarehouse} to ${data.toWarehouse} needs review`,
+    link: `/dashboard/inventory/approvals`,
+  });
+
   revalidatePath("/dashboard/inventory");
 }
 
@@ -423,6 +442,7 @@ export async function approveStockMovement(movementId: string, comment?: string)
 
   if (!mv) throw new Error("Movement not found");
   if (mv.status !== "PENDING") throw new Error("Only pending movements can be approved");
+  await assertSelfActionAllowed(orgId, "inventory:approve", mv.createdBy, userId, "approve");
 
   const signed = parseFloat(mv.quantity);
 
@@ -467,13 +487,14 @@ export async function rejectStockMovement(movementId: string, reason: string): P
   if (!reason.trim()) throw new Error("Rejection reason is required");
 
   const [mv] = await db
-    .select({ status: stockMovement.status })
+    .select({ status: stockMovement.status, createdBy: stockMovement.createdBy })
     .from(stockMovement)
     .where(and(eq(stockMovement.id, movementId), eq(stockMovement.organizationId, orgId)))
     .limit(1);
 
   if (!mv) throw new Error("Movement not found");
   if (mv.status !== "PENDING") throw new Error("Only pending movements can be rejected");
+  await assertSelfActionAllowed(orgId, "inventory:approve", mv.createdBy, userId, "reject");
 
   await db.update(stockMovement)
     .set({ status: "REJECTED", reviewedBy: userId, reviewedAt: new Date(), reviewComment: reason.trim() })

@@ -14,6 +14,8 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { createApprovedMovement } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
+import { notifyUsersWithPermission } from "@/server/notifications";
 import { nanoid } from "nanoid";
 import { eq, and, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -224,6 +226,13 @@ export async function createStockRequest(data: {
     createdAt: new Date(),
   });
 
+  await notifyUsersWithPermission(orgId, "inventory:approve", {
+    type: "inventory:submitted",
+    title: `Stock Request Pending Approval`,
+    body: `A request for ${data.qty} × ${prod.productCode} needs review`,
+    link: `/dashboard/inventory/requests`,
+  });
+
   revalidatePath("/dashboard/inventory/requests");
 }
 
@@ -238,6 +247,7 @@ export async function approveStockRequest(id: string, approvedQty: number, notes
 
   if (!req) throw new Error("Request not found");
   if (req.status !== "pending") throw new Error("Only pending requests can be approved");
+  await assertSelfActionAllowed(orgId, "inventory:approve", req.requestedBy, userId, "approve");
   if (approvedQty <= 0) throw new Error("Approved quantity must be greater than zero");
 
   // Check limit
@@ -305,18 +315,19 @@ export async function approveStockRequest(id: string, approvedQty: number, notes
 }
 
 export async function rejectStockRequest(id: string, reason: string): Promise<void> {
-  const { orgId } = await requireAccess("inventory:approve");
+  const { orgId, userId } = await requireAccess("inventory:approve");
 
   if (!reason.trim()) throw new Error("Rejection reason is required");
 
   const [req] = await db
-    .select({ status: stockRequest.status })
+    .select({ status: stockRequest.status, requestedBy: stockRequest.requestedBy })
     .from(stockRequest)
     .where(and(eq(stockRequest.id, id), eq(stockRequest.organizationId, orgId)))
     .limit(1);
 
   if (!req) throw new Error("Request not found");
   if (req.status !== "pending") throw new Error("Only pending requests can be rejected");
+  await assertSelfActionAllowed(orgId, "inventory:approve", req.requestedBy, userId, "reject");
 
   await db.update(stockRequest)
     .set({ status: "rejected", approvedNotes: reason.trim() })

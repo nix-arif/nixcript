@@ -18,13 +18,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type {
-  ClaimApplicationWithDetails, ClaimTypeRow, ClaimLineItemRow, ClaimDocumentRow,
+  ClaimApplicationWithDetails, ClaimTypeRow, ClaimLineItemWithMeta, ClaimDocumentRow,
   ClaimLineItemInput, ClaimEntertainmentDetailInput, ClaimCustomerOption,
 } from "@/server/claim";
 import {
   deleteClaim, submitClaim, saveDraftClaim, updateDraftClaim,
   finalizeDraftClaim, resubmitRejectedClaim, createClaimDocumentRecord, deleteClaimDocument,
 } from "@/server/claim";
+import type { TravelFormWithDetails } from "@/server/travel-form";
+import { getMyApprovedUnclaimedTravelForms } from "@/server/travel-form";
+import { formatTravelItinerary, travelLegLabel, travelPurposesSummary } from "@/lib/travel/itinerary";
 import { CLAIM_FORM, LINE_CATEGORY, TRAVEL_MODE, TRAVEL_MODE_LABELS } from "@/lib/claim/constants";
 import { uid } from "@/lib/uid";
 import {
@@ -59,6 +62,8 @@ interface TravelRow {
   flightFile?: File;    // required when mode = FLIGHT
   existingFlightFileName?: string; // receipt already attached from a prior submission
   resolvedFrom?: string; resolvedTo?: string; // display names from geocoding
+  travelFormId?: string;  // pre-filled from an approved travel form
+  travelFormNo?: string;  // that form's application no., for the "Linked: TF-…" badge
   // Daily allowance (meal)
   dailyId:string; breakfastDays:string; lunchDays:string; dinnerDays:string;
   // Accommodation
@@ -100,7 +105,7 @@ function inferTravelMode(description: string | null, distanceKm: string | null):
   return { mode: "", purpose: desc };
 }
 
-function lineItemsToTravelRows(items: ClaimLineItemRow[], docsByLineItemId?: Map<string, ClaimDocumentRow>): TravelRow[] {
+function lineItemsToTravelRows(items: ClaimLineItemWithMeta[], docsByLineItemId?: Map<string, ClaimDocumentRow>): TravelRow[] {
   const sorted = [...items].sort((a, b) => a.sortOrder - b.sortOrder);
   const rows: TravelRow[] = [];
   let current: TravelRow | null = null;
@@ -113,6 +118,8 @@ function lineItemsToTravelRows(items: ClaimLineItemRow[], docsByLineItemId?: Map
         fromLocation: item.fromLocation ?? "", toLocation: item.toLocation ?? "",
         distanceKm: item.distanceKm ?? "", mode, purpose,
         existingFlightFileName: docsByLineItemId?.get(item.id)?.fileName,
+        travelFormId: item.travelFormId ?? undefined,
+        travelFormNo: item.travelFormNo ?? undefined,
         dailyId: newId(), breakfastDays: "", lunchDays: "", dinnerDays: "",
         accomId: newId(), accomAmount: "",
         tEntId: newId(), tEntAmount: "",
@@ -139,7 +146,7 @@ function lineItemsToTravelRows(items: ClaimLineItemRow[], docsByLineItemId?: Map
   return rows.length > 0 ? rows : [emptyTravel()];
 }
 
-function buildFormRows(items: ClaimLineItemRow[], docsByLineItemId?: Map<string, ClaimDocumentRow>) {
+function buildFormRows(items: ClaimLineItemWithMeta[], docsByLineItemId?: Map<string, ClaimDocumentRow>) {
   const travelCats = new Set<string>([
     LINE_CATEGORY.TRAVEL, LINE_CATEGORY.TRAVEL_ACCOMMODATION,
     LINE_CATEGORY.TRAVEL_DAILY_ALLOWANCE, LINE_CATEGORY.TRAVEL_ENTERTAINMENT,
@@ -365,6 +372,19 @@ function ClaimReadOnlyDetail({ app }: { app: ClaimApplicationWithDetails }) {
           </div>
         )}
       </div>
+
+      {app.status === "REJECTED" && (app.reviewComment || app.checkerComment) && (
+        <div className="rounded-md border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-700 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          <span className="font-semibold">Rejection reason: </span>
+          {app.checkerComment || app.reviewComment}
+        </div>
+      )}
+      {app.status === "APPROVED" && app.reviewComment && (
+        <div className="rounded-md border border-green-200 bg-green-50 dark:bg-green-900/20 dark:border-green-700 px-4 py-3 text-sm text-green-700 dark:text-green-400">
+          <span className="font-semibold">Approver comment: </span>
+          {app.reviewComment}
+        </div>
+      )}
 
       {app.lineItems.length > 0 && (
         <div className="rounded-md border border-border overflow-hidden">
@@ -644,6 +664,11 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   const [inEntRows,  setInEntRows]  = useState<InEntRow[]>([]);
   const [otherRows,  setOtherRows]  = useState<OtherLocalRow[]>([]);
 
+  // Approved, not-yet-claimed travel forms available to pre-fill a trip row
+  const [travelFormPickerOpen, setTravelFormPickerOpen] = useState(false);
+  const [availableTravelForms, setAvailableTravelForms] = useState<TravelFormWithDetails[]>([]);
+  const [loadingTravelForms, setLoadingTravelForms] = useState(false);
+
   // OVERSEAS
   const [ovMyrRows,   setOvMyrRows]   = useState<OvMyrRow[]>([]);
   const [ovFxRows,    setOvFxRows]    = useState<OvFxRow[]>([]);
@@ -670,6 +695,202 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     const ent     = parseFloat(r.tEntAmount)||0;
     return s + mileage + daily + accom + ent;
   }, 0);
+  function tripTotalOf(row: TravelRow) {
+    const km = parseFloat(row.distanceKm);
+    const mileageAmt = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
+    const dailyAmt = (parseFloat(row.breakfastDays)||0)*mealBreakfastRate + (parseFloat(row.lunchDays)||0)*mealLunchRate + (parseFloat(row.dinnerDays)||0)*mealDinnerRate;
+    const accomAmt = parseFloat(row.accomAmount)||0;
+    const tEntAmt = parseFloat(row.tEntAmount)||0;
+    return mileageAmt+dailyAmt+accomAmt+tEntAmt;
+  }
+
+  // Shared body for one trip/leg's editable fields — used by both standalone
+  // Trip cards and legs nested inside a grouped Itinerary card.
+  function travelDetailFields(row: TravelRow) {
+    const km         = parseFloat(row.distanceKm);
+    const mileageAmt = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
+    const bfDays = parseFloat(row.breakfastDays)||0;
+    const lnDays = parseFloat(row.lunchDays)||0;
+    const dnDays = parseFloat(row.dinnerDays)||0;
+    const dailyAmt   = bfDays*mealBreakfastRate + lnDays*mealLunchRate + dnDays*mealDinnerRate;
+    const accomAmt   = parseFloat(row.accomAmount)||0;
+    const tEntAmt    = parseFloat(row.tEntAmount)||0;
+    const showMileage = row.mode !== TRAVEL_MODE.FLIGHT && row.mode !== TRAVEL_MODE.COMPANY_CAR;
+    const labelCls = "text-xs text-muted-foreground w-32 shrink-0 pt-1.5";
+    return (
+      <>
+        {/* Date + Mode */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">Date</span>
+            <input type="date" value={row.lineDate} onChange={e => updateTravel(row.id,"lineDate",e.target.value)} className={inputCls}/>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">Mode of transport</span>
+            <Select value={row.mode} onValueChange={v => updateTravel(row.id,"mode",v)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select mode…"/></SelectTrigger>
+              <SelectContent>
+                {Object.entries(TRAVEL_MODE_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Purpose */}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">Purpose of travel</span>
+          <input type="text" placeholder="e.g. Client visit, site inspection, training…" value={row.purpose} onChange={e => updateTravel(row.id,"purpose",e.target.value)} className={inputCls}/>
+        </div>
+
+        {/* Route + mileage */}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground flex items-center gap-1"><MapPinIcon className="h-3 w-3"/>Route</span>
+          <div className="flex items-center gap-2">
+            <input type="text" placeholder="From city / location" value={row.fromLocation} onChange={e => updateTravel(row.id,"fromLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.toLocation.trim() && showMileage) calculateDistance(row.id, e.target.value, row.toLocation); }} className={inputCls}/>
+            <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
+            <input type="text" placeholder="To city / location" value={row.toLocation} onChange={e => updateTravel(row.id,"toLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.fromLocation.trim() && showMileage) calculateDistance(row.id, row.fromLocation, e.target.value); }} className={inputCls}/>
+          </div>
+          {showMileage && (
+            <div className="flex flex-col gap-1 mt-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground w-16 shrink-0">Distance</span>
+                <input type="number" placeholder="auto-calculated" value={row.distanceKm} readOnly className={inputCls+" w-36 bg-muted cursor-not-allowed text-muted-foreground"}/>
+                <span className="text-xs text-muted-foreground">km</span>
+                {mileageAmt > 0 && (
+                  <span className="text-xs text-muted-foreground">× RM{ratePerKm.toFixed(2)}/km =
+                    <strong className="text-green-700 dark:text-green-400 ml-1">{fmtAmount(mileageAmt)}</strong>
+                  </span>
+                )}
+                {calculatingRows.has(row.id) && <LoaderIcon className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0"/>}
+              </div>
+              {row.resolvedFrom && row.resolvedTo && row.distanceKm && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1 pl-0">
+                  <InfoIcon className="h-3 w-3 shrink-0"/>
+                  Road distance: <strong className="text-foreground mx-0.5">{row.resolvedFrom}</strong> → <strong className="text-foreground mx-0.5">{row.resolvedTo}</strong> = {row.distanceKm} km via OpenStreetMap routing
+                </p>
+              )}
+              {!row.distanceKm && !calculatingRows.has(row.id) && row.fromLocation.trim() && row.toLocation.trim() && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                  <InfoIcon className="h-3 w-3 shrink-0"/>
+                  Distance is auto-calculated — tab out of the city fields above to trigger
+                </p>
+              )}
+            </div>
+          )}
+          {row.mode === TRAVEL_MODE.FLIGHT && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xs text-muted-foreground">Flight receipt <span className="text-destructive">*</span></span>
+              <TravelSubFilePicker
+                file={row.flightFile}
+                existingFileName={row.existingFlightFileName}
+                onPick={f => { void setTravelFile(row.id,"flightFile",f); }}
+                onRemove={() => { void setTravelFile(row.id,"flightFile",undefined); }}
+                uploading={uploadingFields.has(`flightFile:${row.id}`)}
+              />
+              {!row.flightFile && <span className="text-xs text-amber-600 dark:text-amber-400">Required for flight travel</span>}
+            </div>
+          )}
+        </div>
+
+        {/* ── Sub-expenses ──────────────────────────────── */}
+        <div className="flex flex-col gap-0 border-t border-border/60 pt-3">
+          <p className="text-xs font-medium text-muted-foreground mb-2">Associated Expenses</p>
+
+          {/* Daily allowance */}
+          <div className="flex gap-3 py-2 border-b border-border/40">
+            <span className={labelCls}>Daily allowance</span>
+            {hasMealRates ? (
+              <div className="flex flex-col gap-1.5 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {mealBreakfastRate > 0 && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant={bfDays > 0 ? "default" : "outline"}
+                      onClick={() => updateTravel(row.id,"breakfastDays", bfDays > 0 ? "" : "1")}
+                    >
+                      Breakfast <span className="opacity-70">RM{mealBreakfastRate.toFixed(2)}</span>
+                    </Button>
+                  )}
+                  {mealLunchRate > 0 && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant={lnDays > 0 ? "default" : "outline"}
+                      onClick={() => updateTravel(row.id,"lunchDays", lnDays > 0 ? "" : "1")}
+                    >
+                      Lunch <span className="opacity-70">RM{mealLunchRate.toFixed(2)}</span>
+                    </Button>
+                  )}
+                  {mealDinnerRate > 0 && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant={dnDays > 0 ? "default" : "outline"}
+                      onClick={() => updateTravel(row.id,"dinnerDays", dnDays > 0 ? "" : "1")}
+                    >
+                      Dinner <span className="opacity-70">RM{mealDinnerRate.toFixed(2)}</span>
+                    </Button>
+                  )}
+                </div>
+                {dailyAmt > 0 && <div className="flex justify-end"><span className="text-xs font-semibold text-green-700 dark:text-green-400">Subtotal {fmtAmount(dailyAmt)}</span></div>}
+              </div>
+            ) : (
+              <span className="text-xs text-muted-foreground italic pt-1.5">No meal rates configured — set in Claim Types</span>
+            )}
+          </div>
+
+          {/* Accommodation */}
+          <div className="flex items-center gap-3 py-2 border-b border-border/40">
+            <span className={labelCls}>Accommodation</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">RM</span>
+              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.accomAmount} onChange={e => updateTravel(row.id,"accomAmount",e.target.value)} className={inputCls+" w-28"}/>
+            </div>
+            <TravelSubFilePicker file={row.accomFile} existingFileName={row.existingAccomFileName} onPick={f => { void setTravelFile(row.id,"accomFile",f); }} onRemove={() => { void setTravelFile(row.id,"accomFile",undefined); }} uploading={uploadingFields.has(`accomFile:${row.id}`)}/>
+            {accomAmt > 0 && !row.accomFile && !row.existingAccomFileName && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
+            {accomAmt > 0 && (row.accomFile || row.existingAccomFileName) && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
+          </div>
+
+          {/* Travel entertainment */}
+          <div className="flex items-center gap-3 py-2">
+            <span className={labelCls}>Entertainment</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">RM</span>
+              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.tEntAmount} onChange={e => updateTravel(row.id,"tEntAmount",e.target.value)} className={inputCls+" w-28"}/>
+            </div>
+            <TravelSubFilePicker file={row.tEntFile} existingFileName={row.existingTEntFileName} onPick={f => { void setTravelFile(row.id,"tEntFile",f); }} onRemove={() => { void setTravelFile(row.id,"tEntFile",undefined); }} uploading={uploadingFields.has(`tEntFile:${row.id}`)}/>
+            {tEntAmt > 0 && !row.tEntFile && !row.existingTEntFileName && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
+            {tEntAmt > 0 && (row.tEntFile || row.existingTEntFileName) && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tEntAmt)}</span>}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Trip rows pulled from the same travel form are grouped into one
+  // Itinerary card; manually-added or unlinked rows each stay standalone.
+  interface TravelGroup { key: string; travelFormId?: string; travelFormNo?: string; rows: TravelRow[] }
+  const travelGroups: TravelGroup[] = (() => {
+    const groups: TravelGroup[] = [];
+    const byFormId = new Map<string, TravelGroup>();
+    for (const row of travelRows) {
+      if (row.travelFormId) {
+        let g = byFormId.get(row.travelFormId);
+        if (!g) {
+          g = { key: `form-${row.travelFormId}`, travelFormId: row.travelFormId, travelFormNo: row.travelFormNo, rows: [] };
+          byFormId.set(row.travelFormId, g);
+          groups.push(g);
+        }
+        g.rows.push(row);
+      } else {
+        groups.push({ key: row.id, rows: [row] });
+      }
+    }
+    // Itineraries imported from a travel form show above manually-added/empty trips.
+    return groups.sort((a, b) => (a.travelFormId ? 0 : 1) - (b.travelFormId ? 0 : 1));
+  })();
+
   const miscTotal    = miscRows.reduce((s,r)   => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const inEntTotal   = inEntRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
   const otherTotal   = otherRows.reduce((s,r)  => { const a=parseFloat(r.amountMyr); return s+(isNaN(a)?0:a); }, 0);
@@ -881,6 +1102,44 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   }
 
   const updateTravel   = updater(setTravelRows);
+
+  // Approved travel forms not yet used in a claim — fetched lazily when the
+  // picker opens rather than on every page load.
+  async function handleOpenTravelFormPicker() {
+    setTravelFormPickerOpen(true);
+    setLoadingTravelForms(true);
+    try {
+      const forms = await getMyApprovedUnclaimedTravelForms();
+      setAvailableTravelForms(forms);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load travel forms");
+    } finally {
+      setLoadingTravelForms(false);
+    }
+  }
+  function handleSelectTravelForm(form: TravelFormWithDetails) {
+    const newRows: TravelRow[] = form.stops.map(stop => ({
+      id: newId(), lineDate: stop.stopDate,
+      fromLocation: stop.fromLocation, toLocation: stop.toLocation,
+      distanceKm: stop.distanceKm || "", mode: stop.mode || "", purpose: stop.purpose,
+      travelFormId: form.id, travelFormNo: form.applicationNo,
+      dailyId: newId(), breakfastDays: "", lunchDays: "", dinnerDays: "",
+      accomId: newId(), accomAmount: "",
+      tEntId: newId(), tEntAmount: "",
+    }));
+    setTravelRows(prev => [...prev, ...newRows]);
+    setAvailableTravelForms(prev => prev.filter(f => f.id !== form.id));
+    setTravelFormPickerOpen(false);
+    toast.success(
+      newRows.length > 1
+        ? `${newRows.length} trip legs pre-filled from ${form.applicationNo}`
+        : `Trip pre-filled from ${form.applicationNo}`,
+    );
+  }
+  function handleUnlinkTravelForm(rowId: string) {
+    setTravelRows(prev => prev.map(r => r.id === rowId ? { ...r, travelFormId: undefined, travelFormNo: undefined } : r));
+  }
+
   const EXISTING_FILE_FIELD = { flightFile: "existingFlightFileName", accomFile: "existingAccomFileName", tEntFile: "existingTEntFileName" } as const;
   async function setTravelFile(rowId: string, field: "accomFile" | "tEntFile" | "flightFile", file: File | undefined) {
     const fieldKey = `${field}:${rowId}`;
@@ -1019,7 +1278,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
             const mileageAmt = usesMileage && km > 0 ? km * ratePerKm : 0;
             // Always create a TRAVEL line item so documents (e.g. flight receipt) have an anchor
             if (r.lineDate && (r.fromLocation.trim() || r.toLocation.trim() || r.purpose.trim() || r.mode)) {
-              items.push({ id: r.id, docId: uploadedFiles[`flightFile:${r.id}`]?.docId, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
+              items.push({ id: r.id, docId: uploadedFiles[`flightFile:${r.id}`]?.docId, travelFormId: r.travelFormId, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
             }
             const bf = parseFloat(r.breakfastDays)||0;
             const ln = parseFloat(r.lunchDays)||0;
@@ -1147,7 +1406,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
             const usesMileage = r.mode !== TRAVEL_MODE.FLIGHT && r.mode !== TRAVEL_MODE.COMPANY_CAR;
             const mileageAmt = usesMileage && km > 0 ? km * ratePerKm : 0;
             if (r.fromLocation.trim() || r.toLocation.trim() || r.purpose.trim() || r.mode) {
-              items.push({ id: r.id, docId: uploadedFiles[`flightFile:${r.id}`]?.docId, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
+              items.push({ id: r.id, docId: uploadedFiles[`flightFile:${r.id}`]?.docId, travelFormId: r.travelFormId, category: LINE_CATEGORY.TRAVEL, lineDate: r.lineDate, fromLocation: r.fromLocation || undefined, toLocation: r.toLocation || undefined, distanceKm: usesMileage && km > 0 ? km : undefined, ratePerUnit: usesMileage ? (selectedType.ratePerUnit ?? undefined) : undefined, description: r.purpose.trim() || (r.mode ? TRAVEL_MODE_LABELS[r.mode] : undefined), amountMyr: mileageAmt.toFixed(2) });
             }
             const bf = parseFloat(r.breakfastDays)||0;
             const ln = parseFloat(r.lunchDays)||0;
@@ -1416,6 +1675,46 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
         </SheetContent>
       </Sheet>
 
+      {/* Travel Form Picker Sheet */}
+      <Sheet open={travelFormPickerOpen} onOpenChange={setTravelFormPickerOpen}>
+        <SheetContent className="w-full sm:max-w-md max-w-full! overflow-y-auto px-6">
+          <SheetHeader className="mb-4">
+            <SheetTitle className="flex items-center gap-2">
+              <RouteIcon className="h-5 w-5 text-muted-foreground"/>
+              Select an Approved Travel Form
+            </SheetTitle>
+          </SheetHeader>
+          {loadingTravelForms ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Loading…</p>
+          ) : availableTravelForms.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No approved, unclaimed travel forms found. Submit one under My Travel Forms and get it approved first.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {availableTravelForms.map(form => (
+                <button
+                  key={form.id}
+                  type="button"
+                  onClick={() => handleSelectTravelForm(form)}
+                  className="text-left rounded-md border border-border p-3 hover:bg-muted/50 hover:border-primary transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-xs font-medium">{form.applicationNo}</span>
+                    <span className="text-xs text-muted-foreground">{form.startDate} – {form.endDate}</span>
+                  </div>
+                  <p className="text-sm font-medium mt-1">{formatTravelItinerary(form.stops)}</p>
+                  {form.stops.length > 1 && (
+                    <p className="text-xs text-muted-foreground mt-0.5">Adds {form.stops.length} trip legs to your claim</p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-0.5">{travelPurposesSummary(form.stops)}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
       {/* Submit Claim Sheet */}
       <Sheet open={submitOpen} onOpenChange={open => { if (submitting) return; if (!open) resetForm(); setSubmitOpen(open); }}>
         <SheetContent className="w-full sm:max-w-2xl max-w-full! overflow-y-auto px-6">
@@ -1510,175 +1809,74 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
 
               {/* 1.1 Travel */}
               <Section title="1.1  Travel Expenses" badge={travelTotal > 0 ? fmtAmount(travelTotal) : undefined}>
-                <div className="flex flex-col gap-4">
-                  {travelRows.map((row, idx) => {
-                    const km         = parseFloat(row.distanceKm);
-                    const mileageAmt = (isNaN(km)||km<=0) ? 0 : km*ratePerKm;
-                    const bfDays = parseFloat(row.breakfastDays)||0;
-                    const lnDays = parseFloat(row.lunchDays)||0;
-                    const dnDays = parseFloat(row.dinnerDays)||0;
-                    const dailyAmt   = bfDays*mealBreakfastRate + lnDays*mealLunchRate + dnDays*mealDinnerRate;
-                    const accomAmt   = parseFloat(row.accomAmount)||0;
-                    const tEntAmt    = parseFloat(row.tEntAmount)||0;
-                    const tripTotal  = mileageAmt+dailyAmt+accomAmt+tEntAmt;
-                    const showMileage = row.mode !== TRAVEL_MODE.FLIGHT && row.mode !== TRAVEL_MODE.COMPANY_CAR;
-                    const labelCls = "text-xs text-muted-foreground w-32 shrink-0 pt-1.5";
-                    return (
-                      <div key={row.id} className="rounded-lg border border-border bg-card overflow-hidden">
-                        {/* ── Card header ─────────────────────────────────── */}
-                        <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b border-border">
-                          <span className="text-xs font-semibold text-foreground">Trip {idx+1}</span>
-                          <div className="flex items-center gap-2">
-                            {tripTotal > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(tripTotal)}</span>}
-                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => { void removeOneUpload(`flightFile:${row.id}`); void removeOneUpload(`accomFile:${row.id}`); void removeOneUpload(`tEntFile:${row.id}`); remover(setTravelRows,1)(row.id); }} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
-                          </div>
-                        </div>
-
-                        {/* ── Trip details ─────────────────────────────────── */}
-                        <div className="p-4 flex flex-col gap-3">
-                          {/* Date + Mode */}
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="flex flex-col gap-1">
-                              <span className="text-xs text-muted-foreground">Date</span>
-                              <input type="date" value={row.lineDate} onChange={e => updateTravel(row.id,"lineDate",e.target.value)} className={inputCls}/>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <span className="text-xs text-muted-foreground">Mode of transport</span>
-                              <Select value={row.mode} onValueChange={v => updateTravel(row.id,"mode",v)}>
-                                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select mode…"/></SelectTrigger>
-                                <SelectContent>
-                                  {Object.entries(TRAVEL_MODE_LABELS).map(([k,v]) => <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>)}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-
-                          {/* Purpose */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-xs text-muted-foreground">Purpose of travel</span>
-                            <input type="text" placeholder="e.g. Client visit, site inspection, training…" value={row.purpose} onChange={e => updateTravel(row.id,"purpose",e.target.value)} className={inputCls}/>
-                          </div>
-
-                          {/* Route + mileage */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-xs text-muted-foreground flex items-center gap-1"><MapPinIcon className="h-3 w-3"/>Route</span>
-                            <div className="flex items-center gap-2">
-                              <input type="text" placeholder="From city / location" value={row.fromLocation} onChange={e => updateTravel(row.id,"fromLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.toLocation.trim() && showMileage) calculateDistance(row.id, e.target.value, row.toLocation); }} className={inputCls}/>
-                              <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
-                              <input type="text" placeholder="To city / location" value={row.toLocation} onChange={e => updateTravel(row.id,"toLocation",e.target.value)} onBlur={e => { if (e.target.value.trim() && row.fromLocation.trim() && showMileage) calculateDistance(row.id, row.fromLocation, e.target.value); }} className={inputCls}/>
-                            </div>
-                            {showMileage && (
-                              <div className="flex flex-col gap-1 mt-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-muted-foreground w-16 shrink-0">Distance</span>
-                                  <input type="number" placeholder="auto-calculated" value={row.distanceKm} readOnly className={inputCls+" w-36 bg-muted cursor-not-allowed text-muted-foreground"}/>
-                                  <span className="text-xs text-muted-foreground">km</span>
-                                  {mileageAmt > 0 && (
-                                    <span className="text-xs text-muted-foreground">× RM{ratePerKm.toFixed(2)}/km =
-                                      <strong className="text-green-700 dark:text-green-400 ml-1">{fmtAmount(mileageAmt)}</strong>
-                                    </span>
-                                  )}
-                                  {calculatingRows.has(row.id) && <LoaderIcon className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0"/>}
-                                </div>
-                                {row.resolvedFrom && row.resolvedTo && row.distanceKm && (
-                                  <p className="text-xs text-muted-foreground flex items-center gap-1 pl-0">
-                                    <InfoIcon className="h-3 w-3 shrink-0"/>
-                                    Road distance: <strong className="text-foreground mx-0.5">{row.resolvedFrom}</strong> → <strong className="text-foreground mx-0.5">{row.resolvedTo}</strong> = {row.distanceKm} km via OpenStreetMap routing
-                                  </p>
-                                )}
-                                {!row.distanceKm && !calculatingRows.has(row.id) && row.fromLocation.trim() && row.toLocation.trim() && (
-                                  <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                                    <InfoIcon className="h-3 w-3 shrink-0"/>
-                                    Distance is auto-calculated — tab out of the city fields above to trigger
-                                  </p>
-                                )}
-                              </div>
-                            )}
-                            {row.mode === TRAVEL_MODE.FLIGHT && (
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-xs text-muted-foreground">Flight receipt <span className="text-destructive">*</span></span>
-                                <TravelSubFilePicker
-                                  file={row.flightFile}
-                                  existingFileName={row.existingFlightFileName}
-                                  onPick={f => { void setTravelFile(row.id,"flightFile",f); }}
-                                  onRemove={() => { void setTravelFile(row.id,"flightFile",undefined); }}
-                                  uploading={uploadingFields.has(`flightFile:${row.id}`)}
-                                />
-                                {!row.flightFile && <span className="text-xs text-amber-600 dark:text-amber-400">Required for flight travel</span>}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* ── Sub-expenses ──────────────────────────────── */}
-                          <div className="flex flex-col gap-0 border-t border-border/60 pt-3">
-                            <p className="text-xs font-medium text-muted-foreground mb-2">Associated Expenses</p>
-
-                            {/* Daily allowance */}
-                            <div className="flex gap-3 py-2 border-b border-border/40">
-                              <span className={labelCls}>Daily allowance</span>
-                              {hasMealRates ? (
-                                <div className="flex flex-col gap-1.5 flex-1">
-                                  {mealBreakfastRate > 0 && (
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs text-muted-foreground w-14 shrink-0">Breakfast</span>
-                                      <input type="number" min="0" step="1" placeholder="0" value={row.breakfastDays} onChange={e => updateTravel(row.id,"breakfastDays",e.target.value)} className={inputCls+" w-14 text-right"}/>
-                                      <span className="text-xs text-muted-foreground shrink-0">day(s) × RM{mealBreakfastRate.toFixed(2)}</span>
-                                      {bfDays > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(bfDays*mealBreakfastRate)}</span>}
-                                    </div>
-                                  )}
-                                  {mealLunchRate > 0 && (
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs text-muted-foreground w-14 shrink-0">Lunch</span>
-                                      <input type="number" min="0" step="1" placeholder="0" value={row.lunchDays} onChange={e => updateTravel(row.id,"lunchDays",e.target.value)} className={inputCls+" w-14 text-right"}/>
-                                      <span className="text-xs text-muted-foreground shrink-0">day(s) × RM{mealLunchRate.toFixed(2)}</span>
-                                      {lnDays > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(lnDays*mealLunchRate)}</span>}
-                                    </div>
-                                  )}
-                                  {mealDinnerRate > 0 && (
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs text-muted-foreground w-14 shrink-0">Dinner</span>
-                                      <input type="number" min="0" step="1" placeholder="0" value={row.dinnerDays} onChange={e => updateTravel(row.id,"dinnerDays",e.target.value)} className={inputCls+" w-14 text-right"}/>
-                                      <span className="text-xs text-muted-foreground shrink-0">day(s) × RM{mealDinnerRate.toFixed(2)}</span>
-                                      {dnDays > 0 && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(dnDays*mealDinnerRate)}</span>}
-                                    </div>
-                                  )}
-                                  {dailyAmt > 0 && <div className="flex justify-end"><span className="text-xs font-semibold text-green-700 dark:text-green-400">Subtotal {fmtAmount(dailyAmt)}</span></div>}
-                                </div>
-                              ) : (
-                                <span className="text-xs text-muted-foreground italic pt-1.5">No meal rates configured — set in Claim Types</span>
-                              )}
-                            </div>
-
-                            {/* Accommodation */}
-                            <div className="flex items-center gap-3 py-2 border-b border-border/40">
-                              <span className={labelCls}>Accommodation</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs text-muted-foreground">RM</span>
-                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.accomAmount} onChange={e => updateTravel(row.id,"accomAmount",e.target.value)} className={inputCls+" w-28"}/>
-                              </div>
-                              <TravelSubFilePicker file={row.accomFile} existingFileName={row.existingAccomFileName} onPick={f => { void setTravelFile(row.id,"accomFile",f); }} onRemove={() => { void setTravelFile(row.id,"accomFile",undefined); }} uploading={uploadingFields.has(`accomFile:${row.id}`)}/>
-                              {accomAmt > 0 && !row.accomFile && !row.existingAccomFileName && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
-                              {accomAmt > 0 && (row.accomFile || row.existingAccomFileName) && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(accomAmt)}</span>}
-                            </div>
-
-                            {/* Travel entertainment */}
-                            <div className="flex items-center gap-3 py-2">
-                              <span className={labelCls}>Entertainment</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs text-muted-foreground">RM</span>
-                                <input type="number" min="0.01" step="0.01" placeholder="0.00" value={row.tEntAmount} onChange={e => updateTravel(row.id,"tEntAmount",e.target.value)} className={inputCls+" w-28"}/>
-                              </div>
-                              <TravelSubFilePicker file={row.tEntFile} existingFileName={row.existingTEntFileName} onPick={f => { void setTravelFile(row.id,"tEntFile",f); }} onRemove={() => { void setTravelFile(row.id,"tEntFile",undefined); }} uploading={uploadingFields.has(`tEntFile:${row.id}`)}/>
-                              {tEntAmt > 0 && !row.tEntFile && !row.existingTEntFileName && <span className="text-xs text-destructive ml-auto">Receipt required <span aria-hidden>*</span></span>}
-                              {tEntAmt > 0 && (row.tEntFile || row.existingTEntFileName) && <span className="text-xs font-medium text-green-700 dark:text-green-400 ml-auto">{fmtAmount(tEntAmt)}</span>}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={handleOpenTravelFormPicker}><RouteIcon className="h-3.5 w-3.5"/>Import from Travel Form</Button>
                 </div>
-                <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setTravelRows(p => [...p,emptyTravel(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add Trip</Button>
+                <div className="flex flex-col gap-4">
+                  {(() => {
+                    let standaloneCount = 0;
+                    return travelGroups.map(group => {
+                      const groupTotal = group.rows.reduce((s, r) => s + tripTotalOf(r), 0);
+                      if (group.travelFormId) {
+                        return (
+                          <div key={group.key} className="rounded-lg border-2 border-blue-200 dark:border-blue-900 bg-card overflow-hidden">
+                            <div className="flex items-center justify-between px-4 py-2.5 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-900">
+                              <div className="flex items-center gap-2">
+                                <RouteIcon className="h-3.5 w-3.5 text-blue-700 dark:text-blue-400"/>
+                                <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">Itinerary — {group.travelFormNo}</span>
+                                <span className="text-[10px] text-muted-foreground">{group.rows.length} {group.rows.length===1?"leg":"legs"}</span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                {groupTotal > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(groupTotal)}</span>}
+                                <button type="button" onClick={() => group.rows.forEach(r => handleUnlinkTravelForm(r.id))} className="text-[10px] text-muted-foreground hover:text-destructive underline underline-offset-2">Unlink all</button>
+                              </div>
+                            </div>
+                            <div className="divide-y divide-border/60">
+                              {group.rows.map((row, legIdx) => {
+                                const tripTotal = tripTotalOf(row);
+                                return (
+                                  <div key={row.id} className="p-4 flex flex-col gap-3">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-semibold text-muted-foreground">{travelLegLabel(group.rows, legIdx)}</span>
+                                      <div className="flex items-center gap-2">
+                                        {tripTotal > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(tripTotal)}</span>}
+                                        <button type="button" onClick={() => handleUnlinkTravelForm(row.id)} className="text-[10px] text-muted-foreground hover:text-foreground underline underline-offset-2" title="Detach this leg from the itinerary">Unlink</button>
+                                        <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => { void removeOneUpload(`flightFile:${row.id}`); void removeOneUpload(`accomFile:${row.id}`); void removeOneUpload(`tEntFile:${row.id}`); remover(setTravelRows,1)(row.id); }} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
+                                      </div>
+                                    </div>
+                                    {travelDetailFields(row)}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      }
+                      standaloneCount += 1;
+                      const row = group.rows[0];
+                      return (
+                        <div key={group.key} className="rounded-lg border border-border bg-card overflow-hidden">
+                          {/* ── Card header ─────────────────────────────────── */}
+                          <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b border-border">
+                            <span className="text-xs font-semibold text-foreground">Trip {standaloneCount}</span>
+                            <div className="flex items-center gap-2">
+                              {groupTotal > 0 && <span className="text-xs font-bold text-green-700 dark:text-green-400">{fmtAmount(groupTotal)}</span>}
+                              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => { void removeOneUpload(`flightFile:${row.id}`); void removeOneUpload(`accomFile:${row.id}`); void removeOneUpload(`tEntFile:${row.id}`); remover(setTravelRows,1)(row.id); }} disabled={travelRows.length===1}><XIcon className="h-3.5 w-3.5"/></Button>
+                            </div>
+                          </div>
+
+                          {/* ── Trip details ─────────────────────────────────── */}
+                          <div className="p-4 flex flex-col gap-3">
+                            {travelDetailFields(row)}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" className="w-fit gap-1.5" onClick={() => setTravelRows(p => [...p,emptyTravel(lastDayOfPeriod(claimPeriod))])}><PlusIcon className="h-3.5 w-3.5"/>Add Trip</Button>
+                </div>
               </Section>
 
               {/* 1.2 Miscellaneous */}

@@ -32,6 +32,7 @@ import { revalidatePath } from "next/cache";
 import { createApprovedMovement } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 import { createNotification, getPoApprovers } from "@/server/notifications";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 
 // ── R2 supplier-quotation bucket ───────────────────────────────────────────
 const s3 = new S3Client({
@@ -1071,6 +1072,7 @@ export async function approvePurchaseOrder(id: string): Promise<void> {
   const { orgId, userId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "submitted") throw new Error("Only submitted purchase orders can be approved");
+  await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "approve");
 
   // Generate PO number at approval — this is when the PR becomes a Supplier PO
   const poNo = po.poNo ?? await generatePoNo(orgId);
@@ -1092,9 +1094,10 @@ export async function approvePurchaseOrder(id: string): Promise<void> {
 }
 
 export async function rejectPurchaseOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("purchase-order:approve");
+  const { orgId, userId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "submitted") throw new Error("Only submitted purchase orders can be rejected");
+  await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "reject");
   await db.update(purchaseOrder).set({ status: "draft" }).where(eq(purchaseOrder.id, id));
 
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
@@ -1112,9 +1115,10 @@ export async function rejectPurchaseOrder(id: string): Promise<void> {
 }
 
 export async function recallPurchaseOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("purchase-order:approve");
+  const { orgId, userId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "confirmed") throw new Error("Only confirmed purchase orders can be recalled");
+  await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "recall");
   await db.update(purchaseOrder).set({ status: "draft" }).where(eq(purchaseOrder.id, id));
 
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
@@ -1132,9 +1136,10 @@ export async function recallPurchaseOrder(id: string): Promise<void> {
 }
 
 export async function reconfirmPurchaseOrder(id: string): Promise<void> {
-  const { orgId, session } = await requireAccess("purchase-order:approve");
+  const { orgId, userId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "draft") throw new Error("Only draft purchase orders can be re-confirmed");
+  await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "re-confirm");
   await db.update(purchaseOrder).set({ status: "confirmed" }).where(eq(purchaseOrder.id, id));
 
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);

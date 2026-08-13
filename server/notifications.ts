@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { notification, member, memberDepartment, department, user } from "@/db/schema";
+import { notification, member, memberDepartment, department, user, userPermission } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, desc, inArray } from "drizzle-orm";
@@ -122,6 +122,40 @@ export async function getPoApprovers(organizationId: string): Promise<string[]> 
   }
 
   return [...new Set([...owners.map((o) => o.userId), ...managerUserIds])];
+}
+
+// ── Notify every user holding a given permission key (e.g. eligible
+// approvers of a submitted workflow) ────────────────────────────────────────
+// Returns whether anyone was notified, so callers can fall back to a
+// different key if no one currently holds this one (e.g. claim checking
+// falling back to claim:approve when no checkers are assigned).
+
+export async function notifyUsersWithPermission(
+  orgId: string,
+  permKey: string,
+  notifData: { type: string; title: string; body: string; link: string },
+): Promise<boolean> {
+  const approvers = await db
+    .select({ userId: userPermission.userId })
+    .from(userPermission)
+    .where(
+      and(
+        eq(userPermission.organizationId, orgId),
+        eq(userPermission.permissionKey, permKey),
+        eq(userPermission.allowed, true),
+      ),
+    );
+  if (approvers.length === 0) return false;
+  const notifs = approvers.map((a) => ({
+    id: nanoid(),
+    organizationId: orgId,
+    userId: a.userId,
+    ...notifData,
+    isRead: 0,
+    createdAt: new Date(),
+  }));
+  await db.insert(notification).values(notifs);
+  return true;
 }
 
 // ── Queries ────────────────────────────────────────────────────────────────

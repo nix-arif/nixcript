@@ -9,27 +9,13 @@ import { Switch } from "@/components/ui/switch";
 import { SearchIcon, ChevronDownIcon, CheckIcon, ShieldIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// ── Approval permission metadata (not in ALL_PERMISSIONS) ─────────────────────
-
-const APPROVAL_META = [
-  { key: "leave:approve",          label: "Approve Leave Applications" },
-  { key: "claim:check",            label: "First-Level Claim Review (Checker)" },
-  { key: "claim:approve",          label: "Final Claim Approval" },
-  { key: "payslip:approve",        label: "Approve Payslips" },
-  { key: "payslip:publish",        label: "Publish Payslips to Employees" },
-  { key: "sales-order:approve",    label: "Approve Sales Orders" },
-  { key: "purchase-order:approve", label: "Approve Purchase Orders" },
-  { key: "inventory:approve",      label: "Approve Inventory Requests" },
-] as const;
-
 // ── All managed permissions ────────────────────────────────────────────────────
+// Approval/checker keys (leave:approve, claim:check, etc.) are managed
+// exclusively at /dashboard/admin/approvals, not here.
 
-type PermEntry = { key: string; label: string; isApproval: boolean };
+type PermEntry = { key: string; label: string };
 
-const ALL_MANAGED: PermEntry[] = [
-  ...ALL_PERMISSIONS.map((p) => ({ ...p, isApproval: false })),
-  ...APPROVAL_META.map((p) => ({ ...p, isApproval: true })),
-];
+const ALL_MANAGED: PermEntry[] = [...ALL_PERMISSIONS];
 
 // ── Permission groups ─────────────────────────────────────────────────────────
 
@@ -38,14 +24,14 @@ type PermGroup = { id: string; label: string; perms: PermEntry[] };
 // Map each key to a group id
 const KEY_GROUP: Record<string, string> = {
   "quotation:read": "sales", "quotation:create": "sales", "quotation:update": "sales", "quotation:delete": "sales",
-  "sales-order:read": "sales", "sales-order:create": "sales", "sales-order:update": "sales", "sales-order:delete": "sales", "sales-order:approve": "sales",
+  "sales-order:read": "sales", "sales-order:create": "sales", "sales-order:update": "sales", "sales-order:delete": "sales",
   "customer-po:read": "sales", "customer-po:create": "sales", "customer-po:update": "sales", "customer-po:delete": "sales",
   "customer:read": "sales", "customer:create": "sales", "customer:update": "sales", "customer:delete": "sales",
 
   "purchase-requisition:read": "procurement", "purchase-requisition:create": "procurement",
-  "purchase-requisition:update": "procurement", "purchase-requisition:delete": "procurement", "purchase-requisition:approve": "procurement",
+  "purchase-requisition:update": "procurement", "purchase-requisition:delete": "procurement",
   "purchase-order:read": "procurement", "purchase-order:create": "procurement",
-  "purchase-order:update": "procurement", "purchase-order:delete": "procurement", "purchase-order:approve": "procurement",
+  "purchase-order:update": "procurement", "purchase-order:delete": "procurement",
   "goods-receipt:create": "procurement",
   "supplier:read": "procurement", "supplier:create": "procurement", "supplier:update": "procurement", "supplier:delete": "procurement",
 
@@ -60,11 +46,11 @@ const KEY_GROUP: Record<string, string> = {
   "product:update-price": "products", "product:upload-image": "products",
 
   "inventory:read": "inventory", "inventory:adjust": "inventory",
-  "inventory:manage": "inventory", "inventory:request": "inventory", "inventory:approve": "inventory",
+  "inventory:manage": "inventory", "inventory:request": "inventory",
 
-  "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr", "leave:approve": "hr",
-  "claim:read:own": "hr", "claim:apply": "hr", "claim:check": "hr", "claim:approve": "hr", "claim:manage": "hr",
-  "payslip:read:own": "hr", "payslip:read:all": "hr", "payslip:create": "hr", "payslip:approve": "hr", "payslip:publish": "hr",
+  "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr",
+  "claim:read:own": "hr", "claim:apply": "hr", "claim:manage": "hr",
+  "payslip:read:own": "hr", "payslip:read:all": "hr", "payslip:create": "hr",
   "profile:read": "hr", "profile:update": "hr", "profile:read:all": "hr", "profile:update:all": "hr", "profile:delete:all": "hr",
 
   "member:read": "org", "member:invite": "org", "member:remove": "org",
@@ -438,11 +424,6 @@ function PermissionsTab({
                       />
                       <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
                         <span className="text-sm">{p.label}</span>
-                        {p.isApproval && (
-                          <span className="text-[9px] bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 uppercase tracking-wide font-semibold">
-                            approval role
-                          </span>
-                        )}
                       </div>
                       <span className="text-[10px] font-mono text-muted-foreground bg-muted border border-border/60 rounded px-1.5 py-0.5 shrink-0">
                         {p.key}

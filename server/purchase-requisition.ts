@@ -21,6 +21,8 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
+import { notifyUsersWithPermission } from "@/server/notifications";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -437,6 +439,12 @@ export async function submitPurchaseRequisition(id: string): Promise<void> {
   if (!existing) throw new Error("Purchase requisition not found");
   if (existing.status !== "draft") throw new Error("Only draft requisitions can be submitted");
   await db.update(purchaseRequisition).set({ status: "submitted" }).where(eq(purchaseRequisition.id, id));
+  await notifyUsersWithPermission(orgId, "purchase-requisition:approve", {
+    type: "purchase-requisition:submitted",
+    title: `Purchase Requisition Pending Approval`,
+    body: `Requisition ${existing.prNo} needs review`,
+    link: `/dashboard/procurement/requisition/${id}`,
+  });
   revalidatePath(`/dashboard/procurement/requisition/${id}`);
   revalidatePath("/dashboard/procurement/requisition");
 }
@@ -449,19 +457,21 @@ export async function approvePurchaseRequisition(id: string): Promise<void> {
     .where(and(eq(purchaseRequisition.id, id), eq(purchaseRequisition.organizationId, orgId)));
   if (!existing) throw new Error("Purchase requisition not found");
   if (existing.status !== "submitted") throw new Error("Only submitted requisitions can be approved");
+  await assertSelfActionAllowed(orgId, "purchase-requisition:approve", existing.requestedBy, userId, "approve");
   await db.update(purchaseRequisition).set({ status: "approved", approvedBy: userId, approvedAt: new Date() }).where(eq(purchaseRequisition.id, id));
   revalidatePath(`/dashboard/procurement/requisition/${id}`);
   revalidatePath("/dashboard/procurement/requisition");
 }
 
 export async function rejectPurchaseRequisition(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-requisition:approve");
+  const { orgId, userId } = await requireAccess("purchase-requisition:approve");
   const [existing] = await db
     .select()
     .from(purchaseRequisition)
     .where(and(eq(purchaseRequisition.id, id), eq(purchaseRequisition.organizationId, orgId)));
   if (!existing) throw new Error("Purchase requisition not found");
   if (existing.status !== "submitted") throw new Error("Only submitted requisitions can be rejected");
+  await assertSelfActionAllowed(orgId, "purchase-requisition:approve", existing.requestedBy, userId, "reject");
   await db.update(purchaseRequisition).set({ status: "draft" }).where(eq(purchaseRequisition.id, id));
   revalidatePath(`/dashboard/procurement/requisition/${id}`);
   revalidatePath("/dashboard/procurement/requisition");

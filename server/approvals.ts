@@ -106,5 +106,5 @@ export async function setApprovalPermission(
       set: { allowed },
     });
 
-  revalidatePath("/dashboard/organization/approvals");
+  revalidatePath("/dashboard/admin/approvals");
 }

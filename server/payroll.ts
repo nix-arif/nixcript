@@ -7,6 +7,8 @@ import { nanoid } from "nanoid";
 import { eq, and, desc, sql, asc, lte } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
+import { notifyUsersWithPermission } from "@/server/notifications";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -98,6 +100,13 @@ export async function createPayrollPeriod(month: number, year: number) {
     })
     .returning();
 
+  await notifyUsersWithPermission(orgId, "payslip:approve", {
+    type: "payroll:submitted",
+    title: `Payroll period ${label} pending approval`,
+    body: `Payroll period ${label} needs review`,
+    link: `/dashboard/human-resources/payroll/${period.id}`,
+  });
+
   return period;
 }
 
@@ -118,6 +127,7 @@ export async function approvePayrollPeriod(periodId: string) {
   if (!period) throw new Error("Period not found");
   if (period.status !== "draft")
     throw new Error("Only draft periods can be approved");
+  await assertSelfActionAllowed(orgId, "payslip:approve", period.createdBy, userId, "approve");
 
   await db
     .update(payrollPeriod)

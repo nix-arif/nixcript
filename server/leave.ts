@@ -8,12 +8,13 @@ import {
   leaveDocument,
   member,
   user,
-  userPermission,
   notification,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
+import { notifyUsersWithPermission } from "@/server/notifications";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, sql, ne, isNull } from "drizzle-orm";
 
@@ -117,33 +118,6 @@ async function generateApplicationNo(orgId: string): Promise<string> {
     if (!isNaN(num)) next = num + 1;
   }
   return `LV-${year}-${String(next).padStart(4, "0")}`;
-}
-
-async function notifyUsersWithPermission(
-  orgId: string,
-  permKey: string,
-  notifData: { type: string; title: string; body: string; link: string },
-) {
-  const approvers = await db
-    .select({ userId: userPermission.userId })
-    .from(userPermission)
-    .where(
-      and(
-        eq(userPermission.organizationId, orgId),
-        eq(userPermission.permissionKey, permKey),
-        eq(userPermission.allowed, true),
-      ),
-    );
-  if (approvers.length === 0) return;
-  const notifs = approvers.map((a) => ({
-    id: nanoid(),
-    organizationId: orgId,
-    userId: a.userId,
-    ...notifData,
-    isRead: 0,
-    createdAt: new Date(),
-  }));
-  await db.insert(notification).values(notifs);
 }
 
 async function notifyUser(
@@ -792,7 +766,7 @@ export async function approveLeave(appId: string, comment?: string): Promise<voi
     .limit(1);
   if (!app[0]) throw new Error("Application not found");
   if (app[0].status !== "PENDING") throw new Error("Only pending applications can be approved");
-  if (app[0].userId === userId) throw new Error("You cannot approve your own leave application");
+  await assertSelfActionAllowed(orgId, "leave:approve", app[0].userId, userId, "approve");
 
   const totalDays = parseFloat(app[0].totalDays);
   const year = new Date(app[0].startDate).getFullYear();
@@ -853,6 +827,7 @@ export async function rejectLeave(appId: string, reason: string): Promise<void> 
     .limit(1);
   if (!app[0]) throw new Error("Application not found");
   if (app[0].status !== "PENDING") throw new Error("Only pending applications can be rejected");
+  await assertSelfActionAllowed(orgId, "leave:approve", app[0].userId, userId, "reject");
 
   const totalDays = parseFloat(app[0].totalDays);
   const year = new Date(app[0].startDate).getFullYear();

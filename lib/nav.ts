@@ -121,7 +121,6 @@ export const navConfig: NavGroup[] = [
     items: [
       { title: "Members",              url: "/dashboard/organization/members",              permission: "member:read"               },
       { title: "Departments",          url: "/dashboard/organization/departments",          permission: "department:read"           },
-      { title: "Approvals",            url: "/dashboard/organization/approvals",            permission: "permission:read"           },
       { title: "Roles",                url: "/dashboard/organization/roles",                permission: "organization-role:update"  },
       { title: "Organization Profile", url: "/dashboard/organization/organization-profile", permission: "organization-profile:read" },
       { title: "Document Settings",    url: "/dashboard/organization/document-settings",    permission: "organization-profile:update" },
@@ -154,6 +153,9 @@ export const navConfig: NavGroup[] = [
       { title: "Claim Approvals",url: "/dashboard/human-resources/claim/approvals",      permission: "claim:approve"    },
       { title: "Claim Types",    url: "/dashboard/human-resources/claim/types",          permission: "claim:manage"     },
       { title: "All Claims",     url: "/dashboard/human-resources/claim/all",            permission: "claim:read:all"   },
+      { title: "My Travel Forms",  url: "/dashboard/human-resources/travel",             permission: "travel:read:own"  },
+      { title: "Travel Approvals", url: "/dashboard/human-resources/travel/approvals",   permission: "travel:approve"   },
+      { title: "All Travel Forms", url: "/dashboard/human-resources/travel/all",         permission: "travel:read:all"  },
     ],
   },
   {
@@ -162,6 +164,7 @@ export const navConfig: NavGroup[] = [
     icon: React.createElement(ShieldIcon),
     items: [
       { title: "Access Control", url: "/dashboard/admin/permissions", permission: "permission:read" },
+      { title: "Approvals",      url: "/dashboard/admin/approvals",   permission: "permission:read" },
     ],
   },
   {
