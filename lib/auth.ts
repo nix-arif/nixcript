@@ -54,16 +54,16 @@ export const auth = betterAuth({
   trustedOrigins: [
     "https://nixcrip.com",
     "https://www.nixcrip.com",
-    "http://localhost:3000",
-    "http://192.168.*:3000",
-    "http://172.20.10.*:3000",
+    ...(isProduction
+      ? []
+      : ["http://localhost:3000", "http://192.168.*:3000", "http://172.20.10.*:3000"]),
   ],
 
   database: drizzleAdapter(db, { provider: "pg", schema }),
 
   emailAndPassword: {
     enabled: true,
-    minPasswordLength: 3,
+    minPasswordLength: 8,
     async sendResetPassword({ user, url }) {
       await resend.emails.send({
         from: `${process.env.EMAIL_SENDER_NAME} <${process.env.EMAIL_SENDER_ADDRESS}>`,

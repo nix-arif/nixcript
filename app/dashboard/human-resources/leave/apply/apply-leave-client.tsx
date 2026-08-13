@@ -85,6 +85,10 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
   const workingDays = calcWorkingDays(effectiveStart, effectiveEnd, isHalfDay);
   const remaining = selectedBalance ? parseFloat(selectedBalance.remainingDays) : 0;
   const insufficientBalance = selectedType !== null && workingDays > 0 && workingDays > remaining;
+  const willBeEmergency =
+    selectedType?.emergencyThresholdDays != null &&
+    workingDays > 0 &&
+    workingDays <= selectedType.emergencyThresholdDays;
 
   const isFormValid =
     selectedTypeId !== "" &&
@@ -368,6 +372,17 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                     ) : (
                       "No working days in selected range"
                     )}
+                  </div>
+                )}
+
+                {willBeEmergency && (
+                  <div className="flex items-start gap-2 text-sm text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-md p-3">
+                    <InfoIcon className="h-4 w-4 mt-0.5 shrink-0" />
+                    <span>
+                      This will be automatically recorded as <strong>Emergency Leave</strong>{" "}
+                      (≤{selectedType!.emergencyThresholdDays} days) — it still draws from your{" "}
+                      {selectedType!.name} balance.
+                    </span>
                   </div>
                 )}
 

@@ -2850,6 +2850,13 @@ export const leaveType = pgTable(
     maxDaysPerApplication: integer("max_days_per_application"),
     carryForwardEnabled: boolean("carry_forward_enabled").notNull().default(false),
     maxCarryForward: integer("max_carry_forward"),
+    // When set, an application against THIS type that's <= this many days is
+    // auto-labeled "Emergency Leave" (leaveApplication.leaveTypeName/Code)
+    // instead of this type's own name/code — but still draws from this
+    // type's own entitlement pool. Emergency Leave isn't a separate balance;
+    // it's a short-application subset of whichever type this is set on
+    // (normally Annual Leave). Null disables the behavior for this type.
+    emergencyThresholdDays: integer("emergency_threshold_days"),
     entitlementRules: json("entitlement_rules")
       .$type<Array<{ minYears: number; maxYears: number | null; days: number }>>()
       .notNull()

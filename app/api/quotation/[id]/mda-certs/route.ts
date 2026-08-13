@@ -6,6 +6,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PDFDocument, rgb, StandardFonts, degrees, pushGraphicsState, popGraphicsState, concatTransformationMatrix } from "pdf-lib";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 
 export const maxDuration = 60;
 
@@ -130,6 +132,9 @@ export async function GET(_req: Request, { params }: Props) {
   // Resolve all org IDs the user's owner controls
   const orgId = session.session.activeOrganizationId;
   if (!orgId) return new Response("No active organization", { status: 400 });
+
+  const perms = await getUserPermissions(session.user.id, orgId);
+  if (!hasAccess(perms, "quotation:read")) return new Response("Forbidden", { status: 403 });
 
   const ownerOrgIds = await getAllOwnerOrgIds(session.user.id, orgId);
 

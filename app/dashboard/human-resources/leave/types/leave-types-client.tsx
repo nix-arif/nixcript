@@ -153,6 +153,7 @@ interface FormData {
   maxDaysPerApplication: string;
   carryForwardEnabled: boolean;
   maxCarryForward: string;
+  emergencyThresholdDays: string;
   entitlementRules: EntitlementRule[];
   sortOrder: string;
   description: string;
@@ -167,6 +168,7 @@ const defaultForm: FormData = {
   maxDaysPerApplication: "",
   carryForwardEnabled: false,
   maxCarryForward: "",
+  emergencyThresholdDays: "",
   entitlementRules: [{ minYears: 0, maxYears: null, days: 0 }],
   sortOrder: "0",
   description: "",
@@ -182,6 +184,7 @@ function rowToForm(lt: LeaveTypeRow): FormData {
     maxDaysPerApplication: lt.maxDaysPerApplication?.toString() ?? "",
     carryForwardEnabled: lt.carryForwardEnabled,
     maxCarryForward: lt.maxCarryForward?.toString() ?? "",
+    emergencyThresholdDays: lt.emergencyThresholdDays?.toString() ?? "",
     entitlementRules: (lt.entitlementRules ?? []) as EntitlementRule[],
     sortOrder: lt.sortOrder.toString(),
     description: lt.description ?? "",
@@ -245,6 +248,9 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
         carryForwardEnabled: form.carryForwardEnabled,
         maxCarryForward: form.maxCarryForward
           ? parseInt(form.maxCarryForward, 10)
+          : undefined,
+        emergencyThresholdDays: form.emergencyThresholdDays
+          ? parseInt(form.emergencyThresholdDays, 10)
           : undefined,
         entitlementRules: form.entitlementRules,
         sortOrder: parseInt(form.sortOrder, 10) || 0,
@@ -447,6 +453,15 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                           {lt.maxCarryForward !== null ? `CF ${lt.maxCarryForward}d` : "CF"}
                         </Badge>
                       )}
+                      {lt.emergencyThresholdDays !== null && (
+                        <Badge
+                          variant="outline"
+                          className="text-xs px-1.5 py-0 h-5 text-orange-700 border-orange-200 bg-orange-50 dark:text-orange-400 dark:border-orange-700"
+                          title={`Applications of ≤${lt.emergencyThresholdDays} days are auto-recorded as Emergency Leave, drawn from this same balance`}
+                        >
+                          EL ≤{lt.emergencyThresholdDays}d
+                        </Badge>
+                      )}
                     </div>
                   </TableCell>
 
@@ -624,6 +639,26 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                   />
                 </div>
               )}
+            </div>
+
+            {/* Emergency Leave threshold */}
+            <div className="rounded-md border border-border p-3 space-y-1.5">
+              <Label htmlFor="ltEmergencyThreshold">Emergency Leave Threshold (days)</Label>
+              <input
+                id="ltEmergencyThreshold"
+                type="number"
+                min={0}
+                value={form.emergencyThresholdDays}
+                onChange={(e) => setForm((f) => ({ ...f, emergencyThresholdDays: e.target.value }))}
+                placeholder="Leave blank to disable"
+                className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <p className="text-xs text-muted-foreground">
+                Applications against this leave type of this many days or fewer are automatically
+                recorded as <strong>Emergency Leave</strong> instead of {form.name || "this type"}.
+                They still draw from this same balance — Emergency Leave is not a separate pool.
+                Normally set on Annual Leave only.
+              </p>
             </div>
 
             {/* Entitlement rules */}

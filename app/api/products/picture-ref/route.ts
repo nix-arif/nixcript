@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 
 const EXTS = ["jpg", "jpeg", "png"] as const;
 const ROW_HEIGHT = 195;  // points — all data rows are this height
@@ -75,6 +79,15 @@ async function fetchImageBuffer(
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session) return new NextResponse("Unauthorized", { status: 401 });
+
+    const orgId = session.session.activeOrganizationId;
+    if (!orgId) return new NextResponse("No active organization", { status: 400 });
+
+    const perms = await getUserPermissions(session.user.id, orgId);
+    if (!hasAccess(perms, "product:read")) return new NextResponse("Forbidden", { status: 403 });
+
     const form = await req.formData();
     const file = form.get("file") as File | null;
     if (!file) return NextResponse.json({ error: "No file uploaded" }, { status: 400 });

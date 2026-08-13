@@ -262,6 +262,7 @@ export async function createLeaveType(data: {
   maxDaysPerApplication?: number;
   carryForwardEnabled: boolean;
   maxCarryForward?: number;
+  emergencyThresholdDays?: number;
   entitlementRules: Array<{ minYears: number; maxYears: number | null; days: number }>;
   description?: string;
   sortOrder?: number;
@@ -279,6 +280,7 @@ export async function createLeaveType(data: {
     maxDaysPerApplication: data.maxDaysPerApplication ?? null,
     carryForwardEnabled: data.carryForwardEnabled,
     maxCarryForward: data.maxCarryForward ?? null,
+    emergencyThresholdDays: data.emergencyThresholdDays ?? null,
     entitlementRules: data.entitlementRules,
     sortOrder: data.sortOrder ?? 0,
     description: data.description?.trim() ?? null,
@@ -299,6 +301,7 @@ export async function updateLeaveType(
     maxDaysPerApplication: number | null;
     carryForwardEnabled: boolean;
     maxCarryForward: number | null;
+    emergencyThresholdDays: number | null;
     entitlementRules: Array<{ minYears: number; maxYears: number | null; days: number }>;
     description: string;
     isActive: boolean;
@@ -345,6 +348,10 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
       allowHalfDay: true,
       carryForwardEnabled: true,
       maxCarryForward: 8,
+      // Applications of 2 days or fewer are auto-labeled Emergency Leave —
+      // still drawn from this same Annual Leave balance, not a separate
+      // pool. Adjust per org via Leave Types settings.
+      emergencyThresholdDays: 2,
       sortOrder: 1,
       description: "Paid annual leave per Employment Act 1955",
       entitlementRules: [
@@ -419,19 +426,6 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
       entitlementRules: [{ minYears: 0, maxYears: null, days: 3 }],
     },
     {
-      name: "Emergency Leave",
-      code: "EMERG",
-      isPaid: true,
-      requiresDocument: false,
-      allowHalfDay: false,
-      carryForwardEnabled: false,
-      maxCarryForward: null,
-      maxDaysPerApplication: 3,
-      sortOrder: 7,
-      description: "3 days paid emergency leave per incident.",
-      entitlementRules: [{ minYears: 0, maxYears: null, days: 3 }],
-    },
-    {
       name: "Unpaid Leave",
       code: "UPL",
       isPaid: false,
@@ -457,6 +451,7 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
     maxDaysPerApplication: (d as { maxDaysPerApplication?: number }).maxDaysPerApplication ?? null,
     carryForwardEnabled: d.carryForwardEnabled,
     maxCarryForward: d.maxCarryForward ?? null,
+    emergencyThresholdDays: (d as { emergencyThresholdDays?: number }).emergencyThresholdDays ?? null,
     entitlementRules: d.entitlementRules,
     sortOrder: d.sortOrder,
     description: d.description,
@@ -716,6 +711,15 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
     );
   }
 
+  // Emergency Leave isn't a separate balance — it's a short-application
+  // label on whichever type has emergencyThresholdDays set (normally
+  // Annual Leave). leaveTypeId keeps pointing at the real type (lt) so the
+  // entitlement above is still what gets debited; only the display
+  // name/code recorded on the application changes.
+  const isEmergency = lt.emergencyThresholdDays != null && totalDays <= lt.emergencyThresholdDays;
+  const appliedName = isEmergency ? "Emergency Leave" : lt.name;
+  const appliedCode = isEmergency ? "EMERG" : lt.code;
+
   const applicationNo = await generateApplicationNo(orgId);
   const appId = nanoid();
 
@@ -726,8 +730,8 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
       applicationNo,
       userId,
       leaveTypeId: data.leaveTypeId,
-      leaveTypeName: lt.name,
-      leaveTypeCode: lt.code,
+      leaveTypeName: appliedName,
+      leaveTypeCode: appliedCode,
       startDate: data.startDate,
       endDate: data.endDate,
       totalDays: totalDays.toString(),
@@ -749,8 +753,8 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
 
   await notifyUsersWithPermission(orgId, "leave:approve", {
     type: "leave:submitted",
-    title: `Leave Application: ${lt.name}`,
-    body: `${userName} applied for ${lt.name} from ${data.startDate} to ${data.endDate} (${totalDays} day${totalDays !== 1 ? "s" : ""})`,
+    title: `Leave Application: ${appliedName}`,
+    body: `${userName} applied for ${appliedName} from ${data.startDate} to ${data.endDate} (${totalDays} day${totalDays !== 1 ? "s" : ""})`,
     link: `/dashboard/human-resources/leave/approvals`,
   });
 

@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
+import { validateUploadRequest } from "@/lib/uploads/validate";
 
 const s3 = new S3Client({
   region: "auto",
@@ -28,6 +29,11 @@ export async function POST(req: NextRequest) {
   const form = await req.formData();
   const file = form.get("file") as File | null;
   if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
+
+  // Real bytes are already in hand here (unlike the presigned-upload
+  // routes), so this checks the actual file size, not just a declared one.
+  const uploadError = validateUploadRequest(file.name, file.size);
+  if (uploadError) return NextResponse.json({ error: uploadError }, { status: 400 });
 
   const key = `customer-pos/${nanoid()}-${file.name}`;
   const buffer = Buffer.from(await file.arrayBuffer());

@@ -522,7 +522,7 @@ const REPORT_HTML = `
   <header class="masthead">
     <span class="eyebrow">Authorization &amp; Multi-Tenancy Review</span>
     <h1 class="serif">Trust Boundary Audit</h1>
-    <p class="dek">A full sweep of every server action in the RBAC ERP, following the pattern behind the two bugs already fixed this session (client-supplied org IDs trusted at face value, and permission grants that let a caller hand out more than they hold). Four parallel reviews, one per domain, read every exported function in <span class="mono">server/*.ts</span> against the same checklist.</p>
+    <p class="dek">A full sweep of every server action in the RBAC ERP, following the pattern behind the two bugs already fixed this session (client-supplied org IDs trusted at face value, and permission grants that let a caller hand out more than they hold). Four parallel reviews, one per domain, read every exported function in <span class="mono">server/*.ts</span> against the same checklist. A second-pass sweep then covered the ground the first pass didn't: raw HTTP route handlers under <span class="mono">app/api/**</span>, the auth/session configuration, and a scan for SQL injection, XSS, and committed secrets — see "Phase 2" below.</p>
     <p class="scope-line">39 files · <span class="mono">~21,000</span> lines · every exported function checked · All four tiers now fully patched</p>
 
     <div class="stat-strip">
@@ -979,6 +979,148 @@ const REPORT_HTML = `
     </div>
   </section>
 
+  <!-- ══════════════════════ PHASE 2: API ROUTES & CONFIG ══════════════════════ -->
+  <section class="tier" style="margin-top: 3rem;">
+    <div class="tier-head" style="--tier-color: var(--high);"><span class="dot"></span><h2 class="serif">Phase 2 — API Routes &amp; Configuration</h2><span class="count">25 route handlers + auth config checked · 6 real findings</span><span class="progress">✓ all 6 fixed</span></div>
+    <p style="color: var(--ink-soft); font-size: 0.92rem; max-width: 68ch; margin: 0.2rem 0 1.2rem;">The first pass covered <span class="mono">server/*.ts</span> "use server" actions only. Route handlers under <span class="mono">app/api/**</span> are a different trust boundary — raw HTTP endpoints with no same-origin guarantee, reachable by any client that has the right cookies, not just app-code <span class="mono">fetch</span> calls. This pass read all 25 of them, plus the Better Auth configuration, plus a scan for SQL injection, XSS, and committed secrets.</p>
+
+    <details class="finding" style="--tier-color: var(--clean);">
+      <summary>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="title-block">
+          <span class="fname">A spreadsheet-upload endpoint has no authentication at all</span>
+          <span class="floc mono">app/api/products/picture-ref/route.ts — POST():76</span>
+        </div>
+        <span class="badge high">No auth</span>
+        <span class="badge clean">✓ Fixed</span>
+      </summary>
+      <div class="body">
+        <p>No session check anywhere in the file. The route accepts an uploaded <span class="mono">.xlsx</span>, parses it with ExcelJS, fetches an external image per row, and rebuilds a new workbook — all before any auth boundary is checked, because there isn't one.</p>
+        <h4>Exploit scenario</h4>
+        <p class="scenario">Any HTTP client — no cookies, no account — POSTs a spreadsheet to this endpoint directly and gets back a rebuilt file with images merged in. Beyond being usable as an unauthenticated resource-exhaustion vector (expensive parsing + N external fetches per request, repeatable with no rate limit), it also works as an oracle: submit a list of product codes and see which ones return an image, enumerating the product catalog's image coverage without ever logging in.</p>
+        <h4>Fix applied</h4>
+        <p>Added the same session + <span class="mono">product:read</span> check its sibling <span class="mono">catalogue</span> route already had — the page that links to this feature was already gated by <span class="mono">product:read</span>, but the API endpoint underneath it wasn't.</p>
+      </div>
+    </details>
+
+    <details class="finding" style="--tier-color: var(--clean);">
+      <summary>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="title-block">
+          <span class="fname">Any org member can bulk-write the product catalog, regardless of role</span>
+          <span class="floc mono">app/api/products/seed/route.ts — POST():131</span>
+        </div>
+        <span class="badge medium">No permission check</span>
+        <span class="badge clean">✓ Fixed</span>
+      </summary>
+      <div class="body">
+        <p>Checks that a session exists and resolves the org correctly, but never checks a permission — every authenticated member, no matter their role, could bulk-insert/update product codes, prices, suppliers, and MDA certification data for their org.</p>
+        <h4>Fix applied</h4>
+        <p>Added a <span class="mono">product:seed</span> check — a permission key that already existed in the catalog and is already assigned in one role bundle, just never enforced by this route.</p>
+      </div>
+    </details>
+
+    <details class="finding" style="--tier-color: var(--clean);">
+      <summary>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="title-block">
+          <span class="fname">MDA certificate PDFs skip the permission check its sibling route enforces</span>
+          <span class="floc mono">app/api/quotation/[id]/mda-certs/route.ts — GET():123</span>
+        </div>
+        <span class="badge medium">No permission check</span>
+        <span class="badge clean">✓ Fixed</span>
+      </summary>
+      <div class="body">
+        <p>Correctly verifies the quotation belongs to the caller's own org (or a sibling org their owner controls) before serving anything — tenant isolation was never the gap. But unlike <span class="mono">app/api/quotation/[id]/pdf/route.ts</span>, which delegates to <span class="mono">getQuotationDetail()</span> and inherits its <span class="mono">quotation:read</span> check, this route does its own DB access directly and never checks any permission at all.</p>
+        <h4>Exploit scenario</h4>
+        <p class="scenario">An HR-only employee with zero sales permissions, but who is a member of the same org, calls this route with any quotation ID from their org and receives the merged MDA certificate PDF — bypassing the RBAC boundary every other quotation document route enforces.</p>
+        <h4>Fix applied</h4>
+        <p>Added the missing <span class="mono">quotation:read</span> check, matching the sibling PDF route.</p>
+      </div>
+    </details>
+
+    <details class="finding" style="--tier-color: var(--clean);">
+      <summary>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="title-block">
+          <span class="fname">An unauthenticated geocoding proxy</span>
+          <span class="floc mono">app/api/claim/distance/route.ts — POST():29</span>
+        </div>
+        <span class="badge medium">No auth</span>
+        <span class="badge clean">✓ Fixed</span>
+      </summary>
+      <div class="body">
+        <p>No session check. Used inline while filling in a claim or travel form's mileage fields, but reachable directly by anyone — it takes two free-text locations, geocodes both against OpenStreetMap's Nominatim, then asks OSRM for the driving distance.</p>
+        <h4>Exploit scenario</h4>
+        <p class="scenario">No tenant data is exposed, but an unauthenticated client can hit this endpoint directly and use the app's server as a free, unattributed proxy for two external geocoding/routing services — a cost and abuse vector against those third parties, and against this app's own OSRM/Nominatim rate limits.</p>
+        <h4>Fix applied</h4>
+        <p>Added a plain session check (no specific permission — both <span class="mono">claim:apply</span> and <span class="mono">travel:apply</span> holders use this same endpoint, and it doesn't touch any claim or travel-form data itself).</p>
+      </div>
+    </details>
+
+    <details class="finding" style="--tier-color: var(--clean);">
+      <summary>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="title-block">
+          <span class="fname">Every account in the app was protected by as little as a 3-character password</span>
+          <span class="floc mono">lib/auth.ts — emailAndPassword.minPasswordLength</span>
+        </div>
+        <span class="badge high">Weak policy</span>
+        <span class="badge clean">✓ Fixed</span>
+      </summary>
+      <div class="body">
+        <p><span class="mono">minPasswordLength: 3</span> — the whole app's login boundary accepted passwords as short as three characters, and there is no rate-limiting anywhere in the codebase to slow down brute-force attempts against the sign-in endpoint.</p>
+        <h4>Fix applied</h4>
+        <p>Raised to <span class="mono">minPasswordLength: 8</span>. This only affects passwords set from now on (signup, reset, change-password) — no existing account is locked out, since Better Auth enforces this on write, not on every login.</p>
+      </div>
+    </details>
+
+    <details class="finding" style="--tier-color: var(--clean);">
+      <summary>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="title-block">
+          <span class="fname">Dev-only trusted origins shipped unconditionally to production</span>
+          <span class="floc mono">lib/auth.ts — trustedOrigins</span>
+        </div>
+        <span class="badge low">Hygiene</span>
+        <span class="badge clean">✓ Fixed</span>
+      </summary>
+      <div class="body">
+        <p><span class="mono">trustedOrigins</span> included <span class="mono">localhost:3000</span> and two private-IP wildcard ranges (<span class="mono">192.168.*</span>, <span class="mono">172.20.10.*</span>) — clearly a developer's home/hotspot network, added for local testing — but unlike <span class="mono">baseUrl</span> a few lines above it, this array wasn't branched on <span class="mono">isProduction</span>, so it shipped to the production build too. Low severity: these are private RFC1918 ranges, so exploiting this would require an attacker already on the same private network as production traffic, not something reachable remotely.</p>
+        <h4>Fix applied</h4>
+        <p>The three dev-only entries now only get added when <span class="mono">!isProduction</span>, matching the pattern <span class="mono">baseUrl</span> already used.</p>
+      </div>
+    </details>
+
+    <details class="finding" style="--tier-color: var(--clean);">
+      <summary>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="title-block">
+          <span class="fname">Document uploads accept any file type with no size cap</span>
+          <span class="floc mono">claim, leave, ledger, travel-form upload routes; customer-po/upload</span>
+        </div>
+        <span class="badge low">Missing validation</span>
+        <span class="badge clean">✓ Fixed</span>
+      </summary>
+      <div class="body">
+        <p>None of the five upload routes restricted file extension/type or enforced a size limit. Self-org only, no cross-tenant impact — but an authorized member could upload arbitrary file types, including HTML/SVG, which browsers can execute if ever opened directly from a download link.</p>
+        <h4>Fix applied</h4>
+        <p>Added a shared <span class="mono">lib/uploads/validate.ts</span> allow-list (common document/image types, 25MB cap) used by all five routes. Honest limitation noted inline in that file: the four presigned-URL routes (claim/leave/ledger/travel-form) only ever see the client's <em>declared</em> filename/size, not the real bytes — the actual upload goes straight from browser to R2 — so this closes the malicious-extension angle but doesn't cryptographically enforce the size cap for those four. <span class="mono">customer-po/upload</span> receives real bytes server-side, so its check is fully enforced.</p>
+      </div>
+    </details>
+
+    <div class="pattern-note" style="margin-top: 1.5rem;">
+      <h2 class="serif" style="font-size: 1.05rem;">Also checked, nothing to fix</h2>
+      <ol>
+        <li><strong>SQL injection</strong> — grepped every <span class="mono">sql\`...\`</span> tagged-template use across <span class="mono">server/*.ts</span>; all interpolation goes through Drizzle's automatic parameter binding. Zero uses of <span class="mono">sql.raw()</span> anywhere in the codebase, which is the one API that would actually concatenate raw strings.</li>
+        <li><strong>Committed secrets</strong> — no API keys, private keys, or hardcoded passwords found in tracked source; <span class="mono">.env</span>/<span class="mono">.env.local</span> are gitignored and never committed.</li>
+        <li><strong>XSS</strong> — <span class="mono">dangerouslySetInnerHTML</span> is used in exactly one place in the whole app: this report page, and its content is a static template literal with no interpolated user or database data.</li>
+        <li><strong>Remaining 22 API routes</strong> — every upload/download route (claim, customer-po, leave, ledger, travel-form) correctly verifies the requested file's org ownership in the database before presigning or redirecting; no path traversal or IDOR found in any <span class="mono">[...key]</span> catch-all. Every PDF/export route (claim, purchase-order, quotation, sales-order, ledger) delegates to an already-permission-checked, already-org-scoped server function. <span class="mono">app/api/auth/[...all]/route.ts</span> is Better Auth's unmodified catch-all handler. <span class="mono">app/api/permissions/route.ts</span> accepts a client-supplied org ID but <span class="mono">getUserPermissions()</span> re-verifies caller membership before returning anything. <span class="mono">app/api/test-helpers/invitation/route.ts</span> hard-404s outside <span class="mono">NODE_ENV=production</span>.</li>
+        <li><strong>Two informational notes, not fixed</strong> — <span class="mono">getAllOwnerOrgIds()</span> (used by products mda-cert/catalogue routes) deliberately expands read access to every org the same owner controls, identically to the "conglomerate" pattern already used throughout quotation.ts; this looks intentional, not a bug. Separately, <span class="mono">lib/r2/*.ts</span>'s presigned-URL helpers sign whatever key they're handed with no org check of their own — safe today because every caller already validates first, but a fragile trust boundary if a future route ever calls them directly.</li>
+      </ol>
+    </div>
+  </section>
+
   <!-- ══════════════════════ COVERAGE ══════════════════════ -->
   <section class="tier" style="margin-top: 3rem;">
     <div class="tier-head" style="--tier-color: var(--clean);"><span class="dot"></span><h2 class="serif">Confirmed clean</h2><span class="count">every other exported function, checked and passed</span></div>
@@ -1006,16 +1148,17 @@ const REPORT_HTML = `
 
   <div class="closing">
     <h2 class="serif">Where things stand</h2>
-    <p>All four tiers are fully patched — thirty of thirty-two findings closed outright, three closed on a security issue with a business-logic question put to the team rather than guessed at, and every remaining item confirmed clean or intentionally left as-is with the reasoning stated inline.</p>
+    <p>All four tiers from the first pass are fully patched — thirty of thirty-two findings closed outright, three closed on a security issue with a business-logic question put to the team rather than guessed at. A second-pass sweep of the API routes and auth configuration then found and closed six more real gaps outside the first pass's scope, and confirmed clean on SQL injection, XSS, and committed secrets.</p>
     <div class="phase-list">
       <div class="phase"><span class="num mono">✓</span><span><strong>Critical — done.</strong> All five findings addressed: self-escalation blocked in Default Permissions, the payslip YTD leak closed, the invoice-stats auth bypass removed, quotation settings scoped by org, and purchase-order/requisition linking scoped by org (confirmed-on-create status left as an open question for the team).</span></div>
       <div class="phase"><span class="num mono">✓</span><span><strong>High — done.</strong> All six findings addressed: approvals self-escalation blocked, invitation resend/revoke routed through auth and the owner-approval queue, invitation-list cross-tenant read closed, <span class="mono">buildCustomerSnapshot</span> scoped by org everywhere it's called, and the two remaining unscoped sales-order-item/product lookups (delivery-order and purchase-order) filtered by org.</span></div>
       <div class="phase"><span class="num mono">✓</span><span><strong>Medium — done.</strong> All six findings addressed: certificate presigned URLs checked against the key's embedded org, the draft-claim claim-type lookup scoped by org, the ledger account lookup scoped by org (with a hard failure instead of a silent blank snapshot), consignment's sales-order reference verified against the caller's org, the stock-level balance-correction bypass routed through the same approve/self-approve rule as <span class="mono">adjustStock</span>, and purchase-requisition editing restricted to its creator — confirmed with the team to match purchase-order's existing behavior.</span></div>
       <div class="phase"><span class="num mono">✓</span><span><strong>Low — done.</strong> All fifteen findings addressed: dead-code landmines (roles.ts, permissions.ts catalog, the two arbitrary-status setters) hardened or deleted outright rather than left as future traps; internal-only helpers (notifications, document-numbering, stock-reservation, quotation numbering, replenishment trigger) given floor session/org checks; the auth-hook org lookup moved out of the server-actions layer entirely; real gaps closed in claim.ts's travel-form org scoping, payroll's org filter and membership check, sales-order's missing self-action guard, field-stock's per-rep holding limit, and inventory's pending-movement audit trail; the invoice.ts permission-key choice corrected after confirming with the team.</span></div>
+      <div class="phase"><span class="num mono">✓</span><span><strong>Phase 2 — done.</strong> All six findings addressed: two completely unauthenticated endpoints closed (an Excel-upload route with no session check at all, and a geocoding proxy anyone could hit), two permission checks added to match sibling routes (product-catalog seeding, quotation MDA certs), the app-wide minimum password length raised from 3 to 8 characters, dev-only trusted origins scoped out of production, and a shared file-type/size allow-list added across all five upload routes. SQL injection, XSS, and committed secrets all came back clean.</span></div>
     </div>
   </div>
 
-  <footer class="colophon">Four parallel audits · server/*.ts, 39 files · All four tiers patched</footer>
+  <footer class="colophon">Four parallel audits + a second-pass API/config sweep · server/*.ts (39 files) + 25 API routes + auth config · Everything found, patched</footer>
 
 </div>
 `;

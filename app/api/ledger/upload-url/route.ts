@@ -3,6 +3,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getPresignedUploadUrl } from "@/lib/r2/ledger-docs";
+import { validateUploadRequest } from "@/lib/uploads/validate";
 import { nanoid } from "nanoid";
 
 export async function POST(req: NextRequest) {
@@ -17,6 +18,8 @@ export async function POST(req: NextRequest) {
   if (!entryId || !fileName || !mimeType || !fileSize) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
+  const uploadError = validateUploadRequest(fileName, fileSize);
+  if (uploadError) return NextResponse.json({ error: uploadError }, { status: 400 });
   const ext = fileName.includes(".") ? fileName.split(".").pop() : "bin";
   const key = `${orgId}/${entryId}/${nanoid()}.${ext}`;
   const uploadUrl = await getPresignedUploadUrl(key, mimeType);

@@ -3,6 +3,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getTravelFormPresignedUploadUrl } from "@/lib/r2/travel-docs";
+import { validateUploadRequest } from "@/lib/uploads/validate";
 import { nanoid } from "nanoid";
 
 export async function POST(req: NextRequest) {
@@ -18,6 +19,8 @@ export async function POST(req: NextRequest) {
   if (!travelFormId || !fileName || !mimeType || !fileSize) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
+  const uploadError = validateUploadRequest(fileName, fileSize);
+  if (uploadError) return NextResponse.json({ error: uploadError }, { status: 400 });
   const ext = fileName.includes(".") ? fileName.split(".").pop() : "bin";
   const key = `travel-forms/${orgId}/${travelFormId}/${nanoid()}.${ext}`;
   const uploadUrl = await getTravelFormPresignedUploadUrl(key, mimeType);

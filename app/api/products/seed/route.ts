@@ -125,6 +125,8 @@ import { db } from "@/db";
 import { member, product } from "@/db/schema";
 import { nanoid } from "nanoid";
 import { and, asc, eq, sql } from "drizzle-orm";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 
 export const maxDuration = 60;
 
@@ -139,6 +141,10 @@ export async function POST(req: NextRequest) {
       { error: "No active organization" },
       { status: 400 },
     );
+
+  const perms = await getUserPermissions(session.user.id, currentOrgId);
+  if (!hasAccess(perms, "product:seed"))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // Resolve the primary owner org using the same logic as product search:
   // find who owns the current org, then find their earliest-created org.
