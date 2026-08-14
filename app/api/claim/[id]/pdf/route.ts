@@ -4,7 +4,7 @@ import { getClaimApplicationDetail } from "@/server/claim";
 import { getFullOrganizationProfile } from "@/server/organization-profile";
 import { getClaimPresignedDownloadUrl } from "@/lib/r2/claim-docs";
 import { generateClaimPdf } from "@/app/dashboard/human-resources/claim/generate-claim-pdf";
-import { PDFDocument, PDFPage, StandardFonts, degrees, pushGraphicsState, popGraphicsState, concatTransformationMatrix } from "pdf-lib";
+import { PDFDocument, PDFPage, StandardFonts, degrees, pushGraphicsState, popGraphicsState, concatTransformationMatrix, PDFArray, PDFDict, PDFName, PDFNumber } from "pdf-lib";
 
 export const maxDuration = 60;
 
@@ -16,6 +16,47 @@ interface Props {
 const W = 595.28;
 const H = 841.89;
 const MARGIN = 40;
+
+// Any /Annots on the page (highlights, stamps, comments, form fields) are
+// positioned via /Rect (and /QuadPoints for text-markup annotations) in the
+// page's own coordinate space — normalizePage() below only transforms the
+// content stream, so without this, a rotated page's annotations end up
+// pointing at the wrong location once the content itself is un-rotated and
+// the page's dimensions are swapped. Applies the identical matrix.
+function transformAnnotRects(page: PDFPage, a: number, b: number, c: number, d: number, e: number, f: number): void {
+  const annots = page.node.Annots();
+  if (!annots) return;
+  const tx = (x: number, y: number): [number, number] => [a * x + c * y + e, b * x + d * y + f];
+  for (let i = 0; i < annots.size(); i++) {
+    // A single malformed annotation shouldn't take down the whole merge —
+    // worst case that annotation keeps its old (wrong) position, same as
+    // before this fix existed.
+    try {
+      const dict = annots.lookup(i, PDFDict);
+      const rect = dict.lookupMaybe(PDFName.of("Rect"), PDFArray);
+      if (rect && rect.size() === 4) {
+        const [llx, lly, urx, ury] = [0, 1, 2, 3].map((idx) => rect.lookup(idx, PDFNumber).asNumber());
+        const corners = [tx(llx, lly), tx(urx, lly), tx(llx, ury), tx(urx, ury)];
+        const xs = corners.map((p) => p[0]);
+        const ys = corners.map((p) => p[1]);
+        dict.set(PDFName.of("Rect"), page.doc.context.obj([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]));
+      }
+      const quad = dict.lookupMaybe(PDFName.of("QuadPoints"), PDFArray);
+      if (quad && quad.size() % 8 === 0) {
+        const nums: number[] = [];
+        for (let j = 0; j < quad.size(); j++) nums.push(quad.lookup(j, PDFNumber).asNumber());
+        const out: number[] = [];
+        for (let j = 0; j < nums.length; j += 2) {
+          const [nx, ny] = tx(nums[j], nums[j + 1]);
+          out.push(nx, ny);
+        }
+        dict.set(PDFName.of("QuadPoints"), page.doc.context.obj(out));
+      }
+    } catch {
+      continue;
+    }
+  }
+}
 
 // Copied verbatim from app/api/quotation/[id]/mda-certs/route.ts — un-rotates a
 // copied page so images/PDF receipts scanned sideways render upright.
@@ -37,6 +78,7 @@ function normalizePage(page: PDFPage): void {
   } else {
     return;
   }
+  transformAnnotRects(page, a, b, c, d, e, f);
   page.node.normalize();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const start = (page as any).createContentStream(pushGraphicsState(), concatTransformationMatrix(a, b, c, d, e, f));

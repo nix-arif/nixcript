@@ -6,7 +6,7 @@ import { member, product } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PDFDocument, rgb, StandardFonts, degrees, pushGraphicsState, popGraphicsState, concatTransformationMatrix } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, degrees, pushGraphicsState, popGraphicsState, concatTransformationMatrix, PDFArray, PDFDict, PDFName, PDFNumber } from "pdf-lib";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 
@@ -72,6 +72,47 @@ function isMdapc(items: EnrichedItem[]): boolean {
   );
 }
 
+// Any /Annots on the page (highlights, stamps, comments, form fields) are
+// positioned via /Rect (and /QuadPoints for text-markup annotations) in the
+// page's own coordinate space — normalizePage() below only transforms the
+// content stream, so without this, a rotated page's annotations end up
+// pointing at the wrong location once the content itself is un-rotated and
+// the page's dimensions are swapped. Applies the identical matrix.
+function transformAnnotRects(page: ReturnType<PDFDocument["getPage"]>, a: number, b: number, c: number, d: number, e: number, f: number): void {
+  const annots = page.node.Annots();
+  if (!annots) return;
+  const tx = (x: number, y: number): [number, number] => [a * x + c * y + e, b * x + d * y + f];
+  for (let i = 0; i < annots.size(); i++) {
+    // A single malformed annotation shouldn't take down the whole merge —
+    // worst case that annotation keeps its old (wrong) position, same as
+    // before this fix existed.
+    try {
+      const dict = annots.lookup(i, PDFDict);
+      const rect = dict.lookupMaybe(PDFName.of("Rect"), PDFArray);
+      if (rect && rect.size() === 4) {
+        const [llx, lly, urx, ury] = [0, 1, 2, 3].map((idx) => rect.lookup(idx, PDFNumber).asNumber());
+        const corners = [tx(llx, lly), tx(urx, lly), tx(llx, ury), tx(urx, ury)];
+        const xs = corners.map((p) => p[0]);
+        const ys = corners.map((p) => p[1]);
+        dict.set(PDFName.of("Rect"), page.doc.context.obj([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]));
+      }
+      const quad = dict.lookupMaybe(PDFName.of("QuadPoints"), PDFArray);
+      if (quad && quad.size() % 8 === 0) {
+        const nums: number[] = [];
+        for (let j = 0; j < quad.size(); j++) nums.push(quad.lookup(j, PDFNumber).asNumber());
+        const out: number[] = [];
+        for (let j = 0; j < nums.length; j += 2) {
+          const [nx, ny] = tx(nums[j], nums[j + 1]);
+          out.push(nx, ny);
+        }
+        dict.set(PDFName.of("QuadPoints"), page.doc.context.obj(out));
+      }
+    } catch {
+      continue;
+    }
+  }
+}
+
 // Bakes a page's /Rotate value into its content stream so badges and highlights
 // drawn with pdf-lib (which ignores /Rotate) appear in the correct visual position.
 function normalizePage(page: ReturnType<PDFDocument["getPage"]>): void {
@@ -98,6 +139,7 @@ function normalizePage(page: ReturnType<PDFDocument["getPage"]>): void {
     return;
   }
 
+  transformAnnotRects(page, a, b, c, d, e, f);
   // Mirror PDFPage.translateContent / scaleContent pattern.
   // Do NOT call getContentStream() here — that would cache a stream inside the CTM block,
   // causing subsequent drawBadge/drawRectangle calls to be double-transformed.
