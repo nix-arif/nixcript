@@ -192,18 +192,32 @@ function formatQuotationNo(
 }
 
 // Callers may pass an org other than the caller's single active org — the
-// government-batch and finalize flows number quotations across every org
-// one owner controls (see getAllOwnerOrgs) — so this checks org membership
-// generally rather than requiring an exact match to the active org.
+// government-batch and finalize flows number quotations across every "dummy"
+// org the same owner controls (see getAllOwnerOrgs). Regular staff are never
+// themselves members of an owner's other orgs — only the owner is — so this
+// must NOT require literal membership in orgId. Instead it mirrors
+// getAllOwnerOrgs' own resolution: orgId is allowed if it's the caller's own
+// active org, or one of the other orgs owned by that active org's owner.
 async function assertOrgMember(orgId: string): Promise<void> {
   const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
-  const [m] = await db
+  const activeOrgId = session.session.activeOrganizationId;
+  if (!activeOrgId) throw new Error("Unauthorized");
+  if (orgId === activeOrgId) return;
+
+  const [ownerMember] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, activeOrgId), eq(member.role, "owner")))
+    .limit(1);
+  if (!ownerMember) throw new Error("Unauthorized");
+
+  const [owned] = await db
     .select({ id: member.id })
     .from(member)
-    .where(and(eq(member.userId, session.user.id), eq(member.organizationId, orgId), isNull(member.deletedAt)))
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.organizationId, orgId), eq(member.role, "owner")))
     .limit(1);
-  if (!m) throw new Error("Unauthorized");
+  if (!owned) throw new Error("Unauthorized");
 }
 
 export async function generateQuotationNo(orgId: string): Promise<string> {
