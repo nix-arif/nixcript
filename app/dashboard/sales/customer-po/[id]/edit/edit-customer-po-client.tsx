@@ -75,14 +75,19 @@ export function EditCustomerPoClient({
   cpo,
   members,
   currentUserName = "",
+  updateFn = updateCustomerPo,
+  detailHref,
 }: {
   cpo: CustomerPo;
   members: OrgMember[];
   currentUserName?: string;
+  updateFn?: typeof updateCustomerPo;
+  detailHref?: string;
 }) {
   const router = useRouter();
   const snap   = cpo.customerSnapshot as any;
   const cpoAny = cpo as any;
+  const backHref = detailHref ?? `/dashboard/sales/customer-po/${cpo.id}`;
 
   // ── Quotations (multiple) ──────────────────────────────────────────────────
   const [linkedQuotations, setLinkedQuotations] = useState<LinkedQuotation[]>(() => {
@@ -217,6 +222,12 @@ export function EditCustomerPoClient({
       let customerOrg:  string | null = null;
       let customerOrgMemberId: string | null = null;
 
+      const applySnapshotFallback = () => {
+        const snap = qt.customerSnapshot as any;
+        customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+        customerOrg  = snap?.organizationName ?? null;
+      };
+
       if (qt.customerId) {
         try {
           const cust = await getCustomer(qt.customerId);
@@ -225,16 +236,14 @@ export function EditCustomerPoClient({
             const primary = cust.memberships.find((c) => c.isPrimary) ?? cust.memberships[0];
             customerOrg  = primary?.orgName ?? null;
             customerOrgMemberId = primary?.id ?? null;
+          } else {
+            applySnapshotFallback();
           }
         } catch {
-          const snap = qt.customerSnapshot as any;
-          customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
-          customerOrg  = snap?.organizationName ?? null;
+          applySnapshotFallback();
         }
       } else {
-        const snap = qt.customerSnapshot as any;
-        customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
-        customerOrg  = snap?.organizationName ?? null;
+        applySnapshotFallback();
       }
 
       // Block if customer does not exactly match the primary quotation's customer
@@ -524,7 +533,7 @@ export function EditCustomerPoClient({
     setSaving(true);
     try {
       const primary = linkedQuotations[0];
-      await updateCustomerPo({
+      await updateFn({
         id: cpo.id,
         customerPoNo:    customerPoNo.trim(),
         customerId:      primary?.customerId ?? cpo.customerId ?? undefined,
@@ -557,7 +566,7 @@ export function EditCustomerPoClient({
         status,
       });
       toast.success("Customer PO updated");
-      router.push(`/dashboard/sales/customer-po/${cpo.id}`);
+      router.push(backHref);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -591,7 +600,7 @@ export function EditCustomerPoClient({
               <option value="fulfilled">Fulfilled</option>
               <option value="cancelled">Cancelled</option>
             </select>
-            <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/customer-po/${cpo.id}`)} className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-2">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
           </div>
@@ -1159,7 +1168,7 @@ export function EditCustomerPoClient({
           <Button onClick={handleSave} disabled={saving || pdfUploading}>
             {saving ? "Saving…" : "Save changes"}
           </Button>
-          <Button variant="outline" onClick={() => router.push(`/dashboard/sales/customer-po/${cpo.id}`)}>
+          <Button variant="outline" onClick={() => router.push(backHref)}>
             Cancel
           </Button>
         </div>

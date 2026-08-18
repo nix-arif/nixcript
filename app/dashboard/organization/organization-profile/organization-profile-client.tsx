@@ -202,6 +202,7 @@ export function OrganizationProfileClient({ data }: Props) {
 
   // Company identity
   const [companyName, setCompanyName] = useState(data.companyName ?? "");
+  const [businessType, setBusinessType] = useState(data.businessType ?? "trading");
   const [companyAddress, setCompanyAddress] = useState(data.companyAddress ?? "");
   const [phone, setPhone] = useState(data.phone ?? "");
   const [email, setEmail] = useState(data.email ?? "");
@@ -312,6 +313,7 @@ export function OrganizationProfileClient({ data }: Props) {
     try {
       await upsertOrganizationProfile({
         companyName,
+        businessType,
         companyAddress,
         phone: phone || null,
         email: email || null,
@@ -459,6 +461,33 @@ export function OrganizationProfileClient({ data }: Props) {
                 placeholder="e.g. Bio Mech Supply Sdn. Bhd."
                 className="h-9 text-sm"
               />
+            </Field>
+            <Field label="Business type">
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: "trading", label: "Trading", desc: "Resell finished goods as-is" },
+                  { id: "oem", label: "OEM", desc: "Private-label sourcing only" },
+                  { id: "both", label: "Both", desc: "Mix of trading & OEM" },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setBusinessType(opt.id)}
+                    className={cn(
+                      "text-left px-3 py-2 rounded-lg border transition-colors",
+                      businessType === opt.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted/40",
+                    )}
+                  >
+                    <div className="text-xs font-medium">{opt.label}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                Controls whether OEM sourcing fields (design reference, private-label emboss spec) appear in the product catalogue and sales order items.
+              </p>
             </Field>
             <Field label="Company address">
               <textarea

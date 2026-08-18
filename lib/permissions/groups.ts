@@ -5,7 +5,9 @@
 export const KEY_GROUP: Record<string, string> = {
   "quotation:read": "sales", "quotation:create": "sales", "quotation:update": "sales", "quotation:delete": "sales",
   "sales-order:read": "sales", "sales-order:create": "sales", "sales-order:update": "sales", "sales-order:delete": "sales",
+  "sales-order:read:centralized": "sales", "sales-order:update:centralized": "sales",
   "customer-po:read": "sales", "customer-po:create": "sales", "customer-po:update": "sales", "customer-po:delete": "sales",
+  "customer-po:read:centralized": "sales", "customer-po:update:centralized": "sales",
   "customer:read": "sales", "customer:create": "sales", "customer:update": "sales", "customer:delete": "sales",
 
   "purchase-requisition:read": "procurement", "purchase-requisition:create": "procurement",

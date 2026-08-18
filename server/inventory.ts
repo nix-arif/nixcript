@@ -716,13 +716,14 @@ export async function setReorderPoint(
 
 export async function getProductsByCode(
   codes: string[],
-): Promise<{ productCode: string; id: string; description: string | null; uom: string | null }[]> {
+): Promise<{ productCode: string; id: string; description: string | null; uom: string | null; sourcingType: string | null }[]> {
   if (codes.length === 0) return [];
   const { orgId } = await requireAccess("inventory:read");
+  const orgIds = await getAllOwnerOrgIds(orgId);
   return db
-    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom })
+    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom, sourcingType: product.sourcingType })
     .from(product)
-    .where(and(eq(product.organizationId, orgId), inArray(product.productCode, codes)));
+    .where(and(inArray(product.organizationId, orgIds), inArray(product.productCode, codes)));
 }
 
 export async function searchProducts(query: string) {
@@ -730,7 +731,7 @@ export async function searchProducts(query: string) {
   if (!query.trim()) return [];
   const orgIds = await getAllOwnerOrgIds(orgId);
   return db
-    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom })
+    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom, sourcingType: product.sourcingType })
     .from(product)
     .where(and(
       inArray(product.organizationId, orgIds),

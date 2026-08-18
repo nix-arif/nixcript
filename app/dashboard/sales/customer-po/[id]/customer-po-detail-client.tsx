@@ -6,10 +6,11 @@ import {
   FileTextIcon, PackageIcon, TruckIcon, ReceiptIcon,
   BanknoteIcon, CircleIcon, PencilIcon, ExternalLinkIcon,
   BuildingIcon, UserIcon, CalendarIcon, PaperclipIcon, PlusIcon,
+  LayersIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { CustomerPoTrackingData } from "@/server/customer-purchase-order";
+import type { CustomerPoTrackingData, CpoItemInput } from "@/server/customer-purchase-order";
 
 type Data = CustomerPoTrackingData;
 
@@ -182,14 +183,26 @@ function paymentState(invoices: Data["invoices"]): {
 export function CustomerPoDetailClient({
   data,
   permissions,
+  backHref = "/dashboard/sales/customer-po",
+  organizationName,
+  editHref,
 }: {
   data: Data;
   permissions: string[];
+  backHref?: string;
+  organizationName?: string;
+  // When provided, overrides both the Edit destination and whether the Edit
+  // button shows at all — used by the centralized view, whose Edit rights
+  // are gated by a separate permission (customer-po:update:centralized)
+  // resolved server-side rather than the plain `permissions` array here.
+  editHref?: string;
 }) {
   const router = useRouter();
   const { cpo, createdByName, so, internalPos, dos, invoices } = data;
   const snap = cpo.customerSnapshot as any;
   const can  = (p: string) => permissions.includes("*") || permissions.includes(p);
+  const showEdit = editHref !== undefined || can("customer-po:update");
+  const resolvedEditHref = editHref ?? `/dashboard/sales/customer-po/${cpo.id}/edit`;
 
   const prs     = internalPos.filter((p) => p.status === "draft" || p.status === "submitted");
   const spoList = internalPos.filter((p) => p.status !== "draft" && p.status !== "submitted" && p.status !== "cancelled");
@@ -221,11 +234,16 @@ export function CustomerPoDetailClient({
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Button variant="ghost" size="icon" className="w-7 h-7 -ml-1.5" onClick={() => router.push("/dashboard/sales/customer-po")}>
+            <Button variant="ghost" size="icon" className="w-7 h-7 -ml-1.5" onClick={() => router.push(backHref)}>
               <ArrowLeftIcon className="w-3.5 h-3.5" />
             </Button>
             <h1 className="text-lg font-bold font-mono">{cpo.customerPoNo}</h1>
             <StatusBadge label={cpoStatusCfg.label} color={cpoStatusCfg.color} />
+            {organizationName && (
+              <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
+                {organizationName}
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground pl-9">
             {snap?.organizationName ?? snap?.name ?? "Unknown customer"}
@@ -233,14 +251,17 @@ export function CustomerPoDetailClient({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {can("customer-po:update") && (
+          {showEdit && (
             <Button variant="outline" size="sm" className="gap-1.5"
-              onClick={() => router.push(`/dashboard/sales/customer-po/${cpo.id}/edit`)}>
+              onClick={() => router.push(resolvedEditHref)}>
               <PencilIcon className="w-3.5 h-3.5" /> Edit
             </Button>
           )}
         </div>
       </div>
+
+      {/* ── Items ── */}
+      {cpo.items && cpo.items.length > 0 && <ItemsSection items={cpo.items} currency={cpo.currency} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ── Left: Fulfilment trail ── */}
@@ -558,6 +579,172 @@ function ProgressRow({
       </div>
       <span className={cn("text-xs flex-1", state === "pending" ? "text-muted-foreground" : "text-foreground")}>{label}</span>
       {note && <span className="text-[10px] text-muted-foreground">{note}</span>}
+    </div>
+  );
+}
+
+// ── Items ───────────────────────────────────────────────────────────────────
+function ItemsSection({ items, currency }: { items: CpoItemInput[]; currency: string }) {
+  const acct = (v: number) =>
+    v.toLocaleString("en-MY", { style: "currency", currency: currency || "MYR", minimumFractionDigits: 2 });
+
+  const seenGroupIds = new Set<string>();
+  const groupOrder: string[] = [];
+  for (const it of items) {
+    if (it.setGroupId && !seenGroupIds.has(it.setGroupId)) {
+      seenGroupIds.add(it.setGroupId);
+      groupOrder.push(it.setGroupId);
+    }
+  }
+
+  type Entry =
+    | { kind: "group"; gid: string; first: CpoItemInput; groupTotal: number }
+    | { kind: "item"; item: CpoItemInput; inSet: boolean };
+
+  const entries: Entry[] = [];
+  for (const gid of groupOrder) {
+    const gItems = items.filter((it) => it.setGroupId === gid);
+    const first = gItems[0];
+    const groupTotal = gItems.reduce((s, it) => s + Number(it.totalPrice ?? 0), 0);
+    entries.push({ kind: "group", gid, first, groupTotal });
+    gItems.forEach((it) => entries.push({ kind: "item", item: it, inSet: true }));
+  }
+  items.filter((it) => !it.setGroupId).forEach((it) => entries.push({ kind: "item", item: it, inSet: false }));
+
+  const grandTotal = items.reduce((s, it) => s + Number(it.totalPrice ?? 0), 0);
+
+  const TypeBadge = ({ isRent }: { isRent: boolean }) => (
+    <span className={cn(
+      "text-[8px] font-bold px-1 py-0.5 rounded border",
+      isRent
+        ? "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700 dark:text-amber-400"
+        : "bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-400",
+    )}>
+      {isRent ? "RENT" : "SELL"}
+    </span>
+  );
+
+  return (
+    <div className="bg-background border border-border rounded-xl overflow-hidden">
+      <div className="px-4 py-3 bg-muted/20 border-b border-border flex items-center justify-between gap-4">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Items</span>
+        <span className="text-xs text-muted-foreground">{items.length} item{items.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="border-b border-border text-muted-foreground">
+              <th className="px-3 py-2 text-left font-medium w-12">#</th>
+              <th className="px-3 py-2 text-left font-medium">Code</th>
+              <th className="px-3 py-2 text-left font-medium min-w-48">Description</th>
+              <th className="px-3 py-2 text-center font-medium">Qty</th>
+              <th className="px-3 py-2 text-center font-medium">UOM</th>
+              <th className="px-3 py-2 text-right font-medium">Unit Price</th>
+              <th className="px-3 py-2 text-center font-medium">Disc.</th>
+              <th className="px-3 py-2 text-right font-medium">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((e) => {
+              if (e.kind === "group") {
+                return (
+                  <tr key={`hdr-${e.gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
+                    <td colSpan={3} className="px-3 py-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                          {e.first.setGroupLabel || "Set"}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          × {Number(e.first.setQty || 1)} {Number(e.first.setQty || 1) === 1 ? "set" : "sets"}
+                        </span>
+                      </div>
+                    </td>
+                    <td colSpan={4} />
+                    <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
+                      {acct(e.groupTotal)}
+                    </td>
+                  </tr>
+                );
+              }
+              const isRent = e.item.lineType === "rent";
+              return (
+                <tr
+                  key={`${e.item.rowNo}-${e.item.productCode}`}
+                  className={cn("border-b border-border/60 last:border-0", e.inSet && "bg-blue-50/20 dark:bg-blue-900/5")}
+                >
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-muted-foreground text-[10px]">{e.item.rowNo}</span>
+                      <TypeBadge isRent={isRent} />
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-[11px] align-top">{e.item.productCode || "—"}</td>
+                  <td className="px-3 py-2 align-top whitespace-normal">{e.item.description || "—"}</td>
+                  <td className="px-3 py-2 text-center tabular-nums align-top">{e.item.qty}</td>
+                  <td className="px-3 py-2 text-center text-muted-foreground align-top">{e.item.uom || "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums align-top">{acct(Number(e.item.unitPrice ?? 0))}</td>
+                  <td className="px-3 py-2 text-center tabular-nums align-top">
+                    {Number(e.item.discountPct ?? 0) > 0 ? `${e.item.discountPct}%` : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium align-top">{acct(Number(e.item.totalPrice ?? 0))}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-border">
+              <td colSpan={7} className="px-3 py-2 text-right text-xs font-semibold">Items total</td>
+              <td className="px-3 py-2 text-right text-sm font-bold tabular-nums">{acct(grandTotal)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* Mobile stacked cards */}
+      <div className="md:hidden divide-y divide-border/60">
+        {entries.map((e) => {
+          if (e.kind === "group") {
+            return (
+              <div key={`hdr-${e.gid}`} className="px-3 py-2 bg-blue-50/60 dark:bg-blue-900/10">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">{e.first.setGroupLabel || "Set"}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    × {Number(e.first.setQty || 1)} {Number(e.first.setQty || 1) === 1 ? "set" : "sets"}
+                  </span>
+                  <span className="ml-auto text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">{acct(e.groupTotal)}</span>
+                </div>
+              </div>
+            );
+          }
+          const isRent = e.item.lineType === "rent";
+          return (
+            <div key={`${e.item.rowNo}-${e.item.productCode}`} className={cn("px-3 py-2.5 space-y-1 text-xs", e.inSet && "bg-blue-50/20 dark:bg-blue-900/5")}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground text-[10px]">#{e.item.rowNo}</span>
+                  <TypeBadge isRent={isRent} />
+                  <span className="font-mono text-[11px]">{e.item.productCode || "—"}</span>
+                </div>
+                <span className="font-medium tabular-nums">{acct(Number(e.item.totalPrice ?? 0))}</span>
+              </div>
+              <div className="text-foreground">{e.item.description || "—"}</div>
+              <div className="flex items-center gap-3 text-muted-foreground">
+                <span>{e.item.qty} {e.item.uom}</span>
+                <span>{acct(Number(e.item.unitPrice ?? 0))}/unit</span>
+                {Number(e.item.discountPct ?? 0) > 0 && <span>{e.item.discountPct}% off</span>}
+              </div>
+            </div>
+          );
+        })}
+        <div className="px-3 py-2.5 flex items-center justify-between text-xs font-semibold bg-muted/10">
+          <span>Items total</span>
+          <span className="tabular-nums">{acct(grandTotal)}</span>
+        </div>
+      </div>
     </div>
   );
 }

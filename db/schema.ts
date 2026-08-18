@@ -689,6 +689,17 @@ export const product = pgTable(
     // Rental flag
     isRental: boolean("is_rental").default(false).notNull(),
 
+    // Sourcing: trading | oem | both (null = inherit org's businessType default).
+    // "both" means this product swings either way per order — SO items must
+    // pick one explicitly rather than silently inheriting it.
+    sourcingType: text("sourcing_type"),
+    // OEM / private-label spec — only meaningful when sourcingType is oem/both.
+    designBrandName: text("design_brand_name"), // reference brand to match spec against, e.g. "geister"
+    designBrandCode: text("design_brand_code"), // reference catalog code, e.g. "10-3620"
+    privateLabelCode: text("private_label_code"), // own code to emboss, e.g. "F680-18DP"
+    embossRequired: boolean("emboss_required").default(false).notNull(),
+    qrCodeRequired: boolean("qr_code_required").default(false).notNull(),
+
     // Image
     imageKey: text("image_key"), // R2 key for product catalogue image
     imageUploadedAt: timestamp("image_uploaded_at"), // bumped on every image upload for cache-busting
@@ -965,6 +976,10 @@ export const organizationProfile = pgTable("organization_profile", {
 
   // Quotation number format: A | B | C
   quotationNoFormat: text("quotation_no_format").default("A"),
+
+  // Business model: trading | oem | both — governs whether products/SO items
+  // expose OEM sourcing (design reference + private-label emboss spec).
+  businessType: text("business_type").default("trading"),
 
   // Phone / Contact
   phone: text("phone"),
@@ -1645,6 +1660,12 @@ export const salesOrderItem = pgTable(
     lineType: text("line_type").notNull().default("sell"),
     rentalDuration: text("rental_duration"),
     rentalUnit: text("rental_unit"),
+
+    // Resolved sourcing for this line: trading | oem. Inherited silently
+    // from product.sourcingType when the product is fixed one way; chosen
+    // explicitly when the product is "both" or has no catalog link. This is
+    // what PR/PO creation reads — it never re-derives from product again.
+    sourcingType: text("sourcing_type"),
 
     // Set grouping
     setGroupId: text("set_group_id"),
@@ -2894,6 +2915,13 @@ export const leaveEntitlement = pgTable(
     openingBalance: text("opening_balance").notNull().default("0"),
     openingBalanceSetBy: text("opening_balance_set_by").references(() => user.id),
     openingBalanceSetAt: timestamp("opening_balance_set_at"),
+    // Days already taken before this system was adopted (tracked manually,
+    // e.g. mid-year rollout) — subtracted from remaining, unlike
+    // openingBalance above which is added. One-off backfill for the year
+    // this was recorded in; does not carry forward to future years.
+    openingUsedDays: text("opening_used_days").notNull().default("0"),
+    openingUsedDaysSetBy: text("opening_used_days_set_by").references(() => user.id),
+    openingUsedDaysSetAt: timestamp("opening_used_days_set_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },

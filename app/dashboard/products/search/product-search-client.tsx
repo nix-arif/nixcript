@@ -673,7 +673,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { searchProducts, getDistinctBrands, setProductRental } from "@/server/products";
+import { searchProducts, getDistinctBrands, setProductRental, updateProductSourcing } from "@/server/products";
 import {
   SearchIcon,
   ShieldCheckIcon,
@@ -823,6 +823,34 @@ function ProductSlideOver({
       // leave state unchanged on error
     } finally {
       setToggling(false);
+    }
+  }
+
+  // ── Sourcing (trading / OEM) ────────────────────────────────────────────
+  const [sourcingType, setSourcingType] = useState<"trading" | "oem" | "both" | null>(
+    (p.sourcingType as "trading" | "oem" | "both" | null) ?? null,
+  );
+  const [designBrandName, setDesignBrandName] = useState(p.designBrandName ?? "");
+  const [designBrandCode, setDesignBrandCode] = useState(p.designBrandCode ?? "");
+  const [privateLabelCode, setPrivateLabelCode] = useState(p.privateLabelCode ?? "");
+  const [embossRequired, setEmbossRequired] = useState(p.embossRequired);
+  const [qrCodeRequired, setQrCodeRequired] = useState(p.qrCodeRequired);
+  const [savingSourcing, setSavingSourcing] = useState(false);
+  const showOemFields = sourcingType === "oem" || sourcingType === "both";
+
+  async function handleSaveSourcing() {
+    setSavingSourcing(true);
+    try {
+      await updateProductSourcing(p.id, {
+        sourcingType,
+        designBrandName: designBrandName.trim() || null,
+        designBrandCode: designBrandCode.trim() || null,
+        privateLabelCode: privateLabelCode.trim() || null,
+        embossRequired,
+        qrCodeRequired,
+      });
+    } finally {
+      setSavingSourcing(false);
     }
   }
 
@@ -1029,6 +1057,106 @@ function ProductSlideOver({
                 >
                   {toggling ? "saving…" : isRental ? "rental" : "consumable"}
                 </button>
+              </div>
+            </div>
+
+            {/* Sourcing (trading / OEM) */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-muted/40 border-b border-border flex items-center justify-between">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Sourcing
+                </span>
+                <button
+                  type="button"
+                  disabled={savingSourcing}
+                  onClick={handleSaveSourcing}
+                  className="text-xs px-2.5 py-1 rounded-md border border-primary bg-primary/5 text-primary font-medium disabled:opacity-50"
+                >
+                  {savingSourcing ? "saving…" : "Save"}
+                </button>
+              </div>
+              <div className="px-3 py-3 space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { id: "trading", label: "Trading" },
+                    { id: "oem", label: "OEM" },
+                    { id: "both", label: "Both" },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setSourcingType(opt.id)}
+                      className={cn(
+                        "text-xs px-2 py-1.5 rounded-md border font-medium transition-colors",
+                        sourcingType === opt.id
+                          ? "border-primary bg-primary/5 text-primary"
+                          : "border-border bg-muted/40 text-muted-foreground hover:bg-muted",
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {sourcingType === null && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Not set — falls back to the organization&apos;s default business type.
+                  </p>
+                )}
+
+                {showOemFields && (
+                  <div className="space-y-2.5 pt-2 border-t border-border/50">
+                    <div>
+                      <label className="block text-[10px] font-medium text-muted-foreground mb-1">
+                        Design brand name / code (spec reference)
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          value={designBrandName}
+                          onChange={(e) => setDesignBrandName(e.target.value)}
+                          placeholder="e.g. geister"
+                          className="h-8 w-full border border-input rounded-md px-2 text-xs bg-background"
+                        />
+                        <input
+                          value={designBrandCode}
+                          onChange={(e) => setDesignBrandCode(e.target.value)}
+                          placeholder="e.g. 10-3620"
+                          className="h-8 w-full border border-input rounded-md px-2 text-xs bg-background"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-muted-foreground mb-1">
+                        Private-label code (to emboss)
+                      </label>
+                      <input
+                        value={privateLabelCode}
+                        onChange={(e) => setPrivateLabelCode(e.target.value)}
+                        placeholder="e.g. F680-18DP"
+                        className="h-8 w-full border border-input rounded-md px-2 text-xs bg-background"
+                      />
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={embossRequired}
+                          onChange={(e) => setEmbossRequired(e.target.checked)}
+                          className="w-3.5 h-3.5"
+                        />
+                        Emboss required
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={qrCodeRequired}
+                          onChange={(e) => setQrCodeRequired(e.target.checked)}
+                          className="w-3.5 h-3.5"
+                        />
+                        QR code required
+                      </label>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

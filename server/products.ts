@@ -343,12 +343,14 @@ export async function getProductDetailsByCodes(codes: string[]) {
   });
 }
 
-export async function getProductByCode(code: string): Promise<{ description: string | null; uom: string | null } | null> {
+export async function getProductByCode(
+  code: string,
+): Promise<{ description: string | null; uom: string | null; sourcingType: string | null } | null> {
   if (!code.trim()) return null;
   const { orgId } = await requireAccess("product:read");
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   const [row] = await db
-    .select({ description: product.description, uom: product.uom })
+    .select({ description: product.description, uom: product.uom, sourcingType: product.sourcingType })
     .from(product)
     .where(and(inArray(product.organizationId, ownerOrgIds), ilike(product.productCode, code.trim())))
     .limit(1);
@@ -489,8 +491,35 @@ export async function checkProductCodesExist(
 
 export async function setProductRental(productId: string, isRental: boolean) {
   const { orgId } = await requireAccess("product:seed");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   await db
     .update(product)
     .set({ isRental, updatedAt: new Date() })
-    .where(and(eq(product.id, productId), eq(product.organizationId, orgId)));
+    .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds)));
+}
+
+export interface ProductSourcingInput {
+  sourcingType: "trading" | "oem" | "both" | null;
+  designBrandName?: string | null;
+  designBrandCode?: string | null;
+  privateLabelCode?: string | null;
+  embossRequired?: boolean;
+  qrCodeRequired?: boolean;
+}
+
+export async function updateProductSourcing(productId: string, data: ProductSourcingInput) {
+  const { orgId } = await requireAccess("product:seed");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  await db
+    .update(product)
+    .set({
+      sourcingType: data.sourcingType,
+      designBrandName: data.designBrandName ?? null,
+      designBrandCode: data.designBrandCode ?? null,
+      privateLabelCode: data.privateLabelCode ?? null,
+      embossRequired: data.embossRequired ?? false,
+      qrCodeRequired: data.qrCodeRequired ?? false,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds)));
 }

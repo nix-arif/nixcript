@@ -123,8 +123,13 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     if (val.length < 2) { setQtResults([]); return; }
     if (qtTimer.current) clearTimeout(qtTimer.current);
     qtTimer.current = setTimeout(async () => {
-      setQtResults(await searchQuotationsByNo(val, true));
-      setQtHighlight(-1);
+      try {
+        setQtResults(await searchQuotationsByNo(val, true));
+        setQtHighlight(-1);
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "Failed to search quotations");
+        setQtResults([]);
+      }
     }, 300);
   }, []);
 
@@ -153,6 +158,12 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       let customerOrg:  string | null = null;
       let customerOrgMemberId: string | null = null;
 
+      const applySnapshotFallback = () => {
+        const snap = qt.customerSnapshot as any;
+        customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+        customerOrg  = snap?.organizationName ?? null;
+      };
+
       if (qt.customerId) {
         try {
           const cust = await getCustomer(qt.customerId);
@@ -161,16 +172,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
             const primary = cust.memberships.find((c) => c.isPrimary) ?? cust.memberships[0];
             customerOrg  = primary?.orgName ?? null;
             customerOrgMemberId = primary?.id ?? null;
+          } else {
+            applySnapshotFallback();
           }
         } catch {
-          const snap = qt.customerSnapshot as any;
-          customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
-          customerOrg  = snap?.organizationName ?? null;
+          applySnapshotFallback();
         }
       } else {
-        const snap = qt.customerSnapshot as any;
-        customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
-        customerOrg  = snap?.organizationName ?? null;
+        applySnapshotFallback();
       }
 
       // Block if customer does not exactly match the primary quotation's customer

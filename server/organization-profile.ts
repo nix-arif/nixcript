@@ -298,6 +298,7 @@ export async function getFullOrganizationProfile() {
     slateInfoFontSize: profile.slateInfoFontSize ?? null,
     templateStyle: profile.templateStyle ?? "corporate",
     companyName: profile.companyName ?? org.name,
+    businessType: profile.businessType ?? "trading",
     companyAddress: profile.companyAddress ?? null,
     phone: profile.phone ?? null,
     email: profile.email ?? null,

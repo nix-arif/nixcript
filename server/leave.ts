@@ -47,6 +47,7 @@ export type MyLeaveBalance = LeaveEntitlementRow & {
   emergencyThresholdDays: number | null;
   remainingDays: string;
   openingBalanceSetByName: string | null;
+  openingUsedDaysSetByName: string | null;
   // Splits usedDays/pendingDays by the label actually recorded on each
   // application (leaveApplication.leaveTypeCode/Name) rather than this
   // type's own code — so Annual Leave's card can show how much of its
@@ -239,6 +240,9 @@ async function ensureEntitlement(
     openingBalance: "0",
     openingBalanceSetBy: null,
     openingBalanceSetAt: null,
+    openingUsedDays: "0",
+    openingUsedDaysSetBy: null,
+    openingUsedDaysSetAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -493,7 +497,10 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
     ents.push(await ensureEntitlement(orgId, userId, type, year));
   }
 
-  const setByIds = [...new Set(ents.map((e) => e.openingBalanceSetBy).filter((id): id is string => !!id))];
+  const setByIds = [...new Set([
+    ...ents.map((e) => e.openingBalanceSetBy),
+    ...ents.map((e) => e.openingUsedDaysSetBy),
+  ].filter((id): id is string => !!id))];
   const nameMap: Record<string, string | null> = {};
   if (setByIds.length > 0) {
     const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, setByIds));
@@ -538,9 +545,10 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
     const entitled = parseFloat(ent.entitledDays);
     const carry = parseFloat(ent.carryForwardDays);
     const opening = parseFloat(ent.openingBalance);
+    const openingUsed = parseFloat(ent.openingUsedDays);
     const used = parseFloat(ent.usedDays);
     const pending = parseFloat(ent.pendingDays);
-    const remaining = entitled + carry + opening - used - pending;
+    const remaining = entitled + carry + opening - openingUsed - used - pending;
     const byLabel = breakdownByType.get(type.id);
     const breakdown = byLabel && byLabel.size > 0
       ? [...byLabel.values()].sort((a, b) => (a.code === type.code ? -1 : b.code === type.code ? 1 : 0))
@@ -554,6 +562,7 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
       emergencyThresholdDays: type.emergencyThresholdDays,
       remainingDays: remaining.toFixed(1),
       openingBalanceSetByName: ent.openingBalanceSetBy ? nameMap[ent.openingBalanceSetBy] ?? null : null,
+      openingUsedDaysSetByName: ent.openingUsedDaysSetBy ? nameMap[ent.openingUsedDaysSetBy] ?? null : null,
       breakdown,
     };
   });
@@ -592,6 +601,37 @@ export async function setOpeningBalance(
       openingBalance: days.toFixed(1),
       openingBalanceSetBy: actorId,
       openingBalanceSetAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveEntitlement.id, ent.id));
+}
+
+// Days already taken before this system was adopted (e.g. tracked manually
+// on paper/Excel for a company rolling this out mid-year) — subtracts from
+// remaining, unlike setOpeningBalance above which adds.
+export async function setOpeningUsedDays(
+  userId: string,
+  leaveTypeId: string,
+  year: number,
+  days: number,
+): Promise<void> {
+  const { orgId, userId: actorId } = await requireAccess("leave:manage");
+  if (!Number.isFinite(days) || days < 0) throw new Error("Opening used days must be a non-negative number");
+
+  const [type] = await db
+    .select()
+    .from(leaveType)
+    .where(and(eq(leaveType.id, leaveTypeId), eq(leaveType.organizationId, orgId)))
+    .limit(1);
+  if (!type) throw new Error("Leave type not found");
+
+  const ent = await ensureEntitlement(orgId, userId, type, year);
+  await db
+    .update(leaveEntitlement)
+    .set({
+      openingUsedDays: days.toFixed(1),
+      openingUsedDaysSetBy: actorId,
+      openingUsedDaysSetAt: new Date(),
       updatedAt: new Date(),
     })
     .where(eq(leaveEntitlement.id, ent.id));

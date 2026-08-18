@@ -15,6 +15,7 @@ import {
   user,
   invoice,
   consignment,
+  member,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -93,6 +94,27 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
+// Returns every org owned by the same owner as the caller's active org (the
+// caller need not be a member of those other orgs themselves — only the
+// owner is, by design; see the identical pattern in server/quotation.ts and
+// server/customer-purchase-order.ts).
+async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
+  const [ownerMember] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
+    .limit(1);
+  if (!ownerMember) return [currentOrgId];
+
+  const ownedOrgs = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
+
+  const ids = [...new Set(ownedOrgs.map((o) => o.organizationId))];
+  return ids.length > 0 ? ids : [currentOrgId];
+}
+
 // ── Running number ─────────────────────────────────────────────────────────
 
 async function generateSoNo(orgId: string): Promise<string> {
@@ -167,6 +189,7 @@ export interface SalesOrderItemInput {
   lineType?: string;
   rentalDuration?: string;
   rentalUnit?: string;
+  sourcingType?: "trading" | "oem" | null;
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
@@ -281,6 +304,31 @@ export async function getSalesOrders(): Promise<SalesOrderListRow[]> {
     .where(eq(salesOrder.organizationId, orgId))
     .orderBy(desc(salesOrder.createdAt));
 
+  return enrichSalesOrderRows(rows);
+}
+
+export type CentralizedSalesOrder = SalesOrderListRow & { organizationName: string };
+
+// Cross-org view for members explicitly granted sales-order:read:centralized
+// — every Sales Order recorded under any org the same owner controls, not
+// just the caller's own active org.
+export async function getSalesOrdersCentralized(): Promise<CentralizedSalesOrder[]> {
+  const { orgId, userId } = await requireAccess("sales-order:read:centralized");
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+
+  const rows = await db
+    .select({ so: salesOrder, organizationName: organization.name })
+    .from(salesOrder)
+    .innerJoin(organization, eq(organization.id, salesOrder.organizationId))
+    .where(inArray(salesOrder.organizationId, ownerOrgIds))
+    .orderBy(desc(salesOrder.createdAt));
+
+  const orgNameById = new Map(rows.map((r) => [r.so.id, r.organizationName]));
+  const enriched = await enrichSalesOrderRows(rows.map((r) => r.so));
+  return enriched.map((r) => ({ ...r, organizationName: orgNameById.get(r.id)! }));
+}
+
+async function enrichSalesOrderRows(rows: SalesOrderRow[]): Promise<SalesOrderListRow[]> {
   if (rows.length === 0) return [];
 
   const creatorIds = [...new Set(rows.map((r) => r.createdBy))];
@@ -335,7 +383,30 @@ export async function getSalesOrderDetail(id: string): Promise<SalesOrderWithIte
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
   if (!so) return null;
+  return fetchSalesOrderWithItems(so);
+}
 
+// Same detail, but resolvable across every org the caller's owner controls —
+// for members explicitly granted sales-order:read:centralized.
+export async function getSalesOrderDetailCentralized(
+  id: string,
+): Promise<(SalesOrderWithItems & { organizationName: string }) | null> {
+  const { orgId, userId } = await requireAccess("sales-order:read:centralized");
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+
+  const [row] = await db
+    .select({ so: salesOrder, organizationName: organization.name })
+    .from(salesOrder)
+    .innerJoin(organization, eq(organization.id, salesOrder.organizationId))
+    .where(and(eq(salesOrder.id, id), inArray(salesOrder.organizationId, ownerOrgIds)));
+
+  if (!row) return null;
+  const detail = await fetchSalesOrderWithItems(row.so);
+  return { ...detail, organizationName: row.organizationName };
+}
+
+async function fetchSalesOrderWithItems(so: SalesOrderRow): Promise<SalesOrderWithItems> {
+  const id = so.id;
   const cpoIds = [
     ...new Set(
       ((so.customerPoLinks as { customerPoId: string }[] | null) ?? []).map((l) => l.customerPoId),
@@ -561,6 +632,7 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
         lineType: item.lineType ?? "sell",
         rentalDuration: item.rentalDuration ?? null,
         rentalUnit: item.rentalUnit ?? null,
+        sourcingType: item.sourcingType ?? null,
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
@@ -611,6 +683,31 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
     .where(and(eq(salesOrder.id, input.id), eq(salesOrder.organizationId, orgId)));
 
   if (!existing) throw new Error("Sales order not found");
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+  return applySalesOrderUpdate(existing, input, userId, ownerOrgIds);
+}
+
+// Same update, but resolvable across every org the caller's owner controls —
+// for the Edit flow reached from the centralized view.
+export async function updateSalesOrderCentralized(input: UpdateSalesOrderInput): Promise<SalesOrderRow> {
+  const { orgId, userId } = await requireAccess("sales-order:update:centralized");
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+
+  const [existing] = await db
+    .select()
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, input.id), inArray(salesOrder.organizationId, ownerOrgIds)));
+
+  if (!existing) throw new Error("Sales order not found");
+  return applySalesOrderUpdate(existing, input, userId, ownerOrgIds);
+}
+
+async function applySalesOrderUpdate(
+  existing: SalesOrderRow,
+  input: UpdateSalesOrderInput,
+  userId: string,
+  ownerOrgIds: string[],
+): Promise<SalesOrderRow> {
   if (existing.createdBy !== userId) throw new Error("Only the creator can edit this sales order");
   if (existing.status === "submitted" || existing.status === "confirmed")
     throw new Error("Cannot edit a submitted or confirmed sales order");
@@ -628,7 +725,7 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
   let customerSnapshot: SalesOrderRow["customerSnapshot"] = existing.customerSnapshot;
   if (input.customerId !== undefined) {
     customerSnapshot = input.customerId
-      ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
+      ? await buildCustomerSnapshot(input.customerId, ownerOrgIds, input.customerOrgMemberId)
       : null;
   }
 
@@ -700,6 +797,7 @@ export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<Sa
         lineType: item.lineType ?? "sell",
         rentalDuration: item.rentalDuration ?? null,
         rentalUnit: item.rentalUnit ?? null,
+        sourcingType: item.sourcingType ?? null,
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,

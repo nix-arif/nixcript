@@ -15,6 +15,7 @@ import {
   BuildingIcon,
   BuildingIcon as ProcurementIcon,
   BookOpenIcon,
+  LayersIcon,
 } from "lucide-react";
 import React from "react";
 
@@ -53,6 +54,15 @@ export const navConfig: NavGroup[] = [
       { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
       { title: "Consignment",  url: "/dashboard/sales/consignment",   permission: "sales-order:read" },
       { title: "Activity Log", url: "/dashboard/sales/activity",      permission: "customer:read"    },
+    ],
+  },
+  {
+    title: "Centralize",
+    url: "#",
+    icon: React.createElement(LayersIcon),
+    items: [
+      { title: "Customer POs", url: "/dashboard/sales/customer-po/centralized", permission: "customer-po:read:centralized" },
+      { title: "Sales Orders", url: "/dashboard/sales/order/centralized", permission: "sales-order:read:centralized" },
     ],
   },
   {

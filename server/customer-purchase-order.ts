@@ -10,6 +10,8 @@ import {
   purchaseOrder,
   purchaseOrderCustomerPo,
   user,
+  member,
+  organization,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -145,6 +147,45 @@ export async function getCustomerPos(): Promise<CustomerPo[]> {
     .orderBy(desc(customerPurchaseOrder.createdAt));
 }
 
+// Returns every org owned by the same owner as the caller's active org (the
+// caller need not be a member of those other orgs themselves — only the
+// owner is, by design; see the identical pattern in server/quotation.ts).
+async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<string[]> {
+  const [ownerMember] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")))
+    .limit(1);
+  if (!ownerMember) return [currentOrgId];
+
+  const ownedOrgs = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
+
+  const ids = [...new Set(ownedOrgs.map((o) => o.organizationId))];
+  return ids.length > 0 ? ids : [currentOrgId];
+}
+
+export type CentralizedCustomerPo = CustomerPo & { organizationName: string };
+
+// Cross-org view for members explicitly granted customer-po:read:centralized
+// — every Customer PO recorded under any org the same owner controls, not
+// just the caller's own active org.
+export async function getCustomerPosCentralized(): Promise<CentralizedCustomerPo[]> {
+  const { orgId, userId } = await requireAccess("customer-po:read:centralized");
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+
+  const rows = await db
+    .select({ po: customerPurchaseOrder, organizationName: organization.name })
+    .from(customerPurchaseOrder)
+    .innerJoin(organization, eq(organization.id, customerPurchaseOrder.organizationId))
+    .where(inArray(customerPurchaseOrder.organizationId, ownerOrgIds))
+    .orderBy(desc(customerPurchaseOrder.createdAt));
+
+  return rows.map(({ po, organizationName }) => ({ ...po, organizationName }));
+}
+
 export async function getOpenCustomerPos(): Promise<CustomerPoSearchResult[]> {
   const { orgId } = await requireAccess("customer-po:read");
   return db
@@ -174,6 +215,18 @@ export async function getCustomerPoDetail(id: string): Promise<CustomerPo | null
     .select()
     .from(customerPurchaseOrder)
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
+  return row ?? null;
+}
+
+// Same lookup, but resolvable across every org the caller's owner controls —
+// for the Edit flow reached from the centralized view.
+export async function getCustomerPoDetailCentralized(id: string): Promise<CustomerPo | null> {
+  const { orgId, userId } = await requireAccess("customer-po:update:centralized");
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+  const [row] = await db
+    .select()
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
   return row ?? null;
 }
 
@@ -279,7 +332,7 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
   const { orgId, userId } = await requireAccess("customer-po:create");
 
   const customerSnapshot: CustomerPo["customerSnapshot"] = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, await getAllOwnerOrgIds(userId, orgId), input.customerOrgMemberId)
     : null;
 
   const [row] = await db
@@ -349,6 +402,25 @@ export async function updateCustomerPo(input: UpdateCustomerPoInput): Promise<Cu
     .where(and(eq(customerPurchaseOrder.id, input.id), eq(customerPurchaseOrder.organizationId, orgId)));
   if (!existing) throw new Error("Customer PO not found");
 
+  return applyCustomerPoUpdate(existing, input);
+}
+
+// Same update, but resolvable across every org the caller's owner controls —
+// for the Edit flow reached from the centralized view.
+export async function updateCustomerPoCentralized(input: UpdateCustomerPoInput): Promise<CustomerPo> {
+  const { orgId, userId } = await requireAccess("customer-po:update:centralized");
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+
+  const [existing] = await db
+    .select()
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.id, input.id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
+  if (!existing) throw new Error("Customer PO not found");
+
+  return applyCustomerPoUpdate(existing, input);
+}
+
+async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomerPoInput): Promise<CustomerPo> {
   if (input.documentKey !== undefined && existing.documentKey && existing.documentKey !== input.documentKey) {
     await deleteDocument(existing.documentKey);
   }
@@ -409,7 +481,30 @@ export async function getCustomerPoForTracking(id: string): Promise<CustomerPoTr
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
 
   if (!cpo) return null;
+  return fetchCpoTrackingData(cpo);
+}
 
+// Same tracking data, but resolvable across every org the caller's owner
+// controls — for members explicitly granted customer-po:read:centralized.
+export async function getCustomerPoForTrackingCentralized(
+  id: string,
+): Promise<(CustomerPoTrackingData & { organizationName: string }) | null> {
+  const { orgId, userId } = await requireAccess("customer-po:read:centralized");
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+
+  const [row] = await db
+    .select({ po: customerPurchaseOrder, organizationName: organization.name })
+    .from(customerPurchaseOrder)
+    .innerJoin(organization, eq(organization.id, customerPurchaseOrder.organizationId))
+    .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
+
+  if (!row) return null;
+  const data = await fetchCpoTrackingData(row.po);
+  return { ...data, organizationName: row.organizationName };
+}
+
+async function fetchCpoTrackingData(cpo: CustomerPo): Promise<CustomerPoTrackingData> {
+  const id = cpo.id;
   const [userRows, soRows, poLinkRows] = await Promise.all([
     db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, cpo.createdBy)),
     cpo.salesOrderId

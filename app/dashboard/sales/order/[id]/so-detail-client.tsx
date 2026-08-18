@@ -67,6 +67,9 @@ export function SalesOrderDetailClient({
   currentUserId,
   draftRedirected,
   itemDeliveredQtys = {},
+  backHref = "/dashboard/sales/order",
+  editHref,
+  organizationName,
 }: {
   order: SalesOrderWithItems;
   linkedQuotations?: QuotationBasic[];
@@ -76,6 +79,12 @@ export function SalesOrderDetailClient({
   currentUserId: string;
   draftRedirected?: boolean;
   itemDeliveredQtys?: Record<string, number>;
+  backHref?: string;
+  // When provided, overrides the Edit destination and whether it can show at
+  // all (still gated on isOwner) — used by the centralized view, whose edit
+  // rights are gated by sales-order:update:centralized, resolved server-side.
+  editHref?: string;
+  organizationName?: string;
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -123,6 +132,8 @@ export function SalesOrderDetailClient({
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = order.createdBy === currentUserId;
+  const showEdit = isOwner && (editHref !== undefined || can("sales-order:update"));
+  const resolvedEditHref = editHref ?? `/dashboard/sales/order/${order.id}/edit`;
 
   const snap = order.customerSnapshot as any;
   const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
@@ -266,10 +277,10 @@ export function SalesOrderDetailClient({
       )}
       <PageHeader
         title={order.soNo}
-        description={fmtDate(order.createdAt)}
+        description={organizationName ? `${fmtDate(order.createdAt)} · ${organizationName}` : fmtDate(order.createdAt)}
         action={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/sales/order")} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             {(status === "confirmed" || status === "fulfilled") && (
@@ -289,8 +300,8 @@ export function SalesOrderDetailClient({
             )}
             {status === "draft" ? (
               <>
-                {isOwner && can("sales-order:update") && (
-                  <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/order/${order.id}/edit`)} className="gap-1.5">
+                {showEdit && (
+                  <Button variant="outline" size="sm" onClick={() => router.push(resolvedEditHref)} className="gap-1.5">
                     <PencilIcon className="w-3.5 h-3.5" /> Edit
                   </Button>
                 )}

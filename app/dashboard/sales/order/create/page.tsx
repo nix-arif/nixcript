@@ -2,6 +2,7 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { getOrgMembers } from "@/server/members";
 import { getExistingDraftSo } from "@/server/sales-order";
 import { getCustomerPoForSoCreate, getOpenCustomerPos } from "@/server/customer-purchase-order";
+import { getOrganizationProfile } from "@/server/organization-profile";
 import { CreateSalesOrderClient } from "./create-order-client";
 import { redirect } from "next/navigation";
 
@@ -24,13 +25,22 @@ export default async function CreateSalesOrderPage({
     }
   }
 
-  const [members, cpos, openCpos] = await Promise.all([
+  const [members, cpos, openCpos, profile] = await Promise.all([
     getOrgMembers().catch(() => []),
     Promise.all(cpoIds.map((id) => getCustomerPoForSoCreate(id).catch(() => null))).then(
       (results) => results.filter((r): r is NonNullable<typeof r> => r !== null)
     ),
     getOpenCustomerPos().catch(() => []),
+    getOrganizationProfile().catch(() => null),
   ]);
 
-  return <CreateSalesOrderClient members={members} cpos={cpos} openCpos={openCpos} currentUserName={currentUserName} />;
+  return (
+    <CreateSalesOrderClient
+      members={members}
+      cpos={cpos}
+      openCpos={openCpos}
+      currentUserName={currentUserName}
+      businessType={profile?.businessType ?? "trading"}
+    />
+  );
 }

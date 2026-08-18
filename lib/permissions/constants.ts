@@ -14,12 +14,16 @@ export const ALL_PERMISSIONS = [
   { key: "sales-order:create", label: "Create Sales Order" },
   { key: "sales-order:update", label: "Update Sales Order" },
   { key: "sales-order:delete", label: "Delete Sales Order" },
+  { key: "sales-order:read:centralized", label: "View All Sales Orders Across Owner's Organizations" },
+  { key: "sales-order:update:centralized", label: "Edit Sales Orders Across Owner's Organizations" },
 
   // Customer PO
   { key: "customer-po:read",   label: "View Customer POs" },
   { key: "customer-po:create", label: "Create Customer PO" },
   { key: "customer-po:update", label: "Update Customer PO" },
   { key: "customer-po:delete", label: "Delete Customer PO" },
+  { key: "customer-po:read:centralized", label: "View All Customer POs Across Owner's Organizations" },
+  { key: "customer-po:update:centralized", label: "Edit Customer POs Across Owner's Organizations" },
 
   // Delivery Order
   { key: "delivery-order:read",   label: "View Delivery Orders" },

@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import type { MyLeaveBalance, LeaveTypeRow } from "@/server/leave";
-import { getMemberLeaveBalances, setOpeningBalance } from "@/server/leave";
+import { getMemberLeaveBalances, setOpeningBalance, setOpeningUsedDays } from "@/server/leave";
 import type { OrgMember } from "@/server/members";
 import { WalletIcon, SearchIcon } from "lucide-react";
 
@@ -40,6 +40,8 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
 
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [savingTypeId, setSavingTypeId] = useState<string | null>(null);
+  const [draftUsedValues, setDraftUsedValues] = useState<Record<string, string>>({});
+  const [savingUsedTypeId, setSavingUsedTypeId] = useState<string | null>(null);
 
   const filteredMembers = members.filter((m) =>
     !search.trim() ||
@@ -52,16 +54,26 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
     setSelectedUserId(userId);
     setBalances(null);
     setDraftValues({});
+    setDraftUsedValues({});
     setLoading(true);
     try {
       const rows = await getMemberLeaveBalances(userId);
       setBalances(rows);
       setDraftValues(Object.fromEntries(rows.map((r) => [r.leaveTypeId, r.openingBalance])));
+      setDraftUsedValues(Object.fromEntries(rows.map((r) => [r.leaveTypeId, r.openingUsedDays])));
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to load balances");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function refreshBalances() {
+    if (!selectedUserId) return;
+    const rows = await getMemberLeaveBalances(selectedUserId);
+    setBalances(rows);
+    setDraftValues(Object.fromEntries(rows.map((r) => [r.leaveTypeId, r.openingBalance])));
+    setDraftUsedValues(Object.fromEntries(rows.map((r) => [r.leaveTypeId, r.openingUsedDays])));
   }
 
   async function handleSave(leaveTypeId: string) {
@@ -77,13 +89,32 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
       const year = new Date().getFullYear();
       await setOpeningBalance(selectedUserId, leaveTypeId, year, days);
       toast.success("Opening balance saved");
-      const rows = await getMemberLeaveBalances(selectedUserId);
-      setBalances(rows);
-      setDraftValues(Object.fromEntries(rows.map((r) => [r.leaveTypeId, r.openingBalance])));
+      await refreshBalances();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to save opening balance");
     } finally {
       setSavingTypeId(null);
+    }
+  }
+
+  async function handleSaveUsed(leaveTypeId: string) {
+    if (!selectedUserId) return;
+    const raw = draftUsedValues[leaveTypeId] ?? "0";
+    const days = parseFloat(raw);
+    if (!Number.isFinite(days) || days < 0) {
+      toast.error("Enter a valid, non-negative number of days");
+      return;
+    }
+    setSavingUsedTypeId(leaveTypeId);
+    try {
+      const year = new Date().getFullYear();
+      await setOpeningUsedDays(selectedUserId, leaveTypeId, year, days);
+      toast.success("Opening days taken saved");
+      await refreshBalances();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to save opening days taken");
+    } finally {
+      setSavingUsedTypeId(null);
     }
   }
 
@@ -96,7 +127,7 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
           Leave Balances
         </h1>
         <p className="text-sm text-muted-foreground">
-          Set each member&apos;s opening leave balance carried in from before this system — useful when onboarding an already-running company.
+          Set each member&apos;s opening figures carried in from before this system — <strong>Opening Balance</strong> adds extra days (e.g. a carried-in credit), while <strong>Days Taken (opening)</strong> subtracts days already used earlier this year that were tracked outside the system.
         </p>
       </div>
 
@@ -158,8 +189,8 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
                       <TableHead className="text-right">Carry Forward</TableHead>
                       <TableHead className="text-right">Used / Pending</TableHead>
                       <TableHead className="w-40">Opening Balance</TableHead>
+                      <TableHead className="w-40">Days Taken (opening)</TableHead>
                       <TableHead className="text-right">Remaining</TableHead>
-                      <TableHead className="w-24" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -168,6 +199,10 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
                         ? `Set by ${b.openingBalanceSetByName ?? "—"} · ${fmtDate(b.openingBalanceSetAt)}`
                         : null;
                       const dirty = draftValues[b.leaveTypeId] !== undefined && draftValues[b.leaveTypeId] !== b.openingBalance;
+                      const usedSetInfo = b.openingUsedDaysSetAt
+                        ? `Set by ${b.openingUsedDaysSetByName ?? "—"} · ${fmtDate(b.openingUsedDaysSetAt)}`
+                        : null;
+                      const usedDirty = draftUsedValues[b.leaveTypeId] !== undefined && draftUsedValues[b.leaveTypeId] !== b.openingUsedDays;
                       return (
                         <TableRow key={b.leaveTypeId}>
                           <TableCell className="text-sm font-medium">
@@ -180,29 +215,53 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-1">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                value={draftValues[b.leaveTypeId] ?? b.openingBalance}
-                                onChange={(e) => setDraftValues((prev) => ({ ...prev, [b.leaveTypeId]: e.target.value }))}
-                                className="w-24 h-8 border border-input rounded px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
-                              />
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  value={draftValues[b.leaveTypeId] ?? b.openingBalance}
+                                  onChange={(e) => setDraftValues((prev) => ({ ...prev, [b.leaveTypeId]: e.target.value }))}
+                                  className="w-20 h-8 border border-input rounded px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant={dirty ? "default" : "outline"}
+                                  className="h-7 text-xs px-2"
+                                  disabled={savingTypeId === b.leaveTypeId}
+                                  onClick={() => handleSave(b.leaveTypeId)}
+                                >
+                                  {savingTypeId === b.leaveTypeId ? "…" : "Save"}
+                                </Button>
+                              </div>
                               {setInfo && <span className="text-[10px] text-muted-foreground">{setInfo}</span>}
                             </div>
                           </TableCell>
-                          <TableCell className="text-right text-sm font-semibold">{fmtDays(b.remainingDays)}</TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              size="sm"
-                              variant={dirty ? "default" : "outline"}
-                              className="h-7 text-xs"
-                              disabled={savingTypeId === b.leaveTypeId}
-                              onClick={() => handleSave(b.leaveTypeId)}
-                            >
-                              {savingTypeId === b.leaveTypeId ? "Saving…" : "Save"}
-                            </Button>
+                          <TableCell>
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  value={draftUsedValues[b.leaveTypeId] ?? b.openingUsedDays}
+                                  onChange={(e) => setDraftUsedValues((prev) => ({ ...prev, [b.leaveTypeId]: e.target.value }))}
+                                  className="w-20 h-8 border border-input rounded px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant={usedDirty ? "default" : "outline"}
+                                  className="h-7 text-xs px-2"
+                                  disabled={savingUsedTypeId === b.leaveTypeId}
+                                  onClick={() => handleSaveUsed(b.leaveTypeId)}
+                                >
+                                  {savingUsedTypeId === b.leaveTypeId ? "…" : "Save"}
+                                </Button>
+                              </div>
+                              {usedSetInfo && <span className="text-[10px] text-muted-foreground">{usedSetInfo}</span>}
+                            </div>
                           </TableCell>
+                          <TableCell className="text-right text-sm font-semibold">{fmtDays(b.remainingDays)}</TableCell>
                         </TableRow>
                       );
                     })}

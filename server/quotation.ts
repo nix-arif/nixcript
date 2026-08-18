@@ -839,7 +839,9 @@ export async function getQuotations() {
 
 // ── Lightweight single-row lookup (for cross-doc references) ─────────────
 export async function getQuotationBasic(id: string) {
-  const { orgId } = await requireAccess("quotation:read");
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
   const [row] = await db
     .select({
@@ -852,7 +854,7 @@ export async function getQuotationBasic(id: string) {
       salesPersonName: quotation.salesPersonName,
     })
     .from(quotation)
-    .where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)))
+    .where(and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)))
     .limit(1);
 
   return row ?? null;
@@ -862,10 +864,18 @@ export type QuotationBasic = NonNullable<Awaited<ReturnType<typeof getQuotationB
 
 // ── Search quotations by number (for SO creation lookup) ─────────────────
 export async function searchQuotationsByNo(query: string, includeDummy = false) {
-  const { orgId } = await requireAccess("quotation:read");
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
-  // Match against the running number only (part after the last "-")
-  // e.g. typing "42" matches "BMS-QT-2025-0042", not the prefix
+  // Plain substring match against the full quotation number. Previously this
+  // matched only the part after the LAST "-" (so typing "42" matches
+  // "BMS-QT-2025-0042" without needing the org-specific prefix) — but that
+  // strips a revision suffix like "-R1" down to just "R1", so pasting the
+  // full number of any revised quotation (e.g. "QBIO-0826-00227-R1") could
+  // never match anything. A full-string ILIKE is a superset of the old
+  // behavior (it still matches on the running number alone) and has no such
+  // blind spot.
   const rows = await db
     .select({
       id: quotation.id,
@@ -880,8 +890,8 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
     .from(quotation)
     .where(
       and(
-        eq(quotation.organizationId, orgId),
-        sql`REGEXP_REPLACE(${quotation.quotationNo}, '^.*-', '') ILIKE ${'%' + query + '%'}`,
+        inArray(quotation.organizationId, ownerOrgIds),
+        sql`${quotation.quotationNo} ILIKE ${'%' + query + '%'}`,
         includeDummy ? sql`1=1` : eq(quotation.isDummy, 0),
         eq(quotation.status, "final"),
       ),

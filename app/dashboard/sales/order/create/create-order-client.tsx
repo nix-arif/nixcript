@@ -23,6 +23,7 @@ import {
   type CustomerPoSearchResult,
 } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -86,6 +87,7 @@ interface LineItem extends SalesOrderItemInput {
   lineType: "sell" | "rent";
   rentalDuration: string;
   rentalUnit: string;
+  sourcingType?: "trading" | "oem" | null;
   setGroupId: string;
   setGroupLabel: string;
   setQty: string;
@@ -117,6 +119,7 @@ const newLine = (rowNo: number): LineItem => ({
   lineType: "sell",
   rentalDuration: "",
   rentalUnit: "case",
+  sourcingType: null,
   setGroupId: "",
   setGroupLabel: "",
   setQty: "",
@@ -125,6 +128,12 @@ const newLine = (rowNo: number): LineItem => ({
   sourceCustomerPoNo: "",
   _isAdditional: true,
 });
+
+// A product fixed at "trading" or "oem" is inherited silently; "both" (or no
+// catalog match at all) is ambiguous and needs an explicit pick on the item.
+function resolveSourcingType(productSourcingType: string | null | undefined): "trading" | "oem" | null {
+  return productSourcingType === "trading" || productSourcingType === "oem" ? productSourcingType : null;
+}
 
 interface ProductCellProps {
   item: LineItem;
@@ -136,7 +145,7 @@ interface ProductCellProps {
 
 function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown, onBlur: onCodeBlur }: ProductCellProps) {
   const [q, setQ] = useState(item.productCode ?? "");
-  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null }[]>([]);
+  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null; sourcingType?: string | null }[]>([]);
   const [open, setOpen] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const codeOnFocus = useRef("");
@@ -165,18 +174,20 @@ function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown, onBlur: onCodeBlur
           productCode: exact.productCode,
           description: item.description || exact.description || "",
           uom: item.uom || exact.uom || "",
+          sourcingType: resolveSourcingType(exact.sourcingType),
         });
         setOpen(false);
       }
     }, 300);
   }
 
-  function pick(p: { id: string; productCode: string; description: string | null; uom: string | null }) {
+  function pick(p: { id: string; productCode: string; description: string | null; uom: string | null; sourcingType?: string | null }) {
     onUpdate(item._key, {
       productId: p.id,
       productCode: p.productCode,
       description: item.description || p.description || "",
       uom: item.uom || p.uom || "",
+      sourcingType: resolveSourcingType(p.sourcingType),
     });
     setQ(p.productCode);
     setResults([]);
@@ -241,9 +252,11 @@ interface Props {
   cpos?: CustomerPoForSoCreate[];
   openCpos?: CustomerPoSearchResult[];
   currentUserName?: string;
+  businessType?: string;
 }
 
-export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], currentUserName = "" }: Props) {
+export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], currentUserName = "", businessType = "trading" }: Props) {
+  const showSourcing = businessType !== "trading";
   // Normalise: prefer cpos array, fall back to legacy single cpo prop
   const initialCpos = cpos && cpos.length > 0 ? cpos : cpo ? [cpo] : [];
   const router = useRouter();
@@ -365,15 +378,15 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     if (allItems.length > 0) {
       const codes = [...new Set(allItems.map((i) => i.productCode).filter(Boolean) as string[])];
       getProductsByCode(codes)
-        .catch(() => [] as { productCode: string; id: string }[])
+        .catch(() => [] as { productCode: string; id: string; sourcingType: string | null }[])
         .then((resolved) => {
-          const codeMap = new Map(resolved.map((p) => [p.productCode, p.id]));
+          const codeMap = new Map(resolved.map((p) => [p.productCode, p]));
           setItems(
             allItems.map((item, idx) =>
               calcLine({
                 _key: uid(),
                 rowNo: idx + 1,
-                productId: item.productCode ? codeMap.get(item.productCode) : undefined,
+                productId: item.productCode ? codeMap.get(item.productCode)?.id : undefined,
                 productCode: item.productCode ?? "",
                 description: item.description ?? "",
                 qty: String(item.qty ?? "1"),
@@ -385,6 +398,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 lineType: (item.lineType ?? "sell") as "sell" | "rent",
                 rentalDuration: "",
                 rentalUnit: "case",
+                sourcingType: resolveSourcingType(item.productCode ? codeMap.get(item.productCode)?.sourcingType : null),
                 setGroupId: item.setGroupId ?? "",
                 setGroupLabel: item.setGroupLabel ?? "",
                 setQty: item.setQty ?? "",
@@ -553,16 +567,16 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       if (data.items && data.items.length > 0) {
         const codes = data.items.map((i) => i.productCode).filter(Boolean) as string[];
         getProductsByCode(codes)
-          .catch(() => [] as { productCode: string; id: string }[])
+          .catch(() => [] as { productCode: string; id: string; sourcingType: string | null }[])
           .then((resolved) => {
-            const codeMap = new Map(resolved.map((p) => [p.productCode, p.id]));
+            const codeMap = new Map(resolved.map((p) => [p.productCode, p]));
             setItems((prev) => {
               const base = prev.filter((i) => i.description || i.productCode);
               const newItems = (data.items ?? []).map((item) =>
                 calcLine({
                   _key: uid(),
                   rowNo: 0,
-                  productId: item.productCode ? codeMap.get(item.productCode) : undefined,
+                  productId: item.productCode ? codeMap.get(item.productCode)?.id : undefined,
                   productCode: item.productCode ?? "",
                   description: item.description ?? "",
                   qty: String(item.qty ?? "1"),
@@ -574,6 +588,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   lineType: (item.lineType ?? "sell") as "sell" | "rent",
                   rentalDuration: "",
                   rentalUnit: "case",
+                  sourcingType: resolveSourcingType(item.productCode ? codeMap.get(item.productCode)?.sourcingType : null),
                   setGroupId: item.setGroupId ?? "",
                   setGroupLabel: item.setGroupLabel ?? "",
                   setQty: item.setQty ?? "",
@@ -924,7 +939,13 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       return;
     }
     setItems((prev) => prev.map((i) => i._key === key
-      ? { ...i, description: product.description ?? "N/A", uom: product.uom ?? i.uom, _descriptionSource: ["catalog"] }
+      ? {
+          ...i,
+          description: product.description ?? "N/A",
+          uom: product.uom ?? i.uom,
+          _descriptionSource: ["catalog"],
+          sourcingType: resolveSourcingType(product.sourcingType),
+        }
       : i,
     ));
   }
@@ -2458,6 +2479,41 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         onCellKeyDown={handleCellKeyDown}
                       />
                       <Tag src={item._codeSource} />
+                      {showSourcing && item.productCode?.trim() && (
+                        item.sourcingType ? (
+                          <button
+                            type="button"
+                            onClick={() => updateItem(item._key, { sourcingType: item.sourcingType === "trading" ? "oem" : "trading" })}
+                            className={cn(
+                              "mt-0.5 block text-[10px] px-1.5 py-0.5 rounded-md border font-medium",
+                              item.sourcingType === "oem"
+                                ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800"
+                                : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800",
+                            )}
+                            title="Click to switch"
+                          >
+                            {item.sourcingType === "oem" ? "OEM" : "Trading"}
+                          </button>
+                        ) : (
+                          <div className="mt-0.5 flex items-center gap-1">
+                            <span className="text-[9px] text-destructive">sourcing?</span>
+                            <button
+                              type="button"
+                              onClick={() => updateItem(item._key, { sourcingType: "trading" })}
+                              className="text-[10px] px-1.5 py-0.5 rounded-md border border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                            >
+                              Trading
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateItem(item._key, { sourcingType: "oem" })}
+                              className="text-[10px] px-1.5 py-0.5 rounded-md border border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                            >
+                              OEM
+                            </button>
+                          </div>
+                        )
+                      )}
                     </td>
                     <td className="py-1.5 pr-2 align-top">
                       <Input

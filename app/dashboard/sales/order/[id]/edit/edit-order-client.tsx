@@ -59,6 +59,7 @@ type LinkedCpo = {
 
 interface LineItem extends SalesOrderItemInput {
   _key: string;
+  sourcingType?: "trading" | "oem" | null;
   sourceCustomerPoId: string;
   sourceCustomerPoNo: string;
   _descriptionSource?: Array<"quote" | "catalog" | "user" | "cpo" | "so"> | null;
@@ -99,6 +100,7 @@ const newLine = (rowNo: number): LineItem => ({
   lineType: "sell",
   rentalDuration: "",
   rentalUnit: "case",
+  sourcingType: null,
   setGroupId: "",
   setGroupLabel: "",
   setQty: "",
@@ -108,6 +110,12 @@ const newLine = (rowNo: number): LineItem => ({
   _descriptionSource: null,
   _isAdditional: true,
 });
+
+// A product fixed at "trading" or "oem" is inherited silently; "both" (or no
+// catalog match at all) is ambiguous and needs an explicit pick on the item.
+function resolveSourcingType(productSourcingType: string | null | undefined): "trading" | "oem" | null {
+  return productSourcingType === "trading" || productSourcingType === "oem" ? productSourcingType : null;
+}
 
 interface ProductCellProps {
   item: LineItem;
@@ -119,7 +127,7 @@ interface ProductCellProps {
 
 function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown, onBlur: onCodeBlur }: ProductCellProps) {
   const [q, setQ] = useState(item.productCode ?? "");
-  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null }[]>([]);
+  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null; sourcingType?: string | null }[]>([]);
   const [open, setOpen] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const codeOnFocus = useRef("");
@@ -148,18 +156,20 @@ function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown, onBlur: onCodeBlur
           productCode: exact.productCode,
           description: item.description || exact.description || "",
           uom: item.uom || exact.uom || "",
+          sourcingType: resolveSourcingType(exact.sourcingType),
         });
         setOpen(false);
       }
     }, 300);
   }
 
-  function pick(p: { id: string; productCode: string; description: string | null; uom: string | null }) {
+  function pick(p: { id: string; productCode: string; description: string | null; uom: string | null; sourcingType?: string | null }) {
     onUpdate(item._key, {
       productId: p.id,
       productCode: p.productCode,
       description: item.description || p.description || "",
       uom: item.uom || p.uom || "",
+      sourcingType: resolveSourcingType(p.sourcingType),
     });
     setQ(p.productCode);
     setResults([]);
@@ -228,10 +238,15 @@ interface Props {
   members: OrgMember[];
   currentUserName: string;
   openCpos?: CustomerPoSearchResult[];
+  updateFn?: typeof updateSalesOrder;
+  detailHref?: string;
+  businessType?: string;
 }
 
-export function EditSalesOrderClient({ order, members, currentUserName, openCpos = [] }: Props) {
+export function EditSalesOrderClient({ order, members, currentUserName, openCpos = [], updateFn = updateSalesOrder, detailHref, businessType = "trading" }: Props) {
   const router = useRouter();
+  const backHref = detailHref ?? `/dashboard/sales/order/${order.id}`;
+  const showSourcing = businessType !== "trading";
   const snap = order.customerSnapshot as any;
 
   // ── Customer POs ─────────────────────────────────────────────────────────────
@@ -363,6 +378,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           lineType: (i as any).lineType ?? "sell",
           rentalDuration: (i as any).rentalDuration ?? "",
           rentalUnit: (i as any).rentalUnit ?? "case",
+          sourcingType: (i as any).sourcingType ?? null,
           setGroupId: (i as any).setGroupId ?? "",
           setGroupLabel: (i as any).setGroupLabel ?? "",
           setQty: (i as any).setQty ?? "",
@@ -641,7 +657,14 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       return;
     }
     setItems((prev) => prev.map((i) => i._key === key
-      ? { ...i, description: product.description ?? "N/A", uom: product.uom ?? i.uom, _descriptionSource: ["catalog"], _editedBy: null }
+      ? {
+          ...i,
+          description: product.description ?? "N/A",
+          uom: product.uom ?? i.uom,
+          _descriptionSource: ["catalog"],
+          _editedBy: null,
+          sourcingType: resolveSourcingType(product.sourcingType),
+        }
       : i,
     ));
   }
@@ -728,7 +751,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       const finalDeliveryDate = linkedCpos.length > 0
         ? (() => { const d = linkedCpos[0]?.deliveryDate; return d ? new Date(d) : undefined; })()
         : deliveryDate ? new Date(deliveryDate) : undefined;
-      await updateSalesOrder({
+      await updateFn({
         id: order.id,
         customerId: primaryCustomerId,
         customerOrgMemberId: selectedCustomer ? custOrgMemberId : undefined,
@@ -788,7 +811,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
         })),
       });
       toast.success("Sales order updated");
-      router.push(`/dashboard/sales/order/${order.id}`);
+      router.push(backHref);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -819,7 +842,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
         action={
           <div className="flex items-center gap-2">
             <StatusBadge status={status} />
-            <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/sales/order/${order.id}`)} className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-2">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
           </div>
@@ -1608,6 +1631,40 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                         onCellKeyDown={handleCellKeyDown}
                       />
                       <SrcTag src={item._codeSource} item={item} />
+                      {showSourcing && item.productCode?.trim() && (
+                        item.sourcingType ? (
+                          <button
+                            type="button"
+                            onClick={() => updateItem(item._key, { sourcingType: item.sourcingType === "trading" ? "oem" : "trading" })}
+                            className={`mt-0.5 block text-[10px] px-1.5 py-0.5 rounded-md border font-medium ${
+                              item.sourcingType === "oem"
+                                ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800"
+                                : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
+                            }`}
+                            title="Click to switch"
+                          >
+                            {item.sourcingType === "oem" ? "OEM" : "Trading"}
+                          </button>
+                        ) : (
+                          <div className="mt-0.5 flex items-center gap-1">
+                            <span className="text-[9px] text-destructive">sourcing?</span>
+                            <button
+                              type="button"
+                              onClick={() => updateItem(item._key, { sourcingType: "trading" })}
+                              className="text-[10px] px-1.5 py-0.5 rounded-md border border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                            >
+                              Trading
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateItem(item._key, { sourcingType: "oem" })}
+                              className="text-[10px] px-1.5 py-0.5 rounded-md border border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                            >
+                              OEM
+                            </button>
+                          </div>
+                        )
+                      )}
                     </td>
                     <td className="py-1.5 pr-2 align-top">
                       <Input data-row={rowIdx} data-col={1} value={item.description ?? ""} onChange={(e) => updateItem(item._key, {
@@ -1788,7 +1845,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           <Button onClick={handleSave} disabled={saving} className="gap-2">
             {saving ? "Saving…" : "Save changes"}
           </Button>
-          <Button variant="outline" onClick={() => router.push(`/dashboard/sales/order/${order.id}`)}>
+          <Button variant="outline" onClick={() => router.push(backHref)}>
             Cancel
           </Button>
         </div>
