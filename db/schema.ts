@@ -1666,6 +1666,16 @@ export const salesOrderItem = pgTable(
     // explicitly when the product is "both" or has no catalog link. This is
     // what PR/PO creation reads — it never re-derives from product again.
     sourcingType: text("sourcing_type"),
+    // OEM spec for this line — inherited from product.designBrandName/Code/
+    // privateLabelCode, editable per order. Only meaningful when
+    // sourcingType is "oem"; carries through to the supplier PO.
+    designBrandName: text("design_brand_name"),
+    designBrandCode: text("design_brand_code"),
+    privateLabelCode: text("private_label_code"),
+    // Provenance for designBrandName — "catalog" when auto-filled from a
+    // design-code lookup, "user" once someone edits it directly. Mirrors
+    // descriptionSource/codeSource below.
+    designBrandSource: text("design_brand_source"),
 
     // Set grouping
     setGroupId: text("set_group_id"),

@@ -343,14 +343,26 @@ export async function getProductDetailsByCodes(codes: string[]) {
   });
 }
 
-export async function getProductByCode(
-  code: string,
-): Promise<{ description: string | null; uom: string | null; sourcingType: string | null } | null> {
+export async function getProductByCode(code: string): Promise<{
+  description: string | null;
+  uom: string | null;
+  sourcingType: string | null;
+  designBrandName: string | null;
+  designBrandCode: string | null;
+  privateLabelCode: string | null;
+} | null> {
   if (!code.trim()) return null;
   const { orgId } = await requireAccess("product:read");
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   const [row] = await db
-    .select({ description: product.description, uom: product.uom, sourcingType: product.sourcingType })
+    .select({
+      description: product.description,
+      uom: product.uom,
+      sourcingType: product.sourcingType,
+      designBrandName: product.designBrandName,
+      designBrandCode: product.designBrandCode,
+      privateLabelCode: product.privateLabelCode,
+    })
     .from(product)
     .where(and(inArray(product.organizationId, ownerOrgIds), ilike(product.productCode, code.trim())))
     .limit(1);

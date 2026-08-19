@@ -190,6 +190,10 @@ export interface SalesOrderItemInput {
   rentalDuration?: string;
   rentalUnit?: string;
   sourcingType?: "trading" | "oem" | null;
+  designBrandName?: string | null;
+  designBrandCode?: string | null;
+  privateLabelCode?: string | null;
+  designBrandSource?: "catalog" | "user" | null;
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
@@ -633,6 +637,10 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
         rentalDuration: item.rentalDuration ?? null,
         rentalUnit: item.rentalUnit ?? null,
         sourcingType: item.sourcingType ?? null,
+        designBrandName: item.designBrandName ?? null,
+        designBrandCode: item.designBrandCode ?? null,
+        privateLabelCode: item.privateLabelCode ?? null,
+        designBrandSource: item.designBrandSource ?? null,
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
@@ -798,6 +806,10 @@ async function applySalesOrderUpdate(
         rentalDuration: item.rentalDuration ?? null,
         rentalUnit: item.rentalUnit ?? null,
         sourcingType: item.sourcingType ?? null,
+        designBrandName: item.designBrandName ?? null,
+        designBrandCode: item.designBrandCode ?? null,
+        privateLabelCode: item.privateLabelCode ?? null,
+        designBrandSource: item.designBrandSource ?? null,
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,

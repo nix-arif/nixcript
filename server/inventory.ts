@@ -716,12 +716,21 @@ export async function setReorderPoint(
 
 export async function getProductsByCode(
   codes: string[],
-): Promise<{ productCode: string; id: string; description: string | null; uom: string | null; sourcingType: string | null }[]> {
+): Promise<{
+  productCode: string;
+  id: string;
+  description: string | null;
+  uom: string | null;
+  sourcingType: string | null;
+  designBrandName: string | null;
+  designBrandCode: string | null;
+  privateLabelCode: string | null;
+}[]> {
   if (codes.length === 0) return [];
   const { orgId } = await requireAccess("inventory:read");
   const orgIds = await getAllOwnerOrgIds(orgId);
   return db
-    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom, sourcingType: product.sourcingType })
+    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom, sourcingType: product.sourcingType, designBrandName: product.designBrandName, designBrandCode: product.designBrandCode, privateLabelCode: product.privateLabelCode })
     .from(product)
     .where(and(inArray(product.organizationId, orgIds), inArray(product.productCode, codes)));
 }
@@ -731,7 +740,7 @@ export async function searchProducts(query: string) {
   if (!query.trim()) return [];
   const orgIds = await getAllOwnerOrgIds(orgId);
   return db
-    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom, sourcingType: product.sourcingType })
+    .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom, sourcingType: product.sourcingType, designBrandName: product.designBrandName, designBrandCode: product.designBrandCode, privateLabelCode: product.privateLabelCode })
     .from(product)
     .where(and(
       inArray(product.organizationId, orgIds),
@@ -742,6 +751,31 @@ export async function searchProducts(query: string) {
     ))
     .orderBy(asc(product.productCode))
     .limit(50);
+}
+
+// Look up catalogue products by their own product code — used on the SO
+// "Design Code" column: user types the product code, and on a match this
+// auto-fills Design Brand (from the product's catalogue brand) and
+// Description (without touching the SO's own Code column, which stays
+// import-only).
+export async function searchProductsByDesignCode(query: string) {
+  const { orgId } = await requireAccess("inventory:read");
+  if (query.trim().length < 3) return [];
+  const orgIds = await getAllOwnerOrgIds(orgId);
+  return db
+    .select({
+      id: product.id,
+      productCode: product.productCode,
+      description: product.description,
+      brand: product.brand,
+    })
+    .from(product)
+    .where(and(
+      inArray(product.organizationId, orgIds),
+      ilike(product.productCode, `%${query}%`),
+    ))
+    .orderBy(asc(product.productCode))
+    .limit(20);
 }
 
 export type StockLotRow = typeof stockLot.$inferSelect;

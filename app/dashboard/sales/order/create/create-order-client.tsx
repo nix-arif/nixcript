@@ -9,8 +9,7 @@ import {
   searchConfirmedSalesOrders,
   type SalesOrderItemInput,
 } from "@/server/sales-order";
-import { searchProducts, getProductsByCode } from "@/server/inventory";
-import { getProductByCode } from "@/server/products";
+import { getProductsByCode, searchProductsByDesignCode } from "@/server/inventory";
 import { getCustomers, getCustomer } from "@/server/customer";
 import {
   searchQuotationsByNo,
@@ -88,6 +87,11 @@ interface LineItem extends SalesOrderItemInput {
   rentalDuration: string;
   rentalUnit: string;
   sourcingType?: "trading" | "oem" | null;
+  designBrandName?: string | null;
+  designBrandCode?: string | null;
+  privateLabelCode?: string | null;
+  _designBrandSource?: "catalog" | "user" | null;
+  _privateLabelSource?: "auto" | "user" | null;
   setGroupId: string;
   setGroupLabel: string;
   setQty: string;
@@ -120,6 +124,11 @@ const newLine = (rowNo: number): LineItem => ({
   rentalDuration: "",
   rentalUnit: "case",
   sourcingType: null,
+  designBrandName: "",
+  designBrandCode: "",
+  privateLabelCode: "",
+  _designBrandSource: null,
+  _privateLabelSource: null,
   setGroupId: "",
   setGroupLabel: "",
   setQty: "",
@@ -135,90 +144,111 @@ function resolveSourcingType(productSourcingType: string | null | undefined): "t
   return productSourcingType === "trading" || productSourcingType === "oem" ? productSourcingType : null;
 }
 
-interface ProductCellProps {
+// Autocomplete on the OEM "Design Code" column — searches the catalogue by
+// product.designBrandCode (min 3 chars) and, on a match, fills Design Brand
+// Name and (if still empty) Description, tagging both with their source.
+function DesignCodeCell({
+  item,
+  onUpdate,
+  disabled,
+  dataRow,
+  dataCol,
+  onKeyDown,
+}: {
   item: LineItem;
-  rowIdx: number;
   onUpdate: (key: string, patch: Partial<LineItem>) => void;
-  onCellKeyDown: (e: React.KeyboardEvent<HTMLInputElement>, row: number, col: number) => void;
-  onBlur?: (key: string, code: string, prevCode: string) => void;
-}
-
-function ProductCell({ item, rowIdx, onUpdate, onCellKeyDown, onBlur: onCodeBlur }: ProductCellProps) {
-  const [q, setQ] = useState(item.productCode ?? "");
-  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null; sourcingType?: string | null }[]>([]);
+  disabled?: boolean;
+  dataRow?: number;
+  dataCol?: number;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+}) {
+  const [q, setQ] = useState(item.designBrandCode ?? "");
+  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; brand: string | null }[]>([]);
   const [open, setOpen] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const codeOnFocus = useRef("");
-  const currentVal = useRef(item.productCode ?? "");
+  const currentVal = useRef(item.designBrandCode ?? "");
 
   useEffect(() => {
-    setQ(item.productCode ?? "");
-    currentVal.current = item.productCode ?? "";
-  }, [item.productCode]);
+    setQ(item.designBrandCode ?? "");
+    currentVal.current = item.designBrandCode ?? "";
+  }, [item.designBrandCode]);
+
+  // A match always reflects the fetched product — Design Code becomes
+  // exactly what the user typed, Design Brand comes from the catalogue's
+  // product.brand, Description from product.description (tagged "catalog"
+  // so it's clear where the value now comes from). The one thing a match
+  // never does is downgrade Brand/Description to empty: if the catalogue
+  // has nothing for a spot, keep whatever was already there instead of
+  // wiping it.
+  function applyMatch(p: { brand: string | null; description: string | null }, typedCode: string) {
+    onUpdate(item._key, {
+      designBrandCode: typedCode,
+      designBrandName: p.brand || item.designBrandName || "",
+      _designBrandSource: "catalog",
+      description: (p.description || item.description || "").toUpperCase(),
+      _descriptionSource: ["catalog"],
+    });
+  }
+
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
 
   function handleInput(val: string) {
     setQ(val);
     currentVal.current = val;
-    onUpdate(item._key, { productCode: val, productId: undefined });
+    // Design Code always reflects exactly what the user typed, independent
+    // of whether it resolves to a catalogue match — otherwise a non-matching
+    // code would silently never reach item state and get lost on save.
+    onUpdate(item._key, { designBrandCode: val });
     if (debounce.current) clearTimeout(debounce.current);
-    if (!val.trim()) { setResults([]); setOpen(false); return; }
+    if (val.trim().length < 3) { setResults([]); setOpen(false); setSearched(false); return; }
+    setSearching(true);
     debounce.current = setTimeout(async () => {
-      const r = await searchProducts(val);
+      const r = await searchProductsByDesignCode(val).finally(() => setSearching(false));
       if (val !== currentVal.current) return;
       setResults(r);
-      setOpen(r.length > 0);
+      setSearched(true);
+      setOpen(true);
       const exact = r.find((p) => p.productCode.toLowerCase() === val.trim().toLowerCase());
       if (exact) {
-        onUpdate(item._key, {
-          productId: exact.id,
-          productCode: exact.productCode,
-          description: item.description || exact.description || "",
-          uom: item.uom || exact.uom || "",
-          sourcingType: resolveSourcingType(exact.sourcingType),
-        });
+        applyMatch(exact, val.trim());
         setOpen(false);
       }
     }, 300);
   }
 
-  function pick(p: { id: string; productCode: string; description: string | null; uom: string | null; sourcingType?: string | null }) {
-    onUpdate(item._key, {
-      productId: p.id,
-      productCode: p.productCode,
-      description: item.description || p.description || "",
-      uom: item.uom || p.uom || "",
-      sourcingType: resolveSourcingType(p.sourcingType),
-    });
-    setQ(p.productCode);
-    setResults([]);
-    setOpen(false);
-  }
-
   return (
     <div className="relative">
-      <Input
-        data-row={rowIdx}
-        data-col={0}
+      <input
+        data-row={dataRow} data-col={dataCol}
         value={q}
         onChange={(e) => handleInput(e.target.value)}
-        onKeyDown={(e) => {
-          if (open && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) return;
-          onCellKeyDown(e, rowIdx, 0);
-        }}
-        onFocus={() => { codeOnFocus.current = q; }}
-        onBlur={() => { setTimeout(() => setOpen(false), 150); onCodeBlur?.(item._key, q, codeOnFocus.current); }}
-        className="h-7 text-[11px] md:text-[11px] font-mono"
-        placeholder="Code…"
+        onFocus={() => { if (results.length > 0 || searched) setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={onKeyDown}
+        disabled={disabled}
+        placeholder="search by product code…"
+        className="h-7 w-full text-[11px] border border-input rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed"
       />
       {open && (
         <div className="absolute z-50 top-full left-0 mt-0.5 w-64 rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto text-xs">
+          {searching && (
+            <div className="px-2 py-2 text-muted-foreground">Searching…</div>
+          )}
+          {!searching && results.length === 0 && searched && (
+            <div className="px-2 py-2 text-muted-foreground">No matching product found</div>
+          )}
           {results.map((p) => (
-            <button key={p.id} type="button"
-              className="w-full text-left px-2 py-1.5 hover:bg-accent flex gap-2"
-              onClick={() => pick(p)}
+            <button
+              key={p.id}
+              type="button"
+              className="w-full text-left px-2 py-1.5 hover:bg-accent flex flex-col gap-0.5"
+              onClick={() => { applyMatch(p, p.productCode); setQ(p.productCode); setOpen(false); }}
             >
-              <span className="font-mono font-medium shrink-0">{p.productCode}</span>
-              <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
+              <span className="font-mono font-medium">{p.productCode}</span>
+              <span className="text-muted-foreground truncate">
+                {p.brand ? `${p.brand} · ${p.description ?? ""}` : (p.description ?? "")}
+              </span>
             </button>
           ))}
         </div>
@@ -378,7 +408,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     if (allItems.length > 0) {
       const codes = [...new Set(allItems.map((i) => i.productCode).filter(Boolean) as string[])];
       getProductsByCode(codes)
-        .catch(() => [] as { productCode: string; id: string; sourcingType: string | null }[])
+        .catch(() => [] as { productCode: string; id: string; sourcingType: string | null; designBrandName: string | null; designBrandCode: string | null; privateLabelCode: string | null }[])
         .then((resolved) => {
           const codeMap = new Map(resolved.map((p) => [p.productCode, p]));
           setItems(
@@ -388,7 +418,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 rowNo: idx + 1,
                 productId: item.productCode ? codeMap.get(item.productCode)?.id : undefined,
                 productCode: item.productCode ?? "",
-                description: item.description ?? "",
+                description: (item.description ?? "").toUpperCase(),
                 qty: String(item.qty ?? "1"),
                 uom: item.uom ?? "",
                 unitPrice: String(item.unitPrice ?? "0"),
@@ -399,6 +429,9 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 rentalDuration: "",
                 rentalUnit: "case",
                 sourcingType: resolveSourcingType(item.productCode ? codeMap.get(item.productCode)?.sourcingType : null),
+                designBrandName: (item.productCode ? codeMap.get(item.productCode)?.designBrandName : null) ?? "",
+                designBrandCode: (item.productCode ? codeMap.get(item.productCode)?.designBrandCode : null) ?? "",
+                privateLabelCode: (item.productCode ? codeMap.get(item.productCode)?.privateLabelCode : null) ?? "",
                 setGroupId: item.setGroupId ?? "",
                 setGroupLabel: item.setGroupLabel ?? "",
                 setQty: item.setQty ?? "",
@@ -567,7 +600,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       if (data.items && data.items.length > 0) {
         const codes = data.items.map((i) => i.productCode).filter(Boolean) as string[];
         getProductsByCode(codes)
-          .catch(() => [] as { productCode: string; id: string; sourcingType: string | null }[])
+          .catch(() => [] as { productCode: string; id: string; sourcingType: string | null; designBrandName: string | null; designBrandCode: string | null; privateLabelCode: string | null }[])
           .then((resolved) => {
             const codeMap = new Map(resolved.map((p) => [p.productCode, p]));
             setItems((prev) => {
@@ -578,7 +611,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   rowNo: 0,
                   productId: item.productCode ? codeMap.get(item.productCode)?.id : undefined,
                   productCode: item.productCode ?? "",
-                  description: item.description ?? "",
+                  description: (item.description ?? "").toUpperCase(),
                   qty: String(item.qty ?? "1"),
                   uom: item.uom ?? "",
                   unitPrice: String(item.unitPrice ?? "0"),
@@ -589,6 +622,9 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   rentalDuration: "",
                   rentalUnit: "case",
                   sourcingType: resolveSourcingType(item.productCode ? codeMap.get(item.productCode)?.sourcingType : null),
+                designBrandName: (item.productCode ? codeMap.get(item.productCode)?.designBrandName : null) ?? "",
+                designBrandCode: (item.productCode ? codeMap.get(item.productCode)?.designBrandCode : null) ?? "",
+                privateLabelCode: (item.productCode ? codeMap.get(item.productCode)?.privateLabelCode : null) ?? "",
                   setGroupId: item.setGroupId ?? "",
                   setGroupLabel: item.setGroupLabel ?? "",
                   setQty: item.setQty ?? "",
@@ -767,7 +803,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           rowNo: 0, // renumbered below
           productId: item.productId ?? undefined,
           productCode: item.productCode ?? "",
-          description: item.description ?? "",
+          description: (item.description ?? "").toUpperCase(),
           qty: String(item.qty ?? "1"),
           uom: item.uom ?? "",
           unitPrice: String(item.unitPrice ?? "0"),
@@ -930,26 +966,6 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     setItems((prev) => prev.filter((i) => i._key !== key).map((i, idx) => ({ ...i, rowNo: idx + 1 })));
   }
 
-  async function handleProductCodeBlur(key: string, code: string, prevCode: string) {
-    const trimmed = code.trim();
-    if (!trimmed || trimmed === prevCode.trim()) return;
-    const product = await getProductByCode(trimmed);
-    if (!product) {
-      setItems((prev) => prev.map((i) => i._key === key ? { ...i, description: "N/A" } : i));
-      return;
-    }
-    setItems((prev) => prev.map((i) => i._key === key
-      ? {
-          ...i,
-          description: product.description ?? "N/A",
-          uom: product.uom ?? i.uom,
-          _descriptionSource: ["catalog"],
-          sourcingType: resolveSourcingType(product.sourcingType),
-        }
-      : i,
-    ));
-  }
-
   const [cpoPicker, setCpoPicker] = useState<string | null>(null);
   const [cpoPickerPos, setCpoPickerPos] = useState<{ top: number; left: number } | null>(null);
   const dragKey        = useRef<string | null>(null);
@@ -1031,53 +1047,81 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
 
   // ── Cell keyboard navigation ────────────────────────────────────────────────
 
+  // Column layout for arrow-key nav. When OEM columns are shown, cols 1-3
+  // (Design Brand / Design Code / Emboss Code) only accept focus on rows
+  // whose sourcingType is "oem" — disabled on "trading"/unset rows, so
+  // navigation must skip over them there instead of landing on a dead cell.
+  const firstEditableCol = showSourcing ? 4 : 1;
+  const qtyCol = showSourcing ? 5 : 2;
+  const COLS = qtyCol + 1;
+
+  function isColEnabled(rowIdx: number, colIdx: number): boolean {
+    const it = items[rowIdx];
+    if (!it) return false;
+    if (showSourcing && colIdx >= 1 && colIdx <= 3) return it.sourcingType === "oem";
+    return true;
+  }
+
   function handleCellKeyDown(
     e: React.KeyboardEvent<HTMLInputElement>,
     rowIdx: number,
     colIdx: number,
   ) {
-    const COLS = soType === "proforma" ? 4 : 6;
     const isModifier = e.metaKey || e.ctrlKey;
 
-    const focus = (r: number, c: number) => {
+    const focus = (r: number, c: number): boolean => {
+      if (r < 0 || r >= items.length || !isColEnabled(r, c)) return false;
       const target = tableRef.current?.querySelector<HTMLInputElement>(
         `[data-row="${r}"][data-col="${c}"]`,
       );
-      if (target) { target.focus(); target.select(); }
+      if (target) { target.focus(); target.select(); return true; }
+      return false;
+    };
+    const focusFirstInRow = (r: number): boolean => {
+      for (let c = 1; c < COLS; c++) if (focus(r, c)) return true;
+      return false;
+    };
+    const focusLastInRow = (r: number): boolean => {
+      for (let c = COLS - 1; c >= 1; c--) if (focus(r, c)) return true;
+      return false;
     };
 
     switch (e.key) {
       case "ArrowDown":
         if (!isModifier) break;
         e.preventDefault();
-        focus(rowIdx + 1, colIdx);
+        if (!focus(rowIdx + 1, colIdx)) focus(rowIdx + 1, firstEditableCol);
         break;
       case "ArrowUp":
         if (!isModifier) break;
         e.preventDefault();
-        if (rowIdx > 0) focus(rowIdx - 1, colIdx);
+        if (rowIdx > 0 && !focus(rowIdx - 1, colIdx)) focus(rowIdx - 1, firstEditableCol);
         break;
       case "Enter":
         e.preventDefault();
         if (rowIdx < items.length - 1) {
-          focus(rowIdx + 1, colIdx);
+          if (!focus(rowIdx + 1, colIdx)) focus(rowIdx + 1, firstEditableCol);
         } else {
           addLine();
-          setTimeout(() => focus(rowIdx + 1, 0), 0);
+          setTimeout(() => focus(rowIdx + 1, firstEditableCol), 0);
         }
         break;
-      case "ArrowRight":
+      case "ArrowRight": {
         if (!isModifier) break;
         e.preventDefault();
-        if (colIdx < COLS - 1) focus(rowIdx, colIdx + 1);
-        else focus(rowIdx + 1, 0);
+        let moved = false;
+        for (let c = colIdx + 1; c < COLS; c++) { if (focus(rowIdx, c)) { moved = true; break; } }
+        if (!moved) focusFirstInRow(rowIdx + 1);
         break;
-      case "ArrowLeft":
+      }
+      case "ArrowLeft": {
         if (!isModifier) break;
         e.preventDefault();
-        if (colIdx > 0) focus(rowIdx, colIdx - 1);
-        else if (rowIdx > 0) focus(rowIdx - 1, COLS - 1);
+        let moved = false;
+        for (let c = colIdx - 1; c >= 1; c--) { if (focus(rowIdx, c)) { moved = true; break; } }
+        if (!moved && rowIdx > 0) focusLastInRow(rowIdx - 1);
         break;
+      }
     }
   }
 
@@ -1191,7 +1235,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       sstPct,
       sst: sstAmt.toFixed(2),
       grandTotal: grand.toFixed(2),
-      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, _codeSource, _descriptionSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, ...rest }) => ({
+      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, _codeSource, _descriptionSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _designBrandSource, _privateLabelSource, ...rest }) => ({
         ...rest,
         unitPrice: soType === "proforma" ? "0" : rest.unitPrice,
         discountPct: soType === "proforma" ? "0" : rest.discountPct,
@@ -1215,6 +1259,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         editedBy: _editedBy ?? null,
         soEditedBy: _soEditedBy ?? null,
         isAdditional: _isAdditional ?? false,
+        designBrandSource: _designBrandSource ?? null,
       })),
     });
   }
@@ -2253,6 +2298,13 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 <tr className="border-b border-border text-muted-foreground tracking-wider">
                   <th className="text-left align-bottom pb-2 pr-2 w-8 uppercase">#</th>
                   <th className="text-left align-bottom pb-2 pr-2 w-24 uppercase">Code</th>
+                  {showSourcing && (
+                    <>
+                      <th className="text-left align-bottom pb-2 pr-2 w-24 uppercase">Design Brand</th>
+                      <th className="text-left align-bottom pb-2 pr-2 w-24 uppercase">Design Code</th>
+                      <th className="text-left align-bottom pb-2 pr-2 w-24 uppercase">Emboss Code</th>
+                    </>
+                  )}
                   <th className="text-left align-bottom pb-2 pr-2 uppercase">Description</th>
                   <th className="text-right align-bottom pb-2 pr-2 w-16 uppercase">Qty/Set</th>
                   {soType !== "proforma" && <th className="text-center align-bottom pb-2 pr-2 w-16 uppercase">Total qty</th>}
@@ -2267,8 +2319,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               </thead>
               <tbody>
                 {(() => {
-                  const hasQuotationCustomers = soType === "standard" && linkedQuotations.some((q) => q.customerId || q.customerSnapshot);
-                  const colCount = 5 + (soType !== "proforma" ? 3 : 0) + (hasQuotationCustomers ? 1 : 0) + 1;
+                  const hasQuotationCustomers = soType === "standard" && (
+                    linkedQuotations.some((q) => q.customerId || q.customerSnapshot) ||
+                    linkedCpos.some((c) => c.customerId || c.customerSnapshot)
+                  );
+                  const colCount = 5 + (soType !== "proforma" ? 3 : 0) + (hasQuotationCustomers ? 1 : 0) + (showSourcing ? 3 : 0) + 1;
                   // Build color index map: each unique groupId or cpoId gets a rotating palette entry
                   // Avoid: green/emerald (from-CPO tag), amber/yellow (edited tag), blue/sky (CPO badge)
                   const COLOR_PALETTE = [
@@ -2349,6 +2404,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     lastCpoId = item.sourceCustomerPoId;
                     const cpo = item.sourceCustomerPoId ? linkedCpos.find((c) => c.id === item.sourceCustomerPoId) : undefined;
                     const cpoCustomer = cpo?.customerSnapshot ? [cpo.customerSnapshot.title, cpo.customerSnapshot.name].filter(Boolean).join(" ") : null;
+                    const cpoCustomerOrg = cpo?.customerSnapshot?.organizationName ?? null;
                     rows.push(
                       <tr key={`cpo-section-${item.sourceCustomerPoId ?? "none"}-${rowIdx}`}>
                         <td colSpan={colCount} className={`pt-4 pb-1 ${rowIdx === 0 ? "pt-1" : ""}`}>
@@ -2359,6 +2415,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                                   {cpo.customerPoNo}
                                 </span>
                                 {cpoCustomer && <span className="text-[10px] text-muted-foreground">{cpoCustomer}</span>}
+                                {cpoCustomerOrg && <span className="text-[10px] text-muted-foreground">{cpoCustomerOrg}</span>}
                               </>
                             ) : (
                               <span className="text-[10px] text-muted-foreground italic">No CPO</span>
@@ -2414,9 +2471,6 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   const sourceQt = item.sourceQuotationId
                     ? linkedQuotations.find((q) => q.id === item.sourceQuotationId)
                     : undefined;
-                  const custName = sourceQt?.customerSnapshot
-                    ? [sourceQt.customerSnapshot.title, sourceQt.customerSnapshot.name].filter(Boolean).join(" ")
-                    : null;
                   const unassignedLinked = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
                   // CPO column: find which CPO this item belongs to
                   const sourceCpo = item.sourceCustomerPoId
@@ -2425,6 +2479,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   const cpoCustomerName = sourceCpo?.customerSnapshot
                     ? [sourceCpo.customerSnapshot.title, sourceCpo.customerSnapshot.name].filter(Boolean).join(" ")
                     : null;
+                  // Prefer the linked quotation's customer; fall back to the linked CPO's
+                  // (covers items imported straight from a CPO, e.g. /create?cpoId=...)
+                  const custName = sourceQt?.customerSnapshot
+                    ? [sourceQt.customerSnapshot.title, sourceQt.customerSnapshot.name].filter(Boolean).join(" ")
+                    : cpoCustomerName;
                   const Tag = ({ src: rawSrc }: { src: LineItem["_codeSource"] | string | null | undefined }) => {
                     const src: Array<"cpo" | "quotation" | "user" | "so"> | null = !rawSrc ? null : Array.isArray(rawSrc) ? rawSrc : [rawSrc as "cpo" | "quotation" | "user" | "so"];
                     if (!src?.length) return null;
@@ -2462,28 +2521,23 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   >
                     <td className={`py-1.5 pr-2 align-top ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"} ${color?.border ?? ""}`}><div className="h-7 flex items-center">{item.rowNo}</div></td>
                     <td className="py-1.5 pr-2 align-top">
-                      <ProductCell
-                        item={item}
-                        rowIdx={rowIdx}
-                        onUpdate={(key, patch) => updateItem(key, patch)}
-                        onBlur={(key, code, prevCode) => {
-                          if (code.trim() !== prevCode.trim()) {
-                            const prev = items.find(i => i._key === key);
-                            updateItem(key, {
-                              _codeSource: [...new Set([...(prev?._codeSource ?? []).filter(s => s !== "quotation"), "so" as const])],
-                              _soEditedBy: currentUserName || "user",
-                            });
-                          }
-                          handleProductCodeBlur(key, code, prevCode);
-                        }}
-                        onCellKeyDown={handleCellKeyDown}
-                      />
+                      <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
                       <Tag src={item._codeSource} />
                       {showSourcing && item.productCode?.trim() && (
                         item.sourcingType ? (
                           <button
                             type="button"
-                            onClick={() => updateItem(item._key, { sourcingType: item.sourcingType === "trading" ? "oem" : "trading" })}
+                            onClick={() => {
+                              if (item.sourcingType === "trading") {
+                                updateItem(item._key, {
+                                  sourcingType: "oem",
+                                  privateLabelCode: item.privateLabelCode?.trim() ? item.privateLabelCode : (item.productCode ?? ""),
+                                  _privateLabelSource: item.privateLabelCode?.trim() ? item._privateLabelSource : "auto",
+                                });
+                              } else {
+                                updateItem(item._key, { sourcingType: "trading" });
+                              }
+                            }}
                             className={cn(
                               "mt-0.5 block text-[10px] px-1.5 py-0.5 rounded-md border font-medium",
                               item.sourcingType === "oem"
@@ -2506,7 +2560,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                             </button>
                             <button
                               type="button"
-                              onClick={() => updateItem(item._key, { sourcingType: "oem" })}
+                              onClick={() => updateItem(item._key, {
+                                sourcingType: "oem",
+                                privateLabelCode: item.privateLabelCode?.trim() ? item.privateLabelCode : (item.productCode ?? ""),
+                                _privateLabelSource: item.privateLabelCode?.trim() ? item._privateLabelSource : "auto",
+                              })}
                               className="text-[10px] px-1.5 py-0.5 rounded-md border border-border bg-muted/40 text-muted-foreground hover:bg-muted"
                             >
                               OEM
@@ -2515,16 +2573,89 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         )
                       )}
                     </td>
+                    {showSourcing && (
+                      <>
+                        <td className="py-1.5 pr-2 align-top">
+                          <input
+                            data-row={rowIdx} data-col={1}
+                            value={item.designBrandName ?? ""}
+                            onChange={(e) => updateItem(item._key, { designBrandName: e.target.value, _designBrandSource: "user" })}
+                            onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)}
+                            disabled={item.sourcingType !== "oem"}
+                            placeholder={item.sourcingType === "oem" ? "e.g. geister" : "—"}
+                            className="h-7 w-full text-[11px] border border-input rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed"
+                          />
+                          {item.sourcingType === "oem" && item._designBrandSource && (
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border",
+                                item._designBrandSource === "catalog"
+                                  ? "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
+                                  : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800",
+                              )}
+                            >
+                              {item._designBrandSource === "catalog" ? (
+                                <><DatabaseIcon className="w-2.5 h-2.5 shrink-0" />from catalogue</>
+                              ) : (
+                                <><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edited</>
+                              )}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-1.5 pr-2 align-top">
+                          <DesignCodeCell
+                            item={item}
+                            onUpdate={updateItem}
+                            disabled={item.sourcingType !== "oem"}
+                            dataRow={rowIdx}
+                            dataCol={2}
+                            onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)}
+                          />
+                          {item.sourcingType === "oem" && item.designBrandCode?.trim() && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                              <PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edited
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-1.5 pr-2 align-top">
+                          <input
+                            data-row={rowIdx} data-col={3}
+                            value={item.privateLabelCode ?? ""}
+                            onChange={(e) => updateItem(item._key, { privateLabelCode: e.target.value, _privateLabelSource: "user" })}
+                            onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 3)}
+                            disabled={item.sourcingType !== "oem"}
+                            placeholder={item.sourcingType === "oem" ? "e.g. F680-18DP" : "—"}
+                            className="h-7 w-full text-[11px] border border-input rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed"
+                          />
+                          {item.sourcingType === "oem" && item._privateLabelSource && (
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border",
+                                item._privateLabelSource === "auto"
+                                  ? "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
+                                  : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800",
+                              )}
+                            >
+                              {item._privateLabelSource === "auto" ? (
+                                <><LinkIcon className="w-2.5 h-2.5 shrink-0" />from Code</>
+                              ) : (
+                                <><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edited</>
+                              )}
+                            </span>
+                          )}
+                        </td>
+                      </>
+                    )}
                     <td className="py-1.5 pr-2 align-top">
                       <Input
-                        data-row={rowIdx} data-col={1}
+                        data-row={rowIdx} data-col={firstEditableCol}
                         value={item.description ?? ""}
                         onChange={(e) => updateItem(item._key, {
-                          description: e.target.value,
+                          description: e.target.value.toUpperCase(),
                           _descriptionSource: [...new Set([...(item._descriptionSource ?? []).filter(s => s !== "quote" && s !== "catalog"), "so"])] as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
                           _soEditedBy: currentUserName || "user",
                         })}
-                        onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)}
+                        onKeyDown={(e) => handleCellKeyDown(e, rowIdx, firstEditableCol)}
                         className="h-7 text-[11px] md:text-[11px]"
                       />
                       {item._isAdditional && (
@@ -2595,14 +2726,14 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     </td>
                     <td className="py-1.5 pr-2 align-top">
                       <Input
-                        data-row={rowIdx} data-col={2}
+                        data-row={rowIdx} data-col={qtyCol}
                         value={item.qty}
                         onChange={(e) => updateItem(item._key, {
                           qty: e.target.value,
                           _qtySource: [...new Set([...(item._qtySource ?? []).filter(s => s !== "quotation"), "so" as const])],
                           _soEditedBy: currentUserName || "user",
                         })}
-                        onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)}
+                        onKeyDown={(e) => handleCellKeyDown(e, rowIdx, qtyCol)}
                         className="h-7 text-[11px] md:text-[11px] text-right tabular-nums"
                       />
                       <Tag src={item._qtySource} />
@@ -2632,11 +2763,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     )}
                     {hasQuotationCustomers && (
                       <td className="py-1.5 pr-2">
-                        {custName ? (
-                          <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground max-w-25 truncate" title={custName}>
-                            {custName}
-                          </span>
-                        ) : unassignedLinked.length > 0 ? (
+                        {!custName && unassignedLinked.length > 0 ? (
                           <select
                             value={item.sourceQuotationId ?? ""}
                             onChange={(e) => updateItem(item._key, { sourceQuotationId: e.target.value })}
@@ -2688,7 +2815,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               const newRowIdx = items.length;
               addLine();
               setTimeout(() => {
-                const target = tableRef.current?.querySelector<HTMLInputElement>(`[data-row="${newRowIdx}"][data-col="0"]`);
+                const target = tableRef.current?.querySelector<HTMLInputElement>(`[data-row="${newRowIdx}"][data-col="${firstEditableCol}"]`);
                 if (target) { target.focus(); target.select(); }
               }, 0);
             }}

@@ -41,16 +41,23 @@ export async function upsertProfile(
 
   const existing = await getProfile();
 
+  // date_of_birth is a date column — an empty string from a blank form
+  // field is not valid date syntax, so it must become null instead.
+  const normalized = {
+    ...data,
+    ...(data.dateOfBirth === "" ? { dateOfBirth: null } : {}),
+  };
+
   if (existing) {
     await db
       .update(profile)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...normalized, updatedAt: new Date() })
       .where(eq(profile.userId, session.user.id));
   } else {
     await db.insert(profile).values({
       id: nanoid(),
       userId: session.user.id,
-      ...data,
+      ...normalized,
     });
   }
 }
