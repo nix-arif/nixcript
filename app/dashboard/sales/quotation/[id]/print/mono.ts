@@ -223,7 +223,7 @@ function drawMonoInfoBox(opts: {
   const {
     page, startY, boxH, fontR, fontB, cust,
     quotationNo, createdAt, validUntil, title,
-    accentColor, salesPersonName, salesPersonPhone, revisionNo,
+    accentColor, salesPersonName, salesPersonPhone,
   } = opts;
 
   const DIVX = ML + CW * 0.5;
@@ -312,7 +312,6 @@ function drawMonoInfoBox(opts: {
   const validityDays = (validUntil && createdAt)
     ? Math.round((new Date(validUntil).getTime() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24))
     : null;
-  const isOriginal = (revisionNo ?? 0) === 0;
   const spDisplay = salesPersonName
     ? (salesPersonPhone ? `${salesPersonName} (${salesPersonPhone})` : salesPersonName)
     : null;
@@ -321,7 +320,7 @@ function drawMonoInfoBox(opts: {
     ["Date",         fmtD(createdAt)],
     ["Validity",     validityDays !== null ? `${validityDays} days` : "—"],
     ...(title ? [["Subject", title]] as [string, string][] : []),
-    ...(isOriginal && spDisplay ? [["Sales Person", spDisplay]] as [string, string][] : []),
+    ...(spDisplay ? [["Sales Person", spDisplay]] as [string, string][] : []),
   ];
 
   const uRows = detailRows.map(([l, v]) => [up(l), up(v)] as [string, string]);
@@ -507,7 +506,7 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   const DIVIDER_GAP   = 10;
   const TABLE_HDR_H   = 20;
-  const INFO_BLOCK    = estimateMonoInfoBoxH({ cust, title: q.title ?? null, hasSalesPerson: !q.isDummy && !(q.revisionNo) && !!q.salesPersonName });
+  const INFO_BLOCK    = estimateMonoInfoBoxH({ cust, title: q.title ?? null, hasSalesPerson: !q.isDummy && !!q.salesPersonName });
 
   const totRowCount  = 1 + (showDisc && itemDiscPerSet > 0 ? 2 : 0) + (sets > 1 ? 1 : 0) + (sstAmt > 0 ? 1 : 0);
   const noteLines    = q.notes ? wrap(q.notes, fontR, 9.5, CW - 20) : [];

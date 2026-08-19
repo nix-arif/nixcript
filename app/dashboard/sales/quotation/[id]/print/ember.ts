@@ -498,7 +498,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
       const _validDaysE = (q.validUntil && q.createdAt)
         ? Math.round((new Date(q.validUntil).getTime() - new Date(q.createdAt).getTime()) / (1000 * 60 * 60 * 24))
         : null;
-      const _spDisplayE = (!q.isDummy && !q.revisionNo && q.salesPersonName)
+      const _spDisplayE = (!q.isDummy && q.salesPersonName)
         ? ((q as any).salesPersonPhone ? `${q.salesPersonName} (${(q as any).salesPersonPhone})` : q.salesPersonName)
         : null;
       const dateRows: [string, string][] = [
@@ -601,7 +601,7 @@ export async function generateQuotationEmber(data: Data): Promise<Uint8Array> {
 
       let cuRY2 = cuTop2;
       const _vdE2 = (q.validUntil && q.createdAt) ? Math.round((new Date(q.validUntil).getTime() - new Date(q.createdAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
-      const _spDisplay2 = (!q.isDummy && !q.revisionNo && q.salesPersonName)
+      const _spDisplay2 = (!q.isDummy && q.salesPersonName)
         ? ((q as any).salesPersonPhone ? `${q.salesPersonName} (${(q as any).salesPersonPhone})` : q.salesPersonName)
         : null;
       const dateRows2: [string, string][] = [
