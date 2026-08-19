@@ -194,6 +194,7 @@ export interface SalesOrderItemInput {
   designBrandCode?: string | null;
   privateLabelCode?: string | null;
   designBrandSource?: "catalog" | "user" | null;
+  privateLabelSource?: "auto" | "user" | null;
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
@@ -641,6 +642,7 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
         designBrandCode: item.designBrandCode ?? null,
         privateLabelCode: item.privateLabelCode ?? null,
         designBrandSource: item.designBrandSource ?? null,
+        privateLabelSource: item.privateLabelSource ?? null,
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
@@ -810,6 +812,7 @@ async function applySalesOrderUpdate(
         designBrandCode: item.designBrandCode ?? null,
         privateLabelCode: item.privateLabelCode ?? null,
         designBrandSource: item.designBrandSource ?? null,
+        privateLabelSource: item.privateLabelSource ?? null,
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,

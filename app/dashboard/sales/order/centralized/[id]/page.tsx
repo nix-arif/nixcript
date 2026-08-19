@@ -4,6 +4,9 @@ import { getQuotationBasic, type QuotationBasic } from "@/server/quotation";
 import { getDeliveryOrdersBySoId, getSoItemDeliveredQtys } from "@/server/delivery-order";
 import { getPrsBySoId } from "@/server/purchase-requisition";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { db } from "@/db";
+import { organizationProfile } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { SalesOrderDetailClient } from "../../[id]/so-detail-client";
 
@@ -19,6 +22,14 @@ export default async function CentralizedSalesOrderDetailPage({ params }: { para
   if (!data) notFound();
 
   const { organizationName, ...order } = data;
+
+  // businessType belongs to the order's own org, not necessarily the
+  // viewer's currently active one — this is a cross-org centralized view.
+  const [profile] = await db
+    .select({ businessType: organizationProfile.businessType })
+    .from(organizationProfile)
+    .where(eq(organizationProfile.organizationId, order.organizationId))
+    .limit(1);
 
   const allQuotationIds = (() => {
     const linked = (order.linkedQuotations as { id: string }[] | null) ?? [];
@@ -55,6 +66,7 @@ export default async function CentralizedSalesOrderDetailPage({ params }: { para
       backHref="/dashboard/sales/order/centralized"
       organizationName={organizationName}
       editHref={canEdit ? `/dashboard/sales/order/centralized/${id}/edit` : undefined}
+      businessType={profile?.businessType ?? "trading"}
     />
   );
 }

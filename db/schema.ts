@@ -1676,6 +1676,9 @@ export const salesOrderItem = pgTable(
     // design-code lookup, "user" once someone edits it directly. Mirrors
     // descriptionSource/codeSource below.
     designBrandSource: text("design_brand_source"),
+    // Provenance for privateLabelCode (Emboss Code) — "auto" when filled
+    // from the Code column on switching to OEM, "user" once edited directly.
+    privateLabelSource: text("private_label_source"),
 
     // Set grouping
     setGroupId: text("set_group_id"),

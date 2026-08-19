@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
+import * as XLSX from "xlsx";
 import {
   deleteSalesOrder,
   submitSalesOrder,
@@ -26,7 +27,7 @@ import {
   UserIcon, BuildingIcon, CalendarIcon, MapPinIcon,
   FileTextIcon, PackageIcon, CheckIcon, XIcon, RotateCcwIcon, SendIcon, ClockIcon,
   PrinterIcon, ShoppingCartIcon, WarehouseIcon, AlertTriangleIcon, CheckCircle2Icon,
-  Loader2Icon, TruckIcon, LinkIcon, PlusIcon, DatabaseIcon,
+  Loader2Icon, TruckIcon, LinkIcon, PlusIcon, DatabaseIcon, FileSpreadsheetIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +71,7 @@ export function SalesOrderDetailClient({
   backHref = "/dashboard/sales/order",
   editHref,
   organizationName,
+  businessType = "trading",
 }: {
   order: SalesOrderWithItems;
   linkedQuotations?: QuotationBasic[];
@@ -85,8 +87,10 @@ export function SalesOrderDetailClient({
   // rights are gated by sales-order:update:centralized, resolved server-side.
   editHref?: string;
   organizationName?: string;
+  businessType?: string;
 }) {
   const router = useRouter();
+  const showSourcing = businessType !== "trading";
   const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState(order.status ?? "draft");
   const [actioning, setActioning] = useState<"submit" | "approve" | "reject" | "recall" | null>(null);
@@ -170,6 +174,20 @@ export function SalesOrderDetailClient({
   }
 
   async function handleSubmit() {
+    if (showSourcing) {
+      const missingSourcing = order.items.find((i) => (i.description || i.productCode) && !i.sourcingType);
+      if (missingSourcing) {
+        toast.error(`Please select Trading or OEM sourcing for row ${missingSourcing.rowNo}`);
+        return;
+      }
+      const missingOem = order.items.find((i) => i.sourcingType === "oem" && (
+        !i.designBrandName?.trim() || !i.designBrandCode?.trim() || !i.privateLabelCode?.trim()
+      ));
+      if (missingOem) {
+        toast.error(`Please fill in Design Brand, Design Code and Emboss Code for row ${missingOem.rowNo}`);
+        return;
+      }
+    }
     setActioning("submit");
     try {
       await submitSalesOrder(order.id);
@@ -267,6 +285,59 @@ export function SalesOrderDetailClient({
     }
   }
 
+  function handleExportExcel() {
+    const rows: (string | number)[][] = [];
+
+    rows.push([`Sales Order ${order.soNo}`]);
+    rows.push([`Status: ${SO_STATUS[status]?.label ?? status}`, `Date: ${fmtDate(order.createdAt)}`]);
+    rows.push([]);
+    rows.push(["Customer", custName || "—", "Organization", snap?.organizationName || "—"]);
+    rows.push(["Sales Person", order.salesPersonName || "—", "Due Delivery Date", fmtDate(order.deliveryDate)]);
+    if (order.deliveryAddress) rows.push(["Delivery Address", order.deliveryAddress]);
+    rows.push([]);
+
+    const header = ["#", "Code"];
+    if (showSourcing) header.push("Design Brand", "Design Code", "Emboss Code");
+    header.push("Description", "Qty", "UOM", "Unit Price", "Disc %", "Total");
+    const colCount = header.length;
+    rows.push(header);
+
+    for (const item of order.items) {
+      const row: (string | number)[] = [item.rowNo, item.productCode ?? ""];
+      if (showSourcing) row.push(item.designBrandName ?? "", item.designBrandCode ?? "", item.privateLabelCode ?? "");
+      row.push(
+        item.description ?? "",
+        Number(item.qty ?? 0),
+        item.uom ?? "",
+        Number(item.unitPrice ?? 0),
+        Number(item.discountPct ?? 0),
+        Number(item.totalPrice ?? 0),
+      );
+      rows.push(row);
+    }
+
+    rows.push([]);
+    const footer = (label: string, value: number) => {
+      const r: (string | number)[] = new Array(colCount - 2).fill("");
+      r.push(label, value);
+      return r;
+    };
+    rows.push(footer("Subtotal", Number(order.subtotal ?? 0)));
+    if (parseFloat(order.overallDiscountPct ?? "0") > 0) {
+      rows.push(footer(`Discount (${order.overallDiscountPct}%)`, -Number(order.overallDiscountAmt ?? 0)));
+    }
+    if (parseFloat(order.sstPct ?? "0") > 0) {
+      rows.push(footer(`SST (${order.sstPct}%)`, Number(order.sst ?? 0)));
+    }
+    rows.push(footer("Grand Total", Number(order.grandTotal ?? 0)));
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = header.map(() => ({ wch: 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sales Order");
+    XLSX.writeFile(wb, `${order.soNo}.xlsx`);
+  }
+
   return (
     <div className="p-6 space-y-6">
       {draftRedirected && (
@@ -282,6 +353,9 @@ export function SalesOrderDetailClient({
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleExportExcel}>
+              <FileSpreadsheetIcon className="w-3.5 h-3.5" /> Excel
             </Button>
             {(status === "confirmed" || status === "fulfilled") && (
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.open(`/api/sales-order/${order.id}/pdf`, "_blank")}>
@@ -377,6 +451,13 @@ export function SalesOrderDetailClient({
                     <tr className="bg-muted/50 border-y border-border/60 text-muted-foreground">
                       <th className="text-left align-middle py-1.5 pl-4 pr-3 w-6 text-[10px] tracking-wider font-medium uppercase">#</th>
                       <th className="text-left align-middle py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Code</th>
+                      {showSourcing && (
+                        <>
+                          <th className="text-left align-middle py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Design Brand</th>
+                          <th className="text-left align-middle py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Design Code</th>
+                          <th className="text-left align-middle py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Emboss Code</th>
+                        </>
+                      )}
                       <th className="text-left align-middle py-1.5 pr-3 text-[10px] tracking-wider font-medium uppercase">Description</th>
                       <th className="text-right align-middle py-1.5 pr-3 w-12 text-[10px] tracking-wider font-medium uppercase">Qty</th>
                       <th className="text-center align-middle py-1.5 pr-3 w-16 text-[10px] tracking-wider font-medium uppercase">Total qty</th>
@@ -431,7 +512,8 @@ export function SalesOrderDetailClient({
                       );
                       const colCount = 9
                         + ((status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 ? 1 : 0)
-                        + (can("sales-order:approve") && status === "submitted" ? 1 : 0);
+                        + (can("sales-order:approve") && status === "submitted" ? 1 : 0)
+                        + (showSourcing ? 3 : 0);
 
                       const isUrgent = order.soType === "urgent";
                       const isNonStandard = order.soType !== "standard";
@@ -595,11 +677,85 @@ export function SalesOrderDetailClient({
                               )}
                               {((item as any).codeSource ?? []).includes("so") && (
                                 <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
-                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edited SO
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edit SO
                                 </span>
                               )}
+                              {showSourcing && (
+                                item.sourcingType ? (
+                                  <span className={cn(
+                                    "mt-0.5 inline-block text-[10px] px-1.5 py-0.5 rounded-md border font-medium",
+                                    item.sourcingType === "oem"
+                                      ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800"
+                                      : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800",
+                                  )}>
+                                    {item.sourcingType === "oem" ? "OEM" : "Trading"}
+                                  </span>
+                                ) : item.productCode?.trim() ? (
+                                  <span className="mt-0.5 inline-block text-[10px] px-1.5 py-0.5 rounded-md border border-destructive/40 text-destructive font-medium">
+                                    sourcing?
+                                  </span>
+                                ) : null
+                              )}
                             </td>
-                            <td className="py-2 pr-3">
+                            {showSourcing && (
+                              <>
+                                <td className="py-2 pr-3 align-top">
+                                  {item.sourcingType === "oem" && !item.designBrandName?.trim() ? (
+                                    <span className="text-destructive">missing</span>
+                                  ) : item.designBrandName?.trim() ? (
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="text-muted-foreground">{item.designBrandName}</span>
+                                      {item.designBrandSource === "catalog" ? (
+                                        <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                                          <DatabaseIcon className="w-3 h-3 shrink-0" />from catalogue
+                                        </span>
+                                      ) : item.designBrandSource === "user" ? (
+                                        <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                          <PencilIcon className="w-3 h-3 shrink-0" />{item.soEditedBy || "?"} edit SO
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </td>
+                                <td className="py-2 pr-3 align-top">
+                                  {item.sourcingType === "oem" && !item.designBrandCode?.trim() ? (
+                                    <span className="text-destructive">missing</span>
+                                  ) : item.designBrandCode?.trim() ? (
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="font-mono text-muted-foreground">{item.designBrandCode}</span>
+                                      <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                        <PencilIcon className="w-3 h-3 shrink-0" />{item.soEditedBy || "?"} edit SO
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="font-mono text-muted-foreground">—</span>
+                                  )}
+                                </td>
+                                <td className="py-2 pr-3 align-top">
+                                  {item.sourcingType === "oem" && !item.privateLabelCode?.trim() ? (
+                                    <span className="text-destructive">missing</span>
+                                  ) : item.privateLabelCode?.trim() ? (
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="font-mono text-muted-foreground">{item.privateLabelCode}</span>
+                                      {item.privateLabelSource === "auto" ? (
+                                        <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                                          <LinkIcon className="w-3 h-3 shrink-0" />from Code
+                                        </span>
+                                      ) : item.privateLabelSource === "user" ? (
+                                        <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                          <PencilIcon className="w-3 h-3 shrink-0" />{item.soEditedBy || "?"} edit SO
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <span className="font-mono text-muted-foreground">—</span>
+                                  )}
+                                </td>
+                              </>
+                            )}
+                            <td className="py-2 pr-3 align-top">
                               {/* Rejected tag sits outside the line-through wrapper so it is never struck through */}
                               {isApprovalRejected && (() => {
                                 const meta = approvalRejectionMeta[item.id];
@@ -644,6 +800,12 @@ export function SalesOrderDetailClient({
                                       {(item as any).editedBy || "?"} edited CPO
                                     </span>
                                   )}
+                                  {((item as any).descriptionSource ?? []).includes("so") && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
+                                      <PencilIcon className="w-3 h-3 shrink-0" />
+                                      {item.soEditedBy || "?"} edit SO
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </td>
@@ -666,7 +828,7 @@ export function SalesOrderDetailClient({
                               )}
                               {((item as any).qtySource ?? []).includes("so") && (
                                 <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
-                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edited SO
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edit SO
                                 </span>
                               )}
                             </td>
@@ -711,7 +873,7 @@ export function SalesOrderDetailClient({
                               )}
                               {((item as any).unitPriceSource ?? []).includes("so") && (
                                 <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
-                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edited SO
+                                  <PencilIcon className="w-3 h-3 shrink-0" />{(item as any).soEditedBy || "?"} edit SO
                                 </span>
                               )}
                             </td>

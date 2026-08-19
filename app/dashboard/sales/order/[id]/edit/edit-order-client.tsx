@@ -36,6 +36,7 @@ import {
   FileTextIcon,
   GripVerticalIcon,
   ChevronDownIcon,
+  AlertTriangleIcon,
 } from "lucide-react";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
@@ -130,6 +131,8 @@ function DesignCodeCell({
   dataRow,
   dataCol,
   onKeyDown,
+  invalid,
+  currentUserName,
 }: {
   item: LineItem;
   onUpdate: (key: string, patch: Partial<LineItem>) => void;
@@ -137,6 +140,8 @@ function DesignCodeCell({
   dataRow?: number;
   dataCol?: number;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  invalid?: boolean;
+  currentUserName?: string;
 }) {
   const [q, setQ] = useState(item.designBrandCode ?? "");
   const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; brand: string | null }[]>([]);
@@ -175,7 +180,7 @@ function DesignCodeCell({
     // Design Code always reflects exactly what the user typed, independent
     // of whether it resolves to a catalogue match — otherwise a non-matching
     // code would silently never reach item state and get lost on save.
-    onUpdate(item._key, { designBrandCode: val });
+    onUpdate(item._key, { designBrandCode: val, _soEditedBy: currentUserName || "user" });
     if (debounce.current) clearTimeout(debounce.current);
     if (val.trim().length < 3) { setResults([]); setOpen(false); setSearched(false); return; }
     setSearching(true);
@@ -203,8 +208,8 @@ function DesignCodeCell({
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onKeyDown={onKeyDown}
         disabled={disabled}
-        placeholder="search by product code…"
-        className="h-7 w-full text-[11px] border border-input rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed"
+        placeholder="search by product code… (required)"
+        className={`h-7 w-full text-[11px] border rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed ${invalid ? "border-destructive" : "border-input"}`}
       />
       {open && (
         <div className="absolute z-50 top-full left-0 mt-0.5 w-64 rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto text-xs">
@@ -389,7 +394,10 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
   const [items, setItems] = useState<LineItem[]>(
     order.items.length > 0
       ? order.items.map((i) => ({
-          _key: uid(),
+          // Stable across server/client — a fresh uid() here would differ
+          // between the SSR pass and the client's first render and break
+          // hydration (every row's data-key would mismatch).
+          _key: i.id,
           rowNo: i.rowNo,
           productCode: i.productCode ?? "",
           description: (i.description ?? "").toUpperCase(),
@@ -407,6 +415,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           designBrandCode: (i as any).designBrandCode ?? "",
           privateLabelCode: (i as any).privateLabelCode ?? "",
           _designBrandSource: (i as any).designBrandSource ?? null,
+          _privateLabelSource: (i as any).privateLabelSource ?? null,
           setGroupId: (i as any).setGroupId ?? "",
           setGroupLabel: (i as any).setGroupLabel ?? "",
           setQty: (i as any).setQty ?? "",
@@ -771,6 +780,9 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       null;
     if (!primaryCustomerId) { toast.error("Please select a customer"); return; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return; }
+    // Sourcing/OEM fields are not enforced here — editing only ever touches a
+    // draft order, and a draft is allowed to stay incomplete until it's
+    // actually submitted for approval (from the SO detail page).
     if (linkedCpos.length > 0) {
       for (const cpo of linkedCpos) {
         if (!cpoSalesPersons[cpo.id]?.length) {
@@ -844,6 +856,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           soEditedBy: _soEditedBy ?? null,
           isAdditional: _isAdditional ?? false,
           designBrandSource: _designBrandSource ?? null,
+          privateLabelSource: _privateLabelSource ?? null,
         })),
       });
       toast.success("Sales order updated");
@@ -1299,7 +1312,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     const dateSame = cpo._deliveryDateInherited != null && cpo.deliveryDate === cpo._deliveryDateInherited;
                     const addrSame = cpo._deliveryAddressInherited != null && (cpo.deliveryAddress ?? "") === cpo._deliveryAddressInherited;
                     const tagFrom = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-2.5 h-2.5 shrink-0" />from CPO</span>;
-                    const tagEdited = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edited</span>;
+                    const tagEdited = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO</span>;
                     return (
                       <tr key={cpo.id}>
                         <td className="py-2 pr-3 align-top">
@@ -1479,7 +1492,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                         )}
                         {src.includes("so") && (
                           <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
-                            <PencilIcon className="w-3 h-3 shrink-0" />{it._soEditedBy || currentUserName || "user"} edited SO
+                            <PencilIcon className="w-3 h-3 shrink-0" />{it._soEditedBy || currentUserName || "user"} edit SO
                           </span>
                         )}
                       </>
@@ -1673,7 +1686,10 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                                   _privateLabelSource: item.privateLabelCode?.trim() ? item._privateLabelSource : "auto",
                                 });
                               } else {
-                                updateItem(item._key, { sourcingType: "trading" });
+                                // Emboss Code is OEM-only — clear it going back to Trading so
+                                // a re-toggle to OEM later re-triggers the auto-fill from Code
+                                // instead of resurrecting a stale value.
+                                updateItem(item._key, { sourcingType: "trading", privateLabelCode: "", _privateLabelSource: null });
                               }
                             }}
                             className={`mt-0.5 block text-[10px] px-1.5 py-0.5 rounded-md border font-medium ${
@@ -1716,11 +1732,11 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           <input
                             data-row={rowIdx} data-col={1}
                             value={item.designBrandName ?? ""}
-                            onChange={(e) => updateItem(item._key, { designBrandName: e.target.value, _designBrandSource: "user" })}
+                            onChange={(e) => updateItem(item._key, { designBrandName: e.target.value, _designBrandSource: "user", _soEditedBy: currentUserName || "user" })}
                             onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 1)}
                             disabled={item.sourcingType !== "oem"}
-                            placeholder={item.sourcingType === "oem" ? "e.g. geister" : "—"}
-                            className="h-7 w-full text-[11px] border border-input rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed"
+                            placeholder={item.sourcingType === "oem" ? "e.g. geister (required)" : "—"}
+                            className={`h-7 w-full text-[11px] border rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed ${item.sourcingType === "oem" && !item.designBrandName?.trim() ? "border-destructive" : "border-input"}`}
                           />
                           {item.sourcingType === "oem" && item._designBrandSource && (
                             <span
@@ -1733,7 +1749,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                               {item._designBrandSource === "catalog" ? (
                                 <><DatabaseIcon className="w-2.5 h-2.5 shrink-0" />from catalogue</>
                               ) : (
-                                <><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edited</>
+                                <><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO</>
                               )}
                             </span>
                           )}
@@ -1746,10 +1762,12 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                             dataRow={rowIdx}
                             dataCol={2}
                             onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 2)}
+                            invalid={item.sourcingType === "oem" && !item.designBrandCode?.trim()}
+                            currentUserName={currentUserName}
                           />
                           {item.sourcingType === "oem" && item.designBrandCode?.trim() && (
                             <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
-                              <PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edited
+                              <PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO
                             </span>
                           )}
                         </td>
@@ -1757,26 +1775,32 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           <input
                             data-row={rowIdx} data-col={3}
                             value={item.privateLabelCode ?? ""}
-                            onChange={(e) => updateItem(item._key, { privateLabelCode: e.target.value, _privateLabelSource: "user" })}
+                            onChange={(e) => updateItem(item._key, { privateLabelCode: e.target.value, _privateLabelSource: "user", _soEditedBy: currentUserName || "user" })}
                             onKeyDown={(e) => handleCellKeyDown(e, rowIdx, 3)}
                             disabled={item.sourcingType !== "oem"}
-                            placeholder={item.sourcingType === "oem" ? "e.g. F680-18DP" : "—"}
-                            className="h-7 w-full text-[11px] border border-input rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed"
+                            placeholder={item.sourcingType === "oem" ? "e.g. F680-18DP (required)" : "—"}
+                            className={`h-7 w-full text-[11px] border rounded px-1.5 bg-background disabled:opacity-40 disabled:cursor-not-allowed ${item.sourcingType === "oem" && !item.privateLabelCode?.trim() ? "border-destructive" : "border-input"}`}
                           />
-                          {item.sourcingType === "oem" && item._privateLabelSource && (
-                            <span
-                              className={`inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border ${
-                                item._privateLabelSource === "auto"
-                                  ? "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
-                                  : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"
-                              }`}
-                            >
-                              {item._privateLabelSource === "auto" ? (
-                                <><LinkIcon className="w-2.5 h-2.5 shrink-0" />from Code</>
-                              ) : (
-                                <><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edited</>
-                              )}
-                            </span>
+                          {item.sourcingType === "oem" && (
+                            !item.privateLabelCode?.trim() ? (
+                              <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
+                                <AlertTriangleIcon className="w-2.5 h-2.5 shrink-0" />missing
+                              </span>
+                            ) : item._privateLabelSource ? (
+                              <span
+                                className={`inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border ${
+                                  item._privateLabelSource === "auto"
+                                    ? "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
+                                    : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"
+                                }`}
+                              >
+                                {item._privateLabelSource === "auto" ? (
+                                  <><LinkIcon className="w-2.5 h-2.5 shrink-0" />from Code</>
+                                ) : (
+                                  <><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO</>
+                                )}
+                              </span>
+                            ) : null
                           )}
                         </td>
                       </>
@@ -1814,7 +1838,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       )}
                       {(item._descriptionSource ?? []).includes("so") && (
                         <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800">
-                          <PencilIcon className="w-3 h-3 shrink-0" />{item._soEditedBy || currentUserName || "user"} edited SO
+                          <PencilIcon className="w-3 h-3 shrink-0" />{item._soEditedBy || currentUserName || "user"} edit SO
                         </span>
                       )}
                       {isNonStandard && (

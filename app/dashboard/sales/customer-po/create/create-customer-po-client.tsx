@@ -464,6 +464,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     if (linkedQuotations.length === 0) { toast.error("Please link at least one quotation"); return; }
     if (!customerPoNo.trim()) { toast.error("Customer PO number is required"); return; }
     if (!deliveryAddress.trim()) { toast.error("Delivery address is required"); return; }
+    if (!deliveryDate) { toast.error("Due delivery date is required"); return; }
     if (salesPersons.length === 0) { toast.error("Sales person is required"); return; }
     setSaving(true);
     try {
@@ -746,7 +747,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Due delivery date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Label className="text-xs">Due delivery date <span className="text-destructive">*</span></Label>
               <input
                 type="date"
                 value={deliveryDate}

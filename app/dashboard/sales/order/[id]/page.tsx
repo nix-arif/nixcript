@@ -4,6 +4,7 @@ import { getQuotationBasic, type QuotationBasic } from "@/server/quotation";
 import { getDeliveryOrdersBySoId, getSoItemDeliveredQtys } from "@/server/delivery-order";
 import { getPrsBySoId } from "@/server/purchase-requisition";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { getOrganizationProfile } from "@/server/organization-profile";
 import { notFound } from "next/navigation";
 import { SalesOrderDetailClient } from "./so-detail-client";
 
@@ -12,9 +13,10 @@ export default async function SalesOrderDetailPage({ params, searchParams }: { p
   const { id } = await params;
   const { draft } = await searchParams;
 
-  const [order, permissions] = await Promise.all([
+  const [order, permissions, profile] = await Promise.all([
     getSalesOrderDetail(id),
     getUserPermissions(session.user.id, session.session.activeOrganizationId!),
+    getOrganizationProfile().catch(() => null),
   ]);
 
   if (!order) notFound();
@@ -35,5 +37,5 @@ export default async function SalesOrderDetailPage({ params, searchParams }: { p
     getSoItemDeliveredQtys(id).catch(() => ({} as Record<string, number>)),
   ]);
 
-  return <SalesOrderDetailClient order={order} linkedQuotations={linkedQuotations} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} itemDeliveredQtys={itemDeliveredQtys} />;
+  return <SalesOrderDetailClient order={order} linkedQuotations={linkedQuotations} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} itemDeliveredQtys={itemDeliveredQtys} businessType={profile?.businessType ?? "trading"} />;
 }
