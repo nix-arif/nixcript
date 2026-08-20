@@ -7,9 +7,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import type { ClaimApplicationWithDetails } from "@/server/claim";
+import { setClaimPaid, type ClaimApplicationWithDetails } from "@/server/claim";
 import { CLAIM_FORM } from "@/lib/claim/constants";
-import { ClipboardListIcon, PrinterIcon, SearchIcon, ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon } from "lucide-react";
+import { ClipboardListIcon, PrinterIcon, SearchIcon, ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon, CheckCircle2Icon, CircleIcon } from "lucide-react";
 
 const FORM_LABELS: Record<string, string> = {
   LOCAL: "Local Reimbursement",
@@ -81,13 +81,23 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge className={`border text-xs ${map[status] ?? "border-border"}`}>{labels[status] ?? status}</Badge>;
 }
 
+const STATUS_FILTERS = ["APPROVED", "ALL", "PENDING", "CHECKED", "REJECTED", "CANCELLED", "DRAFT"] as const;
+const STATUS_FILTER_LABELS: Record<string, string> = {
+  APPROVED: "Approved", ALL: "All", PENDING: "Pending", CHECKED: "Checked",
+  REJECTED: "Rejected", CANCELLED: "Cancelled", DRAFT: "Draft",
+};
+
 interface Props {
   applications: ClaimApplicationWithDetails[];
+  currentUserName?: string;
 }
 
-export function AllClaimsClient({ applications }: Props) {
+export function AllClaimsClient({ applications: initialApplications, currentUserName }: Props) {
+  const [applications, setApplications] = useState(initialApplications);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<typeof STATUS_FILTERS[number]>("APPROVED");
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
+  const [togglingPaidId, setTogglingPaidId] = useState<string | null>(null);
 
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -120,7 +130,26 @@ export function AllClaimsClient({ applications }: Props) {
     }
   }
 
+  // Marks/unmarks an approved claim as paid — tracked separately from status
+  // so finance can tell which approved claims still need a bank transfer.
+  async function handleTogglePaid(app: ClaimApplicationWithDetails) {
+    const nextPaid = !app.paidAt;
+    setTogglingPaidId(app.id);
+    try {
+      await setClaimPaid(app.id, nextPaid);
+      setApplications((prev) => prev.map((a) => a.id === app.id
+        ? { ...a, paidAt: nextPaid ? new Date() : null, paidByName: nextPaid ? (currentUserName ?? "user") : null }
+        : a));
+      toast.success(nextPaid ? "Marked as paid" : "Marked as unpaid");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update paid status");
+    } finally {
+      setTogglingPaidId(null);
+    }
+  }
+
   const filtered = applications.filter((app) => {
+    if (statusFilter !== "ALL" && app.status !== statusFilter) return false;
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
@@ -139,18 +168,36 @@ export function AllClaimsClient({ applications }: Props) {
           All Claims
         </h1>
         <p className="text-sm text-muted-foreground">
-          Every claim submitted across the organisation, regardless of status.
+          Every claim submitted across the organisation. Defaults to Approved for bank transfer processing.
         </p>
       </div>
 
-      <div className="relative max-w-sm">
-        <SearchIcon className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by ref no., applicant, or claim type…"
-          className="w-full h-8 pl-8 pr-2 border border-input rounded-md text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative max-w-sm flex-1 min-w-50">
+          <SearchIcon className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by ref no., applicant, or claim type…"
+            className="w-full h-8 pl-8 pr-2 border border-input rounded-md text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+          />
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          {STATUS_FILTERS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatusFilter(s)}
+              className={`h-7 px-2.5 rounded-md text-xs font-medium border transition-colors ${
+                statusFilter === s
+                  ? "bg-foreground text-background border-foreground"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {STATUS_FILTER_LABELS[s]}
+            </button>
+          ))}
+        </div>
       </div>
 
       {sorted.length === 0 ? (
@@ -169,6 +216,8 @@ export function AllClaimsClient({ applications }: Props) {
                 <SortableHeader label="Submitted" sortKey="submitted" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-28"/>
                 <TableHead className="w-28 text-right">Amount</TableHead>
                 <TableHead className="w-24">Status</TableHead>
+                <TableHead className="w-44">Bank Account</TableHead>
+                <TableHead className="w-32">Paid</TableHead>
                 <TableHead className="w-16 text-right">PDF</TableHead>
               </TableRow>
             </TableHeader>
@@ -189,6 +238,42 @@ export function AllClaimsClient({ applications }: Props) {
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{fmtSubmittedDate(app.createdAt)}</TableCell>
                     <TableCell className="text-right text-sm font-semibold">{fmtAmount(app.amount)}</TableCell>
                     <TableCell><StatusBadge status={app.status} /></TableCell>
+                    <TableCell className="text-xs">
+                      {app.applicantBankAccountNo ? (
+                        <div className="flex flex-col">
+                          <span className="font-medium">{app.applicantBankAccountHolder || app.applicantName || "—"}</span>
+                          <span className="text-muted-foreground">{app.applicantBankName || "—"} · {app.applicantBankAccountNo}</span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">No bank details on file</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {app.status === "APPROVED" ? (
+                        <button
+                          type="button"
+                          disabled={togglingPaidId === app.id}
+                          onClick={() => handleTogglePaid(app)}
+                          title={app.paidAt ? `Paid by ${app.paidByName ?? "?"} on ${fmtSubmittedDate(app.paidAt)} — click to unmark` : "Click to mark as paid"}
+                          className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border transition-colors disabled:opacity-50 ${
+                            app.paidAt
+                              ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-100 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700"
+                              : "bg-muted/40 text-muted-foreground border-border hover:bg-muted"
+                          }`}
+                        >
+                          {togglingPaidId === app.id ? (
+                            <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"/>
+                          ) : app.paidAt ? (
+                            <CheckCircle2Icon className="h-3.5 w-3.5"/>
+                          ) : (
+                            <CircleIcon className="h-3.5 w-3.5"/>
+                          )}
+                          {app.paidAt ? "Paid" : "Unpaid"}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
                       {app.status !== "DRAFT" && (
                         <Button

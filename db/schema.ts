@@ -3111,6 +3111,10 @@ export const claimApplication = pgTable(
     cancelReason: text("cancel_reason"),
     // Auto-posted journal entry created on approval
     journalEntryId: text("journal_entry_id").references(() => ledgerEntry.id, { onDelete: "set null" }),
+    // Bank transfer tracking — set once finance has actually paid an approved claim.
+    // Independent of `status` (stays APPROVED); absence of paidAt means unpaid.
+    paidAt: timestamp("paid_at"),
+    paidBy: text("paid_by").references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },

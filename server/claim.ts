@@ -18,6 +18,7 @@ import {
   department,
   customer,
   travelForm,
+  profile,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -95,6 +96,10 @@ export type ClaimApplicationWithDetails = ClaimApplicationRow & {
   documents: ClaimDocumentRow[];
   lineItems: ClaimLineItemWithMeta[];
   entertainmentDetails: ClaimEntertainmentDetailWithMeta[];
+  paidByName?: string | null;
+  applicantBankName?: string | null;
+  applicantBankAccountNo?: string | null;
+  applicantBankAccountHolder?: string | null;
 };
 
 /* =========================
@@ -520,9 +525,16 @@ export async function getClaimApplicationDetail(appId: string): Promise<ClaimApp
 export async function getAllClaimApplications(): Promise<ClaimApplicationWithDetails[]> {
   const { orgId } = await requireAccess("claim:read:all");
   const apps = await db
-    .select({ app: claimApplication, applicantName: user.name })
+    .select({
+      app: claimApplication,
+      applicantName: user.name,
+      bankName: profile.bankName,
+      bankAccountNo: profile.bankAccountNo,
+      bankAccountHolder: profile.bankAccountHolder,
+    })
     .from(claimApplication)
     .leftJoin(user, eq(claimApplication.userId, user.id))
+    .leftJoin(profile, eq(profile.userId, claimApplication.userId))
     .where(eq(claimApplication.organizationId, orgId))
     .orderBy(desc(claimApplication.createdAt));
 
@@ -530,13 +542,44 @@ export async function getAllClaimApplications(): Promise<ClaimApplicationWithDet
   const appIds = apps.map((a) => a.app.id);
   const { docMap, lineMap, entMap } = await loadExtras(appIds);
 
-  return apps.map(({ app, applicantName }) => ({
+  const paidByIds = [...new Set(apps.map((a) => a.app.paidBy).filter((x): x is string => !!x))];
+  const paidByRows = paidByIds.length > 0
+    ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, paidByIds))
+    : [];
+  const paidByNameMap = Object.fromEntries(paidByRows.map((u) => [u.id, u.name]));
+
+  return apps.map(({ app, applicantName, bankName, bankAccountNo, bankAccountHolder }) => ({
     ...app,
     applicantName: applicantName ?? null,
+    paidByName: app.paidBy ? (paidByNameMap[app.paidBy] ?? null) : null,
+    applicantBankName: bankName ?? null,
+    applicantBankAccountNo: bankAccountNo ?? null,
+    applicantBankAccountHolder: bankAccountHolder ?? null,
     documents: docMap[app.id] ?? [],
     lineItems: lineMap[app.id] ?? [],
     entertainmentDetails: entMap[app.id] ?? [],
   }));
+}
+
+// Marks (or unmarks) an approved claim as paid — purely a bank-transfer
+// tracking flag, independent of `status`. Reuses claim:approve since that's
+// already the finance-facing permission for claims.
+export async function setClaimPaid(appId: string, paid: boolean): Promise<void> {
+  const { orgId, userId } = await requireAccess("claim:approve");
+  const [app] = await db
+    .select({ id: claimApplication.id, status: claimApplication.status })
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app) throw new Error("Application not found");
+  if (app.status !== "APPROVED") throw new Error("Only approved claims can be marked as paid");
+
+  await db
+    .update(claimApplication)
+    .set(paid
+      ? { paidAt: new Date(), paidBy: userId }
+      : { paidAt: null, paidBy: null })
+    .where(eq(claimApplication.id, appId));
 }
 
 /* =========================

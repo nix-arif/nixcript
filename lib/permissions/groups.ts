@@ -31,7 +31,7 @@ export const KEY_GROUP: Record<string, string> = {
   "inventory:manage": "inventory", "inventory:request": "inventory",
 
   "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr",
-  "claim:read:own": "hr", "claim:apply": "hr", "claim:manage": "hr",
+  "claim:read:own": "hr", "claim:apply": "hr", "claim:manage": "hr", "claim:read:all": "hr",
   "travel:read:own": "hr", "travel:apply": "hr", "travel:manage": "hr", "travel:read:all": "hr",
   "payslip:read:own": "hr", "payslip:read:all": "hr", "payslip:create": "hr",
   "profile:read": "hr", "profile:update": "hr", "profile:read:all": "hr", "profile:update:all": "hr", "profile:delete:all": "hr",

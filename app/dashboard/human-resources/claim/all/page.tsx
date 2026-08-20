@@ -3,7 +3,7 @@ import { getAllClaimApplications } from "@/server/claim";
 import { AllClaimsClient } from "./all-claims-client";
 
 export default async function AllClaimsPage() {
-  await requirePermission("claim:read:all");
+  const session = await requirePermission("claim:read:all");
   const applications = await getAllClaimApplications();
-  return <AllClaimsClient applications={applications} />;
+  return <AllClaimsClient applications={applications} currentUserName={session.user.name ?? undefined} />;
 }
