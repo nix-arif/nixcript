@@ -192,6 +192,10 @@ export const member = pgTable(
     // "member" means the user has dept assignments in member_department
     role: text("role").default("member").notNull(),
     departmentId: text("department_id"), // kept for compat; member_department is authoritative
+    // Actual employment start date — set by HR (leave:manage) on the Leave
+    // Balances page, never self-editable. Drives leave entitlement service-
+    // years and join-year proration; falls back to createdAt when unset.
+    hireDate: date("hire_date"),
     createdAt: timestamp("created_at").notNull(),
     // Soft-delete: set when member is removed, null when active
     deletedAt: timestamp("deleted_at"),

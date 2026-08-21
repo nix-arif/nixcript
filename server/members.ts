@@ -35,6 +35,7 @@ export async function getOrgMembers() {
       email: user.email,
       role: member.role,
       joinedAt: member.createdAt,
+      hireDate: member.hireDate,
     })
     .from(member)
     .innerJoin(user, eq(member.userId, user.id))

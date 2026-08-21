@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import type { MyLeaveBalance, LeaveTypeRow } from "@/server/leave";
-import { getMemberLeaveBalances, setOpeningBalance, setOpeningUsedDays } from "@/server/leave";
+import { getMemberLeaveBalances, setOpeningBalance, setOpeningUsedDays, setMemberHireDate } from "@/server/leave";
 import type { OrgMember } from "@/server/members";
 import { WalletIcon, SearchIcon } from "lucide-react";
 
@@ -42,6 +42,8 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
   const [savingTypeId, setSavingTypeId] = useState<string | null>(null);
   const [draftUsedValues, setDraftUsedValues] = useState<Record<string, string>>({});
   const [savingUsedTypeId, setSavingUsedTypeId] = useState<string | null>(null);
+  const [hireDateDraft, setHireDateDraft] = useState("");
+  const [savingHireDate, setSavingHireDate] = useState(false);
 
   const filteredMembers = members.filter((m) =>
     !search.trim() ||
@@ -55,6 +57,7 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
     setBalances(null);
     setDraftValues({});
     setDraftUsedValues({});
+    setHireDateDraft(members.find((m) => m.userId === userId)?.hireDate ?? "");
     setLoading(true);
     try {
       const rows = await getMemberLeaveBalances(userId);
@@ -118,6 +121,20 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
     }
   }
 
+  async function handleSaveHireDate() {
+    if (!selectedUserId) return;
+    setSavingHireDate(true);
+    try {
+      await setMemberHireDate(selectedUserId, hireDateDraft || null);
+      toast.success("Hire date saved");
+      await refreshBalances();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to save hire date");
+    } finally {
+      setSavingHireDate(false);
+    }
+  }
+
   return (
     <div className="p-6 flex flex-col gap-6">
       {/* Header */}
@@ -176,10 +193,34 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              <div>
-                <h2 className="text-sm font-semibold">{selectedMember.name}</h2>
-                <p className="text-xs text-muted-foreground">{selectedMember.email}</p>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <h2 className="text-sm font-semibold">{selectedMember.name}</h2>
+                  <p className="text-xs text-muted-foreground">{selectedMember.email}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-muted-foreground" htmlFor="hire-date-input">Hire date</label>
+                  <input
+                    id="hire-date-input"
+                    type="date"
+                    value={hireDateDraft}
+                    onChange={(e) => setHireDateDraft(e.target.value)}
+                    className="h-8 border border-input rounded px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <Button
+                    size="sm"
+                    variant={hireDateDraft !== (selectedMember.hireDate ?? "") ? "default" : "outline"}
+                    className="h-7 text-xs px-2"
+                    disabled={savingHireDate}
+                    onClick={handleSaveHireDate}
+                  >
+                    {savingHireDate ? "…" : "Save"}
+                  </Button>
+                </div>
               </div>
+              <p className="text-[11px] text-muted-foreground -mt-2">
+                Drives service-years and first-year proration below. Falls back to the date they were added to the org if left blank.
+              </p>
               <div className="rounded-lg border border-border overflow-hidden">
                 <Table>
                   <TableHeader>

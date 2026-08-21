@@ -105,6 +105,28 @@ function calcServiceYears(joinDate: Date): number {
   return ms / (1000 * 60 * 60 * 24 * 365.25);
 }
 
+function isLeapYear(y: number): boolean {
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
+
+function roundToHalfDay(n: number): number {
+  return Math.round(n * 2) / 2;
+}
+
+// Full-year tier entitlement is only correct for a member who was already
+// employed on Jan 1. For the calendar year they actually joined, scale it
+// down to the fraction of that year remaining from their hire date onward
+// (rounded to the nearest half day). Every later year gets the full amount.
+function prorateForJoinYear(fullDays: number, joinDate: Date, year: number): number {
+  if (joinDate.getFullYear() < year) return fullDays;
+  if (joinDate.getFullYear() > year) return 0; // hasn't joined as of this year
+  const yearEnd = new Date(year, 11, 31);
+  const daysInYear = isLeapYear(year) ? 366 : 365;
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const daysRemaining = Math.floor((yearEnd.getTime() - joinDate.getTime()) / msPerDay) + 1;
+  return roundToHalfDay(fullDays * daysRemaining / daysInYear);
+}
+
 function getEntitledDays(
   rules: Array<{ minYears: number; maxYears: number | null; days: number }>,
   serviceYears: number,
@@ -181,9 +203,12 @@ async function ensureEntitlement(
       ),
     )
     .limit(1);
-  const joinDate = memberRow[0]?.createdAt ?? new Date();
+  const joinDate = memberRow[0]?.hireDate
+    ? new Date(memberRow[0].hireDate + "T00:00:00")
+    : (memberRow[0]?.createdAt ?? new Date());
   const serviceYears = calcServiceYears(joinDate);
-  const entitledDays = getEntitledDays(type.entitlementRules, serviceYears);
+  const fullEntitledDays = getEntitledDays(type.entitlementRules, serviceYears);
+  const entitledDays = prorateForJoinYear(fullEntitledDays, joinDate, year);
 
   if (existing[0]) {
     // Keep entitledDays in sync with the leave type's current rules — usedDays/
@@ -635,6 +660,26 @@ export async function setOpeningUsedDays(
       updatedAt: new Date(),
     })
     .where(eq(leaveEntitlement.id, ent.id));
+}
+
+// HR-only — never exposed on the member's own profile page. Drives service-
+// years and join-year proration in ensureEntitlement(); pass null to clear
+// back to the createdAt fallback.
+export async function setMemberHireDate(userId: string, hireDate: string | null): Promise<void> {
+  const { orgId } = await requireAccess("leave:manage");
+  if (hireDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(hireDate)) {
+    throw new Error("Invalid hire date");
+  }
+  await db
+    .update(member)
+    .set({ hireDate })
+    .where(
+      and(
+        eq(member.organizationId, orgId),
+        eq(member.userId, userId),
+        isNull(member.deletedAt),
+      ),
+    );
 }
 
 /* =========================
