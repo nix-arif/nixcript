@@ -162,6 +162,13 @@ interface Props {
   initialProfile: any;
 }
 
+const EMPLOYMENT_STATUS_LABELS: Record<string, string> = {
+  probation: "Probation",
+  permanent: "Permanent",
+  resigned: "Resigned",
+  terminated: "Terminated",
+};
+
 function Field({
   label,
   error,
@@ -308,8 +315,11 @@ export function ProfileClient({ user, initialProfile }: Props) {
   const onSubmit = async (data: FormValues) => {
     setSaving(true);
     try {
+      // employmentStatus is HR-only (see Leave Balances page) — never
+      // submitted from this self-service form, regardless of form state.
+      const { employmentStatus: _employmentStatus, ...rest } = data;
       await upsertProfile({
-        ...data,
+        ...rest,
         phoneNumbers: phones.filter(Boolean),
         bankBookUrl: bankBookUrl || undefined,
         pdpaConsentAt: data.pdpaConsent ? new Date() : undefined,
@@ -622,16 +632,10 @@ export function ProfileClient({ user, initialProfile }: Props) {
               />
             </Field>
             <Field label="Employment status">
-              <Sel
-                name="employmentStatus"
-                placeholder="Select status"
-                options={[
-                  { value: "probation", label: "Probation" },
-                  { value: "permanent", label: "Permanent" },
-                  { value: "resigned", label: "Resigned" },
-                  { value: "terminated", label: "Terminated" },
-                ]}
-              />
+              <div className="h-9 flex items-center px-3 text-sm rounded-md border border-input bg-muted/40 text-muted-foreground">
+                {EMPLOYMENT_STATUS_LABELS[initialProfile?.employmentStatus ?? ""] ?? "Not set"}
+              </div>
+              <p className="text-[11px] text-muted-foreground">Set by HR, not self-editable.</p>
             </Field>
           </div>
         );

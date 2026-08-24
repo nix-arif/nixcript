@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { department, member, memberDepartment, user, userPermission, pendingDepartmentAssignment } from "@/db/schema";
+import { department, member, memberDepartment, user, userPermission, pendingDepartmentAssignment, profile } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -36,9 +36,13 @@ export async function getOrgMembers() {
       role: member.role,
       joinedAt: member.createdAt,
       hireDate: member.hireDate,
+      noticeDate: member.noticeDate,
+      leaveBlockedOnNotice: member.leaveBlockedOnNotice,
+      employmentStatus: profile.employmentStatus,
     })
     .from(member)
     .innerJoin(user, eq(member.userId, user.id))
+    .leftJoin(profile, eq(profile.userId, member.userId))
     .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt)));
 
   // Fetch all dept assignments for this org in one query

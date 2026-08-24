@@ -1,9 +1,11 @@
 "use server";
 
 import { db } from "@/db";
-import { profile } from "@/db/schema";
+import { profile, member } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
-import { eq } from "drizzle-orm";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
+import { eq, and, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   S3Client,
@@ -100,6 +102,48 @@ export async function uploadBankBook(formData: FormData) {
   // Store key only — not public URL (private bucket)
   await upsertProfile({ bankBookUrl: key });
   return key;
+}
+
+// HR-only — never callable from the self-service profile form. Employment
+// status drives leave restrictions (see server/leave.ts applyForLeave), so
+// it needs to be set by a designated person rather than the staff member
+// themselves.
+export async function setMemberEmploymentStatus(
+  userId: string,
+  employmentStatus: "probation" | "permanent" | "resigned" | "terminated",
+): Promise<void> {
+  const session = await getCachedSession();
+  if (!session) throw new Error("Unauthorized");
+  const orgId = session.session.activeOrganizationId;
+  if (!orgId) throw new Error("No active organization");
+  const perms = await getUserPermissions(session.user.id, orgId);
+  if (!hasAccess(perms, "leave:manage")) throw new Error("You don't have permission to do this");
+
+  const [targetMember] = await db
+    .select({ id: member.id })
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.userId, userId), isNull(member.deletedAt)))
+    .limit(1);
+  if (!targetMember) throw new Error("Member not found");
+
+  const [existing] = await db
+    .select({ id: profile.id })
+    .from(profile)
+    .where(eq(profile.userId, userId))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(profile)
+      .set({ employmentStatus, updatedAt: new Date() })
+      .where(eq(profile.userId, userId));
+  } else {
+    await db.insert(profile).values({
+      id: nanoid(),
+      userId,
+      employmentStatus,
+    });
+  }
 }
 
 export async function ensureProfileExists() {

@@ -8,7 +8,9 @@ import {
   leaveDocument,
   member,
   user,
+  profile,
   notification,
+  noticePeriodPolicy,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -307,6 +309,8 @@ export async function createLeaveType(data: {
   carryForwardEnabled: boolean;
   maxCarryForward?: number;
   emergencyThresholdDays?: number;
+  allowDuringProbation?: boolean;
+  blockedDuringNotice?: boolean;
   entitlementRules: Array<{ minYears: number; maxYears: number | null; days: number }>;
   description?: string;
   sortOrder?: number;
@@ -325,6 +329,8 @@ export async function createLeaveType(data: {
     carryForwardEnabled: data.carryForwardEnabled,
     maxCarryForward: data.maxCarryForward ?? null,
     emergencyThresholdDays: data.emergencyThresholdDays ?? null,
+    allowDuringProbation: data.allowDuringProbation ?? true,
+    blockedDuringNotice: data.blockedDuringNotice ?? false,
     entitlementRules: data.entitlementRules,
     sortOrder: data.sortOrder ?? 0,
     description: data.description?.trim() ?? null,
@@ -346,6 +352,8 @@ export async function updateLeaveType(
     carryForwardEnabled: boolean;
     maxCarryForward: number | null;
     emergencyThresholdDays: number | null;
+    allowDuringProbation: boolean;
+    blockedDuringNotice: boolean;
     entitlementRules: Array<{ minYears: number; maxYears: number | null; days: number }>;
     description: string;
     isActive: boolean;
@@ -396,6 +404,12 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
       // still drawn from this same Annual Leave balance, not a separate
       // pool. Adjust per org via Leave Types settings.
       emergencyThresholdDays: 2,
+      // Common Malaysian SME practice: new hires accrue Annual Leave from
+      // day one, but can't actually apply for it until confirmed permanent;
+      // it's also the type most commonly restricted during a resignation
+      // notice period. Other types below are left unaffected (defaults).
+      allowDuringProbation: false,
+      blockedDuringNotice: true,
       sortOrder: 1,
       description: "Paid annual leave per Employment Act 1955",
       entitlementRules: [
@@ -496,6 +510,8 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
     carryForwardEnabled: d.carryForwardEnabled,
     maxCarryForward: d.maxCarryForward ?? null,
     emergencyThresholdDays: (d as { emergencyThresholdDays?: number }).emergencyThresholdDays ?? null,
+    allowDuringProbation: (d as { allowDuringProbation?: boolean }).allowDuringProbation ?? true,
+    blockedDuringNotice: (d as { blockedDuringNotice?: boolean }).blockedDuringNotice ?? false,
     entitlementRules: d.entitlementRules,
     sortOrder: d.sortOrder,
     description: d.description,
@@ -680,6 +696,90 @@ export async function setMemberHireDate(userId: string, hireDate: string | null)
         isNull(member.deletedAt),
       ),
     );
+}
+
+// HR-only — pairs with profile.employmentStatus ("resigned"), which HR sets
+// separately via setMemberEmploymentStatus. leaveBlockedOnNotice governs
+// whether leave types flagged blockedDuringNotice (normally Annual Leave)
+// can still be applied for during this specific member's notice period —
+// decided case-by-case per resignation, not a blanket org policy.
+export async function setMemberNoticeDate(
+  userId: string,
+  noticeDate: string | null,
+  leaveBlockedOnNotice: boolean,
+): Promise<void> {
+  const { orgId } = await requireAccess("leave:manage");
+  if (noticeDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(noticeDate)) {
+    throw new Error("Invalid notice date");
+  }
+  await db
+    .update(member)
+    .set({ noticeDate, leaveBlockedOnNotice })
+    .where(
+      and(
+        eq(member.organizationId, orgId),
+        eq(member.userId, userId),
+        isNull(member.deletedAt),
+      ),
+    );
+}
+
+/* =========================
+   NOTICE PERIOD POLICY
+   HR-defined notice-period length (days), by employment status x department
+   role. Drives the auto-calculated last working day shown against a
+   resigning member's notice date (noticeDate + policy days). A missing row
+   for a status/role combo means HR hasn't set one yet, not zero days.
+========================= */
+
+export type NoticePeriodPolicyRow = typeof noticePeriodPolicy.$inferSelect;
+
+// Readable by anyone who can see the org's members (the computed last
+// working day is shown alongside notice date wherever that already is);
+// only leave:manage can change the policy itself.
+export async function getNoticePeriodPolicies(): Promise<NoticePeriodPolicyRow[]> {
+  const { orgId } = await requireAccess("member:read");
+  return db
+    .select()
+    .from(noticePeriodPolicy)
+    .where(eq(noticePeriodPolicy.organizationId, orgId));
+}
+
+export async function setNoticePeriodPolicy(
+  employmentStatus: "probation" | "permanent",
+  departmentRole: "member" | "manager",
+  noticePeriodDays: number,
+): Promise<void> {
+  const { orgId } = await requireAccess("leave:manage");
+  if (!Number.isFinite(noticePeriodDays) || noticePeriodDays < 0) {
+    throw new Error("Enter a valid, non-negative number of days");
+  }
+  const [existing] = await db
+    .select({ id: noticePeriodPolicy.id })
+    .from(noticePeriodPolicy)
+    .where(
+      and(
+        eq(noticePeriodPolicy.organizationId, orgId),
+        eq(noticePeriodPolicy.employmentStatus, employmentStatus),
+        eq(noticePeriodPolicy.departmentRole, departmentRole),
+      ),
+    )
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(noticePeriodPolicy)
+      .set({ noticePeriodDays, updatedAt: new Date() })
+      .where(eq(noticePeriodPolicy.id, existing.id));
+  } else {
+    await db.insert(noticePeriodPolicy).values({
+      id: nanoid(),
+      organizationId: orgId,
+      employmentStatus,
+      departmentRole,
+      noticePeriodDays,
+    });
+  }
 }
 
 /* =========================
@@ -926,6 +1026,28 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
     .limit(1);
   if (!type[0] || !type[0].isActive) throw new Error("Leave type not found or inactive");
   const lt = type[0];
+
+  if (!lt.allowDuringProbation) {
+    const [profileRow] = await db
+      .select({ employmentStatus: profile.employmentStatus })
+      .from(profile)
+      .where(eq(profile.userId, userId))
+      .limit(1);
+    if (profileRow?.employmentStatus === "probation") {
+      throw new Error(`${lt.name} cannot be applied for while still on probation`);
+    }
+  }
+
+  if (lt.blockedDuringNotice) {
+    const [memberRow] = await db
+      .select({ noticeDate: member.noticeDate, leaveBlockedOnNotice: member.leaveBlockedOnNotice })
+      .from(member)
+      .where(and(eq(member.organizationId, orgId), eq(member.userId, userId), isNull(member.deletedAt)))
+      .limit(1);
+    if (memberRow?.noticeDate && memberRow.leaveBlockedOnNotice) {
+      throw new Error(`${lt.name} cannot be applied for during your notice period`);
+    }
+  }
 
   if (data.isHalfDay && !lt.allowHalfDay)
     throw new Error("This leave type does not allow half-day applications");

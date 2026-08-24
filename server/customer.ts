@@ -197,6 +197,7 @@ export async function createCustomer(data: {
   }[];
 }) {
   const { orgId, userId } = await requireAccess("customer:create");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
 
   const customerId = nanoid();
 
@@ -228,13 +229,16 @@ export async function createCustomer(data: {
       const name = (c.orgName ?? c.organizationName ?? "").trim();
       if (!name) continue;
 
-      // Upsert: find by name+orgId or insert
+      // Upsert: find by name across every org this owner runs (matches
+      // createCustomerOrganization's dedup scope) or insert. Scoping this to
+      // just the currently active org let a sibling org's existing record
+      // go unmatched, silently creating a duplicate.
       const [existing] = await db
         .select({ id: customerOrganization.id })
         .from(customerOrganization)
         .where(
           and(
-            eq(customerOrganization.organizationId, orgId),
+            inArray(customerOrganization.organizationId, ownerOrgIds),
             sql`LOWER(TRIM(${customerOrganization.name})) = LOWER(TRIM(${name}))`,
           ),
         )

@@ -148,6 +148,19 @@ function OrgPicker({
     }, 300);
   };
 
+  // If the user typed a full name and clicked away instead of picking a
+  // suggestion, commit it when it's an exact match rather than silently
+  // discarding the link — createCustomer drops any membership with no name.
+  const handleBlur = () => {
+    if (!query.trim()) return;
+    const exact = results.find((r) => r.name.toLowerCase() === query.trim().toLowerCase());
+    if (exact) {
+      onSelect(exact);
+      setQuery("");
+      setResults([]);
+    }
+  };
+
   if (value) {
     return (
       <div className="flex items-center gap-2 h-9 px-3 rounded-md border border-border bg-muted/20 text-sm">
@@ -167,6 +180,7 @@ function OrgPicker({
         <Input
           value={query}
           onChange={(e) => search(e.target.value)}
+          onBlur={handleBlur}
           placeholder="Search organisations…"
           className="pl-9 h-9 text-sm"
         />
@@ -336,6 +350,10 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
   };
 
   const onSubmitCustomer = async (data: CustomerForm) => {
+    if (!activeCustomer && localMemberships.some((m) => !m.orgName.trim())) {
+      toast.error("Pick an organisation from the search results for each added row, or remove the row.");
+      return;
+    }
     setSavingCustomer(true);
     try {
       if (activeCustomer && customerSheet === "edit") {

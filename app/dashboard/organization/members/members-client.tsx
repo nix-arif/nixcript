@@ -29,6 +29,12 @@ import {
 } from "@/server/members";
 import type { OrgMember, DeletedMember } from "@/server/members";
 import type { Department } from "@/server/departments";
+import { setMemberHireDate, setMemberNoticeDate } from "@/server/leave";
+import type { NoticePeriodPolicyRow } from "@/server/leave";
+import { setMemberEmploymentStatus } from "@/server/profile";
+import { hasAccess } from "@/lib/permissions/has-access";
+import { memberNoticeRoleBucket, computeLastWorkingDay } from "@/lib/notice-period";
+import { BriefcaseIcon } from "lucide-react";
 
 // ── Styles ────────────────────────────────────────────────────────────────
 
@@ -52,6 +58,196 @@ function avatarColor(s: string) {
 function fmtDate(d: Date | string | null) {
   if (!d) return "—";
   return new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+
+const EMPLOYMENT_STATUS_OPTIONS = [
+  { value: "", label: "Not set" },
+  { value: "probation", label: "Probation" },
+  { value: "permanent", label: "Permanent" },
+  { value: "resigned", label: "Resigned" },
+  { value: "terminated", label: "Terminated" },
+];
+const EMPLOYMENT_STATUS_LABELS: Record<string, string> = {
+  probation: "Probation", permanent: "Permanent", resigned: "Resigned", terminated: "Terminated",
+};
+const EMPLOYMENT_STATUS_STYLE: Record<string, { bg: string; color: string }> = {
+  probation: { bg: "#FAEEDA", color: "#854F0B" },
+  permanent: { bg: "#EAF3DE", color: "#3B6D11" },
+  resigned:  { bg: "#FAECE7", color: "#993C1D" },
+  terminated:{ bg: "#F2F2F0", color: "#444"    },
+};
+
+// ── Employment record dialog — hire date / employment status / notice
+// period. HR-only (leave:manage); drives leave-entitlement proration and
+// the probation/notice-period leave restrictions in server/leave.ts.
+function EmploymentDialog({
+  member: m,
+  policies,
+  open,
+  onClose,
+  onSaved,
+}: {
+  member: OrgMember;
+  policies: NoticePeriodPolicyRow[];
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [hireDateDraft, setHireDateDraft] = useState(m.hireDate ?? "");
+  const [savingHireDate, setSavingHireDate] = useState(false);
+  const [employmentStatusDraft, setEmploymentStatusDraft] = useState(m.employmentStatus ?? "");
+  const [savingEmploymentStatus, setSavingEmploymentStatus] = useState(false);
+  const [noticeDateDraft, setNoticeDateDraft] = useState(m.noticeDate ?? "");
+  const [leaveBlockedOnNoticeDraft, setLeaveBlockedOnNoticeDraft] = useState(m.leaveBlockedOnNotice ?? true);
+  const [savingNoticeDate, setSavingNoticeDate] = useState(false);
+
+  const bucket = memberNoticeRoleBucket(m);
+  const previewStatus = employmentStatusDraft || m.employmentStatus;
+  const lastWorkingDayPreview = computeLastWorkingDay(
+    { ...m, employmentStatus: previewStatus, noticeDate: noticeDateDraft || null },
+    policies,
+  );
+
+  async function handleSaveHireDate() {
+    setSavingHireDate(true);
+    try {
+      await setMemberHireDate(m.userId, hireDateDraft || null);
+      toast.success("Hire date saved");
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSavingHireDate(false);
+    }
+  }
+
+  async function handleSaveEmploymentStatus() {
+    if (!employmentStatusDraft) return;
+    setSavingEmploymentStatus(true);
+    try {
+      await setMemberEmploymentStatus(
+        m.userId,
+        employmentStatusDraft as "probation" | "permanent" | "resigned" | "terminated",
+      );
+      toast.success("Employment status saved");
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSavingEmploymentStatus(false);
+    }
+  }
+
+  async function handleSaveNoticeDate() {
+    setSavingNoticeDate(true);
+    try {
+      await setMemberNoticeDate(m.userId, noticeDateDraft || null, leaveBlockedOnNoticeDraft);
+      toast.success("Notice details saved");
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSavingNoticeDate(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Employment record — {m.name}</DialogTitle>
+          <DialogDescription>
+            Drives leave entitlement proration and the probation/notice-period leave restrictions.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Hire date</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={hireDateDraft}
+                onChange={(e) => setHireDateDraft(e.target.value)}
+                className="h-9 border border-input rounded-md px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+              />
+              <Button size="sm" disabled={savingHireDate} onClick={handleSaveHireDate}>
+                {savingHireDate ? "…" : "Save"}
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Falls back to the date they were added to the org if left blank.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Employment status</label>
+            <div className="flex items-center gap-2">
+              <select
+                value={employmentStatusDraft}
+                onChange={(e) => setEmploymentStatusDraft(e.target.value)}
+                className="h-9 border border-input rounded-md px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+              >
+                {EMPLOYMENT_STATUS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <Button size="sm" disabled={savingEmploymentStatus || !employmentStatusDraft} onClick={handleSaveEmploymentStatus}>
+                {savingEmploymentStatus ? "…" : "Save"}
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              While on Probation, leave types marked &quot;not allowed during probation&quot; can&apos;t be applied for.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Notice date</label>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="date"
+                value={noticeDateDraft}
+                onChange={(e) => setNoticeDateDraft(e.target.value)}
+                className="h-9 border border-input rounded-md px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+              />
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={leaveBlockedOnNoticeDraft}
+                  onChange={(e) => setLeaveBlockedOnNoticeDraft(e.target.checked)}
+                  className="rounded border-input"
+                />
+                Block restricted leave types during notice
+              </label>
+              <Button size="sm" disabled={savingNoticeDate} onClick={handleSaveNoticeDate}>
+                {savingNoticeDate ? "…" : "Save"}
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Set when this member tenders resignation. Only applies to leave types marked
+              &quot;blocked during notice&quot; (Annual Leave by default).
+            </p>
+            {noticeDateDraft && (
+              <p className="text-xs">
+                <span className="text-muted-foreground">Last working day (auto-calculated): </span>
+                {lastWorkingDayPreview ? (
+                  <span className="font-medium">{fmtDate(lastWorkingDayPreview)}</span>
+                ) : (
+                  <span className="text-muted-foreground italic">
+                    No notice-period policy set for {previewStatus || "this status"}/{bucket} —
+                    set one on the Notice Period Policy page.
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // ── Dept-role chip ────────────────────────────────────────────────────────
@@ -166,13 +362,18 @@ export function MembersClient({
   deletedMembers,
   departments,
   currentUserId,
+  permissions,
+  noticePolicies,
 }: {
   members: OrgMember[];
   deletedMembers: DeletedMember[];
   departments: Department[];
   currentUserId: string;
+  permissions: string[];
+  noticePolicies: NoticePeriodPolicyRow[];
 }) {
   const router = useRouter();
+  const canManageEmployment                    = hasAccess(permissions, "leave:manage");
   const [tab, setTab]                           = useState<Tab>("active");
   const [search, setSearch]                     = useState("");
   const [removingId, setRemovingId]             = useState<string | null>(null);
@@ -184,6 +385,7 @@ export function MembersClient({
   // Confirmation dialog state
   const [removeTarget, setRemoveTarget]         = useState<OrgMember | null>(null);
   const [permDeleteTarget, setPermDeleteTarget] = useState<DeletedMember | null>(null);
+  const [employmentTarget, setEmploymentTarget] = useState<OrgMember | null>(null);
 
   const filteredActive = members.filter(
     (m) =>
@@ -331,13 +533,16 @@ export function MembersClient({
                   <TableHead className="text-xs font-semibold uppercase tracking-wider">Org role</TableHead>
                   <TableHead className="text-xs font-semibold uppercase tracking-wider">Department assignments</TableHead>
                   <TableHead className="text-xs font-semibold uppercase tracking-wider">Joined</TableHead>
+                  {canManageEmployment && (
+                    <TableHead className="text-xs font-semibold uppercase tracking-wider">Employment</TableHead>
+                  )}
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredActive.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-12 text-sm text-muted-foreground">
+                    <TableCell colSpan={canManageEmployment ? 6 : 5} className="text-center py-12 text-sm text-muted-foreground">
                       No members found.
                     </TableCell>
                   </TableRow>
@@ -426,6 +631,41 @@ export function MembersClient({
                         {fmtDate(m.joinedAt)}
                       </TableCell>
 
+                      {/* Employment */}
+                      {canManageEmployment && (
+                        <TableCell className="pt-2">
+                          <button
+                            onClick={() => setEmploymentTarget(m)}
+                            className="flex flex-col items-start gap-0.5 text-xs hover:opacity-80 transition-opacity"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              {m.employmentStatus ? (
+                                <span
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold capitalize"
+                                  style={EMPLOYMENT_STATUS_STYLE[m.employmentStatus] ? {
+                                    background: EMPLOYMENT_STATUS_STYLE[m.employmentStatus].bg,
+                                    color: EMPLOYMENT_STATUS_STYLE[m.employmentStatus].color,
+                                  } : undefined}
+                                >
+                                  {EMPLOYMENT_STATUS_LABELS[m.employmentStatus] ?? m.employmentStatus}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground italic">Not set</span>
+                              )}
+                              <BriefcaseIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                            </span>
+                            {m.noticeDate && (
+                              <span className="text-[10px] text-muted-foreground">
+                                Last day:{" "}
+                                {computeLastWorkingDay(m, noticePolicies)
+                                  ? fmtDate(computeLastWorkingDay(m, noticePolicies))
+                                  : "policy not set"}
+                              </span>
+                            )}
+                          </button>
+                        </TableCell>
+                      )}
+
                       {/* Remove */}
                       <TableCell className="pt-2">
                         {!isOwner && m.userId !== currentUserId && (
@@ -447,6 +687,17 @@ export function MembersClient({
             </Table>
           </div>
         </>
+      )}
+
+      {/* ── Employment record dialog ── */}
+      {employmentTarget && (
+        <EmploymentDialog
+          member={employmentTarget}
+          policies={noticePolicies}
+          open={!!employmentTarget}
+          onClose={() => setEmploymentTarget(null)}
+          onSaved={() => { setEmploymentTarget(null); router.refresh(); }}
+        />
       )}
 
       {/* ── Remove member dialog ── */}

@@ -6,14 +6,23 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import type { MyLeaveBalance, LeaveTypeRow } from "@/server/leave";
-import { getMemberLeaveBalances, setOpeningBalance, setOpeningUsedDays, setMemberHireDate } from "@/server/leave";
+import type { MyLeaveBalance, LeaveTypeRow, NoticePeriodPolicyRow } from "@/server/leave";
+import { getMemberLeaveBalances, setOpeningBalance, setOpeningUsedDays } from "@/server/leave";
 import type { OrgMember } from "@/server/members";
+import { computeLastWorkingDay } from "@/lib/notice-period";
 import { WalletIcon, SearchIcon } from "lucide-react";
+
+const EMPLOYMENT_STATUS_LABELS: Record<string, string> = {
+  probation: "Probation",
+  permanent: "Permanent",
+  resigned: "Resigned",
+  terminated: "Terminated",
+};
 
 interface Props {
   members: OrgMember[];
   leaveTypes: LeaveTypeRow[];
+  noticePolicies: NoticePeriodPolicyRow[];
 }
 
 function fmtDays(v: string | number): string {
@@ -32,7 +41,7 @@ function withEmergencyLabel(name: string, hasThreshold: boolean): string {
   return `${name.replace(/\s*Leave$/i, "")}/Emergency Leave`;
 }
 
-export function LeaveBalancesClient({ members, leaveTypes }: Props) {
+export function LeaveBalancesClient({ members, leaveTypes, noticePolicies }: Props) {
   const [search, setSearch] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [balances, setBalances] = useState<MyLeaveBalance[] | null>(null);
@@ -42,8 +51,6 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
   const [savingTypeId, setSavingTypeId] = useState<string | null>(null);
   const [draftUsedValues, setDraftUsedValues] = useState<Record<string, string>>({});
   const [savingUsedTypeId, setSavingUsedTypeId] = useState<string | null>(null);
-  const [hireDateDraft, setHireDateDraft] = useState("");
-  const [savingHireDate, setSavingHireDate] = useState(false);
 
   const filteredMembers = members.filter((m) =>
     !search.trim() ||
@@ -57,7 +64,6 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
     setBalances(null);
     setDraftValues({});
     setDraftUsedValues({});
-    setHireDateDraft(members.find((m) => m.userId === userId)?.hireDate ?? "");
     setLoading(true);
     try {
       const rows = await getMemberLeaveBalances(userId);
@@ -118,20 +124,6 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
       toast.error(err instanceof Error ? err.message : "Failed to save opening days taken");
     } finally {
       setSavingUsedTypeId(null);
-    }
-  }
-
-  async function handleSaveHireDate() {
-    if (!selectedUserId) return;
-    setSavingHireDate(true);
-    try {
-      await setMemberHireDate(selectedUserId, hireDateDraft || null);
-      toast.success("Hire date saved");
-      await refreshBalances();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to save hire date");
-    } finally {
-      setSavingHireDate(false);
     }
   }
 
@@ -198,29 +190,49 @@ export function LeaveBalancesClient({ members, leaveTypes }: Props) {
                   <h2 className="text-sm font-semibold">{selectedMember.name}</h2>
                   <p className="text-xs text-muted-foreground">{selectedMember.email}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-muted-foreground" htmlFor="hire-date-input">Hire date</label>
-                  <input
-                    id="hire-date-input"
-                    type="date"
-                    value={hireDateDraft}
-                    onChange={(e) => setHireDateDraft(e.target.value)}
-                    className="h-8 border border-input rounded px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <Button
-                    size="sm"
-                    variant={hireDateDraft !== (selectedMember.hireDate ?? "") ? "default" : "outline"}
-                    className="h-7 text-xs px-2"
-                    disabled={savingHireDate}
-                    onClick={handleSaveHireDate}
-                  >
-                    {savingHireDate ? "…" : "Save"}
-                  </Button>
-                </div>
               </div>
-              <p className="text-[11px] text-muted-foreground -mt-2">
-                Drives service-years and first-year proration below. Falls back to the date they were added to the org if left blank.
-              </p>
+
+              <div className="rounded-lg border border-border p-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs">
+                <div>
+                  <span className="text-muted-foreground">Hire date: </span>
+                  <span className="font-medium">{fmtDate(selectedMember.hireDate) ?? "Not set"}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Employment status: </span>
+                  <span className="font-medium">
+                    {selectedMember.employmentStatus
+                      ? EMPLOYMENT_STATUS_LABELS[selectedMember.employmentStatus] ?? selectedMember.employmentStatus
+                      : "Not set"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Notice date: </span>
+                  <span className="font-medium">
+                    {selectedMember.noticeDate
+                      ? `${fmtDate(selectedMember.noticeDate)}${selectedMember.leaveBlockedOnNotice ? " (leave blocked)" : ""}`
+                      : "Not set"}
+                  </span>
+                </div>
+                {selectedMember.noticeDate && (
+                  <div>
+                    <span className="text-muted-foreground">Last working day: </span>
+                    <span className="font-medium">
+                      {(() => {
+                        const lwd = computeLastWorkingDay(selectedMember, noticePolicies);
+                        return lwd ? fmtDate(lwd) : "policy not set";
+                      })()}
+                    </span>
+                  </div>
+                )}
+                <p className="w-full text-[11px] text-muted-foreground">
+                  Edit these on the{" "}
+                  <a href="/dashboard/organization/members" className="underline hover:no-underline">
+                    Organization Members
+                  </a>{" "}
+                  page. They drive service-years proration and the probation/notice-period leave restrictions below.
+                </p>
+              </div>
+
               <div className="rounded-lg border border-border overflow-hidden">
                 <Table>
                   <TableHeader>

@@ -196,6 +196,14 @@ export const member = pgTable(
     // Balances page, never self-editable. Drives leave entitlement service-
     // years and join-year proration; falls back to createdAt when unset.
     hireDate: date("hire_date"),
+    // Resignation tendered date — set by HR alongside profile.employmentStatus
+    // ("resigned"). Paired with leaveBlockedOnNotice below to control whether
+    // this specific member can still apply for leave types flagged
+    // blockedDuringNotice (normally Annual Leave) during their notice period.
+    // Case-by-case per member rather than a blanket policy, since notice-
+    // period leave handling is commonly negotiated per resignation.
+    noticeDate: date("notice_date"),
+    leaveBlockedOnNotice: boolean("leave_blocked_on_notice").notNull().default(true),
     createdAt: timestamp("created_at").notNull(),
     // Soft-delete: set when member is removed, null when active
     deletedAt: timestamp("deleted_at"),
@@ -2895,6 +2903,12 @@ export const leaveType = pgTable(
     // it's a short-application subset of whichever type this is set on
     // (normally Annual Leave). Null disables the behavior for this type.
     emergencyThresholdDays: integer("emergency_threshold_days"),
+    // Org-wide policy toggles — checked against profile.employmentStatus /
+    // member.leaveBlockedOnNotice in applyForLeave(). Defaults preserve
+    // today's behavior (no restriction) for any existing/custom leave type;
+    // seedDefaultLeaveTypes sets Annual Leave's actual values explicitly.
+    allowDuringProbation: boolean("allow_during_probation").notNull().default(true),
+    blockedDuringNotice: boolean("blocked_during_notice").notNull().default(false),
     entitlementRules: json("entitlement_rules")
       .$type<Array<{ minYears: number; maxYears: number | null; days: number }>>()
       .notNull()
@@ -2907,6 +2921,30 @@ export const leaveType = pgTable(
   (t) => [
     uniqueIndex("leave_type_org_code_uidx").on(t.organizationId, t.code),
     index("leave_type_org_idx").on(t.organizationId),
+  ],
+);
+
+// HR-defined notice-period length (in days), keyed by employment status
+// (probation | permanent) x department role (member | manager) — resigning
+// managers commonly owe a longer notice than regular staff. Used to
+// auto-calculate a resigning member's last working day from member.noticeDate.
+// Absence of a row for a given org+status+role combo means "not yet set by
+// HR" (no auto-calculation shown), not "zero days".
+export const noticePeriodPolicy = pgTable(
+  "notice_period_policy",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    employmentStatus: text("employment_status").notNull(), // "probation" | "permanent"
+    departmentRole: text("department_role").notNull(), // "member" | "manager"
+    noticePeriodDays: integer("notice_period_days").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("notice_period_policy_org_key_uidx").on(t.organizationId, t.employmentStatus, t.departmentRole),
   ],
 );
 
