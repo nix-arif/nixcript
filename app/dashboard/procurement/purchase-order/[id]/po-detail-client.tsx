@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import {
   recallPurchaseOrder,
   reconfirmPurchaseOrder,
   submitPurchaseOrder,
   fulfillPurchaseOrder,
   cancelPurchaseOrder,
+  deletePurchaseOrder,
   type PurchaseOrderWithItems,
 } from "@/server/purchase-order";
 import { Button } from "@/components/ui/button";
@@ -17,6 +19,7 @@ import {
   ArrowLeftIcon, BuildingIcon, CalendarIcon, PackageIcon,
   CheckIcon, XIcon, ArchiveIcon, PrinterIcon, RotateCcwIcon,
   ClipboardListIcon, TruckIcon, LinkIcon, ImageIcon, PencilIcon, SendIcon,
+  DatabaseIcon, FileSpreadsheetIcon, TagIcon, PlusIcon, Trash2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -96,20 +99,53 @@ export function PurchaseOrderDetailClient({
   order,
   permissions,
   currentUserId,
+  businessType = "trading",
+  backHref = "/dashboard/procurement/purchase-order",
+  organizationName,
+  editHref,
+  hidePricing = false,
 }: {
   order: PurchaseOrderWithItems;
   permissions: string[];
   currentUserId: string;
+  businessType?: string;
+  backHref?: string;
+  // Shown alongside the supplier when viewing this PO from the centralized
+  // (cross-org) list, so it's clear which org this record actually belongs to.
+  organizationName?: string;
+  // When provided, overrides both the Edit destination and whether the Edit
+  // button shows at all — used by the centralized view, whose edit rights
+  // are resolved server-side (creator, org-scoped update, or the centralized
+  // update permission) rather than the plain `permissions` array here.
+  editHref?: string;
+  // Centralized viewers who can't edit this PO see everything except money.
+  hidePricing?: boolean;
 }) {
+  const showSourcing = businessType !== "trading";
   const router = useRouter();
   const [status, setStatus] = useState(order.status ?? "confirmed");
   const [actioning, setActioning] = useState<string | null>(null);
   const [pdfWithImages, setPdfWithImages] = useState(true);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => { setStatus(order.status ?? "confirmed"); }, [order.status]);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+  const isOwner = permissions.includes("*");
   const snap = order.supplierSnapshot as any;
+
+  async function handleDelete() {
+    if (!confirm(`Permanently delete ${order.poNo ?? order.prNo ?? "this purchase order"}? This removes the record entirely and can't be undone.`)) return;
+    setDeleting(true);
+    try {
+      await deletePurchaseOrder(order.id);
+      toast.success("Purchase order deleted");
+      router.push(backHref);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+      setDeleting(false);
+    }
+  }
 
   async function act(key: string, fn: () => Promise<void>, next: string, successMsg: string) {
     setActioning(key);
@@ -129,22 +165,78 @@ export function PurchaseOrderDetailClient({
   const isConfirmed = status === "confirmed";
   const isFulfilled = status === "fulfilled";
 
+  // Packing list: a logistics document for the supplier's warehouse to pack
+  // against and countersign — deliberately excludes pricing (unlike the PO
+  // PDF/Excel itself) and adds a blank "Qty Packed" column for them to fill
+  // in by hand, since that reconciliation is the whole point of the document.
+  function handleDownloadPackingList() {
+    const hasGroups = order.items.some((i) => i.setGroupLabel);
+    const rows: (string | number)[][] = [];
+
+    rows.push(["PACKING LIST"]);
+    rows.push([]);
+    rows.push(["PO No", order.poNo ?? "—", "Date", fmtDate(order.createdAt)]);
+    rows.push(["Supplier", snap?.name ?? "—"]);
+    if (snap?.address) rows.push(["Supplier Address", snap.address]);
+    if (order.deliveryAddress) rows.push(["Ship To", order.deliveryAddress]);
+    if (order.expectedDeliveryDate) rows.push(["Expected Delivery", fmtDate(order.expectedDeliveryDate)]);
+    rows.push([]);
+
+    const header = ["#"];
+    if (hasGroups) header.push("Set");
+    if (showSourcing) header.push("Design Brand", "Design Code", "Emboss Code");
+    header.push("Code", "Description", "Ordered Qty", "UOM", "Qty Packed", "Remarks");
+    rows.push(header);
+
+    let totalQty = 0;
+    for (const item of order.items) {
+      const qty = Number(item.qty ?? 0);
+      totalQty += qty;
+      const row: (string | number)[] = [item.rowNo];
+      if (hasGroups) row.push(item.setGroupLabel ?? "");
+      if (showSourcing) row.push(item.designBrandName ?? "", item.designBrandCode ?? "", item.privateLabelCode ?? "");
+      row.push(item.productCode ?? "", item.description ?? "", qty, item.uom ?? "", "", "");
+      rows.push(row);
+    }
+
+    rows.push([]);
+    const qtyColIdx = header.indexOf("Ordered Qty");
+    const totalRow = new Array(header.length).fill("");
+    totalRow[qtyColIdx - 1] = "Total";
+    totalRow[qtyColIdx] = totalQty;
+    rows.push(totalRow);
+    rows.push([]);
+    rows.push(["Packed By:", "", "", "Date:"]);
+    rows.push(["Checked By:", "", "", "Date:"]);
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = header.map((h) => ({ wch: h === "Description" ? 40 : 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Packing List");
+    XLSX.writeFile(wb, `Packing List - ${order.poNo ?? order.prNo ?? order.id}.xlsx`);
+  }
+
   return (
     <div className="p-6 space-y-6">
       <PageHeader
         title={order.poNo ?? order.prNo ?? order.id}
-        description={`Supplier Purchase Order · ${fmtDate(order.createdAt)}`}
+        description={`Supplier Purchase Order${organizationName ? ` · ${organizationName}` : ""} · ${fmtDate(order.createdAt)}`}
         action={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/procurement/purchase-order")} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
-            {isDraft && can("purchase-order:update") && (
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/edit`)}>
+            {isDraft && (editHref ? true : can("purchase-order:update")) && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(editHref ?? `/dashboard/procurement/purchase-order/${order.id}/edit`)}>
                 <PencilIcon className="w-3.5 h-3.5" /> Edit
               </Button>
             )}
-            {isConfirmed && (
+            {isOwner && !order.approvedAt && (status === "draft" || status === "cancelled") && (
+              <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" disabled={deleting} onClick={handleDelete}>
+                <Trash2Icon className="w-3.5 h-3.5" /> Delete
+              </Button>
+            )}
+            {isConfirmed && !hidePricing && (
               <div className="flex items-center rounded-md border border-border overflow-hidden">
                 <button
                   type="button"
@@ -169,6 +261,11 @@ export function PurchaseOrderDetailClient({
                   <span>{pdfWithImages ? "with images" : "no images"}</span>
                 </button>
               </div>
+            )}
+            {(isConfirmed || isFulfilled) && (
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={handleDownloadPackingList}>
+                <FileSpreadsheetIcon className="w-3.5 h-3.5" /> Packing List
+              </Button>
             )}
             <StatusBadge status={status} />
           </div>
@@ -228,30 +325,162 @@ export function PurchaseOrderDetailClient({
                   <thead>
                     <tr className="border-b border-border text-muted-foreground">
                       <th className="text-left pb-2 pr-3 w-6">#</th>
-                      <th className="text-left pb-2 pr-3 w-10">Img</th>
-                      <th className="text-left pb-2 pr-3 w-20">Code</th>
+                      {showSourcing && (
+                        <>
+                          <th className="text-left pb-2 pr-3 w-28">Design Brand</th>
+                          <th className="text-left pb-2 pr-3 w-24">Design Code</th>
+                        </>
+                      )}
+                      <th className="text-left pb-2 pr-3 w-24">Code</th>
                       <th className="text-left pb-2 pr-3">Description</th>
+                      <th className="text-left pb-2 pr-3 w-10">Img</th>
                       <th className="text-right pb-2 pr-3 w-12">Qty</th>
                       <th className="text-left pb-2 pr-3 w-12">UOM</th>
-                      <th className="text-left pb-2 pr-3 w-12">Ccy</th>
-                      <th className="text-right pb-2 pr-3 w-24">Unit Price</th>
-                      <th className="text-right pb-2 w-24">Total</th>
+                      {!hidePricing && (
+                        <>
+                          <th className="text-left pb-2 pr-3 w-12">Ccy</th>
+                          <th className="text-right pb-2 pr-3 w-24">Unit Price</th>
+                          <th className="text-right pb-2 w-24">Total</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {order.items.map((item) => (
                       <tr key={item.id} className="border-b border-border/40 last:border-0">
-                        <td className="py-2 pr-3 text-muted-foreground">{item.rowNo}</td>
-                        <td className="py-2 pr-3">
+                        <td className="py-2 pr-3 align-top text-muted-foreground">{item.rowNo}</td>
+                        {showSourcing && (
+                          <>
+                            <td className="py-2 pr-3 align-top">
+                              {item.designBrandName?.trim() ? (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-muted-foreground">{item.designBrandName}</span>
+                                  {item.designBrandSource === "catalog" ? (
+                                    <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                                      <DatabaseIcon className="w-3 h-3 shrink-0" />from catalogue
+                                    </span>
+                                  ) : item.designBrandSource === "user" && (
+                                    <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                      <PencilIcon className="w-3 h-3 shrink-0" />{item.oemEditedBy ? `${item.oemEditedBy} edited SPO` : "edited SPO"}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : item.sourcingType === "oem" ? (
+                                <span className="text-destructive">missing</span>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </td>
+                            <td className="py-2 pr-3 align-top">
+                              {item.designBrandCode?.trim() ? (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-mono text-muted-foreground">{item.designBrandCode}</span>
+                                  <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                    <PencilIcon className="w-3 h-3 shrink-0" />{item.oemEditedBy ? `${item.oemEditedBy} edited SPO` : "edited SPO"}
+                                  </span>
+                                </div>
+                              ) : item.sourcingType === "oem" ? (
+                                <span className="font-sans text-destructive">missing</span>
+                              ) : "—"}
+                            </td>
+                          </>
+                        )}
+                        <td className="py-2 pr-3 align-top">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono text-muted-foreground">{item.productCode || "—"}</span>
+                            {showSourcing && item.sourcingType && (
+                              <span className={cn(
+                                "inline-block w-fit text-[10px] px-1.5 py-0.5 rounded-md border font-medium",
+                                item.sourcingType === "oem"
+                                  ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800"
+                                  : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800",
+                              )}>
+                                {item.sourcingType === "oem" ? "OEM" : "Trading"}
+                              </span>
+                            )}
+                            {item.sourcingType === "oem" && (
+                              item.privateLabelCode?.trim() && item.privateLabelCode !== item.productCode ? (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-mono text-[10px] text-muted-foreground">Emboss: {item.privateLabelCode}</span>
+                                  {item.privateLabelSource === "catalog" ? (
+                                    <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                                      <DatabaseIcon className="w-3 h-3 shrink-0" />from catalogue
+                                    </span>
+                                  ) : item.privateLabelSource === "auto" ? (
+                                    <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                                      <LinkIcon className="w-3 h-3 shrink-0" />from Code
+                                    </span>
+                                  ) : item.privateLabelSource === "user" && (
+                                    <span className="inline-flex items-center gap-1 w-fit text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                                      <PencilIcon className="w-3 h-3 shrink-0" />{item.oemEditedBy ? `${item.oemEditedBy} edited SPO` : "edited SPO"}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : !item.privateLabelCode?.trim() ? (
+                                <span className="text-[10px] text-destructive">emboss code missing</span>
+                              ) : null
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3 align-top">
+                          {(item.setGroupLabel || item.customerPoNo || item.customerOrganization || item.customerName) && (
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {item.setGroupLabel && (
+                                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                                  <TagIcon className="w-2.5 h-2.5 shrink-0" />{item.setGroupLabel}
+                                </span>
+                              )}
+                              {item.customerPoNo && (
+                                <span className="inline-flex items-center text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-md border bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                                  {item.customerPoNo}
+                                </span>
+                              )}
+                              {item.customerOrganization && (
+                                <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                                  {item.customerOrganization}
+                                </span>
+                              )}
+                              {item.customerName && (
+                                <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                                  {item.customerName}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {item.description || "—"}
+                          {item.descriptionSource === "product" && (
+                            <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
+                              <DatabaseIcon className="w-3 h-3 shrink-0" />from catalogue
+                            </span>
+                          )}
+                          {item.descriptionSource === "pr" && (
+                            <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
+                              <ClipboardListIcon className="w-3 h-3 shrink-0" />from purchase requisition
+                            </span>
+                          )}
+                          {item.isAdditional && (
+                            <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800">
+                              <PlusIcon className="w-3 h-3 shrink-0" />additional row
+                            </span>
+                          )}
+                          {item.editedBy && (
+                            <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                              <PencilIcon className="w-3 h-3 shrink-0" />{item.editedBy} edited SPO
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 align-top">
                           <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
                         </td>
-                        <td className="py-2 pr-3 font-mono text-muted-foreground">{item.productCode || "—"}</td>
-                        <td className="py-2 pr-3">{item.description || "—"}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{item.qty}</td>
-                        <td className="py-2 pr-3 text-muted-foreground">{item.uom || "—"}</td>
-                        <td className="py-2 pr-3 font-mono text-muted-foreground">{item.currency || "MYR"}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{Number(item.unitPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
-                        <td className="py-2 text-right tabular-nums font-medium">{Number(item.totalPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2 pr-3 align-top text-right tabular-nums">{item.qty}</td>
+                        <td className="py-2 pr-3 align-top text-muted-foreground">{item.uom || "—"}</td>
+                        {!hidePricing && (
+                          <>
+                            <td className="py-2 pr-3 align-top font-mono text-muted-foreground">{item.currency || "MYR"}</td>
+                            <td className="py-2 pr-3 align-top text-right tabular-nums">{Number(item.unitPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                            <td className="py-2 align-top text-right tabular-nums font-medium">{Number(item.totalPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                          </>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -270,14 +499,24 @@ export function PurchaseOrderDetailClient({
           <section className="border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Goods Receipts</h2>
-              {isConfirmed && can("goods-receipt:create") && (
-                <Button
-                  size="sm" variant="outline" className="h-7 text-xs gap-1.5"
-                  onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/goods-receipt/create`)}
-                >
-                  <TruckIcon className="w-3 h-3" /> Record Receipt
-                </Button>
-              )}
+              <div className="flex items-center gap-2">
+                {isConfirmed && can("packing-list:create") && order.supplierId && (
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                    onClick={() => router.push(`/dashboard/procurement/packing-list/create?supplierId=${order.supplierId}`)}
+                  >
+                    <ClipboardListIcon className="w-3 h-3" /> Create Packing List
+                  </Button>
+                )}
+                {isConfirmed && can("goods-receipt:create") && (
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                    onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/goods-receipt/create`)}
+                  >
+                    <TruckIcon className="w-3 h-3" /> Record Receipt
+                  </Button>
+                )}
+              </div>
             </div>
             {order.goodsReceipts.length === 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -309,10 +548,10 @@ export function PurchaseOrderDetailClient({
             <section className="border border-amber-200 dark:border-amber-800/50 rounded-xl p-4 bg-amber-50/30 dark:bg-amber-950/10">
               <h2 className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide mb-3">Draft — Recalled PO</h2>
               <div className="flex flex-col gap-2">
-                {can("purchase-order:update") && (
+                {(editHref ? true : can("purchase-order:update")) && (
                   <Button
                     size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
-                    onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/edit`)}
+                    onClick={() => router.push(editHref ?? `/dashboard/procurement/purchase-order/${order.id}/edit`)}
                   >
                     <PencilIcon className="w-3.5 h-3.5" /> Edit PO
                   </Button>
@@ -384,25 +623,27 @@ export function PurchaseOrderDetailClient({
             </section>
           )}
 
-          <section className="border border-border rounded-xl p-4">
-            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Pricing</h2>
-            <div className="space-y-1.5 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span className="tabular-nums">{fmt(order.subtotal, order.currency)}</span>
-              </div>
-              {parseFloat(order.sstPct ?? "0") > 0 && (
+          {!hidePricing && (
+            <section className="border border-border rounded-xl p-4">
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Pricing</h2>
+              <div className="space-y-1.5 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">SST ({order.sstPct}%)</span>
-                  <span className="tabular-nums">{fmt(order.sst, order.currency)}</span>
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="tabular-nums">{fmt(order.subtotal, order.currency)}</span>
                 </div>
-              )}
-              <div className="flex justify-between font-semibold border-t border-border pt-2 mt-2">
-                <span>Grand Total</span>
-                <span className="tabular-nums">{fmt(order.grandTotal, order.currency)}</span>
+                {parseFloat(order.sstPct ?? "0") > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">SST ({order.sstPct}%)</span>
+                    <span className="tabular-nums">{fmt(order.sst, order.currency)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-semibold border-t border-border pt-2 mt-2">
+                  <span>Grand Total</span>
+                  <span className="tabular-nums">{fmt(order.grandTotal, order.currency)}</span>
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
+          )}
 
           <section className="border border-border rounded-xl p-4 space-y-2.5">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Details</h2>

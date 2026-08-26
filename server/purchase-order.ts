@@ -18,10 +18,14 @@ import {
   organization,
   organizationProfile,
   goodsReceipt,
+  customer,
+  customerCompany,
+  customerOrganization,
+  member,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, notInArray, sql } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, notInArray, sql, ilike } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -113,6 +117,19 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
+// For actions restricted to the organization owner regardless of any
+// individually granted permission — e.g. deleting a Supplier PO.
+async function requireOwner() {
+  const { session, orgId, userId } = await getSession();
+  const [m] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
+    .limit(1);
+  if (!m || m.role !== "owner") throw new Error("Only the organization owner can do this");
+  return { session, orgId, userId };
+}
+
 
 // ── Running numbers ────────────────────────────────────────────────────────
 
@@ -183,12 +200,24 @@ export interface PurchaseOrderItemInput {
   currency?: string;
   totalPrice?: string;
   imageKey?: string;
+  descriptionSource?: string;
+  isAdditional?: boolean;
+  editedBy?: string;
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
+  customerId?: string;
+  customerOrganizationId?: string;
   customerName?: string;
   customerOrganization?: string;
   customerPoNo?: string;
+  sourcingType?: string;
+  designBrandName?: string;
+  designBrandCode?: string;
+  privateLabelCode?: string;
+  designBrandSource?: string;
+  privateLabelSource?: string;
+  oemEditedBy?: string;
 }
 
 export interface CreatePurchaseOrderInput {
@@ -205,6 +234,9 @@ export interface CreatePurchaseOrderInput {
   notes?: string;
   expectedDeliveryDate?: Date;
   deliveryAddress?: string;
+  // Overrides the auto-generated PO number — for backfilling a PO that was
+  // already manually issued to the supplier under its own number.
+  manualPoNo?: string;
   items: PurchaseOrderItemInput[];
 }
 
@@ -328,6 +360,73 @@ export interface UpdatePurchaseOrderInput extends Omit<CreatePurchaseOrderInput,
 }
 
 // ── Reference data fetchers for PO forms ──────────────────────────────────
+
+async function getOwnerOrgIds(orgId: string): Promise<string[]> {
+  const [ownerMember] = await db
+    .select()
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+    .limit(1);
+  if (!ownerMember) return [orgId];
+  const owned = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
+  const ids = [...new Set(owned.map((m) => m.organizationId))];
+  return ids.length > 0 ? ids : [orgId];
+}
+
+// Search the shared customer directory for the PO item "destined-for"
+// picker. Scoped the same way the customer directory itself is (shared
+// across every org the same owner runs) so a customer created under a
+// sibling org still shows up here. Returns EVERY customerOrganization each
+// matched customer belongs to (a customer can belong to more than one) so
+// the picker can show them all rather than silently guessing which one
+// applies to this line.
+export async function searchCustomersForPo(query: string): Promise<{
+  id: string;
+  name: string;
+  memberships: { customerOrganizationId: string; orgName: string; isPrimary: boolean }[];
+}[]> {
+  const { orgId } = await requireAccess("purchase-order:create");
+  if (!query.trim()) return [];
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+
+  const customers = await db
+    .select({ id: customer.id, name: customer.name })
+    .from(customer)
+    .where(and(inArray(customer.organizationId, ownerOrgIds), ilike(customer.name, `%${query.trim()}%`)))
+    .orderBy(asc(customer.name))
+    .limit(20);
+  if (customers.length === 0) return [];
+
+  const memberships = await db
+    .select({
+      customerId: customerCompany.customerId,
+      customerOrganizationId: customerCompany.customerOrganizationId,
+      orgName: customerOrganization.name,
+      isPrimary: customerCompany.isPrimary,
+    })
+    .from(customerCompany)
+    .innerJoin(customerOrganization, eq(customerOrganization.id, customerCompany.customerOrganizationId))
+    .where(inArray(customerCompany.customerId, customers.map((c) => c.id)))
+    .orderBy(desc(customerCompany.isPrimary), asc(customerOrganization.name));
+
+  const membershipsByCustomer = new Map<string, typeof memberships>();
+  for (const m of memberships) {
+    if (!membershipsByCustomer.has(m.customerId)) membershipsByCustomer.set(m.customerId, []);
+    membershipsByCustomer.get(m.customerId)!.push(m);
+  }
+
+  return customers.map((c) => ({
+    ...c,
+    memberships: (membershipsByCustomer.get(c.id) ?? []).map((m) => ({
+      customerOrganizationId: m.customerOrganizationId!,
+      orgName: m.orgName,
+      isPrimary: m.isPrimary,
+    })),
+  }));
+}
 
 export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: string; customerName: string | null }[]> {
   const { orgId } = await requireAccess("purchase-order:read");
@@ -502,6 +601,11 @@ export type PurchaseOrderWithItems = PurchaseOrderRow & {
   goodsReceipts: GoodsReceiptSummary[];
 };
 export type PurchaseOrderListRow = PurchaseOrderRow & { createdByName: string | null; customerPoNos: string[] };
+// canEdit: true for the creator, anyone holding purchase-order:update in the
+// PO's own organization, or anyone holding purchase-order:update:centralized
+// — everyone else gets view-only access in the centralized view.
+export type CentralizedPurchaseOrder = PurchaseOrderListRow & { organizationName: string; canEdit: boolean };
+export type CentralizedPurchaseOrderWithItems = PurchaseOrderWithItems & { organizationName: string; canEdit: boolean; businessType: string };
 
 const EDITABLE_STATUSES = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
@@ -654,6 +758,133 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
   };
 }
 
+// Whether userId can edit a PO belonging to poOrgId: the creator always can;
+// otherwise either purchase-order:update:centralized (any org), or
+// purchase-order:update evaluated specifically in the PO's own org (covers
+// both a direct member of that org and getUserPermissions' own sibling-org
+// fallback for owners/shared-directory staff).
+async function canEditPoAcrossOrgs(
+  userId: string,
+  poOrgId: string,
+  createdBy: string,
+  callerOrgId: string,
+  callerPerms: string[],
+): Promise<boolean> {
+  if (createdBy === userId) return true;
+  if (hasAccess(callerPerms, "purchase-order:update:centralized")) return true;
+  const orgPerms = poOrgId === callerOrgId ? callerPerms : await getUserPermissions(userId, poOrgId);
+  return hasAccess(orgPerms, "purchase-order:update");
+}
+
+// Cross-org view for members explicitly granted purchase-order:read:centralized
+// — every Supplier PO recorded under any org the same owner controls, not
+// just the caller's own active org. Mirrors the identical Customer PO pattern
+// in server/customer-purchase-order.ts.
+export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchaseOrder[]> {
+  const { orgId, userId } = await requireAccess("purchase-order:read:centralized");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+
+  const rows = await db
+    .select({ po: purchaseOrder, organizationName: organization.name })
+    .from(purchaseOrder)
+    .innerJoin(organization, eq(organization.id, purchaseOrder.organizationId))
+    .where(inArray(purchaseOrder.organizationId, ownerOrgIds))
+    .orderBy(desc(purchaseOrder.createdAt));
+
+  if (rows.length === 0) return [];
+
+  const poIds = rows.map((r) => r.po.id);
+  const [users, cpoLinks] = await Promise.all([
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [...new Set(rows.map((r) => r.po.createdBy))])),
+    db.select({ purchaseOrderId: purchaseOrderCustomerPo.purchaseOrderId, customerPoNo: purchaseOrderCustomerPo.customerPoNo })
+      .from(purchaseOrderCustomerPo)
+      .where(inArray(purchaseOrderCustomerPo.purchaseOrderId, poIds)),
+  ]);
+  const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
+  const cpoMap = new Map<string, string[]>();
+  for (const link of cpoLinks) {
+    const arr = cpoMap.get(link.purchaseOrderId) ?? [];
+    arr.push(link.customerPoNo);
+    cpoMap.set(link.purchaseOrderId, arr);
+  }
+
+  // Resolve edit rights once per distinct org among the results (not once
+  // per row) to avoid N+1 permission fetches.
+  const callerPerms = await getUserPermissions(userId, orgId);
+  const distinctOtherOrgIds = [...new Set(rows.map((r) => r.po.organizationId))].filter((id) => id !== orgId);
+  const otherOrgPermsEntries = await Promise.all(
+    distinctOtherOrgIds.map(async (id) => [id, await getUserPermissions(userId, id)] as const),
+  );
+  const orgPermsMap = new Map<string, string[]>([[orgId, callerPerms], ...otherOrgPermsEntries]);
+  const hasCentralizedUpdate = hasAccess(callerPerms, "purchase-order:update:centralized");
+
+  return rows.map(({ po, organizationName }) => ({
+    ...po,
+    createdByName: nameOf(po.createdBy),
+    customerPoNos: cpoMap.get(po.id) ?? [],
+    organizationName,
+    canEdit: po.createdBy === userId || hasCentralizedUpdate || hasAccess(orgPermsMap.get(po.organizationId) ?? [], "purchase-order:update"),
+  }));
+}
+
+// Same detail as getPurchaseOrderDetail, but resolvable across every org the
+// caller's owner controls — for members explicitly granted
+// purchase-order:read:centralized.
+export async function getPurchaseOrderDetailCentralized(id: string): Promise<CentralizedPurchaseOrderWithItems | null> {
+  const { orgId, userId } = await requireAccess("purchase-order:read:centralized");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+
+  const [row] = await db
+    .select({ po: purchaseOrder, organizationName: organization.name, businessType: organizationProfile.businessType })
+    .from(purchaseOrder)
+    .innerJoin(organization, eq(organization.id, purchaseOrder.organizationId))
+    .leftJoin(organizationProfile, eq(organizationProfile.organizationId, purchaseOrder.organizationId))
+    .where(and(eq(purchaseOrder.id, id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
+  if (!row) return null;
+  const { po, organizationName, businessType } = row;
+
+  const [items, users, customerPos, soRows, grs] = await Promise.all([
+    db.select().from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, id)).orderBy(asc(purchaseOrderItem.rowNo)),
+    db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, po.createdBy)),
+    db.select().from(purchaseOrderCustomerPo).where(eq(purchaseOrderCustomerPo.purchaseOrderId, id)),
+    po.salesOrderId
+      ? db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.id, po.salesOrderId))
+      : Promise.resolve([]),
+    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, receivedDate: goodsReceipt.receivedDate, createdAt: goodsReceipt.createdAt })
+      .from(goodsReceipt)
+      .where(eq(goodsReceipt.purchaseOrderId, id))
+      .orderBy(desc(goodsReceipt.createdAt)),
+  ]);
+
+  const enrichedItems: PurchaseOrderItemEnriched[] = await Promise.all(
+    items.map(async (i) => {
+      let imageUrl: string | null = null;
+      if (i.imageKey) {
+        try {
+          const cmd = new GetObjectCommand({ Bucket: PROCUREMENT_DOCS_BUCKET, Key: i.imageKey });
+          imageUrl = await getSignedUrl(s3, cmd, { expiresIn: 7200 });
+        } catch {}
+      }
+      return { ...i, imageUrl };
+    }),
+  );
+
+  const callerPerms = await getUserPermissions(userId, orgId);
+  const canEdit = await canEditPoAcrossOrgs(userId, po.organizationId, po.createdBy, orgId, callerPerms);
+
+  return {
+    ...po,
+    items: enrichedItems,
+    createdByName: users[0]?.name ?? null,
+    salesOrderNo: soRows[0]?.soNo ?? null,
+    customerPos,
+    goodsReceipts: grs,
+    organizationName,
+    canEdit,
+    businessType: businessType ?? "trading",
+  };
+}
+
 export async function getPoForPrint(id: string) {
   const { orgId } = await requireAccess("purchase-order:read");
 
@@ -759,7 +990,19 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
 
   // All POs get a PO number and are created as confirmed — no draft/approval cycle here
   const prNo = null;
-  const poNo = await generatePoNo(orgId);
+  const manualPoNo = input.manualPoNo?.trim();
+  let poNo: string;
+  if (manualPoNo) {
+    const [clash] = await db
+      .select({ id: purchaseOrder.id })
+      .from(purchaseOrder)
+      .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.poNo, manualPoNo)))
+      .limit(1);
+    if (clash) throw new Error(`PO number "${manualPoNo}" is already in use`);
+    poNo = manualPoNo;
+  } else {
+    poNo = await generatePoNo(orgId);
+  }
   const status = "confirmed";
 
   const [row] = await db
@@ -803,12 +1046,24 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
         currency: item.currency ?? "MYR",
         totalPrice: item.totalPrice ?? "0",
         imageKey: item.imageKey ?? null,
+        descriptionSource: item.descriptionSource ?? null,
+        isAdditional: item.isAdditional ?? false,
+        editedBy: item.editedBy ?? null,
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
+        customerId: item.customerId ?? null,
+        customerOrganizationId: item.customerOrganizationId ?? null,
         customerName: item.customerName ?? null,
         customerOrganization: item.customerOrganization ?? null,
         customerPoNo: item.customerPoNo ?? null,
+        sourcingType: item.sourcingType ?? null,
+        designBrandName: item.designBrandName ?? null,
+        designBrandCode: item.designBrandCode ?? null,
+        privateLabelCode: item.privateLabelCode ?? null,
+        designBrandSource: item.designBrandSource ?? null,
+        privateLabelSource: item.privateLabelSource ?? null,
+        oemEditedBy: item.oemEditedBy ?? null,
       })),
     );
   }
@@ -899,6 +1154,34 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
   if (existing.createdBy !== userId) throw new Error("Only the creator can edit this purchase order");
   if (!EDITABLE_STATUSES.has(existing.status)) throw new Error("Only draft purchase orders can be edited");
 
+  return applyPurchaseOrderUpdate(existing, input);
+}
+
+// Same update, but resolvable across every org the caller's owner controls —
+// for the Edit flow reached from the centralized view. Editing is allowed
+// for the creator, anyone holding purchase-order:update in the PO's own
+// org, or anyone holding purchase-order:update:centralized — everyone else
+// is rejected here even though they can view the PO. The draft-only
+// restriction still applies either way.
+export async function updatePurchaseOrderCentralized(input: UpdatePurchaseOrderInput): Promise<PurchaseOrderRow> {
+  const { orgId, userId } = await requireAccess("purchase-order:read:centralized");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+
+  const [existing] = await db
+    .select()
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.id, input.id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
+  if (!existing) throw new Error("Purchase order not found");
+
+  const callerPerms = await getUserPermissions(userId, orgId);
+  const canEdit = await canEditPoAcrossOrgs(userId, existing.organizationId, existing.createdBy, orgId, callerPerms);
+  if (!canEdit) throw new Error("You don't have permission to do this");
+  if (!EDITABLE_STATUSES.has(existing.status)) throw new Error("Only draft purchase orders can be edited");
+
+  return applyPurchaseOrderUpdate(existing, input);
+}
+
+async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: UpdatePurchaseOrderInput): Promise<PurchaseOrderRow> {
   if (
     input.supplierQuotationKey !== undefined &&
     existing.supplierQuotationKey &&
@@ -975,12 +1258,24 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
         currency: item.currency ?? "MYR",
         totalPrice: item.totalPrice ?? "0",
         imageKey: item.imageKey ?? null,
+        descriptionSource: item.descriptionSource ?? null,
+        isAdditional: item.isAdditional ?? false,
+        editedBy: item.editedBy ?? null,
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
+        customerId: item.customerId ?? null,
+        customerOrganizationId: item.customerOrganizationId ?? null,
         customerName: item.customerName ?? null,
         customerOrganization: item.customerOrganization ?? null,
         customerPoNo: item.customerPoNo ?? null,
+        sourcingType: item.sourcingType ?? null,
+        designBrandName: item.designBrandName ?? null,
+        designBrandCode: item.designBrandCode ?? null,
+        privateLabelCode: item.privateLabelCode ?? null,
+        designBrandSource: item.designBrandSource ?? null,
+        privateLabelSource: item.privateLabelSource ?? null,
+        oemEditedBy: item.oemEditedBy ?? null,
       })),
     );
   }
@@ -1008,7 +1303,7 @@ export async function updatePurchaseOrder(input: UpdatePurchaseOrderInput): Prom
 }
 
 export async function deletePurchaseOrder(id: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("purchase-order:delete");
+  const { orgId } = await requireOwner();
 
   const [existing] = await db
     .select()
@@ -1016,7 +1311,6 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
     .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
 
   if (!existing) throw new Error("Purchase order not found");
-  if (existing.createdBy !== userId) throw new Error("Only the creator can delete this purchase order");
   if (existing.approvedAt) throw new Error("Approved purchase orders cannot be deleted");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled purchase orders can be deleted");
 

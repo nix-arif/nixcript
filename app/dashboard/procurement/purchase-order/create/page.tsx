@@ -6,6 +6,7 @@ import {
   getPrForPoConversion,
   getDefaultDeliveryAddress,
 } from "@/server/purchase-order";
+import { getOrganizationProfile } from "@/server/organization-profile";
 import { redirect } from "next/navigation";
 import { CreatePurchaseOrderClient } from "./create-po-client";
 
@@ -17,21 +18,23 @@ export default async function CreatePurchaseOrderPage({ searchParams }: { search
 
   // PR conversion path
   if (prId) {
-    const [prData, suppliers, defaultDeliveryAddress] = await Promise.all([
+    const [prData, suppliers, defaultDeliveryAddress, profile] = await Promise.all([
       getPrForPoConversion(prId).catch(() => null),
       getSuppliers(),
       getDefaultDeliveryAddress().catch(() => ""),
+      getOrganizationProfile().catch(() => null),
     ]);
     if (!prData) redirect("/dashboard/procurement/requisition");
-    return <CreatePurchaseOrderClient suppliers={suppliers} prData={prData} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} currentUserName={currentUserName} />;
+    return <CreatePurchaseOrderClient suppliers={suppliers} prData={prData} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} currentUserName={currentUserName} businessType={profile?.businessType ?? "trading"} />;
   }
 
   // Direct creation path
-  const [suppliers, approvedSos, customerPos, defaultDeliveryAddress] = await Promise.all([
+  const [suppliers, approvedSos, customerPos, defaultDeliveryAddress, profile] = await Promise.all([
     getSuppliers(),
     getApprovedSalesOrders(),
     getActiveCustomerPos(),
     getDefaultDeliveryAddress().catch(() => ""),
+    getOrganizationProfile().catch(() => null),
   ]);
-  return <CreatePurchaseOrderClient suppliers={suppliers} approvedSos={approvedSos} customerPos={customerPos} initialSoId={soId} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} currentUserName={currentUserName} />;
+  return <CreatePurchaseOrderClient suppliers={suppliers} approvedSos={approvedSos} customerPos={customerPos} initialSoId={soId} defaultDeliveryAddress={defaultDeliveryAddress} backHref={backHref} currentUserName={currentUserName} businessType={profile?.businessType ?? "trading"} />;
 }

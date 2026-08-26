@@ -54,9 +54,17 @@ export const ALL_PERMISSIONS = [
   { key: "purchase-order:create", label: "Create Purchase Order" },
   { key: "purchase-order:update", label: "Update Purchase Order" },
   { key: "purchase-order:delete", label: "Delete Purchase Order" },
+  { key: "purchase-order:read:centralized",   label: "View All Supplier POs Across Owner's Organizations" },
+  { key: "purchase-order:update:centralized", label: "Edit Supplier POs Across Owner's Organizations" },
 
   // Goods Receipt
   { key: "goods-receipt:create", label: "Record Goods Receipt" },
+
+  // Packing List
+  { key: "packing-list:create",  label: "Create Packing List" },
+  { key: "packing-list:inspect", label: "Inspect Packing List / Record Condition" },
+  { key: "packing-list:read:centralized", label: "View All Packing Lists Across Owner's Organizations" },
+  { key: "packing-list:inspect:centralized", label: "Inspect Packing Lists Across Owner's Organizations" },
 
   // Ledger / Chart of Accounts
   { key: "account:read",   label: "View Ledger & Chart of Accounts" },
@@ -213,6 +221,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
       "purchase-requisition:read", "purchase-requisition:create", "purchase-requisition:update", "purchase-requisition:delete",
       "goods-receipt:create",
+      "packing-list:create", "packing-list:inspect",
       "customer:read", "customer:create", "customer:update", "customer:delete",
       "product:read", "product:update-price", "product:upload-image",
       "member:read", "member:invite", "member:remove",
@@ -348,6 +357,8 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "quotation:read",
       "sales-order:read",
       "delivery-order:read",
+      "purchase-order:read",
+      "packing-list:inspect",
       "member:read",
       "department:read",
       "profile:read", "profile:update",
@@ -359,6 +370,8 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     member: [
       "product:read",
       "quotation:read",
+      "purchase-order:read",
+      "packing-list:inspect",
       "member:read",
       "department:read",
       "profile:read", "profile:update",
@@ -375,6 +388,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
       "purchase-requisition:read", "purchase-requisition:create", "purchase-requisition:update", "purchase-requisition:delete",
       "goods-receipt:create",
+      "packing-list:create",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
       "inventory:read", "inventory:adjust", "inventory:manage",
       "sales-order:read",
@@ -392,6 +406,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "purchase-order:read",
       "purchase-requisition:read",
       "goods-receipt:create",
+      "packing-list:create",
       "supplier:read",
       "inventory:read", "inventory:adjust",
       "sales-order:read",
@@ -568,8 +583,14 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
   {
     id: "warehouse-receiving",
     label: "Warehouse / Receiving Staff",
-    description: "Record goods receipts against confirmed purchase orders. View-only access to POs.",
-    permissions: ["goods-receipt:create", "purchase-order:read", "supplier:read", "product:read"],
+    description: "Record goods receipts and create packing lists against confirmed purchase orders. View-only access to POs.",
+    permissions: ["goods-receipt:create", "packing-list:create", "purchase-order:read", "supplier:read", "product:read"],
+  },
+  {
+    id: "quality-inspection",
+    label: "Quality Inspection Staff",
+    description: "Inspect packing lists against delivered goods and record condition (good/damaged) and follow-up action. View-only access to POs.",
+    permissions: ["packing-list:inspect", "purchase-order:read", "product:read"],
   },
   {
     id: "inventory-staff",

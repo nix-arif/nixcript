@@ -63,6 +63,8 @@ export const navConfig: NavGroup[] = [
     items: [
       { title: "Customer POs", url: "/dashboard/sales/customer-po/centralized", permission: "customer-po:read:centralized" },
       { title: "Sales Orders", url: "/dashboard/sales/order/centralized", permission: "sales-order:read:centralized" },
+      { title: "Supplier POs", url: "/dashboard/procurement/purchase-order/centralized", permission: "purchase-order:read:centralized" },
+      { title: "Packing Lists", url: "/dashboard/procurement/packing-list/centralized", permission: "packing-list:read:centralized" },
     ],
   },
   {
@@ -73,6 +75,7 @@ export const navConfig: NavGroup[] = [
       { title: "Suppliers",            url: "/dashboard/procurement/supplier",        permission: "supplier:read"       },
       { title: "Purchase Requisition", url: "/dashboard/procurement/requisition",   permission: "purchase-requisition:read" },
       { title: "Purchase Orders",      url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
+      { title: "Packing Lists",        url: "/dashboard/procurement/packing-list",   permission: "purchase-order:read" },
       { title: "Goods Receipts",       url: "/dashboard/procurement/goods-receipt",  permission: "purchase-order:read" },
     ],
   },

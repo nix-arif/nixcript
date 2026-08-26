@@ -1,4 +1,4 @@
-export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "do" | "inv" | "co";
+export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "pl" | "do" | "inv" | "co";
 
 export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string }> = {
   qt:  { docCode: "QT",  label: "Quotation" },
@@ -6,6 +6,7 @@ export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string
   pr:  { docCode: "PR",  label: "Purchase Requisition" },
   po:  { docCode: "PO",  label: "Purchase Order" },
   gr:  { docCode: "GR",  label: "Goods Receipt" },
+  pl:  { docCode: "PL",  label: "Packing List" },
   do:  { docCode: "DO",  label: "Delivery Order" },
   inv: { docCode: "INV", label: "Invoice" },
   co:  { docCode: "CO",  label: "Consignment" },

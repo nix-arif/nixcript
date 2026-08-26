@@ -37,6 +37,8 @@ interface Props {
   suppliers: Supplier[];
   approvedSos: ApprovedSo[];
   customerPos: CustomerPoOption[];
+  updateFn?: typeof updatePurchaseOrder;
+  detailHref?: string;
 }
 
 interface LineItem extends PurchaseOrderItemInput {
@@ -75,9 +77,13 @@ function toDateInput(d: Date | string | null | undefined): string {
   return new Date(d).toISOString().split("T")[0];
 }
 
-export function EditPurchaseOrderClient({ order, suppliers, approvedSos, customerPos }: Props) {
+export function EditPurchaseOrderClient({
+  order, suppliers, approvedSos, customerPos,
+  updateFn = updatePurchaseOrder,
+  detailHref,
+}: Props) {
   const router = useRouter();
-  const backUrl = `/dashboard/procurement/purchase-order/${order.id}`;
+  const backUrl = detailHref ?? `/dashboard/procurement/purchase-order/${order.id}`;
 
   // Supplier (required)
   const [supplierId, setSupplierId] = useState(order.supplierId ?? "");
@@ -237,7 +243,7 @@ export function EditPurchaseOrderClient({ order, suppliers, approvedSos, custome
     setSaving(true);
     try {
       const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
-      await updatePurchaseOrder({
+      await updateFn({
         id: order.id,
         supplierId,
         salesOrderId: selectedSo!.id,
