@@ -12,6 +12,7 @@ import {
   deleteInspectionPhoto,
   type PackingListWithItems,
   type InspectionPhoto,
+  type InspectionPhotoCategory,
 } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -214,7 +215,8 @@ type Row = {
   saving: boolean;
   dirty: boolean; // has local edits not yet persisted
   photos: InspectionPhoto[];
-  uploadingPhotos: boolean;
+  uploadingReturnPhotos: boolean;
+  uploadingRepairPhotos: boolean;
 };
 
 function initialRow(item: PackingListWithItems["items"][number]): Row {
@@ -229,7 +231,8 @@ function initialRow(item: PackingListWithItems["items"][number]): Row {
     saving: false,
     dirty: false,
     photos: item.photos,
-    uploadingPhotos: false,
+    uploadingReturnPhotos: false,
+    uploadingRepairPhotos: false,
   };
 }
 
@@ -329,7 +332,7 @@ export function InspectPackingListClient({
             if (!local) continue;
             let updated = local;
 
-            if (!local.uploadingPhotos) {
+            if (!local.uploadingReturnPhotos && !local.uploadingRepairPhotos) {
               updated = { ...updated, photos: s.photos };
             }
 
@@ -361,7 +364,7 @@ export function InspectPackingListClient({
     return () => clearInterval(interval);
   }, [pl.id]);
 
-  async function handlePhotoUpload(itemId: string, fileList: FileList) {
+  async function handlePhotoUpload(itemId: string, category: InspectionPhotoCategory, fileList: FileList) {
     const files = Array.from(fileList);
     const validFiles: File[] = [];
     for (const file of files) {
@@ -371,21 +374,22 @@ export function InspectPackingListClient({
     }
     if (validFiles.length === 0) return;
 
-    setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], uploadingPhotos: true } }));
+    const uploadingKey = category === "return" ? "uploadingReturnPhotos" : "uploadingRepairPhotos";
+    setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [uploadingKey]: true } }));
     let failCount = 0;
     for (const file of validFiles) {
       try {
-        const { key, uploadUrl } = await getInspectionPhotoUploadUrl(itemId, file.name);
+        const { key, uploadUrl } = await getInspectionPhotoUploadUrl(itemId, file.name, category);
         const res = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const photo = await addInspectionPhoto(itemId, key);
+        const photo = await addInspectionPhoto(itemId, key, category);
         setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], photos: [...prev[itemId].photos, photo] } }));
       } catch (e) {
         failCount++;
         toast.error(`${file.name}: ${uploadErrorMessage(e)}`);
       }
     }
-    setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], uploadingPhotos: false } }));
+    setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [uploadingKey]: false } }));
     if (failCount === 0) toast.success(`${validFiles.length} photo${validFiles.length > 1 ? "s" : ""} added`);
   }
 
@@ -647,6 +651,12 @@ export function InspectPackingListClient({
                                 placeholder="Notes (optional)"
                                 className="h-7 text-[11px]"
                               />
+                              <InspectionPhotoStrip
+                                photos={row.photos.filter((p) => p.category === "return")}
+                                uploading={row.uploadingReturnPhotos}
+                                onUpload={(files) => handlePhotoUpload(item.id, "return", files)}
+                                onDelete={(photoId) => handlePhotoDelete(item.id, photoId)}
+                              />
                             </div>
                           )}
                           {repair > 0 && (
@@ -662,15 +672,14 @@ export function InspectPackingListClient({
                                 placeholder="Notes (optional)"
                                 className="h-7 text-[11px]"
                               />
+                              <InspectionPhotoStrip
+                                photos={row.photos.filter((p) => p.category === "repair")}
+                                uploading={row.uploadingRepairPhotos}
+                                onUpload={(files) => handlePhotoUpload(item.id, "repair", files)}
+                                onDelete={(photoId) => handlePhotoDelete(item.id, photoId)}
+                              />
                             </div>
                           )}
-
-                          <InspectionPhotoStrip
-                            photos={row.photos}
-                            uploading={row.uploadingPhotos}
-                            onUpload={(files) => handlePhotoUpload(item.id, files)}
-                            onDelete={(photoId) => handlePhotoDelete(item.id, photoId)}
-                          />
                         </td>
                         <td className="py-2.5 pr-3">
                           <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />

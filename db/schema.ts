@@ -2339,6 +2339,10 @@ export const inspectionPhoto = pgTable(
       .notNull()
       .references(() => packingListItem.id, { onDelete: "cascade" }),
     imageKey: text("image_key").notNull(),
+    // Which outcome this photo is evidence for — a line can be split across
+    // both a return and a repair at once, so photos must say which is which
+    // rather than sitting in one undifferentiated pile.
+    category: text("category").notNull(), // "return" | "repair"
     uploadedBy: text("uploaded_by")
       .notNull()
       .references(() => user.id),

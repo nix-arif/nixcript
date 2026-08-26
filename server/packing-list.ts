@@ -767,10 +767,13 @@ async function assertCanInspectPackingList(plOrgId: string, callerOrgId: string,
   }
 }
 
+export type InspectionPhotoCategory = "return" | "repair";
+
 export type InspectionPhoto = {
   id: string;
   imageKey: string;
   url: string;
+  category: InspectionPhotoCategory;
   uploadedByName: string | null;
   createdAt: Date;
 };
@@ -797,7 +800,7 @@ async function getPhotosForItems(itemIds: string[]): Promise<Map<string, Inspect
     rows.map(async (r) => {
       const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: ITEM_INSPECTIONS_BUCKET, Key: r.imageKey }), { expiresIn: 7200 });
       const arr = map.get(r.packingListItemId) ?? [];
-      arr.push({ id: r.id, imageKey: r.imageKey, url, uploadedByName: nameOf(r.uploadedBy), createdAt: r.createdAt });
+      arr.push({ id: r.id, imageKey: r.imageKey, url, category: r.category as InspectionPhotoCategory, uploadedByName: nameOf(r.uploadedBy), createdAt: r.createdAt });
       map.set(r.packingListItemId, arr);
     }),
   );
@@ -806,8 +809,10 @@ async function getPhotosForItems(itemIds: string[]): Promise<Map<string, Inspect
 
 // Requested per packingListItemId (not just a bare "any inspector" check) so
 // the upload URL is scoped to a specific packing list's own authorization —
-// the same rules as saveInspectionLineDraft.
-export async function getInspectionPhotoUploadUrl(packingListItemId: string, filename: string): Promise<{ key: string; uploadUrl: string }> {
+// the same rules as saveInspectionLineDraft. category groups the photo under
+// the matching Return or Repair box on the inspect form — a line split
+// across both needs its evidence kept straight about which is which.
+export async function getInspectionPhotoUploadUrl(packingListItemId: string, filename: string, category: InspectionPhotoCategory): Promise<{ key: string; uploadUrl: string }> {
   const { orgId, userId } = await getSession();
   const [row] = await db
     .select({ pl: packingList })
@@ -818,14 +823,14 @@ export async function getInspectionPhotoUploadUrl(packingListItemId: string, fil
   if (row.pl.status !== "pending") throw new Error("This packing list has already been inspected or cancelled");
   await assertCanInspectPackingList(row.pl.organizationId, orgId, userId);
 
-  const key = `item-inspections/${packingListItemId}/${nanoid()}-${filename}`;
+  const key = `item-inspections/${packingListItemId}/${category}/${nanoid()}-${filename}`;
   const cmd = new PutObjectCommand({ Bucket: ITEM_INSPECTIONS_BUCKET, Key: key });
   const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
   return { key, uploadUrl };
 }
 
 // Persists the DB row once the client has successfully PUT the file to R2.
-export async function addInspectionPhoto(packingListItemId: string, imageKey: string): Promise<InspectionPhoto> {
+export async function addInspectionPhoto(packingListItemId: string, imageKey: string, category: InspectionPhotoCategory): Promise<InspectionPhoto> {
   const { orgId, userId } = await getSession();
   const [row] = await db
     .select({ pl: packingList })
@@ -836,10 +841,10 @@ export async function addInspectionPhoto(packingListItemId: string, imageKey: st
   if (row.pl.status !== "pending") throw new Error("This packing list has already been inspected or cancelled");
   await assertCanInspectPackingList(row.pl.organizationId, orgId, userId);
 
-  const [photo] = await db.insert(inspectionPhoto).values({ id: nanoid(), packingListItemId, imageKey, uploadedBy: userId }).returning();
+  const [photo] = await db.insert(inspectionPhoto).values({ id: nanoid(), packingListItemId, imageKey, category, uploadedBy: userId }).returning();
   const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
   const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: ITEM_INSPECTIONS_BUCKET, Key: imageKey }), { expiresIn: 7200 });
-  return { id: photo.id, imageKey: photo.imageKey, url, uploadedByName: u?.name ?? null, createdAt: photo.createdAt };
+  return { id: photo.id, imageKey: photo.imageKey, url, category: photo.category as InspectionPhotoCategory, uploadedByName: u?.name ?? null, createdAt: photo.createdAt };
 }
 
 // Anyone who can inspect this packing list can remove any photo on it, not
