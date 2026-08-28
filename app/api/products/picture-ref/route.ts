@@ -32,6 +32,21 @@ const PRICE_COL_LETTER = colIndexToLetter(COL["Price/Pc (USD)"]);
 const MISMATCH_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE68A" } }; // amber
 const NOTFOUND_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFECACA" } }; // red
 
+const THIN_BORDER: Partial<ExcelJS.Borders> = {
+  top: { style: "thin", color: { argb: "FF000000" } },
+  left: { style: "thin", color: { argb: "FF000000" } },
+  bottom: { style: "thin", color: { argb: "FF000000" } },
+  right: { style: "thin", color: { argb: "FF000000" } },
+};
+const TOP_WRAP_ALIGNMENT: Partial<ExcelJS.Alignment> = { vertical: "top", wrapText: true };
+const TOTAL_ROW_HEIGHT = 32; // taller than the default ~15 so the bold total line has breathing room
+
+// Applies the grid border + top-aligned wrap text every cell in the sheet gets.
+function styleCell(cell: ExcelJS.Cell) {
+  cell.border = THIN_BORDER;
+  cell.alignment = TOP_WRAP_ALIGNMENT;
+}
+
 function colIndexToLetter(n: number): string {
   let s = "";
   while (n > 0) {
@@ -192,6 +207,7 @@ export async function POST(req: NextRequest) {
       const cell = outWs.getRow(1).getCell(i + 1);
       cell.value = h;
       cell.font = { bold: true };
+      styleCell(cell);
     });
     outWs.getRow(1).height = 30;
     outWs.getRow(1).commit();
@@ -239,6 +255,8 @@ export async function POST(req: NextRequest) {
       if (status === "mismatch") outRow.getCell(COL["Match Status"]).fill = MISMATCH_FILL;
       if (status === "notfound") outRow.getCell(COL["Match Status"]).fill = NOTFOUND_FILL;
 
+      for (let c = 1; c <= OUTPUT_HEADERS.length; c++) styleCell(outRow.getCell(c));
+
       // Only attempt an image fetch when the code actually resolved to a product.
       if (match) {
         const imgResult = await fetchImageBuffer(match.productCode);
@@ -276,6 +294,10 @@ export async function POST(req: NextRequest) {
 
     // ── Total row ──────────────────────────────────────────────────────────
     const totalRow = outWs.getRow(inRows.length + 2);
+    totalRow.height = TOTAL_ROW_HEIGHT;
+    // Border every physical cell in the merged span — a merge only hides the
+    // value of non-master cells, their own borders still render the perimeter.
+    for (let c = 1; c <= OUTPUT_HEADERS.length; c++) styleCell(totalRow.getCell(c));
     totalRow.getCell(1).value = "TOTAL PRICE (USD)";
     totalRow.getCell(1).font = { bold: true };
     outWs.mergeCells(totalRow.number, 1, totalRow.number, COL["Total Price (USD)"] - 1);
