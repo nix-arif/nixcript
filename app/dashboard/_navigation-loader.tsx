@@ -76,6 +76,10 @@ export function NavigationLoader({
       if (href.startsWith("http") || href.startsWith("//")) return;
       if (href.startsWith("mailto:") || href.startsWith("tel:")) return;
       if (href.startsWith("#")) return;
+      // Skip file downloads — these are blob:/data: URLs (or have a download
+      // attribute) that trigger a browser save, not an in-app route change.
+      if (anchor.hasAttribute("download")) return;
+      if (href.startsWith("blob:") || href.startsWith("data:")) return;
       if (e.ctrlKey || e.metaKey || e.shiftKey) return; // open-in-new-tab
       if (anchor.target === "_blank") return;
 
