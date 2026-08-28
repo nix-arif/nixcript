@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { db } from "@/db";
-import { product } from "@/db/schema";
+import { product, member, organization } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 
 const EXTS = ["jpg", "jpeg", "png"] as const;
@@ -38,13 +38,16 @@ const THIN_BORDER: Partial<ExcelJS.Borders> = {
   bottom: { style: "thin", color: { argb: "FF000000" } },
   right: { style: "thin", color: { argb: "FF000000" } },
 };
-const TOP_WRAP_ALIGNMENT: Partial<ExcelJS.Alignment> = { vertical: "top", wrapText: true };
+const CENTER_ALIGNMENT: Partial<ExcelJS.Alignment> = { vertical: "top", horizontal: "center", wrapText: true };
+const LEFT_ALIGNMENT: Partial<ExcelJS.Alignment> = { vertical: "top", wrapText: true };
 const TOTAL_ROW_HEIGHT = 32; // taller than the default ~15 so the bold total line has breathing room
 
 // Applies the grid border + top-aligned wrap text every cell in the sheet gets.
-function styleCell(cell: ExcelJS.Cell) {
+// Every column is horizontally centered except "Description", which stays
+// left-aligned since it's the one column holding long free-text.
+function styleCell(cell: ExcelJS.Cell, colIdx: number) {
   cell.border = THIN_BORDER;
-  cell.alignment = TOP_WRAP_ALIGNMENT;
+  cell.alignment = colIdx === COL["Description"] ? LEFT_ALIGNMENT : CENTER_ALIGNMENT;
 }
 
 function colIndexToLetter(n: number): string {
@@ -191,12 +194,55 @@ export async function POST(req: NextRequest) {
     // productCode is the org-unique key products are actually stored and
     // imaged under — designBrandCode/designBrandName on `product` are still
     // unpopulated org-wide, so `brand` + `productCode` are the real fields.
+    //
+    // A supplier PO often references products that live in a sibling company's
+    // catalogue rather than the org currently active in this session (e.g. a
+    // "bolton" item sourced through a different owned org). Since productCode
+    // is only unique per-org, the same code can resolve to different products
+    // in different orgs — so this searches every org the caller OWNS (not
+    // just anyone they're a member of, to avoid pulling in data from an org
+    // where they only hold a limited role) and picks the best candidate per
+    // row rather than assuming the active org is authoritative.
+    const ownedOrgs = await db
+      .select({ organizationId: member.organizationId, orgName: organization.name })
+      .from(member)
+      .innerJoin(organization, eq(organization.id, member.organizationId))
+      .where(and(eq(member.userId, session.user.id), eq(member.role, "owner")));
+    const searchOrgIds = new Set(ownedOrgs.map((o) => o.organizationId));
+    searchOrgIds.add(orgId); // always include the active org even if not "owner" there
+    const orgNameById = new Map(ownedOrgs.map((o) => [o.organizationId, o.orgName]));
+
     const codes = [...new Set(inRows.map((r) => r.brandCode))];
     const matches = await db
-      .select({ productCode: product.productCode, brand: product.brand, description: product.description, uom: product.uom })
+      .select({
+        productCode: product.productCode,
+        brand: product.brand,
+        description: product.description,
+        uom: product.uom,
+        organizationId: product.organizationId,
+      })
       .from(product)
-      .where(and(eq(product.organizationId, orgId), inArray(product.productCode, codes)));
-    const matchByCode = new Map(matches.map((m) => [m.productCode, m]));
+      .where(and(inArray(product.organizationId, [...searchOrgIds]), inArray(product.productCode, codes)));
+
+    const candidatesByCode = new Map<string, typeof matches>();
+    for (const m of matches) {
+      const arr = candidatesByCode.get(m.productCode) ?? [];
+      arr.push(m);
+      candidatesByCode.set(m.productCode, arr);
+    }
+
+    // Prefer whichever candidate's brand actually matches what was typed
+    // (even if it's in a different org); otherwise fall back to the active
+    // org's candidate; otherwise just the first one found.
+    function pickBestMatch(code: string, typedBrand: string) {
+      const candidates = candidatesByCode.get(code);
+      if (!candidates || candidates.length === 0) return null;
+      const brandHit = typedBrand && candidates.find((c) => brandNamesMatch(typedBrand, c.brand ?? ""));
+      if (brandHit) return brandHit;
+      const activeOrgHit = candidates.find((c) => c.organizationId === orgId);
+      if (activeOrgHit) return activeOrgHit;
+      return candidates[0];
+    }
 
     // ── Build output workbook ─────────────────────────────────────────────────
     const outWb = new ExcelJS.Workbook();
@@ -207,7 +253,7 @@ export async function POST(req: NextRequest) {
       const cell = outWs.getRow(1).getCell(i + 1);
       cell.value = h;
       cell.font = { bold: true };
-      styleCell(cell);
+      styleCell(cell, i + 1);
     });
     outWs.getRow(1).height = 30;
     outWs.getRow(1).commit();
@@ -222,7 +268,8 @@ export async function POST(req: NextRequest) {
       const outRow = outWs.getRow(r);
       outRow.height = ROW_HEIGHT;
 
-      const match = matchByCode.get(inRow.brandCode);
+      const match = pickBestMatch(inRow.brandCode, inRow.brandName);
+      const matchOrgName = match && match.organizationId !== orgId ? orgNameById.get(match.organizationId) : null;
       let status: "matched" | "mismatch" | "notfound";
       if (!match) {
         status = "notfound";
@@ -247,15 +294,16 @@ export async function POST(req: NextRequest) {
       outRow.getCell(COL["Total Price (USD)"]).value = {
         formula: `${QTY_COL_LETTER}${r}*${PRICE_COL_LETTER}${r}`,
       };
+      const sourceSuffix = matchOrgName ? ` (from ${matchOrgName})` : "";
       outRow.getCell(COL["Match Status"]).value =
-        status === "matched" ? "Matched"
-        : status === "mismatch" ? `Brand mismatch — catalogue has "${match!.brand}"`
+        status === "matched" ? `Matched${sourceSuffix}`
+        : status === "mismatch" ? `Brand mismatch — catalogue has "${match!.brand}"${sourceSuffix}`
         : "Not found in catalogue";
 
       if (status === "mismatch") outRow.getCell(COL["Match Status"]).fill = MISMATCH_FILL;
       if (status === "notfound") outRow.getCell(COL["Match Status"]).fill = NOTFOUND_FILL;
 
-      for (let c = 1; c <= OUTPUT_HEADERS.length; c++) styleCell(outRow.getCell(c));
+      for (let c = 1; c <= OUTPUT_HEADERS.length; c++) styleCell(outRow.getCell(c), c);
 
       // Only attempt an image fetch when the code actually resolved to a product.
       if (match) {
@@ -297,7 +345,7 @@ export async function POST(req: NextRequest) {
     totalRow.height = TOTAL_ROW_HEIGHT;
     // Border every physical cell in the merged span — a merge only hides the
     // value of non-master cells, their own borders still render the perimeter.
-    for (let c = 1; c <= OUTPUT_HEADERS.length; c++) styleCell(totalRow.getCell(c));
+    for (let c = 1; c <= OUTPUT_HEADERS.length; c++) styleCell(totalRow.getCell(c), c);
     totalRow.getCell(1).value = "TOTAL PRICE (USD)";
     totalRow.getCell(1).font = { bold: true };
     outWs.mergeCells(totalRow.number, 1, totalRow.number, COL["Total Price (USD)"] - 1);
