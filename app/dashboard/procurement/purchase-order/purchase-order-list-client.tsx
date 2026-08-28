@@ -36,6 +36,26 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
+// "Fulfilled" only means everything was physically received (see
+// maybeAutoFulfill in server/goods-receipt.ts) — it says nothing about
+// whether it was actually accepted. This flags the gap: received quantity
+// still sitting unresolved in "return to supplier" or "in-house repair".
+function PendingActionBadge({ pendingReturnQty, pendingRepairQty }: { pendingReturnQty: number; pendingRepairQty: number }) {
+  if (pendingReturnQty <= 0 && pendingRepairQty <= 0) return null;
+  const parts: string[] = [];
+  if (pendingReturnQty > 0) parts.push(`${pendingReturnQty} pending return`);
+  if (pendingRepairQty > 0) parts.push(`${pendingRepairQty} pending repair`);
+  return (
+    <span
+      className="flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800"
+      title={parts.join(", ")}
+    >
+      <AlertCircleIcon className="w-2.5 h-2.5 shrink-0" />
+      {parts.join(" · ")}
+    </span>
+  );
+}
+
 const PR_PENDING_STATUS: Record<string, { label: string; className: string }> = {
   approved:          { label: "Approved",          className: "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400" },
   partially_ordered: { label: "Partially Ordered", className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
@@ -225,6 +245,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                           <Highlight text={o.poNo ?? o.id} query={search} />
                         </span>
                         <StatusBadge status={o.status} />
+                        <PendingActionBadge pendingReturnQty={o.pendingReturnQty} pendingRepairQty={o.pendingRepairQty} />
                         {o.prNo && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">
                             <ClipboardListIcon className="w-2.5 h-2.5 shrink-0" />

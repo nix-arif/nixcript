@@ -15,10 +15,11 @@ import {
   salesOrder,
   salesOrderItem,
   member,
+  packingList,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, or, ne, desc, inArray } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -53,6 +54,19 @@ async function requireAnyAccess(permissions: string[]) {
   const { session, orgId, userId } = await getSession();
   const perms = await getUserPermissions(userId, orgId);
   if (!permissions.some((p) => hasAccess(perms, p))) throw new Error("You don't have permission to do this");
+  return { session, orgId, userId };
+}
+
+// For actions restricted to the organization owner regardless of any
+// individually granted permission — e.g. recalling or deleting a GR.
+async function requireOwner() {
+  const { session, orgId, userId } = await getSession();
+  const [m] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
+    .limit(1);
+  if (!m || m.role !== "owner") throw new Error("Only the organization owner can do this");
   return { session, orgId, userId };
 }
 
@@ -146,8 +160,13 @@ export interface CreateGoodsReceiptInput {
   targetOrgId?: string;
 }
 
+export type GoodsReceiptItemEnriched = GoodsReceiptItemRow & {
+  returnResolvedByName: string | null;
+  repairResolvedByName: string | null;
+};
+
 export type GoodsReceiptWithItems = GoodsReceiptRow & {
-  items: GoodsReceiptItemRow[];
+  items: GoodsReceiptItemEnriched[];
   receivedByName: string | null;
   purchaseOrderNo: string | null;
   purchaseOrderPrNo: string | null;
@@ -201,9 +220,21 @@ export async function getGoodsReceiptDetail(id: string): Promise<GoodsReceiptWit
       .where(eq(purchaseOrder.id, gr.purchaseOrderId)),
   ]);
 
+  const resolverIds = [...new Set(items.flatMap((i) => [i.returnResolvedBy, i.repairResolvedBy]).filter((v): v is string => !!v))];
+  const resolvers = resolverIds.length > 0
+    ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, resolverIds))
+    : [];
+  const resolverNameOf = (id: string | null) => (id ? (resolvers.find((r) => r.id === id)?.name ?? null) : null);
+
+  const enrichedItems: GoodsReceiptItemEnriched[] = items.map((i) => ({
+    ...i,
+    returnResolvedByName: resolverNameOf(i.returnResolvedBy),
+    repairResolvedByName: resolverNameOf(i.repairResolvedBy),
+  }));
+
   return {
     ...gr,
-    items,
+    items: enrichedItems,
     receivedByName: userRows[0]?.name ?? null,
     purchaseOrderNo: poRows[0]?.poNo ?? null,
     purchaseOrderPrNo: poRows[0]?.prNo ?? null,
@@ -261,6 +292,90 @@ export async function getAllGoodsReceipts(): Promise<GoodsReceiptListRow[]> {
       salesOrderNo:   soId ? (soMap[soId] ?? null) : null,
     };
   });
+}
+
+export type PendingReturnRepairRow = {
+  goodsReceiptItemId: string;
+  category: "return" | "repair";
+  qty: number;
+  notes: string | null;
+  productCode: string | null;
+  description: string | null;
+  goodsReceiptId: string;
+  grNo: string;
+  purchaseOrderId: string;
+  poNo: string | null;
+  prNo: string | null;
+  supplierName: string | null;
+  inspectedAt: Date | null;
+};
+
+// "Fulfilled" only tracks physical receipt (see maybeAutoFulfill below) — it
+// says nothing about condition. This is the org-wide worklist for the other
+// half: every received line still sitting unresolved in "return to
+// supplier" or "in-house repair", across every PO, in one place — the
+// alternative to hunting down each GR individually to find out what's
+// outstanding.
+export async function getPendingReturnsAndRepairs(): Promise<PendingReturnRepairRow[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+
+  const rows = await db
+    .select({
+      id: goodsReceiptItem.id,
+      qtyReturn: goodsReceiptItem.qtyReturn,
+      returnStatus: goodsReceiptItem.returnStatus,
+      returnNotes: goodsReceiptItem.returnNotes,
+      qtyRepair: goodsReceiptItem.qtyRepair,
+      repairStatus: goodsReceiptItem.repairStatus,
+      repairNotes: goodsReceiptItem.repairNotes,
+      productCode: goodsReceiptItem.productCode,
+      description: goodsReceiptItem.description,
+      inspectedAt: goodsReceiptItem.inspectedAt,
+      goodsReceiptId: goodsReceipt.id,
+      grNo: goodsReceipt.grNo,
+      purchaseOrderId: goodsReceipt.purchaseOrderId,
+    })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .where(and(
+      eq(goodsReceipt.organizationId, orgId),
+      ne(goodsReceipt.status, "recalled"),
+      or(eq(goodsReceiptItem.returnStatus, "pending"), eq(goodsReceiptItem.repairStatus, "pending")),
+    ));
+  if (rows.length === 0) return [];
+
+  const poIds = [...new Set(rows.map((r) => r.purchaseOrderId))];
+  const pos = await db
+    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierSnapshot: purchaseOrder.supplierSnapshot })
+    .from(purchaseOrder)
+    .where(inArray(purchaseOrder.id, poIds));
+  const poMap = Object.fromEntries(pos.map((p) => [p.id, p]));
+
+  const result: PendingReturnRepairRow[] = [];
+  for (const r of rows) {
+    const po = poMap[r.purchaseOrderId];
+    const snap = po?.supplierSnapshot as { name?: string } | null;
+    const base = {
+      productCode: r.productCode,
+      description: r.description,
+      goodsReceiptId: r.goodsReceiptId,
+      grNo: r.grNo,
+      purchaseOrderId: r.purchaseOrderId,
+      poNo: po?.poNo ?? null,
+      prNo: po?.prNo ?? null,
+      supplierName: snap?.name ?? null,
+      inspectedAt: r.inspectedAt,
+    };
+    const qtyReturn = parseFloat(r.qtyReturn ?? "0") || 0;
+    if (r.returnStatus === "pending" && qtyReturn > 0) {
+      result.push({ ...base, goodsReceiptItemId: r.id, category: "return", qty: qtyReturn, notes: r.returnNotes });
+    }
+    const qtyRepair = parseFloat(r.qtyRepair ?? "0") || 0;
+    if (r.repairStatus === "pending" && qtyRepair > 0) {
+      result.push({ ...base, goodsReceiptItemId: r.id, category: "repair", qty: qtyRepair, notes: r.repairNotes });
+    }
+  }
+  return result.sort((a, b) => (a.inspectedAt?.getTime() ?? 0) - (b.inspectedAt?.getTime() ?? 0));
 }
 
 export async function getConfirmedPosForGr(): Promise<ConfirmedPoForGr[]> {
@@ -435,7 +550,7 @@ export async function createGoodsReceipt(input: CreateGoodsReceiptInput): Promis
   );
 
   // Auto-fulfill the PO if all items are fully received across all GRs
-  await maybeAutoFulfill(input.purchaseOrderId, orgId);
+  await syncPoFulfillmentStatus(input.purchaseOrderId, orgId);
 
   // Re-attempt stock reservation for any SOs that were previously insufficient
   // and contain the products just received into the Default warehouse.
@@ -481,8 +596,11 @@ async function retryInsufficientSos(orgId: string, userId: string, productIds: s
   }
 }
 
-async function maybeAutoFulfill(purchaseOrderId: string, orgId: string) {
-  // Get all PO items
+// Bidirectional: called after a normal receipt (may push confirmed -> fulfilled)
+// and after a recall (may pull fulfilled back down to confirmed, since a
+// recalled GR's items no longer count as received). Recalled GRs are
+// excluded from the received-qty sum entirely either way.
+async function syncPoFulfillmentStatus(purchaseOrderId: string, orgId: string) {
   const poItems = await db
     .select()
     .from(purchaseOrderItem)
@@ -490,19 +608,19 @@ async function maybeAutoFulfill(purchaseOrderId: string, orgId: string) {
 
   if (poItems.length === 0) return;
 
-  // Get all GR items for this PO across all GRs
-  const allGrs = await db
+  const activeGrs = await db
     .select({ id: goodsReceipt.id })
     .from(goodsReceipt)
-    .where(and(eq(goodsReceipt.purchaseOrderId, purchaseOrderId), eq(goodsReceipt.organizationId, orgId)));
+    .where(and(
+      eq(goodsReceipt.purchaseOrderId, purchaseOrderId),
+      eq(goodsReceipt.organizationId, orgId),
+      ne(goodsReceipt.status, "recalled"),
+    ));
 
-  if (allGrs.length === 0) return;
-
-  const grIds = allGrs.map((g) => g.id);
-  const allGrItems = await db
-    .select()
-    .from(goodsReceiptItem)
-    .where(inArray(goodsReceiptItem.goodsReceiptId, grIds));
+  const grIds = activeGrs.map((g) => g.id);
+  const allGrItems = grIds.length > 0
+    ? await db.select().from(goodsReceiptItem).where(inArray(goodsReceiptItem.goodsReceiptId, grIds))
+    : [];
 
   // Sum received qty per PO item
   const receivedByPoItemId: Record<string, number> = {};
@@ -513,17 +631,106 @@ async function maybeAutoFulfill(purchaseOrderId: string, orgId: string) {
     }
   }
 
-  // Check if all PO items are fully received
   const allFulfilled = poItems.every((item) => {
     const received = receivedByPoItemId[item.id] ?? 0;
     const ordered = parseFloat(item.qty ?? "0");
     return received >= ordered;
   });
 
-  if (allFulfilled) {
-    await db
-      .update(purchaseOrder)
-      .set({ status: "fulfilled" })
-      .where(eq(purchaseOrder.id, purchaseOrderId));
+  const [po] = await db.select({ status: purchaseOrder.status }).from(purchaseOrder).where(eq(purchaseOrder.id, purchaseOrderId));
+  if (allFulfilled && po?.status === "confirmed") {
+    await db.update(purchaseOrder).set({ status: "fulfilled" }).where(eq(purchaseOrder.id, purchaseOrderId));
+  } else if (!allFulfilled && po?.status === "fulfilled") {
+    await db.update(purchaseOrder).set({ status: "confirmed" }).where(eq(purchaseOrder.id, purchaseOrderId));
   }
+}
+
+// Owner-only. Reverses the stock this GR put in (one STOCK_OUT movement per
+// line that originally fed stock), reopens the source packing list for
+// correction if there was one, and drops the PO back to "confirmed" if this
+// GR had auto-fulfilled it — then marks the GR itself "recalled" rather than
+// deleting it, so there's still a record of what happened. Blocked if
+// reversing would take any product negative — createApprovedMovement
+// already enforces that for every STOCK_OUT, so a partially-consumed
+// recall fails atomically before any movement is written, not halfway
+// through. Does NOT attempt to unwind the weighted-average stockLevel.unitCost
+// or the product.costUnitPrice this GR set — those are lossy to invert
+// precisely and reversing them isn't safe to automate.
+export async function recallGoodsReceipt(id: string): Promise<void> {
+  const { orgId, userId } = await requireOwner();
+
+  const [gr] = await db
+    .select()
+    .from(goodsReceipt)
+    .where(and(eq(goodsReceipt.id, id), eq(goodsReceipt.organizationId, orgId)));
+  if (!gr) throw new Error("Goods receipt not found");
+  if (gr.status === "recalled") throw new Error("This goods receipt has already been recalled");
+
+  const [po] = await db.select().from(purchaseOrder).where(eq(purchaseOrder.id, gr.purchaseOrderId));
+
+  let warehouseLabel = "Default";
+  if (po?.purchaseRequisitionId) {
+    const [pr] = await db
+      .select({ prType: purchaseRequisition.prType })
+      .from(purchaseRequisition)
+      .where(eq(purchaseRequisition.id, po.purchaseRequisitionId));
+    if (pr?.prType === "sample_demo") warehouseLabel = "Demo";
+  }
+
+  const items = await db.select().from(goodsReceiptItem).where(eq(goodsReceiptItem.goodsReceiptId, id));
+  const stockQty = (item: GoodsReceiptItemRow) =>
+    item.qtyGood !== null ? (parseFloat(item.qtyGood) || 0) : (parseFloat(item.qtyReceived) || 0);
+  const poRef = po?.poNo ?? po?.prNo ?? gr.purchaseOrderId;
+
+  for (const item of items) {
+    if (item.productId && stockQty(item) > 0) {
+      await createApprovedMovement({
+        orgId,
+        userId,
+        productId: item.productId,
+        warehouseLabel,
+        movementType: MOVEMENT_TYPE.STOCK_OUT,
+        quantity: stockQty(item),
+        referenceType: REF_TYPE.PURCHASE_ORDER,
+        referenceId: gr.id,
+        referenceNo: gr.grNo,
+        notes: `Recall of ${gr.grNo} · PO ${poRef}: ${item.productCode ?? ""}`.trim(),
+      });
+    }
+  }
+
+  if (gr.packingListId) {
+    await db.update(packingList).set({ status: "pending" }).where(eq(packingList.id, gr.packingListId));
+  }
+
+  await db.update(goodsReceipt).set({ status: "recalled" }).where(eq(goodsReceipt.id, id));
+  await syncPoFulfillmentStatus(gr.purchaseOrderId, orgId);
+
+  revalidatePath("/dashboard/procurement/goods-receipt");
+  revalidatePath(`/dashboard/procurement/goods-receipt/${id}`);
+  revalidatePath(`/dashboard/procurement/purchase-order/${gr.purchaseOrderId}`);
+  if (gr.packingListId) {
+    revalidatePath("/dashboard/procurement/packing-list");
+    revalidatePath(`/dashboard/procurement/packing-list/${gr.packingListId}`);
+  }
+  revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard/inventory/movements");
+}
+
+// Owner-only, and only once a GR has already been recalled — permanently
+// removes the record. goodsReceiptItem cascades with it.
+export async function deleteGoodsReceipt(id: string): Promise<void> {
+  const { orgId } = await requireOwner();
+
+  const [gr] = await db
+    .select()
+    .from(goodsReceipt)
+    .where(and(eq(goodsReceipt.id, id), eq(goodsReceipt.organizationId, orgId)));
+  if (!gr) throw new Error("Goods receipt not found");
+  if (gr.status !== "recalled") throw new Error("Only a recalled goods receipt can be deleted — recall it first");
+
+  await db.delete(goodsReceipt).where(eq(goodsReceipt.id, id));
+
+  revalidatePath("/dashboard/procurement/goods-receipt");
+  revalidatePath(`/dashboard/procurement/purchase-order/${gr.purchaseOrderId}`);
 }

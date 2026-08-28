@@ -168,7 +168,7 @@ export function CreateGoodsReceiptClient({ order }: Props) {
         items,
       });
       toast.success(`Goods receipt ${gr.grNo} recorded`);
-      router.push(`/dashboard/procurement/purchase-order/${order.id}/goods-receipt/${gr.id}`);
+      router.push(`/dashboard/procurement/goods-receipt/${gr.id}`);
     } catch (e: any) {
       toast.error(e.message);
       setSaving(false);

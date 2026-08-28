@@ -9,8 +9,7 @@ export default async function CentralizedInspectPackingListPage({ params }: { pa
 
   const data = await getPackingListDetailCentralized(id);
   if (!data) notFound();
-  if (!data.canInspect) redirect(`/dashboard/procurement/packing-list/centralized/${id}`);
-  if (data.status !== "pending") notFound();
+  if (!data.canInspect || data.status !== "pending") redirect(`/dashboard/procurement/packing-list/centralized/${id}`);
 
   const { organizationName, businessType, ...packingList } = data;
 

@@ -18,6 +18,7 @@ import {
   organization,
   organizationProfile,
   goodsReceipt,
+  goodsReceiptItem,
   customer,
   customerCompany,
   customerOrganization,
@@ -25,7 +26,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, notInArray, sql, ilike } from "drizzle-orm";
+import { eq, and, ne, desc, asc, inArray, notInArray, sql, ilike } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -592,15 +593,52 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForP
 }
 
 export type PurchaseOrderCustomerPoRow = typeof purchaseOrderCustomerPo.$inferSelect;
-export type GoodsReceiptSummary = { id: string; grNo: string; receivedDate: Date; createdAt: Date };
+export type GoodsReceiptSummary = { id: string; grNo: string; receivedDate: Date; createdAt: Date; status: string };
 export type PurchaseOrderWithItems = PurchaseOrderRow & {
   items: PurchaseOrderItemEnriched[];
   createdByName: string | null;
   salesOrderNo: string | null;
   customerPos: PurchaseOrderCustomerPoRow[];
   goodsReceipts: GoodsReceiptSummary[];
+  pendingReturnQty: number;
+  pendingRepairQty: number;
 };
-export type PurchaseOrderListRow = PurchaseOrderRow & { createdByName: string | null; customerPoNos: string[] };
+export type PurchaseOrderListRow = PurchaseOrderRow & {
+  createdByName: string | null;
+  customerPoNos: string[];
+  pendingReturnQty: number;
+  pendingRepairQty: number;
+};
+
+// "Fulfilled" only ever tracks physical receipt (see maybeAutoFulfill in
+// server/goods-receipt.ts) — it says nothing about whether what arrived was
+// actually accepted. This is the other half: how much received quantity is
+// still sitting in "return to supplier" or "in-house repair" limbo,
+// unresolved. Summed once per distinct PO, not per row.
+async function getPendingReturnRepairByPo(poIds: string[]): Promise<Map<string, { pendingReturnQty: number; pendingRepairQty: number }>> {
+  const map = new Map<string, { pendingReturnQty: number; pendingRepairQty: number }>();
+  if (poIds.length === 0) return map;
+
+  const rows = await db
+    .select({
+      purchaseOrderId: goodsReceipt.purchaseOrderId,
+      qtyReturn: goodsReceiptItem.qtyReturn,
+      returnStatus: goodsReceiptItem.returnStatus,
+      qtyRepair: goodsReceiptItem.qtyRepair,
+      repairStatus: goodsReceiptItem.repairStatus,
+    })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .where(and(inArray(goodsReceipt.purchaseOrderId, poIds), ne(goodsReceipt.status, "recalled")));
+
+  for (const r of rows) {
+    const bucket = map.get(r.purchaseOrderId) ?? { pendingReturnQty: 0, pendingRepairQty: 0 };
+    if (r.returnStatus === "pending") bucket.pendingReturnQty += parseFloat(r.qtyReturn ?? "0") || 0;
+    if (r.repairStatus === "pending") bucket.pendingRepairQty += parseFloat(r.qtyRepair ?? "0") || 0;
+    map.set(r.purchaseOrderId, bucket);
+  }
+  return map;
+}
 // canEdit: true for the creator, anyone holding purchase-order:update in the
 // PO's own organization, or anyone holding purchase-order:update:centralized
 // — everyone else gets view-only access in the centralized view.
@@ -708,8 +746,15 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     arr.push(link.customerPoNo);
     cpoMap.set(link.purchaseOrderId, arr);
   }
+  const pendingByPo = await getPendingReturnRepairByPo(poIds);
 
-  return rows.map((r) => ({ ...r, createdByName: nameOf(r.createdBy), customerPoNos: cpoMap.get(r.id) ?? [] }));
+  return rows.map((r) => ({
+    ...r,
+    createdByName: nameOf(r.createdBy),
+    customerPoNos: cpoMap.get(r.id) ?? [],
+    pendingReturnQty: pendingByPo.get(r.id)?.pendingReturnQty ?? 0,
+    pendingRepairQty: pendingByPo.get(r.id)?.pendingRepairQty ?? 0,
+  }));
 }
 
 export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderWithItems | null> {
@@ -729,7 +774,7 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
     po.salesOrderId
       ? db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.id, po.salesOrderId))
       : Promise.resolve([]),
-    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, receivedDate: goodsReceipt.receivedDate, createdAt: goodsReceipt.createdAt })
+    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, receivedDate: goodsReceipt.receivedDate, createdAt: goodsReceipt.createdAt, status: goodsReceipt.status })
       .from(goodsReceipt)
       .where(eq(goodsReceipt.purchaseOrderId, id))
       .orderBy(desc(goodsReceipt.createdAt)),
@@ -748,6 +793,8 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
     }),
   );
 
+  const pendingByPo = await getPendingReturnRepairByPo([id]);
+
   return {
     ...po,
     items: enrichedItems,
@@ -755,6 +802,8 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
     salesOrderNo: soRows[0]?.soNo ?? null,
     customerPos,
     goodsReceipts: grs,
+    pendingReturnQty: pendingByPo.get(id)?.pendingReturnQty ?? 0,
+    pendingRepairQty: pendingByPo.get(id)?.pendingRepairQty ?? 0,
   };
 }
 
@@ -817,6 +866,7 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
   );
   const orgPermsMap = new Map<string, string[]>([[orgId, callerPerms], ...otherOrgPermsEntries]);
   const hasCentralizedUpdate = hasAccess(callerPerms, "purchase-order:update:centralized");
+  const pendingByPo = await getPendingReturnRepairByPo(poIds);
 
   return rows.map(({ po, organizationName }) => ({
     ...po,
@@ -824,6 +874,8 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
     customerPoNos: cpoMap.get(po.id) ?? [],
     organizationName,
     canEdit: po.createdBy === userId || hasCentralizedUpdate || hasAccess(orgPermsMap.get(po.organizationId) ?? [], "purchase-order:update"),
+    pendingReturnQty: pendingByPo.get(po.id)?.pendingReturnQty ?? 0,
+    pendingRepairQty: pendingByPo.get(po.id)?.pendingRepairQty ?? 0,
   }));
 }
 
@@ -850,7 +902,7 @@ export async function getPurchaseOrderDetailCentralized(id: string): Promise<Cen
     po.salesOrderId
       ? db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.id, po.salesOrderId))
       : Promise.resolve([]),
-    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, receivedDate: goodsReceipt.receivedDate, createdAt: goodsReceipt.createdAt })
+    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, receivedDate: goodsReceipt.receivedDate, createdAt: goodsReceipt.createdAt, status: goodsReceipt.status })
       .from(goodsReceipt)
       .where(eq(goodsReceipt.purchaseOrderId, id))
       .orderBy(desc(goodsReceipt.createdAt)),
@@ -871,6 +923,7 @@ export async function getPurchaseOrderDetailCentralized(id: string): Promise<Cen
 
   const callerPerms = await getUserPermissions(userId, orgId);
   const canEdit = await canEditPoAcrossOrgs(userId, po.organizationId, po.createdBy, orgId, callerPerms);
+  const pendingByPo = await getPendingReturnRepairByPo([id]);
 
   return {
     ...po,
@@ -882,6 +935,8 @@ export async function getPurchaseOrderDetailCentralized(id: string): Promise<Cen
     organizationName,
     canEdit,
     businessType: businessType ?? "trading",
+    pendingReturnQty: pendingByPo.get(id)?.pendingReturnQty ?? 0,
+    pendingRepairQty: pendingByPo.get(id)?.pendingRepairQty ?? 0,
   };
 }
 

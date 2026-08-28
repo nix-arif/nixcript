@@ -3,11 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { type GoodsReceiptWithItems } from "@/server/goods-receipt";
+import { type GoodsReceiptWithItems, recallGoodsReceipt, deleteGoodsReceipt } from "@/server/goods-receipt";
 import { resolveReceiptItemAction } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
-import { ArrowLeftIcon, CalendarIcon, BuildingIcon, TruckIcon, AlertTriangleIcon, CheckIcon } from "lucide-react";
+import { ArrowLeftIcon, CalendarIcon, BuildingIcon, TruckIcon, AlertTriangleIcon, CheckIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const fmtDate = (d: Date | string | null | undefined) =>
@@ -15,20 +15,59 @@ const fmtDate = (d: Date | string | null | undefined) =>
 
 interface Props {
   gr: GoodsReceiptWithItems;
-  purchaseOrderId: string;
   permissions: string[];
 }
 
-export function GoodsReceiptDetailClient({ gr, purchaseOrderId, permissions }: Props) {
+export function GoodsReceiptDetailClient({ gr, permissions }: Props) {
   const router = useRouter();
+  const [items, setItems] = useState(gr.items);
+  const [status, setStatus] = useState(gr.status);
   const [resolving, setResolving] = useState<string | null>(null);
+  const [recalling, setRecalling] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+  const isOwner = permissions.includes("*");
+  const purchaseOrderId = gr.purchaseOrderId;
   const poRef = gr.purchaseOrderNo ?? gr.purchaseOrderPrNo ?? purchaseOrderId;
+
+  async function handleRecall() {
+    if (!confirm(`Recall ${gr.grNo}? This reverses the stock it added, reopens its packing list for correction if there was one, and can't be undone.`)) return;
+    setRecalling(true);
+    try {
+      await recallGoodsReceipt(gr.id);
+      setStatus("recalled");
+      toast.success("Goods receipt recalled");
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setRecalling(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Permanently delete ${gr.grNo}? This removes the record entirely and can't be undone.`)) return;
+    setDeleting(true);
+    try {
+      await deleteGoodsReceipt(gr.id);
+      toast.success("Goods receipt deleted");
+      router.push("/dashboard/procurement/goods-receipt");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+      setDeleting(false);
+    }
+  }
 
   async function handleResolve(itemId: string, actionType: "return" | "repair") {
     setResolving(`${itemId}:${actionType}`);
     try {
-      await resolveReceiptItemAction(itemId, actionType);
+      const { resolvedByName, resolvedAt } = await resolveReceiptItemAction(itemId, actionType);
+      setItems((prev) => prev.map((i) => {
+        if (i.id !== itemId) return i;
+        return actionType === "return"
+          ? { ...i, returnStatus: "resolved", returnResolvedByName: resolvedByName, returnResolvedAt: resolvedAt }
+          : { ...i, repairStatus: "resolved", repairResolvedByName: resolvedByName, repairResolvedAt: resolvedAt };
+      }));
       toast.success("Marked resolved");
       router.refresh();
     } catch (e) {
@@ -44,14 +83,31 @@ export function GoodsReceiptDetailClient({ gr, purchaseOrderId, permissions }: P
         title={gr.grNo}
         description={`Goods Receipt · Against ${poRef} · ${fmtDate(gr.receivedDate)}`}
         action={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.push(`/dashboard/procurement/purchase-order/${purchaseOrderId}`)}
-            className="gap-1.5"
-          >
-            <ArrowLeftIcon className="w-3.5 h-3.5" /> Back to PO
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push("/dashboard/procurement/goods-receipt")}
+              className="gap-1.5"
+            >
+              <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+            </Button>
+            {isOwner && status !== "recalled" && (
+              <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" disabled={recalling} onClick={handleRecall}>
+                <RotateCcwIcon className="w-3.5 h-3.5" /> Recall
+              </Button>
+            )}
+            {isOwner && status === "recalled" && (
+              <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" disabled={deleting} onClick={handleDelete}>
+                <Trash2Icon className="w-3.5 h-3.5" /> Delete
+              </Button>
+            )}
+            {status === "recalled" && (
+              <span className="text-[11px] font-medium rounded px-2 py-0.5 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400">
+                Recalled
+              </span>
+            )}
+          </div>
         }
       />
 
@@ -60,9 +116,9 @@ export function GoodsReceiptDetailClient({ gr, purchaseOrderId, permissions }: P
         <div className="lg:col-span-2 space-y-5">
           <section className="border border-border rounded-xl p-4">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Items Received <span className="font-normal">({gr.items.length})</span>
+              Items Received <span className="font-normal">({items.length})</span>
             </h2>
-            {gr.items.length === 0 ? (
+            {items.length === 0 ? (
               <p className="text-sm text-muted-foreground">No items</p>
             ) : (
               <div className="overflow-x-auto">
@@ -77,7 +133,7 @@ export function GoodsReceiptDetailClient({ gr, purchaseOrderId, permissions }: P
                     </tr>
                   </thead>
                   <tbody>
-                    {gr.items.map((item) => {
+                    {items.map((item) => {
                       const ordered = parseFloat(item.qtyOrdered ?? "0");
                       const received = parseFloat(item.qtyReceived ?? "0");
                       const pct = ordered > 0 ? Math.round((received / ordered) * 100) : 0;
@@ -108,7 +164,7 @@ export function GoodsReceiptDetailClient({ gr, purchaseOrderId, permissions }: P
                                     )}>
                                       {item.returnStatus === "resolved" ? "resolved" : "pending"}
                                     </span>
-                                    {item.returnStatus === "pending" && can("packing-list:inspect") && (
+                                    {item.returnStatus === "pending" && status !== "recalled" && can("packing-list:inspect") && (
                                       <button
                                         type="button"
                                         disabled={resolving === `${item.id}:return`}
@@ -120,6 +176,12 @@ export function GoodsReceiptDetailClient({ gr, purchaseOrderId, permissions }: P
                                     )}
                                     {item.returnNotes && (
                                       <p className="w-full text-[10px] text-muted-foreground mt-0.5">{item.returnNotes}</p>
+                                    )}
+                                    {item.returnStatus === "resolved" && item.returnResolvedByName && (
+                                      <p className="w-full text-[10px] text-muted-foreground mt-0.5">
+                                        Resolved by {item.returnResolvedByName}
+                                        {item.returnResolvedAt && ` · ${fmtDate(item.returnResolvedAt)}`}
+                                      </p>
                                     )}
                                   </>
                                 )}
@@ -136,7 +198,7 @@ export function GoodsReceiptDetailClient({ gr, purchaseOrderId, permissions }: P
                                     )}>
                                       {item.repairStatus === "resolved" ? "resolved" : "pending"}
                                     </span>
-                                    {item.repairStatus === "pending" && can("packing-list:inspect") && (
+                                    {item.repairStatus === "pending" && status !== "recalled" && can("packing-list:inspect") && (
                                       <button
                                         type="button"
                                         disabled={resolving === `${item.id}:repair`}
@@ -148,6 +210,12 @@ export function GoodsReceiptDetailClient({ gr, purchaseOrderId, permissions }: P
                                     )}
                                     {item.repairNotes && (
                                       <p className="w-full text-[10px] text-muted-foreground mt-0.5">{item.repairNotes}</p>
+                                    )}
+                                    {item.repairStatus === "resolved" && item.repairResolvedByName && (
+                                      <p className="w-full text-[10px] text-muted-foreground mt-0.5">
+                                        Resolved by {item.repairResolvedByName}
+                                        {item.repairResolvedAt && ` · ${fmtDate(item.repairResolvedAt)}`}
+                                      </p>
                                     )}
                                   </>
                                 )}

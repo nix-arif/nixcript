@@ -19,7 +19,7 @@ import {
   ArrowLeftIcon, BuildingIcon, CalendarIcon, PackageIcon,
   CheckIcon, XIcon, ArchiveIcon, PrinterIcon, RotateCcwIcon,
   ClipboardListIcon, TruckIcon, LinkIcon, ImageIcon, PencilIcon, SendIcon,
-  DatabaseIcon, FileSpreadsheetIcon, TagIcon, PlusIcon, Trash2Icon,
+  DatabaseIcon, FileSpreadsheetIcon, TagIcon, PlusIcon, Trash2Icon, AlertCircleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -93,6 +93,26 @@ const PO_STATUS: Record<string, { label: string; className: string }> = {
 function StatusBadge({ status }: { status: string }) {
   const cfg = PO_STATUS[status] ?? { label: status, className: "bg-muted text-muted-foreground" };
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
+}
+
+// "Fulfilled" only means everything was physically received (see
+// maybeAutoFulfill in server/goods-receipt.ts) — it says nothing about
+// whether it was actually accepted. This flags the gap: received quantity
+// still sitting unresolved in "return to supplier" or "in-house repair".
+function PendingActionBadge({ pendingReturnQty, pendingRepairQty }: { pendingReturnQty: number; pendingRepairQty: number }) {
+  if (pendingReturnQty <= 0 && pendingRepairQty <= 0) return null;
+  const parts: string[] = [];
+  if (pendingReturnQty > 0) parts.push(`${pendingReturnQty} pending return`);
+  if (pendingRepairQty > 0) parts.push(`${pendingRepairQty} pending repair`);
+  return (
+    <span
+      className="flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800"
+      title={parts.join(", ")}
+    >
+      <AlertCircleIcon className="w-3 h-3 shrink-0" />
+      {parts.join(" · ")}
+    </span>
+  );
 }
 
 export function PurchaseOrderDetailClient({
@@ -268,6 +288,7 @@ export function PurchaseOrderDetailClient({
               </Button>
             )}
             <StatusBadge status={status} />
+            <PendingActionBadge pendingReturnQty={order.pendingReturnQty} pendingRepairQty={order.pendingRepairQty} />
           </div>
         }
       />
@@ -527,12 +548,17 @@ export function PurchaseOrderDetailClient({
                 {order.goodsReceipts.map((gr) => (
                   <button
                     key={gr.id}
-                    onClick={() => router.push(`/dashboard/procurement/purchase-order/${order.id}/goods-receipt/${gr.id}`)}
+                    onClick={() => router.push(`/dashboard/procurement/goods-receipt/${gr.id}`)}
                     className="w-full flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted/30 transition-colors text-left"
                   >
                     <div className="flex items-center gap-2">
                       <TruckIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                       <span className="font-mono text-xs font-medium">{gr.grNo}</span>
+                      {gr.status === "recalled" && (
+                        <span className="text-[10px] font-medium rounded px-1.5 py-0.5 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400">
+                          Recalled
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs text-muted-foreground">{fmtDate(gr.receivedDate)}</span>
                   </button>

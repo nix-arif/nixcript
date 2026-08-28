@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, BuildingIcon, CalendarIcon, ClipboardCheckIcon,
   XIcon, TruckIcon, LinkIcon, DatabaseIcon, PencilIcon, ClipboardListIcon, PlusIcon, TagIcon, Trash2Icon,
+  AlertTriangleIcon, CheckIcon, UserIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -74,6 +75,53 @@ function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; pr
   );
 }
 
+function PhotoThumbnails({ photos }: { photos: PackingListWithItems["items"][number]["photos"] }) {
+  const [lightbox, setLightbox] = useState<PackingListWithItems["items"][number]["photos"][number] | null>(null);
+  if (photos.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {photos.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => setLightbox(p)}
+          className="block w-8 h-8 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
+          title="View photo"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={p.url} className="w-full h-full object-cover" alt="" />
+        </button>
+      ))}
+      <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
+        <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
+          <DialogTitle className="sr-only">Inspection photo</DialogTitle>
+          {lightbox && (
+            <>
+              <div className="relative bg-muted/30">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={lightbox.url} className="w-full object-contain max-h-[65vh]" alt="" />
+                <button
+                  type="button"
+                  onClick={() => setLightbox(null)}
+                  className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
+                >
+                  <XIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="px-4 py-3 border-t">
+                <p className="text-xs text-muted-foreground truncate">
+                  {lightbox.uploadedByName ? `Added by ${lightbox.uploadedByName}` : ""}
+                </p>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
@@ -111,6 +159,7 @@ export function PackingListDetailClient({
   const status = STATUS[pl.status] ?? { label: pl.status, className: "bg-muted text-muted-foreground" };
   const snap = pl.supplierSnapshot as { name?: string; address?: string; contactPerson?: string; contactNo?: string; email?: string } | null;
   const isPending = pl.status === "pending";
+  const showInspectionResults = !isPending;
 
   const byPo = pl.items.reduce<Record<string, typeof pl.items>>((acc, item) => {
     (acc[item.purchaseOrderId] ??= []).push(item);
@@ -213,11 +262,24 @@ export function PackingListDetailClient({
                             <th className="text-left py-1.5 pr-3 font-medium">Description</th>
                             <th className="text-left py-1.5 pr-3 font-medium w-10">Img</th>
                             <th className="text-right py-1.5 pr-3 font-medium w-24">Qty Expected</th>
+                            {showInspectionResults && (
+                              <>
+                                <th className="text-right py-1.5 pr-3 font-medium w-20">Received</th>
+                                <th className="text-right py-1.5 pr-3 font-medium w-20">Return</th>
+                                <th className="text-right py-1.5 pr-3 font-medium w-20">Repair</th>
+                                <th className="text-right py-1.5 pr-3 font-medium w-20">Accepted</th>
+                              </>
+                            )}
                             <th className="text-left py-1.5 pr-3 font-medium w-12">UOM</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {items.map((item, itemIndex) => (
+                          {items.map((item, itemIndex) => {
+                            const received = item.draftQtyReceived ?? item.qtyExpected;
+                            const ret = parseFloat(item.draftQtyReturn ?? "0") || 0;
+                            const repair = parseFloat(item.draftQtyRepair ?? "0") || 0;
+                            const accepted = Math.max(0, (parseFloat(received) || 0) - ret);
+                            return (
                             <tr key={item.id} className={cn("border-t border-border/40 align-top", itemIndex % 2 === 1 && color.stripe)}>
                               <td className="py-2 pl-3 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{itemIndex + 1}</td>
                               {showSourcing && (
@@ -337,14 +399,59 @@ export function PackingListDetailClient({
                                     <PencilIcon className="w-3 h-3 shrink-0" />{item.editedBy} edited SPO
                                   </span>
                                 )}
+
+                                {showInspectionResults && item.draftInspectedByName && (
+                                  <div className="flex items-center gap-1 w-fit mt-1 text-[10px] text-muted-foreground">
+                                    <UserIcon className="w-3 h-3 shrink-0" />
+                                    Inspected by {item.draftInspectedByName}
+                                    {item.draftInspectedAt && ` · ${fmtDate(item.draftInspectedAt)}`}
+                                  </div>
+                                )}
+
+                                {showInspectionResults && ret > 0 && (
+                                  <div className="mt-1.5 flex flex-col gap-1 border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20 rounded-md p-2">
+                                    <div className="flex items-center gap-1 text-[10px] text-red-700 dark:text-red-400 font-medium">
+                                      <AlertTriangleIcon className="w-3 h-3 shrink-0" /> {ret} {item.uom || ""} returned to supplier
+                                    </div>
+                                    {item.draftReturnNotes && <p className="text-[10px] text-muted-foreground">{item.draftReturnNotes}</p>}
+                                    <PhotoThumbnails photos={item.photos.filter((p) => p.category === "return")} />
+                                  </div>
+                                )}
+                                {showInspectionResults && repair > 0 && (
+                                  <div className="mt-1.5 flex flex-col gap-1 border border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20 rounded-md p-2">
+                                    <div className="flex items-center gap-1 text-[10px] text-orange-700 dark:text-orange-400 font-medium">
+                                      <AlertTriangleIcon className="w-3 h-3 shrink-0" /> {repair} {item.uom || ""} in-house repair
+                                    </div>
+                                    {item.draftRepairNotes && <p className="text-[10px] text-muted-foreground">{item.draftRepairNotes}</p>}
+                                    <PhotoThumbnails photos={item.photos.filter((p) => p.category === "repair")} />
+                                  </div>
+                                )}
                               </td>
                               <td className="py-2 pr-3 align-top">
                                 <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
                               </td>
                               <td className="py-2 pr-3 align-top text-right tabular-nums">{item.qtyExpected}</td>
+                              {showInspectionResults && (
+                                <>
+                                  <td className="py-2 pr-3 align-top text-right tabular-nums text-muted-foreground">{received}</td>
+                                  <td className="py-2 pr-3 align-top text-right tabular-nums">
+                                    {ret > 0 ? <span className="text-red-600 dark:text-red-400 font-medium">{ret}</span> : "—"}
+                                  </td>
+                                  <td className="py-2 pr-3 align-top text-right tabular-nums">
+                                    {repair > 0 ? <span className="text-orange-600 dark:text-orange-400 font-medium">{repair}</span> : "—"}
+                                  </td>
+                                  <td className="py-2 pr-3 align-top text-right tabular-nums font-medium text-green-600 dark:text-green-400">
+                                    <span className="inline-flex items-center gap-1 justify-end">
+                                      {accepted > 0 && <CheckIcon className="w-3 h-3 shrink-0" />}
+                                      {accepted}
+                                    </span>
+                                  </td>
+                                </>
+                              )}
                               <td className="py-2 pr-3 align-top text-muted-foreground">{item.uom || "—"}</td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -372,11 +479,16 @@ export function PackingListDetailClient({
                   <button
                     key={gr.id}
                     className="w-full flex items-center gap-2 border border-border/60 rounded-lg px-3 py-2 text-xs hover:bg-muted/20 transition-colors text-left"
-                    onClick={() => router.push(`/dashboard/procurement/purchase-order/${gr.purchaseOrderId}/goods-receipt/${gr.id}`)}
+                    onClick={() => router.push(`/dashboard/procurement/goods-receipt/${gr.id}`)}
                   >
                     <TruckIcon className="w-3.5 h-3.5 text-green-600 dark:text-green-400 shrink-0" />
                     <span className="font-mono font-medium">{gr.grNo}</span>
                     <span className="text-muted-foreground">against {gr.poNo ?? gr.purchaseOrderId}</span>
+                    {gr.status === "recalled" && (
+                      <span className="text-[10px] font-medium rounded px-1.5 py-0.5 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400">
+                        Recalled
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>

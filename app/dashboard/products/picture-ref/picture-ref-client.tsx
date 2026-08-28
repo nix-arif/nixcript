@@ -37,12 +37,14 @@ export function PictureRefClient() {
 
   function handleDownloadTemplate() {
     const ws = XLSX.utils.aoa_to_sheet([
-      ["No", "Design Brand Code to Refer", "Description"],
-      [1, "BMS-001", "Sample product 1"],
-      [2, "BMS-002", "Sample product 2"],
-      [3, "BMS-003", "Sample product 3"],
+      ["Hospital", "Set Name", "No", "Design Brand Name to Refer", "Design Brand Code to Refer", "Best Medical Code to Emboss", "Qty"],
+      ["Seberang Jaya", "Loose Items", "1.1", "medicon", "72.05.70", "Q249-21", 10],
+      ["Seberang Jaya", "Loose Items", "1.2", "geister", "10-3620", "F680-18DP", 5],
+      ["Alor Gajah", "Loose Items", "2.1", "medicon", "45.75.03", "Q112-08", 2],
     ]);
-    ws["!cols"] = [{ wch: 6 }, { wch: 30 }, { wch: 30 }];
+    ws["!cols"] = [
+      { wch: 18 }, { wch: 16 }, { wch: 8 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 8 },
+    ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
     XLSX.writeFile(wb, "picture-ref-template.xlsx");
@@ -62,6 +64,9 @@ export function PictureRefClient() {
         const json = await res.json().catch(() => ({}));
         throw new Error(json.error ?? `Server error ${res.status}`);
       }
+      const matched = res.headers.get("X-Match-Matched");
+      const mismatch = res.headers.get("X-Match-Mismatch");
+      const notFound = res.headers.get("X-Match-NotFound");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -69,7 +74,14 @@ export function PictureRefClient() {
       a.download = "picture-ref.xlsx";
       a.click();
       URL.revokeObjectURL(url);
-      toast.success("File downloaded");
+
+      if (mismatch && notFound && (Number(mismatch) > 0 || Number(notFound) > 0)) {
+        toast.warning(
+          `Downloaded — ${matched} matched, ${mismatch} brand mismatch, ${notFound} not found in catalogue. See "Match Status" column.`,
+        );
+      } else {
+        toast.success(`File downloaded — ${matched ?? "all"} items matched`);
+      }
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -81,7 +93,7 @@ export function PictureRefClient() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Picture Reference"
-        description='Upload a spreadsheet with a "Design Brand Code to Refer" column to generate an output with embedded product images.'
+        description="Upload a purchase spec spreadsheet to generate an output with product descriptions, pricing and images matched from the catalogue."
       />
 
       <div>
@@ -115,7 +127,7 @@ export function PictureRefClient() {
         <div className="text-center">
           <p className="text-sm font-medium">Drop your spreadsheet here or click to browse</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Must contain a column named <span className="font-mono">"Design Brand Code to Refer"</span>
+            Must contain a column named <span className="font-mono">Design Brand Code to Refer</span>
           </p>
         </div>
       </div>

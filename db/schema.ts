@@ -2128,6 +2128,11 @@ export const goodsReceipt = pgTable(
       .notNull()
       .references(() => user.id),
     notes: text("notes"),
+    // "confirmed" | "recalled" — recall reverses the stock-in movement (and
+    // the PO's auto-fulfilled status, and reopens the source packing list
+    // for correction) but keeps this row as an audit trail; only a recalled
+    // GR can then be hard-deleted. Owner-only, see requireOwner below.
+    status: text("status").notNull().default("confirmed"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -2171,8 +2176,14 @@ export const goodsReceiptItem = pgTable(
     qtyRepair: text("qty_repair"),
     returnStatus: text("return_status"), // "pending" | "resolved" — only set when qtyReturn > 0
     returnNotes: text("return_notes"),
+    // Who marked the return resolved and when — set only on the
+    // pending -> resolved transition, independent of the repair side below.
+    returnResolvedBy: text("return_resolved_by").references(() => user.id),
+    returnResolvedAt: timestamp("return_resolved_at"),
     repairStatus: text("repair_status"), // "pending" | "resolved" — only set when qtyRepair > 0
     repairNotes: text("repair_notes"),
+    repairResolvedBy: text("repair_resolved_by").references(() => user.id),
+    repairResolvedAt: timestamp("repair_resolved_at"),
     inspectedBy: text("inspected_by").references(() => user.id),
     inspectedAt: timestamp("inspected_at"),
   },

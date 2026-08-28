@@ -160,7 +160,7 @@ export interface CreatePackingListInput {
 export type PackingListWithItems = PackingListRow & {
   items: PackingListItemEnriched[];
   createdByName: string | null;
-  goodsReceipts: { id: string; grNo: string; purchaseOrderId: string; poNo: string | null }[];
+  goodsReceipts: { id: string; grNo: string; purchaseOrderId: string; poNo: string | null; status: string }[];
   purchaseOrders: { id: string; poNo: string | null; prNo: string | null }[];
 };
 
@@ -467,7 +467,7 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
   const [items, userRows, grs] = await Promise.all([
     db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo)),
     db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, pl.createdBy)),
-    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, purchaseOrderId: goodsReceipt.purchaseOrderId })
+    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, purchaseOrderId: goodsReceipt.purchaseOrderId, status: goodsReceipt.status })
       .from(goodsReceipt)
       .where(eq(goodsReceipt.packingListId, id)),
   ]);
@@ -587,7 +587,7 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
   const [items, userRows, grs] = await Promise.all([
     db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo)),
     db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, pl.createdBy)),
-    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, purchaseOrderId: goodsReceipt.purchaseOrderId })
+    db.select({ id: goodsReceipt.id, grNo: goodsReceipt.grNo, purchaseOrderId: goodsReceipt.purchaseOrderId, status: goodsReceipt.status })
       .from(goodsReceipt)
       .where(eq(goodsReceipt.packingListId, id)),
   ]);
@@ -1113,26 +1113,34 @@ export async function deletePackingList(id: string): Promise<void> {
 
 // A line can need both a return AND a repair at once (split across the
 // damaged quantity), so each is resolved independently by actionType.
-export async function resolveReceiptItemAction(goodsReceiptItemId: string, actionType: "return" | "repair"): Promise<void> {
-  const { orgId } = await requireAccess("packing-list:inspect");
+export async function resolveReceiptItemAction(
+  goodsReceiptItemId: string,
+  actionType: "return" | "repair",
+): Promise<{ resolvedByName: string | null; resolvedAt: Date }> {
+  const { orgId, userId } = await requireAccess("packing-list:inspect");
 
   const [row] = await db
-    .select({ id: goodsReceiptItem.id, orgId: goodsReceipt.organizationId })
+    .select({ id: goodsReceiptItem.id, orgId: goodsReceipt.organizationId, grStatus: goodsReceipt.status })
     .from(goodsReceiptItem)
     .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
     .where(eq(goodsReceiptItem.id, goodsReceiptItemId));
   if (!row || row.orgId !== orgId) throw new Error("Item not found");
+  if (row.grStatus === "recalled") throw new Error("This goods receipt has been recalled — nothing to resolve");
 
+  const resolvedAt = new Date();
   if (actionType === "return") {
     await db
       .update(goodsReceiptItem)
-      .set({ returnStatus: "resolved" })
+      .set({ returnStatus: "resolved", returnResolvedBy: userId, returnResolvedAt: resolvedAt })
       .where(and(eq(goodsReceiptItem.id, goodsReceiptItemId), eq(goodsReceiptItem.returnStatus, "pending")));
   } else {
     await db
       .update(goodsReceiptItem)
-      .set({ repairStatus: "resolved" })
+      .set({ repairStatus: "resolved", repairResolvedBy: userId, repairResolvedAt: resolvedAt })
       .where(and(eq(goodsReceiptItem.id, goodsReceiptItemId), eq(goodsReceiptItem.repairStatus, "pending")));
   }
   revalidatePath("/dashboard/procurement/purchase-order");
+
+  const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
+  return { resolvedByName: u?.name ?? null, resolvedAt };
 }

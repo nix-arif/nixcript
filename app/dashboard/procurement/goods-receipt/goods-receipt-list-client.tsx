@@ -2,29 +2,49 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { type GoodsReceiptListRow } from "@/server/goods-receipt";
+import { toast } from "sonner";
+import { type GoodsReceiptListRow, type PendingReturnRepairRow } from "@/server/goods-receipt";
+import { resolveReceiptItemAction } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import {
   PlusIcon, SearchIcon, XIcon,
-  TruckIcon, BuildingIcon, CalendarIcon, PackageIcon, FileTextIcon, ArrowRightIcon,
+  TruckIcon, BuildingIcon, CalendarIcon, PackageIcon, FileTextIcon, ArrowRightIcon, AlertCircleIcon, CheckIcon,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 interface Props {
   initialGrs: GoodsReceiptListRow[];
+  pendingReturnsRepairs: PendingReturnRepairRow[];
   permissions: string[];
 }
 
-export function GoodsReceiptListClient({ initialGrs, permissions }: Props) {
+export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, permissions }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [pending, setPending] = useState(pendingReturnsRepairs);
+  const [resolving, setResolving] = useState<string | null>(null);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+
+  async function handleResolve(row: PendingReturnRepairRow) {
+    const key = `${row.goodsReceiptItemId}:${row.category}`;
+    setResolving(key);
+    try {
+      await resolveReceiptItemAction(row.goodsReceiptItemId, row.category);
+      setPending((prev) => prev.filter((p) => !(p.goodsReceiptItemId === row.goodsReceiptItemId && p.category === row.category)));
+      toast.success("Marked resolved");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setResolving(null);
+    }
+  }
 
   const filtered = initialGrs.filter((gr) => {
     if (!search) return true;
@@ -54,6 +74,65 @@ export function GoodsReceiptListClient({ initialGrs, permissions }: Props) {
           )
         }
       />
+
+      {pending.length > 0 && (
+        <div className="mb-5 border border-red-200 dark:border-red-800/50 bg-red-50/50 dark:bg-red-950/15 rounded-xl p-4">
+          <div className="flex items-center gap-1.5 mb-3">
+            <AlertCircleIcon className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+            <h2 className="text-xs font-semibold text-red-800 dark:text-red-300 uppercase tracking-wide">
+              Pending Returns &amp; Repairs <span className="font-normal normal-case">({pending.length} item{pending.length !== 1 ? "s" : ""} unresolved)</span>
+            </h2>
+          </div>
+          <div className="space-y-2">
+            {pending.map((row) => {
+              const key = `${row.goodsReceiptItemId}:${row.category}`;
+              const isReturn = row.category === "return";
+              return (
+                <div
+                  key={key}
+                  className="flex items-center justify-between gap-3 border border-red-200/70 dark:border-red-800/40 bg-background rounded-lg px-3 py-2"
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-wrap">
+                    <span className={cn(
+                      "text-[10px] font-medium px-1.5 py-0.5 rounded-md border shrink-0",
+                      isReturn
+                        ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800"
+                        : "bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800",
+                    )}>
+                      {row.qty} {isReturn ? "return" : "repair"}
+                    </span>
+                    <button
+                      className="font-mono text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+                      onClick={() => router.push(`/dashboard/procurement/goods-receipt/${row.goodsReceiptId}`)}
+                    >
+                      {row.poNo ?? row.prNo ?? row.purchaseOrderId}
+                    </button>
+                    <span className="text-[11px] text-muted-foreground font-mono truncate">{row.productCode}</span>
+                    {row.supplierName && (
+                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground truncate">
+                        <BuildingIcon className="w-3 h-3 shrink-0" />
+                        {row.supplierName}
+                      </span>
+                    )}
+                    {row.notes && <span className="text-[11px] text-muted-foreground truncate">{row.notes}</span>}
+                  </div>
+                  {can("packing-list:inspect") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 h-7 text-xs shrink-0"
+                      disabled={resolving === key}
+                      onClick={() => handleResolve(row)}
+                    >
+                      <CheckIcon className="w-3 h-3" /> Mark Resolved
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="relative mb-4">
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -103,7 +182,7 @@ export function GoodsReceiptListClient({ initialGrs, permissions }: Props) {
               <div
                 key={gr.id}
                 className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
-                onClick={() => router.push(`/dashboard/procurement/purchase-order/${gr.purchaseOrderId}/goods-receipt/${gr.id}`)}
+                onClick={() => router.push(`/dashboard/procurement/goods-receipt/${gr.id}`)}
               >
                 <div className="flex items-center gap-3 px-4 py-3">
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-green-50 dark:bg-green-900/20 shrink-0">
@@ -118,6 +197,11 @@ export function GoodsReceiptListClient({ initialGrs, permissions }: Props) {
                       {(gr.poNo ?? gr.prNo) && (
                         <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
                           <Highlight text={gr.poNo ?? gr.prNo ?? ""} query={search} />
+                        </span>
+                      )}
+                      {gr.status === "recalled" && (
+                        <span className="text-[10px] font-medium rounded px-1.5 py-0.5 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400">
+                          Recalled
                         </span>
                       )}
                     </div>
