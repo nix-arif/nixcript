@@ -38,6 +38,9 @@ const THIN_BORDER: Partial<ExcelJS.Borders> = {
   bottom: { style: "thin", color: { argb: "FF000000" } },
   right: { style: "thin", color: { argb: "FF000000" } },
 };
+// Excel's built-in Accounting format: $ symbol pinned to the cell's left edge,
+// thousands separator, 2 decimals, negatives in parentheses, "-" for zero.
+const ACCOUNTING_FORMAT = '_-$* #,##0.00_-;-$* #,##0.00_-;_-$* "-"??_-;_-@_-';
 const CENTER_ALIGNMENT: Partial<ExcelJS.Alignment> = { vertical: "top", horizontal: "center", wrapText: true };
 const LEFT_ALIGNMENT: Partial<ExcelJS.Alignment> = { vertical: "top", wrapText: true };
 const TOTAL_ROW_HEIGHT = 32; // taller than the default ~15 so the bold total line has breathing room
@@ -294,6 +297,8 @@ export async function POST(req: NextRequest) {
       outRow.getCell(COL["Total Price (USD)"]).value = {
         formula: `${QTY_COL_LETTER}${r}*${PRICE_COL_LETTER}${r}`,
       };
+      outRow.getCell(COL["Price/Pc (USD)"]).numFmt = ACCOUNTING_FORMAT;
+      outRow.getCell(COL["Total Price (USD)"]).numFmt = ACCOUNTING_FORMAT;
       const sourceSuffix = matchOrgName ? ` (from ${matchOrgName})` : "";
       outRow.getCell(COL["Match Status"]).value =
         status === "matched" ? `Matched${sourceSuffix}`
@@ -352,6 +357,7 @@ export async function POST(req: NextRequest) {
     const totalCell = totalRow.getCell(COL["Total Price (USD)"]);
     totalCell.value = { formula: `SUM(${PRICE_COL_LETTER === QTY_COL_LETTER ? "" : ""}${colIndexToLetter(COL["Total Price (USD)"])}2:${colIndexToLetter(COL["Total Price (USD)"])}${inRows.length + 1})` };
     totalCell.font = { bold: true };
+    totalCell.numFmt = ACCOUNTING_FORMAT;
     totalRow.commit();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
