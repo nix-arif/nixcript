@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, BuildingIcon, CalendarIcon, ClipboardCheckIcon,
   XIcon, TruckIcon, LinkIcon, DatabaseIcon, PencilIcon, ClipboardListIcon, PlusIcon, TagIcon, Trash2Icon,
-  AlertTriangleIcon, CheckIcon, UserIcon,
+  AlertTriangleIcon, CheckIcon, UserIcon, FileWarningIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -160,6 +160,12 @@ export function PackingListDetailClient({
   const snap = pl.supplierSnapshot as { name?: string; address?: string; contactPerson?: string; contactNo?: string; email?: string } | null;
   const isPending = pl.status === "pending";
   const showInspectionResults = !isPending;
+  const hasDiscrepancies = pl.items.some((item) => {
+    const expected = parseFloat(item.qtyExpected) || 0;
+    const received = parseFloat(item.draftQtyReceived ?? item.qtyExpected) || 0;
+    const returned = parseFloat(item.draftQtyReturn ?? "0") || 0;
+    return received < expected || returned > 0;
+  });
 
   const byPo = pl.items.reduce<Record<string, typeof pl.items>>((acc, item) => {
     (acc[item.purchaseOrderId] ??= []).push(item);
@@ -215,6 +221,13 @@ export function PackingListDetailClient({
             {isPending && can("packing-list:create") && (
               <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" disabled={cancelling} onClick={handleCancel}>
                 <XIcon className="w-3.5 h-3.5" /> Cancel
+              </Button>
+            )}
+            {showInspectionResults && hasDiscrepancies && (
+              <Button size="sm" variant="outline" className="gap-1.5" asChild>
+                <a href={`/api/packing-list/${pl.id}/discrepancy-report`} download>
+                  <FileWarningIcon className="w-3.5 h-3.5" /> Report to Supplier
+                </a>
               </Button>
             )}
             {isOwner && pl.status !== "completed" && (
@@ -433,7 +446,15 @@ export function PackingListDetailClient({
                               <td className="py-2 pr-3 align-top text-right tabular-nums">{item.qtyExpected}</td>
                               {showInspectionResults && (
                                 <>
-                                  <td className="py-2 pr-3 align-top text-right tabular-nums text-muted-foreground">{received}</td>
+                                  <td className="py-2 pr-3 align-top text-right tabular-nums">
+                                    {parseFloat(received) < (parseFloat(item.qtyExpected) || 0) ? (
+                                      <span className="text-amber-600 dark:text-amber-400 font-medium" title={`Short by ${(parseFloat(item.qtyExpected) || 0) - parseFloat(received)}`}>
+                                        {received}
+                                      </span>
+                                    ) : (
+                                      <span className="text-muted-foreground">{received}</span>
+                                    )}
+                                  </td>
                                   <td className="py-2 pr-3 align-top text-right tabular-nums">
                                     {ret > 0 ? <span className="text-red-600 dark:text-red-400 font-medium">{ret}</span> : "—"}
                                   </td>

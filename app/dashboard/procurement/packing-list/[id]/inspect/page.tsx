@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getPackingListDetail } from "@/server/packing-list";
+import { getPackingListDetail, canApprovePackingListInspection } from "@/server/packing-list";
 import { getOrganizationProfile } from "@/server/organization-profile";
 import { InspectPackingListClient } from "./inspect-packing-list-client";
 
@@ -17,5 +17,6 @@ export default async function InspectPackingListPage({
   ]);
   if (!pl) notFound();
   if (pl.status !== "pending") redirect(`/dashboard/procurement/packing-list/${id}`);
-  return <InspectPackingListClient packingList={pl} businessType={profile?.businessType ?? "trading"} />;
+  const canApprove = await canApprovePackingListInspection(pl.organizationId);
+  return <InspectPackingListClient packingList={pl} businessType={profile?.businessType ?? "trading"} canApprove={canApprove} />;
 }

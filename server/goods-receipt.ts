@@ -16,10 +16,11 @@ import {
   salesOrderItem,
   member,
   packingList,
+  packingListItem,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, or, ne, desc, inArray } from "drizzle-orm";
+import { eq, and, or, ne, desc, inArray, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -241,6 +242,70 @@ export async function getGoodsReceiptDetail(id: string): Promise<GoodsReceiptWit
   };
 }
 
+export type CentralizedGoodsReceiptWithItems = GoodsReceiptWithItems & {
+  organizationName: string;
+  isOwnOrg: boolean;
+  // Whether the caller can Mark Resolved / recall / delete on THIS
+  // particular receipt — same rule as assertCanActOnReceivingIssue, checked
+  // once here instead of re-deriving in the client.
+  canAct: boolean;
+};
+
+// Same detail as getGoodsReceiptDetail, but resolvable across every org the
+// caller owns — the centralized counterpart, same shape as
+// getPackingListDetailCentralized in server/packing-list.ts.
+export async function getGoodsReceiptDetailCentralized(id: string): Promise<CentralizedGoodsReceiptWithItems | null> {
+  const { orgId, userId } = await requireAccess("goods-receipt:read:centralized");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+
+  const [row] = await db
+    .select({ gr: goodsReceipt, organizationName: organization.name })
+    .from(goodsReceipt)
+    .innerJoin(organization, eq(organization.id, goodsReceipt.organizationId))
+    .where(and(eq(goodsReceipt.id, id), inArray(goodsReceipt.organizationId, ownerOrgIds)));
+  if (!row) return null;
+  const { gr, organizationName } = row;
+
+  const [items, userRows, poRows] = await Promise.all([
+    db.select().from(goodsReceiptItem).where(eq(goodsReceiptItem.goodsReceiptId, id)),
+    db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, gr.receivedBy)),
+    db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo })
+      .from(purchaseOrder)
+      .where(eq(purchaseOrder.id, gr.purchaseOrderId)),
+  ]);
+
+  const resolverIds = [...new Set(items.flatMap((i) => [i.returnResolvedBy, i.repairResolvedBy]).filter((v): v is string => !!v))];
+  const resolvers = resolverIds.length > 0
+    ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, resolverIds))
+    : [];
+  const resolverNameOf = (rid: string | null) => (rid ? (resolvers.find((r) => r.id === rid)?.name ?? null) : null);
+
+  const enrichedItems: GoodsReceiptItemEnriched[] = items.map((i) => ({
+    ...i,
+    returnResolvedByName: resolverNameOf(i.returnResolvedBy),
+    repairResolvedByName: resolverNameOf(i.repairResolvedBy),
+  }));
+
+  let canAct: boolean;
+  try {
+    await assertCanActOnReceivingIssue(gr.organizationId, orgId, userId);
+    canAct = true;
+  } catch {
+    canAct = false;
+  }
+
+  return {
+    ...gr,
+    items: enrichedItems,
+    receivedByName: userRows[0]?.name ?? null,
+    purchaseOrderNo: poRows[0]?.poNo ?? null,
+    purchaseOrderPrNo: poRows[0]?.prNo ?? null,
+    organizationName,
+    isOwnOrg: gr.organizationId === orgId,
+    canAct,
+  };
+}
+
 export async function getAllGoodsReceipts(): Promise<GoodsReceiptListRow[]> {
   const { orgId } = await requireAccess("purchase-order:read");
 
@@ -294,30 +359,103 @@ export async function getAllGoodsReceipts(): Promise<GoodsReceiptListRow[]> {
   });
 }
 
+export type CentralizedGoodsReceiptRow = GoodsReceiptListRow & { organizationName: string; isOwnOrg: boolean };
+
+// Same as getAllGoodsReceipts, but across every org the caller owns — the
+// alternative to switching active org repeatedly to check each one.
+export async function getAllGoodsReceiptsCentralized(): Promise<CentralizedGoodsReceiptRow[]> {
+  const { orgId } = await requireAccess("goods-receipt:read:centralized");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+
+  const grs = await db
+    .select()
+    .from(goodsReceipt)
+    .where(inArray(goodsReceipt.organizationId, ownerOrgIds))
+    .orderBy(desc(goodsReceipt.createdAt));
+
+  if (grs.length === 0) return [];
+
+  const userIds = [...new Set(grs.map((g) => g.receivedBy))];
+  const poIds   = [...new Set(grs.map((g) => g.purchaseOrderId))];
+  const grIds   = grs.map((g) => g.id);
+  const orgIds  = [...new Set(grs.map((g) => g.organizationId))];
+
+  const [users, pos, grItems, orgs] = await Promise.all([
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds)),
+    db.select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, supplierSnapshot: purchaseOrder.supplierSnapshot, salesOrderId: purchaseOrder.salesOrderId })
+      .from(purchaseOrder)
+      .where(inArray(purchaseOrder.id, poIds)),
+    db.select({ goodsReceiptId: goodsReceiptItem.goodsReceiptId })
+      .from(goodsReceiptItem)
+      .where(inArray(goodsReceiptItem.goodsReceiptId, grIds)),
+    db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, orgIds)),
+  ]);
+
+  const soIds = [...new Set(pos.map((p) => p.salesOrderId).filter(Boolean))] as string[];
+  const soRows = soIds.length > 0
+    ? await db.select({ id: salesOrder.id, soNo: salesOrder.soNo }).from(salesOrder).where(inArray(salesOrder.id, soIds))
+    : [];
+  const soMap = Object.fromEntries(soRows.map((s) => [s.id, s.soNo]));
+
+  const userMap    = Object.fromEntries(users.map((u) => [u.id, u.name]));
+  const poMap      = Object.fromEntries(pos.map((p) => [p.id, p]));
+  const orgMap     = Object.fromEntries(orgs.map((o) => [o.id, o.name]));
+  const itemCounts = grIds.reduce<Record<string, number>>((acc, id) => ({ ...acc, [id]: 0 }), {});
+  for (const gi of grItems) itemCounts[gi.goodsReceiptId] = (itemCounts[gi.goodsReceiptId] ?? 0) + 1;
+
+  return grs.map((gr) => {
+    const po   = poMap[gr.purchaseOrderId];
+    const snap = po?.supplierSnapshot as { name?: string } | null;
+    const soId = po?.salesOrderId ?? null;
+    return {
+      ...gr,
+      receivedByName: userMap[gr.receivedBy] ?? null,
+      poNo:           po?.poNo ?? null,
+      prNo:           po?.prNo ?? null,
+      supplierName:   snap?.name ?? null,
+      itemCount:      itemCounts[gr.id] ?? 0,
+      salesOrderId:   soId,
+      salesOrderNo:   soId ? (soMap[soId] ?? null) : null,
+      organizationName: orgMap[gr.organizationId] ?? "—",
+      isOwnOrg:       gr.organizationId === orgId,
+    };
+  });
+}
+
 export type PendingReturnRepairRow = {
-  goodsReceiptItemId: string;
-  category: "return" | "repair";
+  // Identifies the row to act on — goodsReceiptItemId for return/repair
+  // (resolveReceiptItemAction), purchaseOrderItemId for shortfall
+  // (writeOffShortfall). Only the relevant one of the two is set.
+  goodsReceiptItemId: string | null;
+  purchaseOrderItemId: string | null;
+  category: "return" | "repair" | "shortfall";
   qty: number;
   notes: string | null;
   productCode: string | null;
   description: string | null;
-  goodsReceiptId: string;
-  grNo: string;
+  goodsReceiptId: string | null;
+  grNo: string | null;
   purchaseOrderId: string;
   poNo: string | null;
   prNo: string | null;
   supplierName: string | null;
   inspectedAt: Date | null;
+  organizationId: string;
+  organizationName: string | null;
 };
 
-// "Fulfilled" only tracks physical receipt (see maybeAutoFulfill below) — it
-// says nothing about condition. This is the org-wide worklist for the other
-// half: every received line still sitting unresolved in "return to
-// supplier" or "in-house repair", across every PO, in one place — the
-// alternative to hunting down each GR individually to find out what's
-// outstanding.
-export async function getPendingReturnsAndRepairs(): Promise<PendingReturnRepairRow[]> {
-  const { orgId } = await requireAccess("purchase-order:read");
+// Shared by getPendingReturnsAndRepairs (own org) and
+// getPendingReturnsAndRepairsCentralized (every org the caller owns) — same
+// worklist logic either way, just scoped to a different set of org ids so
+// the two don't drift apart. "Fulfilled" only tracks physical receipt (see
+// maybeAutoFulfill below) — it says nothing about condition, and shortfall
+// isn't "fulfilled" at all. This is the worklist for everything still open
+// on a receipt: return to supplier, in-house repair, or short-shipped with
+// nothing yet done about it — across every PO, in one place, the
+// alternative to hunting down each GR or packing list individually to find
+// out what's outstanding.
+async function computeOutstandingIssues(orgIds: string[]): Promise<PendingReturnRepairRow[]> {
+  if (orgIds.length === 0) return [];
 
   const rows = await db
     .select({
@@ -334,24 +472,120 @@ export async function getPendingReturnsAndRepairs(): Promise<PendingReturnRepair
       goodsReceiptId: goodsReceipt.id,
       grNo: goodsReceipt.grNo,
       purchaseOrderId: goodsReceipt.purchaseOrderId,
+      organizationId: goodsReceipt.organizationId,
     })
     .from(goodsReceiptItem)
     .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
     .where(and(
-      eq(goodsReceipt.organizationId, orgId),
+      inArray(goodsReceipt.organizationId, orgIds),
       ne(goodsReceipt.status, "recalled"),
       or(eq(goodsReceiptItem.returnStatus, "pending"), eq(goodsReceiptItem.repairStatus, "pending")),
     ));
-  if (rows.length === 0) return [];
+
+  // Shortfall — computed per PO item (not per GR line), same qtyGood-based
+  // remaining-to-pack math used throughout server/packing-list.ts, so a line
+  // that's since been topped up by a follow-up shipment drops off this list
+  // automatically. Only writeOffShortfall/resolveShortfall stop it from
+  // reappearing on its own.
+  const confirmedPos = await db
+    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierSnapshot: purchaseOrder.supplierSnapshot, organizationId: purchaseOrder.organizationId })
+    .from(purchaseOrder)
+    .where(and(inArray(purchaseOrder.organizationId, orgIds), eq(purchaseOrder.status, "confirmed")));
+  const confirmedPoIds = confirmedPos.map((p) => p.id);
+
+  const shortfallRows: PendingReturnRepairRow[] = [];
+  if (confirmedPoIds.length > 0) {
+    const poItems = await db
+      .select()
+      .from(purchaseOrderItem)
+      .where(and(inArray(purchaseOrderItem.purchaseOrderId, confirmedPoIds), isNull(purchaseOrderItem.shortfallClosedStatus)));
+    const itemIds = poItems.map((i) => i.id);
+
+    const [grItems, plItems] = itemIds.length > 0
+      ? await Promise.all([
+          db.select({ purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyReceived: goodsReceiptItem.qtyReceived, qtyReturn: goodsReceiptItem.qtyReturn, returnStatus: goodsReceiptItem.returnStatus, inspectedAt: goodsReceiptItem.inspectedAt })
+            .from(goodsReceiptItem)
+            .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+            .where(and(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds), ne(goodsReceipt.status, "recalled"))),
+          db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
+            .from(packingListItem)
+            .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+            .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"))),
+        ])
+      : [[], []];
+
+    // What actually counts as "accepted" here, on purpose, differs from the
+    // qtyGood-based remaining-to-pack math elsewhere: a returned unit only
+    // stops counting as accepted once the return has actually SHIPPED
+    // (returnStatus "resolved") — while it's still sitting in the warehouse
+    // pending outbound, there's no real gap yet, just an inspection-pending
+    // line, and flagging it here would double up with its own "return" row
+    // on the same panel. Once the return ships, the gap becomes real and
+    // this activates — matching when you'd actually go chase the supplier.
+    const acceptedByItem: Record<string, number> = {};
+    const lastInspectedByItem: Record<string, Date | null> = {};
+    for (const gi of grItems) {
+      if (!gi.purchaseOrderItemId) continue;
+      const received = parseFloat(gi.qtyReceived ?? "0") || 0;
+      const returnedAndShipped = gi.returnStatus === "resolved" ? (parseFloat(gi.qtyReturn ?? "0") || 0) : 0;
+      const accepted = received - returnedAndShipped;
+      acceptedByItem[gi.purchaseOrderItemId] = (acceptedByItem[gi.purchaseOrderItemId] ?? 0) + accepted;
+      const prevAt = lastInspectedByItem[gi.purchaseOrderItemId];
+      if (gi.inspectedAt && (!prevAt || gi.inspectedAt > prevAt)) lastInspectedByItem[gi.purchaseOrderItemId] = gi.inspectedAt;
+    }
+    const reservedByItem: Record<string, number> = {};
+    for (const pi of plItems) {
+      reservedByItem[pi.purchaseOrderItemId] = (reservedByItem[pi.purchaseOrderItemId] ?? 0) + (parseFloat(pi.qtyExpected ?? "0") || 0);
+    }
+
+    const poMapForShortfall = Object.fromEntries(confirmedPos.map((p) => [p.id, p]));
+    for (const item of poItems) {
+      const ordered = parseFloat(item.qty ?? "0") || 0;
+      const remaining = ordered - (acceptedByItem[item.id] ?? 0) - (reservedByItem[item.id] ?? 0);
+      // Only worth flagging once at least one receipt has actually come in
+      // short — an item nobody has received yet isn't "short," it's just
+      // not due.
+      if (remaining > 0 && acceptedByItem[item.id] !== undefined) {
+        const po = poMapForShortfall[item.purchaseOrderId];
+        const snap = po?.supplierSnapshot as { name?: string } | null;
+        shortfallRows.push({
+          goodsReceiptItemId: null,
+          purchaseOrderItemId: item.id,
+          category: "shortfall",
+          qty: remaining,
+          notes: null,
+          productCode: item.productCode,
+          description: item.description,
+          goodsReceiptId: null,
+          grNo: null,
+          purchaseOrderId: item.purchaseOrderId,
+          poNo: po?.poNo ?? null,
+          prNo: po?.prNo ?? null,
+          supplierName: snap?.name ?? null,
+          inspectedAt: lastInspectedByItem[item.id] ?? null,
+          organizationId: po?.organizationId ?? "",
+          organizationName: null,
+        });
+      }
+    }
+  }
+
+  if (rows.length === 0 && shortfallRows.length === 0) return [];
 
   const poIds = [...new Set(rows.map((r) => r.purchaseOrderId))];
-  const pos = await db
-    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierSnapshot: purchaseOrder.supplierSnapshot })
-    .from(purchaseOrder)
-    .where(inArray(purchaseOrder.id, poIds));
+  const [pos, orgs] = await Promise.all([
+    poIds.length > 0
+      ? db
+          .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierSnapshot: purchaseOrder.supplierSnapshot })
+          .from(purchaseOrder)
+          .where(inArray(purchaseOrder.id, poIds))
+      : Promise.resolve([]),
+    db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, orgIds)),
+  ]);
   const poMap = Object.fromEntries(pos.map((p) => [p.id, p]));
+  const orgMap = Object.fromEntries(orgs.map((o) => [o.id, o.name]));
 
-  const result: PendingReturnRepairRow[] = [];
+  const result: PendingReturnRepairRow[] = shortfallRows.map((r) => ({ ...r, organizationName: orgMap[r.organizationId] ?? null }));
   for (const r of rows) {
     const po = poMap[r.purchaseOrderId];
     const snap = po?.supplierSnapshot as { name?: string } | null;
@@ -361,10 +595,13 @@ export async function getPendingReturnsAndRepairs(): Promise<PendingReturnRepair
       goodsReceiptId: r.goodsReceiptId,
       grNo: r.grNo,
       purchaseOrderId: r.purchaseOrderId,
+      purchaseOrderItemId: null,
       poNo: po?.poNo ?? null,
       prNo: po?.prNo ?? null,
       supplierName: snap?.name ?? null,
       inspectedAt: r.inspectedAt,
+      organizationId: r.organizationId,
+      organizationName: orgMap[r.organizationId] ?? null,
     };
     const qtyReturn = parseFloat(r.qtyReturn ?? "0") || 0;
     if (r.returnStatus === "pending" && qtyReturn > 0) {
@@ -376,6 +613,81 @@ export async function getPendingReturnsAndRepairs(): Promise<PendingReturnRepair
     }
   }
   return result.sort((a, b) => (a.inspectedAt?.getTime() ?? 0) - (b.inspectedAt?.getTime() ?? 0));
+}
+
+export async function getPendingReturnsAndRepairs(): Promise<PendingReturnRepairRow[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  return computeOutstandingIssues([orgId]);
+}
+
+// Same worklist, but across every org the caller owns — the alternative to
+// checking each org's Goods Receipts page individually.
+export async function getPendingReturnsAndRepairsCentralized(): Promise<PendingReturnRepairRow[]> {
+  const { orgId } = await requireAccess("goods-receipt:read:centralized");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+  return computeOutstandingIssues(ownerOrgIds);
+}
+
+// Same shape as assertCanInspectPackingList in server/packing-list.ts —
+// duplicated locally (see getOwnerOrgIds above) to avoid a circular import
+// between the two files. Own-org just needs packing-list:inspect; cross-org
+// needs either packing-list:inspect:centralized in the caller's own org, or
+// packing-list:inspect evaluated in the item's own org (an owner acting
+// across their own sibling orgs resolves this directly).
+async function assertCanActOnReceivingIssue(itemOrgId: string, callerOrgId: string, userId: string): Promise<void> {
+  if (itemOrgId === callerOrgId) {
+    const perms = await getUserPermissions(userId, callerOrgId);
+    if (!hasAccess(perms, "packing-list:inspect")) throw new Error("You don't have permission to do this");
+    return;
+  }
+  const ownerOrgIds = await getOwnerOrgIds(callerOrgId);
+  if (!ownerOrgIds.includes(itemOrgId)) throw new Error("You don't have permission to do this");
+  const callerPerms = await getUserPermissions(userId, callerOrgId);
+  const targetPerms = await getUserPermissions(userId, itemOrgId);
+  if (!hasAccess(callerPerms, "packing-list:inspect:centralized") && !hasAccess(targetPerms, "packing-list:inspect")) {
+    throw new Error("You don't have permission to do this");
+  }
+}
+
+// Shared by writeOffShortfall and resolveShortfall below — both just close
+// out a short-shipped PO item with a different reason, same audit trail.
+async function closeShortfall(purchaseOrderItemId: string, status: "resolved" | "written_off"): Promise<void> {
+  const { orgId, userId } = await getSession();
+
+  const [item] = await db
+    .select({ id: purchaseOrderItem.id, poOrgId: purchaseOrder.organizationId })
+    .from(purchaseOrderItem)
+    .innerJoin(purchaseOrder, eq(purchaseOrderItem.purchaseOrderId, purchaseOrder.id))
+    .where(eq(purchaseOrderItem.id, purchaseOrderItemId));
+  if (!item) throw new Error("Item not found");
+  await assertCanActOnReceivingIssue(item.poOrgId, orgId, userId);
+
+  await db
+    .update(purchaseOrderItem)
+    .set({ shortfallClosedStatus: status, shortfallClosedBy: userId, shortfallClosedAt: new Date() })
+    .where(eq(purchaseOrderItem.id, purchaseOrderItemId));
+
+  revalidatePath("/dashboard/procurement/goods-receipt");
+  revalidatePath("/dashboard/procurement/goods-receipt/centralized");
+  revalidatePath("/dashboard/procurement/packing-list");
+}
+
+// Stops a permanently short-shipped line from being offered for packing or
+// showing up on the outstanding-issues worklist, without a replacement ever
+// arriving — a deliberate "we're accepting the loss" decision, distinct from
+// resolveReceiptItemAction below (which marks a return/repair as physically
+// completed). Same permission as that action — same people handle receiving
+// issues either way.
+export async function writeOffShortfall(purchaseOrderItemId: string): Promise<void> {
+  await closeShortfall(purchaseOrderItemId, "written_off");
+}
+
+// The replacement actually showed up — whether through a proper follow-up
+// packing list (which would already self-clear this via the qty math) or
+// through some other channel that doesn't leave a formal GR trail. A manual
+// attestation, same trust level as resolveReceiptItemAction for return/repair.
+export async function resolveShortfall(purchaseOrderItemId: string): Promise<void> {
+  await closeShortfall(purchaseOrderItemId, "resolved");
 }
 
 export async function getConfirmedPosForGr(): Promise<ConfirmedPoForGr[]> {
@@ -622,16 +934,21 @@ async function syncPoFulfillmentStatus(purchaseOrderId: string, orgId: string) {
     ? await db.select().from(goodsReceiptItem).where(inArray(goodsReceiptItem.goodsReceiptId, grIds))
     : [];
 
-  // Sum received qty per PO item
+  // Sum accepted qty per PO item — qtyGood, not qtyReceived, so a line
+  // returned to the supplier doesn't count as fulfilling the PO (it was
+  // never actually kept). Falls back to qtyReceived for the plain direct-GR
+  // flow, which has no inspection split (qtyGood is null there).
   const receivedByPoItemId: Record<string, number> = {};
   for (const grItem of allGrItems) {
     if (grItem.purchaseOrderItemId) {
+      const accepted = parseFloat(grItem.qtyGood ?? grItem.qtyReceived ?? "0") || 0;
       receivedByPoItemId[grItem.purchaseOrderItemId] =
-        (receivedByPoItemId[grItem.purchaseOrderItemId] ?? 0) + parseFloat(grItem.qtyReceived ?? "0");
+        (receivedByPoItemId[grItem.purchaseOrderItemId] ?? 0) + accepted;
     }
   }
 
   const allFulfilled = poItems.every((item) => {
+    if (item.shortfallClosedStatus) return true;
     const received = receivedByPoItemId[item.id] ?? 0;
     const ordered = parseFloat(item.qty ?? "0");
     return received >= ordered;
@@ -708,6 +1025,8 @@ export async function recallGoodsReceipt(id: string): Promise<void> {
 
   revalidatePath("/dashboard/procurement/goods-receipt");
   revalidatePath(`/dashboard/procurement/goods-receipt/${id}`);
+  revalidatePath("/dashboard/procurement/goods-receipt/centralized");
+  revalidatePath(`/dashboard/procurement/goods-receipt/centralized/${id}`);
   revalidatePath(`/dashboard/procurement/purchase-order/${gr.purchaseOrderId}`);
   if (gr.packingListId) {
     revalidatePath("/dashboard/procurement/packing-list");
@@ -732,5 +1051,6 @@ export async function deleteGoodsReceipt(id: string): Promise<void> {
   await db.delete(goodsReceipt).where(eq(goodsReceipt.id, id));
 
   revalidatePath("/dashboard/procurement/goods-receipt");
+  revalidatePath("/dashboard/procurement/goods-receipt/centralized");
   revalidatePath(`/dashboard/procurement/purchase-order/${gr.purchaseOrderId}`);
 }

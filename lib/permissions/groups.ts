@@ -15,7 +15,7 @@ export const KEY_GROUP: Record<string, string> = {
   "purchase-order:read": "procurement", "purchase-order:create": "procurement",
   "purchase-order:update": "procurement", "purchase-order:delete": "procurement",
   "purchase-order:read:centralized": "procurement", "purchase-order:update:centralized": "procurement",
-  "goods-receipt:create": "procurement",
+  "goods-receipt:create": "procurement", "goods-receipt:read:centralized": "procurement",
   "packing-list:create": "procurement", "packing-list:inspect": "procurement",
   "packing-list:read:centralized": "procurement", "packing-list:inspect:centralized": "procurement",
   "supplier:read": "procurement", "supplier:create": "procurement", "supplier:update": "procurement", "supplier:delete": "procurement",
@@ -26,6 +26,7 @@ export const KEY_GROUP: Record<string, string> = {
   "invoice:update": "fulfillment", "invoice:delete": "fulfillment",
   "account:read": "fulfillment", "account:create": "fulfillment",
   "account:update": "fulfillment", "account:delete": "fulfillment",
+  "accounts-receivable:read": "fulfillment", "accounts-receivable:create": "fulfillment",
 
   "product:read": "products", "product:seed": "products",
   "product:update-price": "products", "product:upload-image": "products",

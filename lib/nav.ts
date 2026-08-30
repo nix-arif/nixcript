@@ -65,6 +65,7 @@ export const navConfig: NavGroup[] = [
       { title: "Sales Orders", url: "/dashboard/sales/order/centralized", permission: "sales-order:read:centralized" },
       { title: "Supplier POs", url: "/dashboard/procurement/purchase-order/centralized", permission: "purchase-order:read:centralized" },
       { title: "Packing Lists", url: "/dashboard/procurement/packing-list/centralized", permission: "packing-list:read:centralized" },
+      { title: "Goods Receipts", url: "/dashboard/procurement/goods-receipt/centralized", permission: "goods-receipt:read:centralized" },
     ],
   },
   {
@@ -94,6 +95,7 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(BookOpenIcon),
     items: [
+      { title: "Accounts Receivable", url: "/dashboard/ledger/accounts-receivable", permission: "accounts-receivable:read" },
       { title: "Journal Entries",   url: "/dashboard/ledger/entries",       permission: "account:read" },
       { title: "Chart of Accounts", url: "/dashboard/ledger/accounts",      permission: "account:read" },
       { title: "Trial Balance",     url: "/dashboard/ledger/trial-balance",  permission: "account:read" },

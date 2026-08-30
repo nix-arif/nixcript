@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -10,6 +10,7 @@ import {
   getInspectionPhotoUploadUrl,
   addInspectionPhoto,
   deleteInspectionPhoto,
+  approveInspectionLine,
   type PackingListWithItems,
   type InspectionPhoto,
   type InspectionPhotoCategory,
@@ -21,6 +22,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, ClipboardCheckIcon, AlertTriangleIcon, XIcon, CheckIcon, LoaderIcon,
   DatabaseIcon, PencilIcon, ClipboardListIcon, PlusIcon, TagIcon, LinkIcon, UserIcon, CameraIcon,
+  ShieldCheckIcon, ShieldXIcon, ShieldQuestionIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -37,6 +39,23 @@ const PO_COLORS = [
   { bg: "bg-pink-50/50 dark:bg-pink-950/15", header: "bg-pink-100/70 dark:bg-pink-900/30", border: "border-pink-200 dark:border-pink-800/50", stripe: "bg-pink-100/60 dark:bg-pink-900/25" },
   { bg: "bg-teal-50/50 dark:bg-teal-950/15", header: "bg-teal-100/70 dark:bg-teal-900/30", border: "border-teal-200 dark:border-teal-800/50", stripe: "bg-teal-100/60 dark:bg-teal-900/25" },
 ] as const;
+
+// Row coloring by inspection/approval state — a strong left-border accent
+// (always saturated, unlike the pastel PO-group background above) so it
+// reads clearly no matter which PO color the row happens to sit inside.
+// Approval status (once set) takes priority over the plain zebra stripe.
+const ROW_STATE_STYLES: Record<string, { bg: string; border: string; dot: string }> = {
+  pending:  { bg: "bg-amber-50/70 dark:bg-amber-950/25", border: "border-l-amber-400 dark:border-l-amber-600", dot: "bg-amber-400 dark:bg-amber-500" },
+  approved: { bg: "bg-green-50/70 dark:bg-green-950/25", border: "border-l-green-400 dark:border-l-green-600", dot: "bg-green-400 dark:bg-green-500" },
+  rejected: { bg: "bg-red-50/70 dark:bg-red-950/25", border: "border-l-red-400 dark:border-l-red-600", dot: "bg-red-400 dark:bg-red-500" },
+};
+const NOT_INSPECTED_DOT = "bg-muted-foreground/30";
+
+function rowStateClasses(approvalStatus: string | null, zebra: boolean, zebraClass: string): string {
+  const state = approvalStatus ? ROW_STATE_STYLES[approvalStatus] : null;
+  if (state) return cn(state.bg, "border-l-4", state.border);
+  return cn(zebra && zebraClass, "border-l-4 border-l-transparent");
+}
 
 function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; productCode?: string | null }) {
   const [open, setOpen] = useState(false);
@@ -194,6 +213,31 @@ function InspectionPhotoStrip({
   );
 }
 
+function RejectNoteBox({ onConfirm, onCancel }: { onConfirm: (notes?: string) => void; onCancel: () => void }) {
+  const [note, setNote] = useState("");
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Reason for rejecting (optional)"
+        className="h-6 text-[10px]"
+        autoFocus
+      />
+      <button
+        type="button"
+        onClick={() => onConfirm(note || undefined)}
+        className="text-[9px] px-1.5 py-0.5 rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors shrink-0"
+      >
+        Confirm
+      </button>
+      <button type="button" onClick={onCancel} className="text-[9px] text-muted-foreground hover:text-foreground shrink-0">
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 interface Props {
   packingList: PackingListWithItems;
   businessType?: string;
@@ -202,6 +246,9 @@ interface Props {
   // Shown when this is the centralized (cross-org) inspect flow, so it's
   // clear which org this packing list actually belongs to.
   organizationName?: string;
+  // Whether the current viewer holds packing-list:approve for this packing
+  // list's org — gates whether the Approve/Reject controls render at all.
+  canApprove?: boolean;
 }
 
 type Row = {
@@ -217,6 +264,11 @@ type Row = {
   photos: InspectionPhoto[];
   uploadingReturnPhotos: boolean;
   uploadingRepairPhotos: boolean;
+  approvalStatus: string | null; // "pending" | "approved" | "rejected" | null
+  approvalNotes: string | null;
+  approvedByName: string | null;
+  approving: boolean;
+  showRejectNote: boolean;
 };
 
 function initialRow(item: PackingListWithItems["items"][number]): Row {
@@ -233,13 +285,18 @@ function initialRow(item: PackingListWithItems["items"][number]): Row {
     photos: item.photos,
     uploadingReturnPhotos: false,
     uploadingRepairPhotos: false,
+    approvalStatus: item.draftApprovalStatus,
+    approvalNotes: item.draftApprovalNotes,
+    approvedByName: item.draftApprovedByName,
+    approving: false,
+    showRejectNote: false,
   };
 }
 
 export function InspectPackingListClient({
   packingList: pl, businessType = "trading",
   submitFn = completePackingListInspection,
-  backHref, organizationName,
+  backHref, organizationName, canApprove = false,
 }: Props) {
   const router = useRouter();
   const backUrl = backHref ?? `/dashboard/procurement/packing-list/${pl.id}`;
@@ -267,7 +324,7 @@ export function InspectPackingListClient({
     debounceTimers.current[itemId] = setTimeout(() => saveRow(itemId), AUTOSAVE_DEBOUNCE_MS);
   }
 
-  const saveRow = useCallback(async (itemId: string) => {
+  async function saveRow(itemId: string) {
     const row = rowsRef.current[itemId];
     if (!row || !row.dirty || row.saving) return;
     if (debounceTimers.current[itemId]) { clearTimeout(debounceTimers.current[itemId]); delete debounceTimers.current[itemId]; }
@@ -297,13 +354,18 @@ export function InspectPackingListClient({
           dirty: false,
           inspectedByName: result.inspectedByName,
           inspectedAt: new Date(result.inspectedAt).toISOString(),
+          // The server always resets approval to "pending" on any edit —
+          // mirror that locally instead of waiting for the next poll.
+          approvalStatus: "pending",
+          approvalNotes: null,
+          approvedByName: null,
         },
       }));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't save this line");
       setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], saving: false } }));
     }
-  }, []);
+  }
 
   function handleFocusRow(itemId: string) {
     focusedItemIdRef.current = itemId;
@@ -336,6 +398,18 @@ export function InspectPackingListClient({
               updated = { ...updated, photos: s.photos };
             }
 
+            // Approval is a separate action from editing qty/notes — always
+            // adopt the server's latest decision so an approve/reject from
+            // someone else shows up immediately, even mid-edit on this row.
+            if (!local.approving) {
+              updated = {
+                ...updated,
+                approvalStatus: s.approvalStatus,
+                approvalNotes: s.approvalNotes,
+                approvedByName: s.approvedByName,
+              };
+            }
+
             if (focusedItemIdRef.current !== s.packingListItemId && !local.dirty && !local.saving) {
               const serverAt = s.inspectedAt ? new Date(s.inspectedAt).getTime() : 0;
               const localAt = local.inspectedAt ? new Date(local.inspectedAt).getTime() : 0;
@@ -363,6 +437,28 @@ export function InspectPackingListClient({
     }, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [pl.id]);
+
+  async function handleApprove(itemId: string, decision: "approved" | "rejected", notes?: string) {
+    setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], approving: true } }));
+    try {
+      const result = await approveInspectionLine(itemId, decision, notes);
+      setRows((prev) => ({
+        ...prev,
+        [itemId]: {
+          ...prev[itemId],
+          approving: false,
+          showRejectNote: false,
+          approvalStatus: decision,
+          approvalNotes: notes || null,
+          approvedByName: result.approvedByName,
+        },
+      }));
+      toast.success(decision === "approved" ? "Item approved" : "Item rejected");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't record decision");
+      setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], approving: false } }));
+    }
+  }
 
   async function handlePhotoUpload(itemId: string, category: InspectionPhotoCategory, fileList: FileList) {
     const files = Array.from(fileList);
@@ -460,6 +556,26 @@ export function InspectPackingListClient({
           </p>
         </section>
 
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] border border-border rounded-lg px-3 py-2">
+          <span className="font-medium text-foreground">Row color</span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className={cn("w-2.5 h-2.5 rounded-sm shrink-0", NOT_INSPECTED_DOT)} />
+            Not yet inspected
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className={cn("w-2.5 h-2.5 rounded-sm shrink-0", ROW_STATE_STYLES.pending.dot)} />
+            Awaiting approval
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className={cn("w-2.5 h-2.5 rounded-sm shrink-0", ROW_STATE_STYLES.approved.dot)} />
+            Approved
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className={cn("w-2.5 h-2.5 rounded-sm shrink-0", ROW_STATE_STYLES.rejected.dot)} />
+            Rejected
+          </span>
+        </div>
+
         {Object.entries(byPo).map(([poId, items], poIndex) => {
           const color = PO_COLORS[poIndex % PO_COLORS.length];
           return (
@@ -498,10 +614,15 @@ export function InspectPackingListClient({
                     // return to the supplier actually reduces what's accepted.
                     const accepted = Math.max(0, received - ret);
                     const overCommitted = ret + repair > received + 1e-9;
+                    const expected = parseFloat(item.qtyExpected) || 0;
+                    const shortfall = Math.max(0, expected - received);
                     return (
                       <tr
                         key={item.id}
-                        className={cn("border-b border-border/40 last:border-0 align-top", itemIndex % 2 === 1 && color.stripe)}
+                        className={cn(
+                          "border-b border-border/40 last:border-0 align-top",
+                          rowStateClasses(row.approvalStatus, itemIndex % 2 === 1, color.stripe),
+                        )}
                       >
                         <td className="py-2.5 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{itemIndex + 1}</td>
                         {showSourcing && (
@@ -638,6 +759,59 @@ export function InspectPackingListClient({
                             ) : null}
                           </div>
 
+                          <div className="mt-1.5 flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {row.approvalStatus === "approved" ? (
+                                <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800">
+                                  <ShieldCheckIcon className="w-2.5 h-2.5 shrink-0" />
+                                  Approved{row.approvedByName ? ` · ${row.approvedByName}` : ""}
+                                </span>
+                              ) : row.approvalStatus === "rejected" ? (
+                                <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
+                                  <ShieldXIcon className="w-2.5 h-2.5 shrink-0" />
+                                  Rejected{row.approvedByName ? ` · ${row.approvedByName}` : ""}{row.approvalNotes ? ` — ${row.approvalNotes}` : ""}
+                                </span>
+                              ) : row.approvalStatus === "pending" ? (
+                                <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                                  <ShieldQuestionIcon className="w-2.5 h-2.5 shrink-0" />
+                                  Awaiting approval
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                                  Not yet inspected
+                                </span>
+                              )}
+
+                              {canApprove && !row.dirty && !row.saving && (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={row.approving}
+                                    onClick={() => handleApprove(item.id, "approved")}
+                                    className="text-[9px] px-1.5 py-0.5 rounded-md border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 disabled:opacity-40 transition-colors"
+                                  >
+                                    {row.approving ? "…" : "Approve"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={row.approving}
+                                    onClick={() => setRows((prev) => ({ ...prev, [item.id]: { ...prev[item.id], showRejectNote: !prev[item.id].showRejectNote } }))}
+                                    className="text-[9px] px-1.5 py-0.5 rounded-md border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 transition-colors"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            {row.showRejectNote && (
+                              <RejectNoteBox
+                                onConfirm={(notes) => handleApprove(item.id, "rejected", notes)}
+                                onCancel={() => setRows((prev) => ({ ...prev, [item.id]: { ...prev[item.id], showRejectNote: false } }))}
+                              />
+                            )}
+                          </div>
+
                           {ret > 0 && (
                             <div className="mt-1.5 flex flex-col gap-1.5 border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20 rounded-md p-2">
                               <div className="flex items-center gap-1 text-[10px] text-red-700 dark:text-red-400 font-medium">
@@ -692,8 +866,13 @@ export function InspectPackingListClient({
                             onFocus={() => handleFocusRow(item.id)}
                             onChange={(e) => updateRow(item.id, { qtyReceived: e.target.value })}
                             onBlur={() => handleBlurRow(item.id)}
-                            className="h-7 text-xs text-right tabular-nums w-24 ml-auto"
+                            className={cn("h-7 text-xs text-right tabular-nums w-24 ml-auto", shortfall > 0 && "border-amber-400 focus-visible:ring-amber-400")}
                           />
+                          {shortfall > 0 && (
+                            <p className="text-[9px] text-amber-600 dark:text-amber-400 text-right mt-0.5">
+                              Short by {shortfall} {item.uom || ""}
+                            </p>
+                          )}
                         </td>
                         <td className="py-2.5 pr-3">
                           <Input
@@ -730,6 +909,18 @@ export function InspectPackingListClient({
           </section>
           );
         })}
+
+        {(() => {
+          const total = pl.items.length;
+          const approved = Object.values(rows).filter((r) => r.approvalStatus === "approved").length;
+          if (approved >= total) return null;
+          return (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+              <ShieldQuestionIcon className="w-3 h-3 shrink-0" />
+              {approved} of {total} item{total !== 1 ? "s" : ""} approved — every item needs approval before inspection can be completed.
+            </p>
+          );
+        })()}
 
         <div className="flex gap-3">
           <Button type="submit" disabled={completing} className="gap-1.5">

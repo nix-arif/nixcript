@@ -59,6 +59,7 @@ export const ALL_PERMISSIONS = [
 
   // Goods Receipt
   { key: "goods-receipt:create", label: "Record Goods Receipt" },
+  { key: "goods-receipt:read:centralized", label: "View All Goods Receipts Across Owner's Organizations" },
 
   // Packing List
   { key: "packing-list:create",  label: "Create Packing List" },
@@ -71,6 +72,10 @@ export const ALL_PERMISSIONS = [
   { key: "account:create", label: "Create Journal Entry / Account" },
   { key: "account:update", label: "Update Journal Entry / Account" },
   { key: "account:delete", label: "Delete Journal Entry / Account" },
+
+  // Accounts Receivable (scoped — customer balances/receipts only, not the full ledger)
+  { key: "accounts-receivable:read",   label: "View Accounts Receivable (Customer Balances & Receipts)" },
+  { key: "accounts-receivable:create", label: "Record Customer Receipt (Accounts Receivable)" },
 
   // Customer
   { key: "customer:read",   label: "View Customers" },
@@ -160,6 +165,8 @@ export const APPROVAL_ONLY_KEYS = [
   "purchase-requisition:approve",
   "purchase-order:approve",
   "inventory:approve",
+  "packing-list:approve",
+  "packing-list:approve:centralized",
 ] as const;
 
 export type ApprovalOnlyKey = (typeof APPROVAL_ONLY_KEYS)[number];
@@ -635,6 +642,12 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Account / Ledger Manager",
     description: "Full ledger management: create, post, edit, and delete journal entries and chart of accounts.",
     permissions: ["account:read", "account:create", "account:update", "account:delete"],
+  },
+  {
+    id: "ar-clerk",
+    label: "Accounts Receivable Clerk",
+    description: "Record customer receipts and monitor who owes the business money — without access to the full ledger, chart of accounts, or other stakeholders' balances.",
+    permissions: ["accounts-receivable:read", "accounts-receivable:create"],
   },
   {
     id: "claim-staff",

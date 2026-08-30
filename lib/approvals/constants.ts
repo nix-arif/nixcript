@@ -58,6 +58,15 @@ export const APPROVAL_MODULES = [
     ],
   },
   {
+    id: "packing-list",
+    title: "Packing List Inspection",
+    description: "Who can approve or reject each inspected packing-list item before it's finalized into a Goods Receipt.",
+    permissions: [
+      { key: "packing-list:approve", label: "Approve / Reject Inspected Items" },
+      { key: "packing-list:approve:centralized", label: "Approve / Reject Inspected Items Across Owner's Organizations" },
+    ],
+  },
+  {
     id: "travel",
     title: "Travel Authorization",
     description: "Who can approve travel forms before a trip.",
@@ -86,4 +95,14 @@ export const DEFAULT_SELF_ACTION_ALLOWED: Record<string, boolean> = {
   "purchase-requisition:approve": true,
   "purchase-order:approve": true,
   "inventory:approve": true,
+  // Defaults to blocked, like the HR workflows — a genuine second-person QC
+  // check on the inspector's own numbers. Configurable per-org in Org
+  // Approvals like every other key here.
+  "packing-list:approve": false,
+  // Own key, own toggle — same default as the local one above. Who holds
+  // this permission at all is controlled separately (grant it to a specific
+  // member on the Org Approvals screen, not automatically to every owner),
+  // so self-action here shouldn't default to allowed just because it's a
+  // cross-org grant.
+  "packing-list:approve:centralized": false,
 };

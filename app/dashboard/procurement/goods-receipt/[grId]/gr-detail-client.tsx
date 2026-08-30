@@ -16,19 +16,35 @@ const fmtDate = (d: Date | string | null | undefined) =>
 interface Props {
   gr: GoodsReceiptWithItems;
   permissions: string[];
+  // Shown when this is the centralized (cross-org) detail view, so it's
+  // clear which org this receipt actually belongs to.
+  organizationName?: string;
+  // Overrides "Back" and the post-action redirect for the centralized route.
+  backHref?: string;
+  // Whether the caller can Mark Resolved on this receipt's org — for the
+  // plain own-org view this is always true (gated by `can()` below instead);
+  // for centralized it comes from getGoodsReceiptDetailCentralized's own
+  // cross-org check. Recall/Delete stay restricted to the org you're
+  // actually active in, regardless of this flag — see isOwnOrg below.
+  canAct?: boolean;
+  isOwnOrg?: boolean;
 }
 
-export function GoodsReceiptDetailClient({ gr, permissions }: Props) {
+export function GoodsReceiptDetailClient({ gr, permissions, organizationName, backHref, canAct = true, isOwnOrg = true }: Props) {
   const router = useRouter();
   const [items, setItems] = useState(gr.items);
   const [status, setStatus] = useState(gr.status);
   const [resolving, setResolving] = useState<string | null>(null);
   const [recalling, setRecalling] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const can = (p: string) => permissions.includes("*") || permissions.includes(p);
-  const isOwner = permissions.includes("*");
+  const can = (p: string) => canAct && (permissions.includes("*") || permissions.includes(p));
+  const isOwner = isOwnOrg && permissions.includes("*");
   const purchaseOrderId = gr.purchaseOrderId;
   const poRef = gr.purchaseOrderNo ?? gr.purchaseOrderPrNo ?? purchaseOrderId;
+  const listHref = backHref ?? "/dashboard/procurement/goods-receipt";
+  const poHref = isOwnOrg
+    ? `/dashboard/procurement/purchase-order/${purchaseOrderId}`
+    : `/dashboard/procurement/purchase-order/centralized/${purchaseOrderId}`;
 
   async function handleRecall() {
     if (!confirm(`Recall ${gr.grNo}? This reverses the stock it added, reopens its packing list for correction if there was one, and can't be undone.`)) return;
@@ -51,7 +67,7 @@ export function GoodsReceiptDetailClient({ gr, permissions }: Props) {
     try {
       await deleteGoodsReceipt(gr.id);
       toast.success("Goods receipt deleted");
-      router.push("/dashboard/procurement/goods-receipt");
+      router.push(listHref);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Something went wrong");
       setDeleting(false);
@@ -81,13 +97,13 @@ export function GoodsReceiptDetailClient({ gr, permissions }: Props) {
     <div className="p-6 space-y-6">
       <PageHeader
         title={gr.grNo}
-        description={`Goods Receipt · Against ${poRef} · ${fmtDate(gr.receivedDate)}`}
+        description={`Goods Receipt${organizationName ? ` · ${organizationName}` : ""} · Against ${poRef} · ${fmtDate(gr.receivedDate)}`}
         action={
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => router.push("/dashboard/procurement/goods-receipt")}
+              onClick={() => router.push(listHref)}
               className="gap-1.5"
             >
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
@@ -263,7 +279,7 @@ export function GoodsReceiptDetailClient({ gr, permissions }: Props) {
               <div>
                 <p className="text-[10px] text-muted-foreground">Against PO</p>
                 <button
-                  onClick={() => router.push(`/dashboard/procurement/purchase-order/${purchaseOrderId}`)}
+                  onClick={() => router.push(poHref)}
                   className="text-xs font-mono text-primary hover:underline"
                 >
                   {poRef}

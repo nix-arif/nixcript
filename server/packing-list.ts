@@ -18,7 +18,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc, inArray } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, ne } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -27,6 +27,7 @@ import { revalidatePath } from "next/cache";
 import { createGoodsReceipt, type GoodsReceiptItemInput } from "@/server/goods-receipt";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 
 const s3 = new S3Client({
   region: "auto",
@@ -117,7 +118,12 @@ async function generatePackingListNo(orgId: string): Promise<string> {
 
 export type PackingListRow = typeof packingList.$inferSelect;
 export type PackingListItemRow = typeof packingListItem.$inferSelect;
-export type PackingListItemEnriched = PackingListItemRow & { imageUrl: string | null; draftInspectedByName: string | null; photos: InspectionPhoto[] };
+export type PackingListItemEnriched = PackingListItemRow & {
+  imageUrl: string | null;
+  draftInspectedByName: string | null;
+  draftApprovedByName: string | null;
+  photos: InspectionPhoto[];
+};
 
 export interface PackingListItemInput {
   purchaseOrderId: string;
@@ -276,9 +282,16 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
   const itemIds = items.map((i) => i.id);
 
   const [grItems, plItems] = await Promise.all([
-    db.select({ purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyReceived: goodsReceiptItem.qtyReceived })
+    // qtyGood, not qtyReceived — an item sent back to the supplier (qtyReturn)
+    // was never actually kept, so it must NOT count toward "already fulfilled"
+    // or the supplier's replacement shipment would show zero qty remaining to
+    // pack. Falls back to qtyReceived for the plain direct-GR flow, which has
+    // no inspection split (qtyGood is null there). Recalled GRs are excluded
+    // entirely — a reversed receipt shouldn't reserve against the PO either.
+    db.select({ purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyGood: goodsReceiptItem.qtyGood, qtyReceived: goodsReceiptItem.qtyReceived })
       .from(goodsReceiptItem)
-      .where(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds)),
+      .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+      .where(and(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds), ne(goodsReceipt.status, "recalled"))),
     db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
@@ -288,7 +301,8 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
   const receivedByItem: Record<string, number> = {};
   for (const gi of grItems) {
     if (!gi.purchaseOrderItemId) continue;
-    receivedByItem[gi.purchaseOrderItemId] = (receivedByItem[gi.purchaseOrderItemId] ?? 0) + (parseFloat(gi.qtyReceived ?? "0") || 0);
+    const accepted = parseFloat(gi.qtyGood ?? gi.qtyReceived ?? "0") || 0;
+    receivedByItem[gi.purchaseOrderItemId] = (receivedByItem[gi.purchaseOrderItemId] ?? 0) + accepted;
   }
   const reservedByItem: Record<string, number> = {};
   for (const pi of plItems) {
@@ -298,7 +312,10 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
   const result = await Promise.all(
     items.map(async (item) => {
       const ordered = parseFloat(item.qty ?? "0") || 0;
-      const remaining = ordered - (receivedByItem[item.id] ?? 0) - (reservedByItem[item.id] ?? 0);
+      // Written off = the business has stopped chasing this shortfall, so it
+      // shouldn't be offered for packing even though qty math alone would
+      // still show it as remaining.
+      const remaining = item.shortfallClosedStatus ? 0 : ordered - (receivedByItem[item.id] ?? 0) - (reservedByItem[item.id] ?? 0);
       const po = poMap[item.purchaseOrderId];
       let imageUrl: string | null = null;
       if (item.imageKey) {
@@ -346,6 +363,49 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
   return result.filter((i) => i.qtyRemaining > 0);
 }
 
+export type SupplierOutstandingIssue = { packingListId: string; packingListNo: string; itemCount: number };
+
+// Prior COMPLETED packing lists for this supplier that had a short-received
+// or returned-to-supplier line — surfaced as a banner on the "New Packing
+// List" page so it's obvious a new shipment is (at least partly) resolving
+// an earlier problem, not just a fresh unexplained order. Doesn't try to
+// determine whether a later receipt already fully resolved the shortfall —
+// getPackableItemsForSupplier's qtyRemaining is what actually gates whether
+// the item can be packed again; this is purely an informational pointer.
+export async function getSupplierOutstandingIssues(supplierId: string): Promise<SupplierOutstandingIssue[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+
+  const rows = await db
+    .select({
+      packingListId: packingList.id,
+      packingListNo: packingList.packingListNo,
+      qtyExpected: packingListItem.qtyExpected,
+      draftQtyReceived: packingListItem.draftQtyReceived,
+      draftQtyReturn: packingListItem.draftQtyReturn,
+    })
+    .from(packingListItem)
+    .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+    .where(and(
+      eq(packingList.organizationId, orgId),
+      eq(packingList.supplierId, supplierId),
+      eq(packingList.status, "completed"),
+    ));
+
+  const byPl = new Map<string, SupplierOutstandingIssue>();
+  for (const r of rows) {
+    const expected = parseFloat(r.qtyExpected) || 0;
+    const received = parseFloat(r.draftQtyReceived ?? r.qtyExpected) || 0;
+    const returned = parseFloat(r.draftQtyReturn ?? "0") || 0;
+    if (received < expected || returned > 0) {
+      const bucket = byPl.get(r.packingListId) ?? { packingListId: r.packingListId, packingListNo: r.packingListNo, itemCount: 0 };
+      bucket.itemCount += 1;
+      byPl.set(r.packingListId, bucket);
+    }
+  }
+
+  return [...byPl.values()];
+}
+
 // Confirmed POs that still have items with nothing packed for them yet
 // (ordered qty not fully covered by receipts or pending packing lists) — the
 // "still needs a packing list" queue, shown on the Packing Lists page above
@@ -372,9 +432,13 @@ export async function getPurchaseOrdersPendingPacking(): Promise<PendingPackingL
   const supplierIds = [...new Set(pos.map((p) => p.supplierId).filter((id): id is string => !!id))];
 
   const [grItems, plItems, suppliers] = await Promise.all([
-    db.select({ purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyReceived: goodsReceiptItem.qtyReceived })
+    // See getPackableItemsForSupplier above — qtyGood (not qtyReceived) so a
+    // returned-to-supplier qty still shows up as remaining to pack, and
+    // recalled GRs don't reserve against the PO.
+    db.select({ purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyGood: goodsReceiptItem.qtyGood, qtyReceived: goodsReceiptItem.qtyReceived })
       .from(goodsReceiptItem)
-      .where(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds)),
+      .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+      .where(and(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds), ne(goodsReceipt.status, "recalled"))),
     db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
@@ -387,7 +451,8 @@ export async function getPurchaseOrdersPendingPacking(): Promise<PendingPackingL
   const receivedByItem: Record<string, number> = {};
   for (const gi of grItems) {
     if (!gi.purchaseOrderItemId) continue;
-    receivedByItem[gi.purchaseOrderItemId] = (receivedByItem[gi.purchaseOrderItemId] ?? 0) + (parseFloat(gi.qtyReceived ?? "0") || 0);
+    const accepted = parseFloat(gi.qtyGood ?? gi.qtyReceived ?? "0") || 0;
+    receivedByItem[gi.purchaseOrderItemId] = (receivedByItem[gi.purchaseOrderItemId] ?? 0) + accepted;
   }
   const reservedByItem: Record<string, number> = {};
   for (const pi of plItems) {
@@ -397,6 +462,7 @@ export async function getPurchaseOrdersPendingPacking(): Promise<PendingPackingL
 
   const byPo: Record<string, { itemsRemaining: number; qtyRemaining: number }> = {};
   for (const item of items) {
+    if (item.shortfallClosedStatus) continue;
     const ordered = parseFloat(item.qty ?? "0") || 0;
     const remaining = ordered - (receivedByItem[item.id] ?? 0) - (reservedByItem[item.id] ?? 0);
     if (remaining > 0) {
@@ -477,7 +543,7 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
     ? await db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo }).from(purchaseOrder).where(inArray(purchaseOrder.id, poIds))
     : [];
   const poNoMap = Object.fromEntries(poRows.map((p) => [p.id, p.poNo]));
-  const inspectorNameMap = await getInspectorNameMap(items);
+  const nameMap = await getUserNameMap(items.flatMap((i) => [i.draftInspectedBy, i.draftApprovedBy]));
   const photosByItem = await getPhotosForItems(items.map((i) => i.id));
 
   const enrichedItems: PackingListItemEnriched[] = await Promise.all(
@@ -492,7 +558,8 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
       return {
         ...i,
         imageUrl,
-        draftInspectedByName: i.draftInspectedBy ? (inspectorNameMap.get(i.draftInspectedBy) ?? null) : null,
+        draftInspectedByName: i.draftInspectedBy ? (nameMap.get(i.draftInspectedBy) ?? null) : null,
+        draftApprovedByName: i.draftApprovedBy ? (nameMap.get(i.draftApprovedBy) ?? null) : null,
         photos: photosByItem.get(i.id) ?? [],
       };
     }),
@@ -508,10 +575,10 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
 }
 
 // Shared by getPackingListDetail/Centralized to resolve who's currently
-// shown as "last inspected by" per line — collected once per distinct user
-// across all items rather than N+1 per row.
-async function getInspectorNameMap(items: PackingListItemRow[]): Promise<Map<string, string>> {
-  const ids = [...new Set(items.map((i) => i.draftInspectedBy).filter((v): v is string => !!v))];
+// shown as "last inspected by" / "approved by" per line — collected once per
+// distinct user across all items rather than N+1 per row.
+async function getUserNameMap(userIds: (string | null)[]): Promise<Map<string, string>> {
+  const ids = [...new Set(userIds.filter((v): v is string => !!v))];
   if (ids.length === 0) return new Map();
   const rows = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids));
   return new Map(rows.map((r) => [r.id, r.name]));
@@ -597,7 +664,7 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
     ? await db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo }).from(purchaseOrder).where(inArray(purchaseOrder.id, poIds))
     : [];
   const poNoMap = Object.fromEntries(poRows.map((p) => [p.id, p.poNo]));
-  const inspectorNameMap = await getInspectorNameMap(items);
+  const nameMap = await getUserNameMap(items.flatMap((i) => [i.draftInspectedBy, i.draftApprovedBy]));
   const photosByItem = await getPhotosForItems(items.map((i) => i.id));
 
   const enrichedItems: PackingListItemEnriched[] = await Promise.all(
@@ -612,7 +679,8 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
       return {
         ...i,
         imageUrl,
-        draftInspectedByName: i.draftInspectedBy ? (inspectorNameMap.get(i.draftInspectedBy) ?? null) : null,
+        draftInspectedByName: i.draftInspectedBy ? (nameMap.get(i.draftInspectedBy) ?? null) : null,
+        draftApprovedByName: i.draftApprovedBy ? (nameMap.get(i.draftApprovedBy) ?? null) : null,
         photos: photosByItem.get(i.id) ?? [],
       };
     }),
@@ -654,9 +722,14 @@ export async function createPackingList(input: CreatePackingListInput): Promise<
   const poItemMap = Object.fromEntries(poItems.map((i) => [i.id, i]));
 
   const [grItems, plItems] = await Promise.all([
-    db.select({ purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyReceived: goodsReceiptItem.qtyReceived })
+    // qtyGood (not qtyReceived) and recalled GRs excluded — same reasoning as
+    // getPackableItemsForSupplier above: a returned-to-supplier qty was never
+    // actually kept, so it must still show as remaining, or this exact
+    // re-validation rejects the very re-pack it's supposed to allow.
+    db.select({ purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyGood: goodsReceiptItem.qtyGood, qtyReceived: goodsReceiptItem.qtyReceived })
       .from(goodsReceiptItem)
-      .where(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds)),
+      .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+      .where(and(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds), ne(goodsReceipt.status, "recalled"))),
     db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
@@ -665,7 +738,8 @@ export async function createPackingList(input: CreatePackingListInput): Promise<
   const receivedByItem: Record<string, number> = {};
   for (const gi of grItems) {
     if (!gi.purchaseOrderItemId) continue;
-    receivedByItem[gi.purchaseOrderItemId] = (receivedByItem[gi.purchaseOrderItemId] ?? 0) + (parseFloat(gi.qtyReceived ?? "0") || 0);
+    const accepted = parseFloat(gi.qtyGood ?? gi.qtyReceived ?? "0") || 0;
+    receivedByItem[gi.purchaseOrderItemId] = (receivedByItem[gi.purchaseOrderItemId] ?? 0) + accepted;
   }
   const reservedByItem: Record<string, number> = {};
   for (const pi of plItems) {
@@ -676,7 +750,7 @@ export async function createPackingList(input: CreatePackingListInput): Promise<
     const poItem = poItemMap[item.purchaseOrderItemId];
     if (!poItem) throw new Error("One of the selected items no longer exists");
     const ordered = parseFloat(poItem.qty ?? "0") || 0;
-    const remaining = ordered - (receivedByItem[item.purchaseOrderItemId] ?? 0) - (reservedByItem[item.purchaseOrderItemId] ?? 0);
+    const remaining = poItem.shortfallClosedStatus ? 0 : ordered - (receivedByItem[item.purchaseOrderItemId] ?? 0) - (reservedByItem[item.purchaseOrderItemId] ?? 0);
     const qty = parseFloat(item.qtyExpected) || 0;
     if (qty <= 0) throw new Error(`Quantity for ${poItem.productCode ?? "an item"} must be greater than 0`);
     if (qty > remaining + 1e-9) {
@@ -763,6 +837,28 @@ async function assertCanInspectPackingList(plOrgId: string, callerOrgId: string,
   const callerPerms = await getUserPermissions(userId, callerOrgId);
   const targetPerms = await getUserPermissions(userId, plOrgId);
   if (!hasAccess(callerPerms, "packing-list:inspect:centralized") && !hasAccess(targetPerms, "packing-list:inspect")) {
+    throw new Error("You don't have permission to do this");
+  }
+}
+
+// Same shape as assertCanInspectPackingList above, but for the approval
+// stage. Own-org just needs packing-list:approve (the Org-Approvals-managed
+// key, with its self-action-allowed setting); cross-org needs either the
+// dedicated packing-list:approve:centralized grant (a plain permission,
+// managed at /dashboard/admin/permissions like inspect:centralized — not
+// part of the Org Approvals self-action system), or packing-list:approve
+// evaluated specifically in the packing list's own org.
+async function assertCanApprovePackingList(plOrgId: string, callerOrgId: string, userId: string): Promise<void> {
+  if (plOrgId === callerOrgId) {
+    const perms = await getUserPermissions(userId, callerOrgId);
+    if (!hasAccess(perms, "packing-list:approve")) throw new Error("You don't have permission to do this");
+    return;
+  }
+  const ownerOrgIds = await getOwnerOrgIds(callerOrgId);
+  if (!ownerOrgIds.includes(plOrgId)) throw new Error("You don't have permission to do this");
+  const callerPerms = await getUserPermissions(userId, callerOrgId);
+  const targetPerms = await getUserPermissions(userId, plOrgId);
+  if (!hasAccess(callerPerms, "packing-list:approve:centralized") && !hasAccess(targetPerms, "packing-list:approve")) {
     throw new Error("You don't have permission to do this");
   }
 }
@@ -909,11 +1005,87 @@ export async function saveInspectionLineDraft(packingListItemId: string, input: 
       draftRepairNotes: input.repairNotes || null,
       draftInspectedBy: userId,
       draftInspectedAt: inspectedAt,
+      // Any edit invalidates a prior approval/rejection — the numbers being
+      // signed off on just changed, so this line needs review again.
+      draftApprovalStatus: "pending",
+      draftApprovalNotes: null,
+      draftApprovedBy: null,
+      draftApprovedAt: null,
     })
     .where(eq(packingListItem.id, packingListItemId));
 
   const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
   return { inspectedByName: u?.name ?? null, inspectedAt };
+}
+
+// The approval stage that gates completePackingListInspection — a second
+// person (packing-list:approve) reviews each inspected line's numbers before
+// they can be locked into a Goods Receipt. Self-approval is blocked/allowed
+// per-org via Org Approvals (see lib/approvals/constants.ts), same mechanism
+// as every other approve workflow in this app.
+export async function approveInspectionLine(
+  packingListItemId: string,
+  decision: "approved" | "rejected",
+  notes?: string,
+): Promise<{ approvedByName: string | null; approvedAt: Date }> {
+  const { orgId, userId } = await getSession();
+
+  const [row] = await db
+    .select({ item: packingListItem, pl: packingList })
+    .from(packingListItem)
+    .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+    .where(eq(packingListItem.id, packingListItemId));
+  if (!row) throw new Error("Item not found");
+  if (row.pl.status !== "pending") throw new Error("This packing list has already been inspected or cancelled");
+
+  await assertCanApprovePackingList(row.pl.organizationId, orgId, userId);
+  // Self-action-allowed is a setting of the org the packing list actually
+  // belongs to, not the caller's currently-active org. A line nobody has
+  // touched yet has no "owner" to self-check against — falls through to the
+  // normal approve path, since approving its untouched default (fully
+  // accepted, qtyExpected) is a legitimate outcome, not a rubber-stamp of
+  // someone else's numbers.
+  //
+  // Cross-org approval (the caller's active org differs from the packing
+  // list's own org — i.e. they got here via packing-list:approve:centralized
+  // or an owner's sibling-org membership) gets its own, separately
+  // configurable self-action rule rather than sharing the local one — see
+  // DEFAULT_SELF_ACTION_ALLOWED in lib/approvals/constants.ts.
+  if (row.item.draftInspectedBy) {
+    const selfActionKey = orgId === row.pl.organizationId ? "packing-list:approve" : "packing-list:approve:centralized";
+    await assertSelfActionAllowed(row.pl.organizationId, selfActionKey, row.item.draftInspectedBy, userId, decision === "approved" ? "approve" : "reject");
+  }
+
+  const approvedAt = new Date();
+  await db
+    .update(packingListItem)
+    .set({
+      draftApprovalStatus: decision,
+      draftApprovalNotes: notes || null,
+      draftApprovedBy: userId,
+      draftApprovedAt: approvedAt,
+    })
+    .where(eq(packingListItem.id, packingListItemId));
+
+  const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
+  revalidatePath(`/dashboard/procurement/packing-list/${row.pl.id}/inspect`);
+  revalidatePath(`/dashboard/procurement/packing-list/centralized/${row.pl.id}/inspect`);
+  return { approvedByName: u?.name ?? null, approvedAt };
+}
+
+// Lets the inspect page decide whether to render approve/reject controls at
+// all, without throwing — most people viewing this page only have
+// packing-list:inspect, not packing-list:approve. Takes the packing list's
+// own org (not necessarily the caller's active org) so this works correctly
+// from the centralized cross-org inspect page too.
+export async function canApprovePackingListInspection(plOrganizationId: string): Promise<boolean> {
+  const { orgId, userId } = await getSession();
+  try {
+    await assertCanApprovePackingList(plOrganizationId, orgId, userId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type InspectionLineState = {
@@ -925,12 +1097,16 @@ export type InspectionLineState = {
   draftRepairNotes: string | null;
   inspectedByName: string | null;
   inspectedAt: Date | null;
+  approvalStatus: string | null;
+  approvalNotes: string | null;
+  approvedByName: string | null;
+  approvedAt: Date | null;
   photos: InspectionPhoto[];
 };
 
 // Polled periodically by the inspect form so everyone currently inspecting
 // this packing list sees each other's line-by-line progress — including
-// newly attached photos — without a full-page reload.
+// newly attached photos and approval decisions — without a full-page reload.
 export async function getInspectionLineStates(packingListId: string): Promise<InspectionLineState[]> {
   const { orgId, userId } = await getSession();
 
@@ -939,11 +1115,8 @@ export async function getInspectionLineStates(packingListId: string): Promise<In
   await assertCanInspectPackingList(pl.organizationId, orgId, userId);
 
   const rows = await db.select().from(packingListItem).where(eq(packingListItem.packingListId, packingListId)).orderBy(asc(packingListItem.rowNo));
-  const inspectorIds = [...new Set(rows.map((r) => r.draftInspectedBy).filter((v): v is string => !!v))];
-  const users = inspectorIds.length > 0
-    ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, inspectorIds))
-    : [];
-  const nameOf = (id: string | null) => (id ? (users.find((u) => u.id === id)?.name ?? null) : null);
+  const nameMap = await getUserNameMap(rows.flatMap((r) => [r.draftInspectedBy, r.draftApprovedBy]));
+  const nameOf = (id: string | null) => (id ? (nameMap.get(id) ?? null) : null);
   const photosByItem = await getPhotosForItems(rows.map((r) => r.id));
 
   return rows.map((r) => ({
@@ -955,6 +1128,10 @@ export async function getInspectionLineStates(packingListId: string): Promise<In
     draftRepairNotes: r.draftRepairNotes,
     inspectedByName: nameOf(r.draftInspectedBy),
     inspectedAt: r.draftInspectedAt,
+    approvalStatus: r.draftApprovalStatus,
+    approvalNotes: r.draftApprovalNotes,
+    approvedByName: nameOf(r.draftApprovedBy),
+    approvedAt: r.draftApprovedAt,
     photos: photosByItem.get(r.id) ?? [],
   }));
 }
@@ -977,6 +1154,17 @@ async function applyPackingListInspection(
 
   const plItems = await db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo));
   if (plItems.length === 0) throw new Error("This packing list has no items");
+
+  // Every line needs a sign-off from packing-list:approve before the numbers
+  // get locked into a Goods Receipt — an inspector's own entry isn't enough
+  // on its own. Rejected lines block the same way: they need to be
+  // re-inspected (which resets them to "pending") and re-approved.
+  const notApproved = plItems.filter((i) => i.draftApprovalStatus !== "approved");
+  if (notApproved.length > 0) {
+    throw new Error(
+      `${notApproved.length} of ${plItems.length} item${plItems.length !== 1 ? "s" : ""} still need${notApproved.length === 1 ? "s" : ""} approval before this packing list can be completed`,
+    );
+  }
 
   // Group lines by their source PO — one Goods Receipt gets created per
   // distinct PO, all sharing this packingListId.
@@ -1117,14 +1305,15 @@ export async function resolveReceiptItemAction(
   goodsReceiptItemId: string,
   actionType: "return" | "repair",
 ): Promise<{ resolvedByName: string | null; resolvedAt: Date }> {
-  const { orgId, userId } = await requireAccess("packing-list:inspect");
+  const { orgId, userId } = await getSession();
 
   const [row] = await db
     .select({ id: goodsReceiptItem.id, orgId: goodsReceipt.organizationId, grStatus: goodsReceipt.status })
     .from(goodsReceiptItem)
     .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
     .where(eq(goodsReceiptItem.id, goodsReceiptItemId));
-  if (!row || row.orgId !== orgId) throw new Error("Item not found");
+  if (!row) throw new Error("Item not found");
+  await assertCanInspectPackingList(row.orgId, orgId, userId);
   if (row.grStatus === "recalled") throw new Error("This goods receipt has been recalled — nothing to resolve");
 
   const resolvedAt = new Date();
@@ -1140,6 +1329,12 @@ export async function resolveReceiptItemAction(
       .where(and(eq(goodsReceiptItem.id, goodsReceiptItemId), eq(goodsReceiptItem.repairStatus, "pending")));
   }
   revalidatePath("/dashboard/procurement/purchase-order");
+  // Resolving a return also changes whether the same line now counts as a
+  // genuine shortfall on the Goods Receipts page's outstanding-issues panel
+  // (see getPendingReturnsAndRepairs in server/goods-receipt.ts) — without
+  // this, that panel would keep serving a stale cached read.
+  revalidatePath("/dashboard/procurement/goods-receipt");
+  revalidatePath("/dashboard/procurement/goods-receipt/centralized");
 
   const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
   return { resolvedByName: u?.name ?? null, resolvedAt };

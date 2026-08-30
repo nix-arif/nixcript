@@ -1997,6 +1997,19 @@ export const purchaseOrderItem = pgTable(
     oemEditedBy: text("oem_edited_by"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
+
+    // A short-shipped line normally self-resolves once a follow-up shipment
+    // tops it up — the remaining-to-pack math already handles that
+    // automatically. This is the manual override for the two ways it
+    // DOESN'T self-resolve: "resolved" (the replacement showed up through
+    // some means outside a formal packing list — a manual attestation, same
+    // trust level as resolving a return/repair) or "written_off" (a
+    // deliberate decision to stop chasing it — supplier dispute, accepting
+    // the loss). Either one stops the item from appearing as remaining-to-
+    // pack and drops it off the outstanding-issues monitoring list.
+    shortfallClosedStatus: text("shortfall_closed_status"), // "resolved" | "written_off" | null
+    shortfallClosedBy: text("shortfall_closed_by").references(() => user.id),
+    shortfallClosedAt: timestamp("shortfall_closed_at"),
   },
   (t) => [index("purchase_order_item_po_idx").on(t.purchaseOrderId)],
 );
@@ -2316,6 +2329,17 @@ export const packingListItem = pgTable(
     draftRepairNotes: text("draft_repair_notes"),
     draftInspectedBy: text("draft_inspected_by").references(() => user.id),
     draftInspectedAt: timestamp("draft_inspected_at"),
+
+    // Per-item approval stage — a second person (packing-list:approve) signs
+    // off on the inspector's draft numbers before the packing list can be
+    // completed into a Goods Receipt. Null until the line is first inspected;
+    // any further edit to the draft above resets this back to "pending" since
+    // the numbers being approved just changed. completePackingListInspection
+    // refuses to run while any line isn't "approved".
+    draftApprovalStatus: text("draft_approval_status"), // "pending" | "approved" | "rejected" | null
+    draftApprovalNotes: text("draft_approval_notes"),
+    draftApprovedBy: text("draft_approved_by").references(() => user.id),
+    draftApprovedAt: timestamp("draft_approved_at"),
   },
   (t) => [index("packing_list_item_pl_idx").on(t.packingListId)],
 );

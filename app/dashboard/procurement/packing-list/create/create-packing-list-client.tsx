@@ -6,9 +6,11 @@ import { toast } from "sonner";
 import {
   createPackingList,
   getPackableItemsForSupplier,
+  getSupplierOutstandingIssues,
   type PackableSupplier,
   type PackableItem,
   type PackingListItemInput,
+  type SupplierOutstandingIssue,
 } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, ClipboardCheckIcon, DatabaseIcon, PencilIcon,
-  ClipboardListIcon, PlusIcon, TagIcon, LinkIcon, XIcon,
+  ClipboardListIcon, PlusIcon, TagIcon, LinkIcon, XIcon, AlertTriangleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -94,6 +96,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, business
   const [supplierId, setSupplierId] = useState(initialSupplierId ?? "");
   const [items, setItems] = useState<PackableItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  const [outstandingIssues, setOutstandingIssues] = useState<SupplierOutstandingIssue[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [qtys, setQtys] = useState<Record<string, string>>({});
   const [supplierRefNo, setSupplierRefNo] = useState("");
@@ -102,7 +105,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, business
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!supplierId) { setItems([]); setSelected({}); setQtys({}); return; }
+    if (!supplierId) { setItems([]); setSelected({}); setQtys({}); setOutstandingIssues([]); return; }
     setLoadingItems(true);
     getPackableItemsForSupplier(supplierId)
       .then((rows) => {
@@ -111,6 +114,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, business
         setQtys(Object.fromEntries(rows.map((r) => [r.purchaseOrderItemId, String(r.qtyRemaining)])));
       })
       .finally(() => setLoadingItems(false));
+    getSupplierOutstandingIssues(supplierId).then(setOutstandingIssues);
   }, [supplierId]);
 
   const byPo = items.reduce<Record<string, PackableItem[]>>((acc, item) => {
@@ -245,6 +249,35 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, business
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Shipping details, courier tracking no…" className="text-sm resize-none" rows={2} />
           </div>
         </section>
+
+        {supplierId && outstandingIssues.length > 0 && (
+          <div className="border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/15 rounded-xl p-4">
+            <div className="flex items-center gap-1.5 mb-2">
+              <AlertTriangleIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <h2 className="text-xs font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
+                Outstanding issues from this supplier
+              </h2>
+            </div>
+            <p className="text-xs text-amber-700 dark:text-amber-400 mb-2">
+              These packing lists had short-received or returned items — if this new shipment resolves them, the missing quantity already shows up as remaining to pack below.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {outstandingIssues.map((issue) => (
+                <button
+                  key={issue.packingListId}
+                  type="button"
+                  onClick={() => window.open(`/dashboard/procurement/packing-list/${issue.packingListId}`, "_blank")}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-mono font-medium px-2 py-1 rounded-md bg-background border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors"
+                >
+                  {issue.packingListNo}
+                  <span className="font-sans font-normal text-amber-600 dark:text-amber-500">
+                    {issue.itemCount} item{issue.itemCount !== 1 ? "s" : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {supplierId && (
           <section className="border border-border rounded-xl p-4">

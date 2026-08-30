@@ -358,6 +358,15 @@ export type CreateLedgerEntryInput = {
 
 export async function createLedgerEntry(data: CreateLedgerEntryInput): Promise<string> {
   const { orgId, userId } = await requireAccess("account:create");
+  return insertLedgerEntry(orgId, userId, data);
+}
+
+// Shared by createLedgerEntry (account:create) and the narrower Accounts
+// Receivable module (accounts-receivable:create, server/accounts-receivable.ts)
+// — both build a CreateLedgerEntryInput after their own permission checks and
+// insert it the same way, so the insert logic (and the DRAFT/invoice-junction
+// behavior) can't drift between the two entry points.
+export async function insertLedgerEntry(orgId: string, userId: string, data: CreateLedgerEntryInput): Promise<string> {
   // Validate balance
   const totalDebit = data.lines.reduce((s, l) => s + parseFloat(l.debit || "0"), 0);
   const totalCredit = data.lines.reduce((s, l) => s + parseFloat(l.credit || "0"), 0);

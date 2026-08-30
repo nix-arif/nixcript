@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getPackingListDetailCentralized, completePackingListInspectionCentralized } from "@/server/packing-list";
+import { getPackingListDetailCentralized, completePackingListInspectionCentralized, canApprovePackingListInspection } from "@/server/packing-list";
 import { InspectPackingListClient } from "../../../[id]/inspect/inspect-packing-list-client";
 
 export default async function CentralizedInspectPackingListPage({ params }: { params: Promise<{ id: string }> }) {
@@ -12,6 +12,7 @@ export default async function CentralizedInspectPackingListPage({ params }: { pa
   if (!data.canInspect || data.status !== "pending") redirect(`/dashboard/procurement/packing-list/centralized/${id}`);
 
   const { organizationName, businessType, ...packingList } = data;
+  const canApprove = await canApprovePackingListInspection(packingList.organizationId);
 
   return (
     <InspectPackingListClient
@@ -20,6 +21,7 @@ export default async function CentralizedInspectPackingListPage({ params }: { pa
       submitFn={completePackingListInspectionCentralized}
       backHref={`/dashboard/procurement/packing-list/centralized/${id}`}
       organizationName={organizationName}
+      canApprove={canApprove}
     />
   );
 }
