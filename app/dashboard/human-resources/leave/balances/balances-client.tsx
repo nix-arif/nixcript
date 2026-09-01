@@ -285,6 +285,16 @@ export function LeaveBalancesClient({ members, leaveTypes, noticePolicies }: Pro
                             ) : (
                               fmtDays(b.earnedDays)
                             )}
+                            {b.earnedExpired && (
+                              <span className="block text-[10px] text-amber-600 dark:text-amber-400">
+                                some expired
+                              </span>
+                            )}
+                            {!b.earnedExpired && b.earnedNextExpiryOn && (
+                              <span className="block text-[10px] text-amber-600 dark:text-amber-400">
+                                exp. {b.earnedNextExpiryOn}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">
                             {fmtDays(b.usedDays)} / {fmtDays(b.pendingDays)}

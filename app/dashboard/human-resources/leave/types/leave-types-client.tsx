@@ -274,6 +274,7 @@ interface FormData {
   emergencyThresholdDays: string;
   entitlementRules: EntitlementRule[];
   creditHourRules: CreditHourRule[];
+  creditExpiryDays: string;
   sortOrder: string;
   description: string;
 }
@@ -292,6 +293,7 @@ const defaultForm: FormData = {
   emergencyThresholdDays: "",
   entitlementRules: [{ minYears: 0, maxYears: null, days: 0 }],
   creditHourRules: [],
+  creditExpiryDays: "",
   sortOrder: "0",
   description: "",
 };
@@ -311,6 +313,7 @@ function rowToForm(lt: LeaveTypeRow): FormData {
     emergencyThresholdDays: lt.emergencyThresholdDays?.toString() ?? "",
     entitlementRules: (lt.entitlementRules ?? []) as EntitlementRule[],
     creditHourRules: (lt.creditHourRules ?? []) as CreditHourRule[],
+    creditExpiryDays: lt.creditExpiryDays?.toString() ?? "",
     sortOrder: lt.sortOrder.toString(),
     description: lt.description ?? "",
   };
@@ -383,6 +386,9 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
           : undefined,
         entitlementRules: form.entitlementRules,
         creditHourRules: form.creditHourRules,
+        creditExpiryDays: form.creditExpiryDays
+          ? parseInt(form.creditExpiryDays, 10)
+          : undefined,
         sortOrder: parseInt(form.sortOrder, 10) || 0,
         description: form.description.trim() || undefined,
       };
@@ -606,6 +612,15 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                           Credit-based
                         </Badge>
                       )}
+                      {lt.isCreditBased && lt.creditExpiryDays !== null && (
+                        <Badge
+                          variant="outline"
+                          className="text-xs px-1.5 py-0 h-5 text-orange-700 border-orange-200 bg-orange-50 dark:text-orange-400 dark:border-orange-700"
+                          title={`Each approved credit request expires ${lt.creditExpiryDays} days after its own approval date`}
+                        >
+                          Expires {lt.creditExpiryDays}d
+                        </Badge>
+                      )}
                       {lt.emergencyThresholdDays !== null && (
                         <Badge
                           variant="outline"
@@ -756,6 +771,22 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                   worked earns nothing, 4&ndash;8h counts as half a day, 8h+ earns a full day. Leave
                   empty to credit a flat 1 day per date regardless of hours.
                 </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="ltCreditExpiryDays">Credit Expires After (days)</Label>
+                  <input
+                    id="ltCreditExpiryDays"
+                    type="number"
+                    min={1}
+                    value={form.creditExpiryDays}
+                    onChange={(e) => setForm((f) => ({ ...f, creditExpiryDays: e.target.value }))}
+                    placeholder="Never expires"
+                    className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Each approved credit request stays usable for this many days from the date it was
+                    approved (its own window, not a shared yearly cutoff). Leave empty to never expire.
+                  </p>
+                </div>
               </div>
             )}
 

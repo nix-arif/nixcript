@@ -233,7 +233,16 @@ function BalanceCard({ balance }: { balance: MyLeaveBalance }) {
         )}
         {earned > 0 && (
           <div className="flex justify-between">
-            <span>Earned (credit)</span>
+            <span>
+              Earned (credit)
+              {balance.earnedExpired ? (
+                <span className="text-amber-600 dark:text-amber-400"> (some expired)</span>
+              ) : (
+                balance.earnedNextExpiryOn && (
+                  <span className="text-amber-600 dark:text-amber-400"> (expires {balance.earnedNextExpiryOn})</span>
+                )
+              )}
+            </span>
             <span className="font-medium text-blue-600 dark:text-blue-400">+{formatDays(earned)}d</span>
           </div>
         )}

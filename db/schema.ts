@@ -3216,6 +3216,12 @@ export const leaveType = pgTable(
       .$type<Array<{ minHours: number; maxHours: number | null; days: number }>>()
       .notNull()
       .default([]),
+    // Days after an individual leaveCreditRequest is approved that it stays
+    // usable — unlike carryForwardExpiryMonths (one shared calendar cutoff
+    // per year), each approval gets its own window from its own approval
+    // date, snapshotted onto leaveCreditRequest.expiresOn at approval time.
+    // Null = never expires. See getEarnedAvailableByType in server/leave.ts.
+    creditExpiryDays: integer("credit_expiry_days"),
     sortOrder: integer("sort_order").notNull().default(0),
     description: text("description"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -3377,6 +3383,11 @@ export const leaveCreditRequest = pgTable(
     reviewedBy: text("reviewed_by").references(() => user.id),
     reviewedAt: timestamp("reviewed_at"),
     reviewComment: text("review_comment"),
+    // Set only on approval, from leaveType.creditExpiryDays at that moment
+    // (a snapshot — editing the type's setting afterward doesn't change
+    // already-approved requests). Null = never expires. Compared as a plain
+    // "YYYY-MM-DD" string against today in getEarnedAvailableByType.
+    expiresOn: text("expires_on"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },

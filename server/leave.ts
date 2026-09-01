@@ -57,6 +57,13 @@ export type MyLeaveBalance = LeaveEntitlementRow & {
   // (historical record) but is excluded from remainingDays once expired.
   carryForwardExpired: boolean;
   carryForwardExpiresOn: string | null;
+  // Same idea as carryForwardExpired/Expiresn but for earned (credit-based)
+  // leave — computed live from leaveCreditRequest rows, each with its own
+  // expiresOn, rather than one shared cutoff. earnedExpired is true once
+  // some earned credit has expired (total > available); earnedNextExpiryOn
+  // is the soonest still-valid expiry, for a "use it by" nudge.
+  earnedExpired: boolean;
+  earnedNextExpiryOn: string | null;
   // Splits usedDays/pendingDays by the label actually recorded on each
   // application (leaveApplication.leaveTypeCode/Name) rather than this
   // type's own code — so Annual Leave's card can show how much of its
@@ -390,6 +397,7 @@ export async function createLeaveType(data: {
   isCreditBased?: boolean;
   entitlementRules: Array<{ minYears: number; maxYears: number | null; days: number }>;
   creditHourRules?: Array<{ minHours: number; maxHours: number | null; days: number }>;
+  creditExpiryDays?: number;
   description?: string;
   sortOrder?: number;
 }): Promise<LeaveTypeRow> {
@@ -413,6 +421,7 @@ export async function createLeaveType(data: {
     isCreditBased: data.isCreditBased ?? false,
     entitlementRules: data.entitlementRules,
     creditHourRules: data.creditHourRules ?? [],
+    creditExpiryDays: data.creditExpiryDays ?? null,
     sortOrder: data.sortOrder ?? 0,
     description: data.description?.trim() ?? null,
     createdAt: new Date(),
@@ -439,6 +448,7 @@ export async function updateLeaveType(
     isCreditBased: boolean;
     entitlementRules: Array<{ minYears: number; maxYears: number | null; days: number }>;
     creditHourRules: Array<{ minHours: number; maxHours: number | null; days: number }>;
+    creditExpiryDays: number | null;
     description: string;
     isActive: boolean;
     sortOrder: number;
@@ -625,6 +635,7 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
     isCreditBased: (d as { isCreditBased?: boolean }).isCreditBased ?? false,
     entitlementRules: d.entitlementRules,
     creditHourRules: (d as { creditHourRules?: Array<{ minHours: number; maxHours: number | null; days: number }> }).creditHourRules ?? [],
+    creditExpiryDays: (d as { creditExpiryDays?: number }).creditExpiryDays ?? null,
     sortOrder: d.sortOrder,
     description: d.description,
     createdAt: new Date(),
@@ -636,6 +647,60 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
 /* =========================
    LEAVE BALANCES
 ========================= */
+
+// "YYYY-MM-DD" for right now, in local time — same reasoning as every other
+// local-date formatter this session: never toISOString(), which converts to
+// UTC first and silently shifts the date in any nonzero-offset timezone.
+function todayLocalDate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Earned-credit balance is computed live from approved leaveCreditRequest
+// rows rather than a stored running total — each approval has its own
+// expiresOn (set at approval time from the type's creditExpiryDays), so
+// "available" has to exclude expired ones individually, not as one shared
+// cutoff the way carryForwardExpiryMonths works. One batched query covers
+// every credit-based type the user has (or pass leaveTypeId to scope it to
+// one, e.g. from applyForLeave's balance check).
+async function getEarnedAvailableByType(
+  orgId: string,
+  userId: string,
+  leaveTypeId?: string,
+): Promise<Record<string, { total: number; available: number; nextExpiryOn: string | null }>> {
+  const rows = await db
+    .select({
+      leaveTypeId: leaveCreditRequest.leaveTypeId,
+      totalDays: leaveCreditRequest.totalDays,
+      expiresOn: leaveCreditRequest.expiresOn,
+    })
+    .from(leaveCreditRequest)
+    .where(
+      and(
+        eq(leaveCreditRequest.organizationId, orgId),
+        eq(leaveCreditRequest.userId, userId),
+        eq(leaveCreditRequest.status, "APPROVED"),
+        leaveTypeId ? eq(leaveCreditRequest.leaveTypeId, leaveTypeId) : undefined,
+      ),
+    );
+
+  const today = todayLocalDate();
+  const result: Record<string, { total: number; available: number; nextExpiryOn: string | null }> = {};
+  for (const r of rows) {
+    const bucket = result[r.leaveTypeId] ?? { total: 0, available: 0, nextExpiryOn: null };
+    const days = parseFloat(r.totalDays);
+    bucket.total += days;
+    const expired = r.expiresOn !== null && r.expiresOn < today;
+    if (!expired) {
+      bucket.available += days;
+      if (r.expiresOn && (!bucket.nextExpiryOn || r.expiresOn < bucket.nextExpiryOn)) {
+        bucket.nextExpiryOn = r.expiresOn;
+      }
+    }
+    result[r.leaveTypeId] = bucket;
+  }
+  return result;
+}
 
 async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBalance[]> {
   const year = new Date().getFullYear();
@@ -649,6 +714,8 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
   for (const type of types) {
     ents.push(await ensureEntitlement(orgId, userId, type, year));
   }
+
+  const earnedByType = await getEarnedAvailableByType(orgId, userId);
 
   const setByIds = [...new Set([
     ...ents.map((e) => e.openingBalanceSetBy),
@@ -699,7 +766,8 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
     const carryExpired = isCarryForwardExpired(type.carryForwardExpiryMonths, ent.year);
     const carry = carryExpired ? 0 : parseFloat(ent.carryForwardDays);
     const opening = parseFloat(ent.openingBalance);
-    const earned = parseFloat(ent.earnedDays);
+    const earnedInfo = earnedByType[type.id];
+    const earned = earnedInfo?.available ?? 0;
     const openingUsed = parseFloat(ent.openingUsedDays);
     const used = parseFloat(ent.usedDays);
     const pending = parseFloat(ent.pendingDays);
@@ -717,12 +785,15 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
       allowHalfDay: type.allowHalfDay,
       emergencyThresholdDays: type.emergencyThresholdDays,
       remainingDays: remaining.toFixed(1),
+      earnedDays: (earnedInfo?.total ?? 0).toFixed(2),
       openingBalanceSetByName: ent.openingBalanceSetBy ? nameMap[ent.openingBalanceSetBy] ?? null : null,
       openingUsedDaysSetByName: ent.openingUsedDaysSetBy ? nameMap[ent.openingUsedDaysSetBy] ?? null : null,
       carryForwardExpired: carryExpired,
       carryForwardExpiresOn: cutoff
         ? `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`
         : null,
+      earnedExpired: (earnedInfo?.total ?? 0) > (earnedInfo?.available ?? 0),
+      earnedNextExpiryOn: earnedInfo?.nextExpiryOn ?? null,
       breakdown,
     };
   });
@@ -1204,7 +1275,7 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
   // the displayed remaining total.
   const carry = isCarryForwardExpired(lt.carryForwardExpiryMonths, year) ? 0 : parseFloat(ent.carryForwardDays);
   const opening = parseFloat(ent.openingBalance);
-  const earned = parseFloat(ent.earnedDays);
+  const earned = (await getEarnedAvailableByType(orgId, userId, lt.id))[lt.id]?.available ?? 0;
   const used = parseFloat(ent.usedDays);
   const pending = parseFloat(ent.pendingDays);
   const available = entitled + carry + opening + earned - used - pending;
@@ -1599,14 +1670,17 @@ export async function approveReplacementCredit(id: string, comment?: string): Pr
   const [lt] = await db.select().from(leaveType).where(eq(leaveType.id, req.leaveTypeId)).limit(1);
   if (!lt) throw new Error("Leave type not found");
 
-  // Credited to the current year, same as every balance lookup elsewhere in
-  // this module (applyForLeave/computeBalances always key off
-  // new Date().getFullYear() regardless of the leave dates themselves).
-  const year = new Date().getFullYear();
-  const ent = await ensureEntitlement(orgId, req.userId, lt, year);
-  const totalDays = parseFloat(req.totalDays);
+  // Snapshotted at approval time, not recomputed later — editing the
+  // type's creditExpiryDays afterward shouldn't retroactively change
+  // already-approved requests. Earned balance is derived live from these
+  // per-request expiries (getEarnedAvailableByType), not a pooled counter.
+  let expiresOn: string | null = null;
+  if (lt.creditExpiryDays != null) {
+    const d = new Date();
+    d.setDate(d.getDate() + lt.creditExpiryDays);
+    expiresOn = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
 
-  // neon-http driver has no transaction support — update sequentially.
   await db
     .update(leaveCreditRequest)
     .set({
@@ -1614,17 +1688,10 @@ export async function approveReplacementCredit(id: string, comment?: string): Pr
       reviewedBy: userId,
       reviewedAt: new Date(),
       reviewComment: comment?.trim() ?? null,
+      expiresOn,
       updatedAt: new Date(),
     })
     .where(eq(leaveCreditRequest.id, id));
-
-  await db
-    .update(leaveEntitlement)
-    .set({
-      earnedDays: (parseFloat(ent.earnedDays) + totalDays).toFixed(2),
-      updatedAt: new Date(),
-    })
-    .where(eq(leaveEntitlement.id, ent.id));
 
   const period = req.dateFrom === req.dateUntil ? req.dateFrom : `${req.dateFrom} to ${req.dateUntil}`;
   await notifyUser(orgId, req.userId, {
