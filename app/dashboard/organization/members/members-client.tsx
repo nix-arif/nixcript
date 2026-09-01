@@ -95,12 +95,10 @@ function EmploymentDialog({
   onSaved: () => void;
 }) {
   const [hireDateDraft, setHireDateDraft] = useState(m.hireDate ?? "");
-  const [savingHireDate, setSavingHireDate] = useState(false);
   const [employmentStatusDraft, setEmploymentStatusDraft] = useState(m.employmentStatus ?? "");
-  const [savingEmploymentStatus, setSavingEmploymentStatus] = useState(false);
   const [noticeDateDraft, setNoticeDateDraft] = useState(m.noticeDate ?? "");
   const [leaveBlockedOnNoticeDraft, setLeaveBlockedOnNoticeDraft] = useState(m.leaveBlockedOnNotice ?? true);
-  const [savingNoticeDate, setSavingNoticeDate] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const bucket = memberNoticeRoleBucket(m);
   const previewStatus = employmentStatusDraft || m.employmentStatus;
@@ -109,46 +107,27 @@ function EmploymentDialog({
     policies,
   );
 
-  async function handleSaveHireDate() {
-    setSavingHireDate(true);
+  // One button saves every field at once — sequential so a failure partway
+  // through (e.g. notice date rejected) still leaves the earlier saves
+  // (hire date, status) committed rather than silently discarding them.
+  async function handleSaveAll() {
+    setSaving(true);
     try {
       await setMemberHireDate(m.userId, hireDateDraft || null);
-      toast.success("Hire date saved");
-      onSaved();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setSavingHireDate(false);
-    }
-  }
-
-  async function handleSaveEmploymentStatus() {
-    if (!employmentStatusDraft) return;
-    setSavingEmploymentStatus(true);
-    try {
-      await setMemberEmploymentStatus(
-        m.userId,
-        employmentStatusDraft as "probation" | "permanent" | "resigned" | "terminated",
-      );
-      toast.success("Employment status saved");
-      onSaved();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setSavingEmploymentStatus(false);
-    }
-  }
-
-  async function handleSaveNoticeDate() {
-    setSavingNoticeDate(true);
-    try {
+      if (employmentStatusDraft) {
+        await setMemberEmploymentStatus(
+          m.userId,
+          employmentStatusDraft as "probation" | "permanent" | "resigned" | "terminated",
+        );
+      }
       await setMemberNoticeDate(m.userId, noticeDateDraft || null, leaveBlockedOnNoticeDraft);
-      toast.success("Notice details saved");
+      toast.success("Employment record saved");
       onSaved();
+      onClose();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
-      setSavingNoticeDate(false);
+      setSaving(false);
     }
   }
 
@@ -164,17 +143,12 @@ function EmploymentDialog({
         <div className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Hire date</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={hireDateDraft}
-                onChange={(e) => setHireDateDraft(e.target.value)}
-                className="h-9 border border-input rounded-md px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
-              />
-              <Button size="sm" disabled={savingHireDate} onClick={handleSaveHireDate}>
-                {savingHireDate ? "…" : "Save"}
-              </Button>
-            </div>
+            <input
+              type="date"
+              value={hireDateDraft}
+              onChange={(e) => setHireDateDraft(e.target.value)}
+              className="h-9 border border-input rounded-md px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+            />
             <p className="text-[11px] text-muted-foreground">
               Falls back to the date they were added to the org if left blank.
             </p>
@@ -182,20 +156,15 @@ function EmploymentDialog({
 
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Employment status</label>
-            <div className="flex items-center gap-2">
-              <select
-                value={employmentStatusDraft}
-                onChange={(e) => setEmploymentStatusDraft(e.target.value)}
-                className="h-9 border border-input rounded-md px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
-              >
-                {EMPLOYMENT_STATUS_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-              <Button size="sm" disabled={savingEmploymentStatus || !employmentStatusDraft} onClick={handleSaveEmploymentStatus}>
-                {savingEmploymentStatus ? "…" : "Save"}
-              </Button>
-            </div>
+            <select
+              value={employmentStatusDraft}
+              onChange={(e) => setEmploymentStatusDraft(e.target.value)}
+              className="h-9 border border-input rounded-md px-2 text-sm bg-background outline-none focus:ring-1 focus:ring-ring"
+            >
+              {EMPLOYMENT_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
             <p className="text-[11px] text-muted-foreground">
               While on Probation, leave types marked &quot;not allowed during probation&quot; can&apos;t be applied for.
             </p>
@@ -219,9 +188,6 @@ function EmploymentDialog({
                 />
                 Block restricted leave types during notice
               </label>
-              <Button size="sm" disabled={savingNoticeDate} onClick={handleSaveNoticeDate}>
-                {savingNoticeDate ? "…" : "Save"}
-              </Button>
             </div>
             <p className="text-[11px] text-muted-foreground">
               Set when this member tenders resignation. Only applies to leave types marked
@@ -243,7 +209,10 @@ function EmploymentDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button size="sm" onClick={handleSaveAll} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
