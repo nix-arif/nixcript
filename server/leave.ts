@@ -5,6 +5,7 @@ import {
   leaveType,
   leaveEntitlement,
   leaveApplication,
+  leaveCreditRequest,
   leaveDocument,
   member,
   user,
@@ -27,6 +28,7 @@ import { eq, and, desc, asc, inArray, sql, ne, isNull, gte, lte } from "drizzle-
 export type LeaveTypeRow = typeof leaveType.$inferSelect;
 export type LeaveEntitlementRow = typeof leaveEntitlement.$inferSelect;
 export type LeaveApplicationRow = typeof leaveApplication.$inferSelect;
+export type LeaveCreditRequestRow = typeof leaveCreditRequest.$inferSelect;
 export type LeaveDocumentRow = typeof leaveDocument.$inferSelect;
 
 export type LeaveApplicationWithDetails = LeaveApplicationRow & {
@@ -102,6 +104,34 @@ function calculateWorkingDays(startDate: string, endDate: string, isHalfDay: boo
   return days;
 }
 
+// Every calendar date in [dateFrom, dateUntil] inclusive — unlike
+// calculateWorkingDays above, weekends are NOT skipped: the entire premise
+// of a replacement-credit claim is that the person worked on a day they
+// normally wouldn't have (a weekend or public holiday).
+//
+// Formats each date via local getters (getFullYear/getMonth/getDate), NOT
+// toISOString() — that converts to UTC first, which silently shifts the
+// date by a day whenever the runtime's timezone offset is nonzero. Since
+// the input was parsed from "YYYY-MM-DDT00:00:00" (also local), this
+// round-trip is timezone-agnostic and always returns the same date string
+// that was input — required so this matches the client's identical
+// calcDateRange in my-leave-client.tsx regardless of where either runs.
+function calcDateRange(dateFrom: string, dateUntil: string): string[] {
+  const start = new Date(dateFrom + "T00:00:00");
+  const end = new Date(dateUntil + "T00:00:00");
+  if (start > end) return [];
+  const dates: string[] = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    const y = cur.getFullYear();
+    const m = String(cur.getMonth() + 1).padStart(2, "0");
+    const d = String(cur.getDate()).padStart(2, "0");
+    dates.push(`${y}-${m}-${d}`);
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
+}
+
 function calcServiceYears(joinDate: Date): number {
   const ms = Date.now() - joinDate.getTime();
   return ms / (1000 * 60 * 60 * 24 * 365.25);
@@ -137,6 +167,29 @@ function getEntitledDays(
     (r) => serviceYears >= r.minYears && (r.maxYears === null || serviceYears < r.maxYears),
   );
   return rule?.days ?? 0;
+}
+
+// Converts hours worked on one date into a day credit — same tiered-rule
+// shape as getEntitledDays above, keyed by hours instead of years. An
+// unconfigured type (no rules) falls back to a flat 1 day per date, so
+// configuring this is optional, not required for credit-based types to work.
+function getCreditDaysForHours(
+  rules: Array<{ minHours: number; maxHours: number | null; days: number }>,
+  hours: number,
+): number {
+  if (rules.length === 0) return 1;
+  const rule = rules.find(
+    (r) => hours >= r.minHours && (r.maxHours === null || hours < r.maxHours),
+  );
+  return rule?.days ?? 0;
+}
+
+// Decimal hours between two "HH:MM" times — same-day only, no handling for
+// a shift crossing midnight (not asked for, keeps scope contained).
+function calcHoursWorked(timeFrom: string, timeUntil: string): number {
+  const [fh, fm] = timeFrom.split(":").map(Number);
+  const [uh, um] = timeUntil.split(":").map(Number);
+  return (uh * 60 + um - (fh * 60 + fm)) / 60;
 }
 
 async function generateApplicationNo(orgId: string): Promise<string> {
@@ -264,6 +317,7 @@ async function ensureEntitlement(
     usedDays: "0",
     pendingDays: "0",
     carryForwardDays: carryForwardDays.toString(),
+    earnedDays: "0",
     openingBalance: "0",
     openingBalanceSetBy: null,
     openingBalanceSetAt: null,
@@ -311,7 +365,9 @@ export async function createLeaveType(data: {
   emergencyThresholdDays?: number;
   allowDuringProbation?: boolean;
   blockedDuringNotice?: boolean;
+  isCreditBased?: boolean;
   entitlementRules: Array<{ minYears: number; maxYears: number | null; days: number }>;
+  creditHourRules?: Array<{ minHours: number; maxHours: number | null; days: number }>;
   description?: string;
   sortOrder?: number;
 }): Promise<LeaveTypeRow> {
@@ -331,7 +387,9 @@ export async function createLeaveType(data: {
     emergencyThresholdDays: data.emergencyThresholdDays ?? null,
     allowDuringProbation: data.allowDuringProbation ?? true,
     blockedDuringNotice: data.blockedDuringNotice ?? false,
+    isCreditBased: data.isCreditBased ?? false,
     entitlementRules: data.entitlementRules,
+    creditHourRules: data.creditHourRules ?? [],
     sortOrder: data.sortOrder ?? 0,
     description: data.description?.trim() ?? null,
     createdAt: new Date(),
@@ -354,7 +412,9 @@ export async function updateLeaveType(
     emergencyThresholdDays: number | null;
     allowDuringProbation: boolean;
     blockedDuringNotice: boolean;
+    isCreditBased: boolean;
     entitlementRules: Array<{ minYears: number; maxYears: number | null; days: number }>;
+    creditHourRules: Array<{ minHours: number; maxHours: number | null; days: number }>;
     description: string;
     isActive: boolean;
     sortOrder: number;
@@ -484,6 +544,31 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
       entitlementRules: [{ minYears: 0, maxYears: null, days: 3 }],
     },
     {
+      name: "Replacement Leave",
+      code: "REPL",
+      isPaid: true,
+      requiresDocument: false,
+      allowHalfDay: true,
+      carryForwardEnabled: false,
+      maxCarryForward: null,
+      // No application-level cap — a credit request can span a date range,
+      // and each date's own contribution is already bounded by the hour
+      // tiers below.
+      isCreditBased: true,
+      sortOrder: 7,
+      description: "A day off in exchange for working an off-day or public holiday. Request credit via 'Request Replacement Credit'; once approved, apply for it here like any other leave.",
+      // Starts at 0 — balance only grows as leaveCreditRequest rows get
+      // approved (leaveEntitlement.earnedDays), not from a tenure tier.
+      entitlementRules: [{ minYears: 0, maxYears: null, days: 0 }],
+      // Starter thresholds matching common practice: under 4h worked earns
+      // nothing, 4-8h counts as half a day, a full 8h+ shift earns a full day.
+      creditHourRules: [
+        { minHours: 0, maxHours: 4, days: 0 },
+        { minHours: 4, maxHours: 8, days: 0.5 },
+        { minHours: 8, maxHours: null, days: 1 },
+      ],
+    },
+    {
       name: "Unpaid Leave",
       code: "UPL",
       isPaid: false,
@@ -512,7 +597,9 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
     emergencyThresholdDays: (d as { emergencyThresholdDays?: number }).emergencyThresholdDays ?? null,
     allowDuringProbation: (d as { allowDuringProbation?: boolean }).allowDuringProbation ?? true,
     blockedDuringNotice: (d as { blockedDuringNotice?: boolean }).blockedDuringNotice ?? false,
+    isCreditBased: (d as { isCreditBased?: boolean }).isCreditBased ?? false,
     entitlementRules: d.entitlementRules,
+    creditHourRules: (d as { creditHourRules?: Array<{ minHours: number; maxHours: number | null; days: number }> }).creditHourRules ?? [],
     sortOrder: d.sortOrder,
     description: d.description,
     createdAt: new Date(),
@@ -586,10 +673,11 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
     const entitled = parseFloat(ent.entitledDays);
     const carry = parseFloat(ent.carryForwardDays);
     const opening = parseFloat(ent.openingBalance);
+    const earned = parseFloat(ent.earnedDays);
     const openingUsed = parseFloat(ent.openingUsedDays);
     const used = parseFloat(ent.usedDays);
     const pending = parseFloat(ent.pendingDays);
-    const remaining = entitled + carry + opening - openingUsed - used - pending;
+    const remaining = entitled + carry + opening + earned - openingUsed - used - pending;
     const byLabel = breakdownByType.get(type.id);
     const breakdown = byLabel && byLabel.size > 0
       ? [...byLabel.values()].sort((a, b) => (a.code === type.code ? -1 : b.code === type.code ? 1 : 0))
@@ -1082,9 +1170,10 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
   const entitled = parseFloat(ent.entitledDays);
   const carry = parseFloat(ent.carryForwardDays);
   const opening = parseFloat(ent.openingBalance);
+  const earned = parseFloat(ent.earnedDays);
   const used = parseFloat(ent.usedDays);
   const pending = parseFloat(ent.pendingDays);
-  const available = entitled + carry + opening - used - pending;
+  const available = entitled + carry + opening + earned - used - pending;
 
   if (totalDays > available) {
     throw new Error(
@@ -1312,6 +1401,283 @@ export async function cancelLeave(appId: string, reason?: string): Promise<void>
       .set(update)
       .where(eq(leaveEntitlement.id, ent[0].id));
   }
+}
+
+/* =========================
+   REPLACEMENT CREDIT (earn side of credit-based leave types)
+========================= */
+
+export type LeaveCreditRequestWithDetails = LeaveCreditRequestRow & {
+  applicantName: string | null;
+};
+
+async function generateCreditRequestNo(orgId: string): Promise<string> {
+  const year = new Date().getFullYear();
+  const rows = await db
+    .select({ requestNo: leaveCreditRequest.requestNo })
+    .from(leaveCreditRequest)
+    .where(
+      and(
+        eq(leaveCreditRequest.organizationId, orgId),
+        sql`${leaveCreditRequest.requestNo} LIKE ${`RC-${year}-%`}`,
+      ),
+    )
+    .orderBy(desc(leaveCreditRequest.requestNo));
+  let next = 1;
+  if (rows.length > 0) {
+    const parts = rows[0].requestNo.split("-");
+    const num = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(num)) next = num + 1;
+  }
+  return `RC-${year}-${String(next).padStart(4, "0")}`;
+}
+
+export type ReplacementCreditLine = {
+  date: string;
+  timeFrom: string;
+  timeUntil: string;
+  reason: string;
+};
+
+export type ApplyReplacementCreditInput = {
+  leaveTypeId: string;
+  dateFrom: string;
+  dateUntil: string;
+  lines: ReplacementCreditLine[];
+};
+
+export async function applyForReplacementCredit(data: ApplyReplacementCreditInput): Promise<string> {
+  const { orgId, userId, userName } = await requireAccess("leave:apply");
+
+  const [lt] = await db
+    .select()
+    .from(leaveType)
+    .where(and(eq(leaveType.id, data.leaveTypeId), eq(leaveType.organizationId, orgId)))
+    .limit(1);
+  if (!lt || !lt.isActive) throw new Error("Leave type not found or inactive");
+  if (!lt.isCreditBased) throw new Error(`${lt.name} does not accept replacement-credit requests`);
+
+  if (!data.dateFrom || !data.dateUntil) throw new Error("The dates you worked are required");
+  if (new Date(data.dateFrom + "T00:00:00") > new Date(data.dateUntil + "T00:00:00"))
+    throw new Error("The 'from' date must be on or before the 'until' date");
+  if (new Date(data.dateUntil + "T00:00:00") > new Date())
+    throw new Error("The worked dates can't be in the future");
+
+  // Server derives the expected date set itself rather than trusting the
+  // client's line count — same principle applyForLeave follows for
+  // totalDays from startDate/endDate.
+  const expectedDates = calcDateRange(data.dateFrom, data.dateUntil);
+  const lineDates = data.lines.map((l) => l.date);
+  const lineSet = new Set(lineDates);
+  if (
+    lineDates.length !== expectedDates.length ||
+    lineSet.size !== lineDates.length ||
+    !expectedDates.every((d) => lineSet.has(d))
+  ) {
+    throw new Error("Every date from the worked range must have exactly one entry");
+  }
+
+  for (const line of data.lines) {
+    if (!line.timeFrom || !line.timeUntil) throw new Error(`Time in/out is required for ${line.date}`);
+    if (line.timeUntil <= line.timeFrom) throw new Error(`Time until must be after time from for ${line.date}`);
+    if (!line.reason?.trim()) throw new Error(`A reason is required for ${line.date}`);
+  }
+
+  // Each date's day-credit is computed here, server-side, from the hours
+  // worked against the type's creditHourRules — the client never sends a
+  // days value, same principle as totalDays itself.
+  const computedLines = data.lines.map((line) => {
+    const hours = calcHoursWorked(line.timeFrom, line.timeUntil);
+    return { ...line, days: getCreditDaysForHours(lt.creditHourRules, hours) };
+  });
+  const totalDays = computedLines.reduce((sum, l) => sum + l.days, 0);
+  if (lt.maxDaysPerApplication && totalDays > lt.maxDaysPerApplication) {
+    throw new Error(`Maximum ${lt.maxDaysPerApplication} days allowed per credit request for ${lt.name}`);
+  }
+
+  // No individual date already backing another non-cancelled/rejected claim.
+  const existing = await db
+    .select({ workLines: leaveCreditRequest.workLines })
+    .from(leaveCreditRequest)
+    .where(
+      and(
+        eq(leaveCreditRequest.userId, userId),
+        eq(leaveCreditRequest.organizationId, orgId),
+        eq(leaveCreditRequest.leaveTypeId, data.leaveTypeId),
+        ne(leaveCreditRequest.status, "CANCELLED"),
+        ne(leaveCreditRequest.status, "REJECTED"),
+      ),
+    );
+  const claimedDates = new Set(existing.flatMap((r) => r.workLines.map((l) => l.date)));
+  const conflicts = expectedDates.filter((d) => claimedDates.has(d));
+  if (conflicts.length > 0) {
+    throw new Error(`You've already claimed replacement credit for: ${conflicts.join(", ")}`);
+  }
+
+  const requestNo = await generateCreditRequestNo(orgId);
+  const id = nanoid();
+  const sortedLines = [...computedLines].sort((a, b) => a.date.localeCompare(b.date));
+  await db.insert(leaveCreditRequest).values({
+    id,
+    organizationId: orgId,
+    requestNo,
+    userId,
+    leaveTypeId: lt.id,
+    leaveTypeName: lt.name,
+    leaveTypeCode: lt.code,
+    dateFrom: data.dateFrom,
+    dateUntil: data.dateUntil,
+    totalDays: totalDays.toFixed(2),
+    workLines: sortedLines.map((l) => ({
+      date: l.date,
+      timeFrom: l.timeFrom,
+      timeUntil: l.timeUntil,
+      reason: l.reason.trim(),
+      days: l.days,
+    })),
+    status: "PENDING",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  const period = data.dateFrom === data.dateUntil ? data.dateFrom : `${data.dateFrom} to ${data.dateUntil}`;
+  await notifyUsersWithPermission(orgId, "leave:approve", {
+    type: "leave:credit:submitted",
+    title: `Replacement Credit Request: ${lt.name}`,
+    body: `${userName} claimed ${totalDays} day(s) of ${lt.name} for working ${period}`,
+    link: `/dashboard/human-resources/leave/approvals`,
+  });
+
+  return id;
+}
+
+export async function approveReplacementCredit(id: string, comment?: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("leave:approve");
+  const [req] = await db
+    .select()
+    .from(leaveCreditRequest)
+    .where(and(eq(leaveCreditRequest.id, id), eq(leaveCreditRequest.organizationId, orgId)))
+    .limit(1);
+  if (!req) throw new Error("Request not found");
+  if (req.status !== "PENDING") throw new Error("Only pending requests can be approved");
+  await assertSelfActionAllowed(orgId, "leave:approve", req.userId, userId, "approve");
+
+  const [lt] = await db.select().from(leaveType).where(eq(leaveType.id, req.leaveTypeId)).limit(1);
+  if (!lt) throw new Error("Leave type not found");
+
+  // Credited to the current year, same as every balance lookup elsewhere in
+  // this module (applyForLeave/computeBalances always key off
+  // new Date().getFullYear() regardless of the leave dates themselves).
+  const year = new Date().getFullYear();
+  const ent = await ensureEntitlement(orgId, req.userId, lt, year);
+  const totalDays = parseFloat(req.totalDays);
+
+  // neon-http driver has no transaction support — update sequentially.
+  await db
+    .update(leaveCreditRequest)
+    .set({
+      status: "APPROVED",
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      reviewComment: comment?.trim() ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveCreditRequest.id, id));
+
+  await db
+    .update(leaveEntitlement)
+    .set({
+      earnedDays: (parseFloat(ent.earnedDays) + totalDays).toFixed(2),
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveEntitlement.id, ent.id));
+
+  const period = req.dateFrom === req.dateUntil ? req.dateFrom : `${req.dateFrom} to ${req.dateUntil}`;
+  await notifyUser(orgId, req.userId, {
+    type: "leave:credit:approved",
+    title: `Replacement Credit Approved: ${req.leaveTypeName}`,
+    body: `Your claim for ${req.totalDays} day(s) worked ${period} has been approved — your ${req.leaveTypeName} balance has increased.`,
+    link: `/dashboard/human-resources/leave`,
+  });
+}
+
+export async function rejectReplacementCredit(id: string, reason: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("leave:approve");
+  if (!reason.trim()) throw new Error("Rejection reason is required");
+  const [req] = await db
+    .select()
+    .from(leaveCreditRequest)
+    .where(and(eq(leaveCreditRequest.id, id), eq(leaveCreditRequest.organizationId, orgId)))
+    .limit(1);
+  if (!req) throw new Error("Request not found");
+  if (req.status !== "PENDING") throw new Error("Only pending requests can be rejected");
+  await assertSelfActionAllowed(orgId, "leave:approve", req.userId, userId, "reject");
+
+  await db
+    .update(leaveCreditRequest)
+    .set({
+      status: "REJECTED",
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      reviewComment: reason.trim(),
+      updatedAt: new Date(),
+    })
+    .where(eq(leaveCreditRequest.id, id));
+
+  await notifyUser(orgId, req.userId, {
+    type: "leave:credit:rejected",
+    title: `Replacement Credit Rejected: ${req.leaveTypeName}`,
+    body: `Your claim for ${req.totalDays} day(s) worked ${req.dateFrom === req.dateUntil ? req.dateFrom : `${req.dateFrom} to ${req.dateUntil}`} was rejected. Reason: ${reason.trim()}`,
+    link: `/dashboard/human-resources/leave`,
+  });
+}
+
+// Only while PENDING — nothing's been credited yet, so there's no
+// leaveEntitlement effect to undo (unlike cancelLeave, which can reverse an
+// APPROVED application). Withdrawing an already-approved credit is a manual
+// HR adjustment via Leave Balances, out of scope here.
+export async function cancelReplacementCredit(id: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("leave:apply");
+  const [req] = await db
+    .select()
+    .from(leaveCreditRequest)
+    .where(and(eq(leaveCreditRequest.id, id), eq(leaveCreditRequest.organizationId, orgId)))
+    .limit(1);
+  if (!req) throw new Error("Request not found");
+  const perms = await getUserPermissions(userId, orgId);
+  if (req.userId !== userId && !hasAccess(perms, "leave:approve"))
+    throw new Error("You can only cancel your own requests");
+  if (req.status !== "PENDING") throw new Error("Only pending requests can be cancelled");
+
+  await db
+    .update(leaveCreditRequest)
+    .set({ status: "CANCELLED", updatedAt: new Date() })
+    .where(eq(leaveCreditRequest.id, id));
+}
+
+export async function getMyReplacementCredits(): Promise<LeaveCreditRequestWithDetails[]> {
+  const { orgId, userId } = await requireAccess("leave:read:own");
+  const reqs = await db
+    .select()
+    .from(leaveCreditRequest)
+    .where(and(eq(leaveCreditRequest.organizationId, orgId), eq(leaveCreditRequest.userId, userId)))
+    .orderBy(desc(leaveCreditRequest.createdAt));
+
+  const userRow = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
+  const applicantName = userRow[0]?.name ?? null;
+  return reqs.map((r) => ({ ...r, applicantName }));
+}
+
+export async function getPendingReplacementCredits(): Promise<LeaveCreditRequestWithDetails[]> {
+  const { orgId } = await requireAccess("leave:approve");
+  const reqs = await db
+    .select({ req: leaveCreditRequest, applicantName: user.name })
+    .from(leaveCreditRequest)
+    .leftJoin(user, eq(leaveCreditRequest.userId, user.id))
+    .where(and(eq(leaveCreditRequest.organizationId, orgId), eq(leaveCreditRequest.status, "PENDING")))
+    .orderBy(asc(leaveCreditRequest.dateFrom));
+
+  return reqs.map(({ req, applicantName }) => ({ ...req, applicantName: applicantName ?? null }));
 }
 
 /* =========================

@@ -149,6 +149,115 @@ function EntitlementRuleEditor({
   );
 }
 
+// ── Credit hour rules (credit-based types only) ─────────────────────────────
+
+interface CreditHourRule {
+  minHours: number;
+  maxHours: number | null;
+  days: number;
+}
+
+function formatHourRules(rules: Array<{ minHours: number; maxHours: number | null; days: number }>): string {
+  if (rules.length === 0) return "1 day per date (default)";
+  return rules
+    .map((r) => (r.maxHours === null ? `${r.days}d (${r.minHours}h+)` : `${r.days}d (<${r.maxHours}h)`))
+    .join(" · ");
+}
+
+// Sibling to EntitlementRuleEditor below — same row-based min/max/days
+// editor, keyed by hours worked on a single date instead of years of
+// service. Kept separate rather than generalized since EntitlementRuleEditor
+// is load-bearing for the tenure-tier feature already.
+function CreditHourRuleEditor({
+  rules,
+  onChange,
+}: {
+  rules: CreditHourRule[];
+  onChange: (rules: CreditHourRule[]) => void;
+}) {
+  function update(idx: number, field: keyof CreditHourRule, value: string) {
+    onChange(
+      rules.map((r, i) => {
+        if (i !== idx) return r;
+        if (field === "maxHours")
+          return { ...r, maxHours: value === "" ? null : parseFloat(value) };
+        if (field === "days") return { ...r, days: parseFloat(value) || 0 };
+        return { ...r, [field]: parseFloat(value) || 0 };
+      }),
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <Label>Hours &rarr; Days Rules</Label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 gap-1 text-xs"
+          onClick={() => onChange([...rules, { minHours: 0, maxHours: null, days: 0 }])}
+        >
+          <PlusIcon className="h-3 w-3" />
+          Add Rule
+        </Button>
+      </div>
+      {rules.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          No rules defined — every worked date will credit a flat 1 day regardless of hours.
+        </p>
+      )}
+      {rules.map((rule, idx) => (
+        <div key={idx} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-end p-3 rounded-md bg-muted/40 border border-border">
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">Min Hours</Label>
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={rule.minHours}
+              onChange={(e) => update(idx, "minHours", e.target.value)}
+              className="w-full border border-input rounded-md px-2 py-1.5 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">Max Hours (blank = &infin;)</Label>
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={rule.maxHours ?? ""}
+              onChange={(e) => update(idx, "maxHours", e.target.value)}
+              placeholder="∞"
+              className="w-full border border-input rounded-md px-2 py-1.5 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">Days</Label>
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={rule.days}
+              onChange={(e) => update(idx, "days", e.target.value)}
+              className="w-full border border-input rounded-md px-2 py-1.5 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+            onClick={() => onChange(rules.filter((_, i) => i !== idx))}
+          >
+            <TrashIcon className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Form types ─────────────────────────────────────────────────────────────
 
 interface FormData {
@@ -157,11 +266,13 @@ interface FormData {
   isPaid: boolean;
   requiresDocument: boolean;
   allowHalfDay: boolean;
+  isCreditBased: boolean;
   maxDaysPerApplication: string;
   carryForwardEnabled: boolean;
   maxCarryForward: string;
   emergencyThresholdDays: string;
   entitlementRules: EntitlementRule[];
+  creditHourRules: CreditHourRule[];
   sortOrder: string;
   description: string;
 }
@@ -172,11 +283,13 @@ const defaultForm: FormData = {
   isPaid: true,
   requiresDocument: false,
   allowHalfDay: true,
+  isCreditBased: false,
   maxDaysPerApplication: "",
   carryForwardEnabled: false,
   maxCarryForward: "",
   emergencyThresholdDays: "",
   entitlementRules: [{ minYears: 0, maxYears: null, days: 0 }],
+  creditHourRules: [],
   sortOrder: "0",
   description: "",
 };
@@ -188,11 +301,13 @@ function rowToForm(lt: LeaveTypeRow): FormData {
     isPaid: lt.isPaid,
     requiresDocument: lt.requiresDocument,
     allowHalfDay: lt.allowHalfDay,
+    isCreditBased: lt.isCreditBased,
     maxDaysPerApplication: lt.maxDaysPerApplication?.toString() ?? "",
     carryForwardEnabled: lt.carryForwardEnabled,
     maxCarryForward: lt.maxCarryForward?.toString() ?? "",
     emergencyThresholdDays: lt.emergencyThresholdDays?.toString() ?? "",
     entitlementRules: (lt.entitlementRules ?? []) as EntitlementRule[],
+    creditHourRules: (lt.creditHourRules ?? []) as CreditHourRule[],
     sortOrder: lt.sortOrder.toString(),
     description: lt.description ?? "",
   };
@@ -249,6 +364,7 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
         isPaid: form.isPaid,
         requiresDocument: form.requiresDocument,
         allowHalfDay: form.allowHalfDay,
+        isCreditBased: form.isCreditBased,
         maxDaysPerApplication: form.maxDaysPerApplication
           ? parseInt(form.maxDaysPerApplication, 10)
           : undefined,
@@ -260,6 +376,7 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
           ? parseInt(form.emergencyThresholdDays, 10)
           : undefined,
         entitlementRules: form.entitlementRules,
+        creditHourRules: form.creditHourRules,
         sortOrder: parseInt(form.sortOrder, 10) || 0,
         description: form.description.trim() || undefined,
       };
@@ -419,13 +536,21 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
 
                   {/* Entitlement */}
                   <TableCell className="text-sm text-muted-foreground">
-                    {formatEntitlementRules(
-                      lt.entitlementRules as Array<{
-                        minYears: number;
-                        maxYears: number | null;
-                        days: number;
-                      }>,
-                    )}
+                    {lt.isCreditBased
+                      ? formatHourRules(
+                          lt.creditHourRules as Array<{
+                            minHours: number;
+                            maxHours: number | null;
+                            days: number;
+                          }>,
+                        )
+                      : formatEntitlementRules(
+                          lt.entitlementRules as Array<{
+                            minYears: number;
+                            maxYears: number | null;
+                            days: number;
+                          }>,
+                        )}
                   </TableCell>
 
                   {/* Options — compact flags */}
@@ -460,6 +585,15 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                           }
                         >
                           {lt.maxCarryForward !== null ? `CF ${lt.maxCarryForward}d` : "CF"}
+                        </Badge>
+                      )}
+                      {lt.isCreditBased && (
+                        <Badge
+                          variant="outline"
+                          className="text-xs px-1.5 py-0 h-5 text-orange-700 border-orange-200 bg-orange-50 dark:text-orange-400 dark:border-orange-700"
+                          title="Entitlement is earned via approved replacement-credit requests, not an annual tier"
+                        >
+                          Credit-based
                         </Badge>
                       )}
                       {lt.emergencyThresholdDays !== null && (
@@ -581,6 +715,7 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                 { id: "ltIsPaid", label: "Paid Leave", field: "isPaid" as const },
                 { id: "ltRequiresDoc", label: "Requires MC/Doc", field: "requiresDocument" as const },
                 { id: "ltAllowHalfDay", label: "Allow Half-day", field: "allowHalfDay" as const },
+                { id: "ltIsCreditBased", label: "Credit-Based Entitlement", field: "isCreditBased" as const },
               ].map(({ id, label, field }) => (
                 <label key={id} className="flex items-center gap-2 cursor-pointer select-none">
                   <input
@@ -594,6 +729,25 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                 </label>
               ))}
             </div>
+            {form.isCreditBased && (
+              <div className="flex flex-col gap-3 rounded-md border border-border p-3">
+                <p className="text-xs text-muted-foreground">
+                  Entitlement isn&apos;t computed from the tier table below — it starts at 0 (set the
+                  rule&apos;s days to 0) and grows only as members&apos; &ldquo;Request Replacement
+                  Credit&rdquo; submissions get approved. Members then apply for the leave itself
+                  normally, against that earned balance.
+                </p>
+                <CreditHourRuleEditor
+                  rules={form.creditHourRules}
+                  onChange={(creditHourRules) => setForm((f) => ({ ...f, creditHourRules }))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Converts the hours worked on each claimed date into a day credit — e.g. under 4h
+                  worked earns nothing, 4&ndash;8h counts as half a day, 8h+ earns a full day. Leave
+                  empty to credit a flat 1 day per date regardless of hours.
+                </p>
+              </div>
+            )}
 
             {/* Max days + sort order */}
             <div className="grid grid-cols-2 gap-4">

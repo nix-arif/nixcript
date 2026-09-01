@@ -3188,8 +3188,25 @@ export const leaveType = pgTable(
     // seedDefaultLeaveTypes sets Annual Leave's actual values explicitly.
     allowDuringProbation: boolean("allow_during_probation").notNull().default(true),
     blockedDuringNotice: boolean("blocked_during_notice").notNull().default(false),
+    // Types whose entitlement is earned via approved leaveCreditRequest rows
+    // (e.g. Replacement Leave) instead of the entitlementRules tenure table
+    // below — entitlementRules is conventionally left at a flat 0 for these,
+    // and leaveEntitlement.earnedDays (credited on each approval) is what
+    // actually funds the balance. See applyForReplacementCredit/
+    // approveReplacementCredit in server/leave.ts.
+    isCreditBased: boolean("is_credit_based").notNull().default(false),
     entitlementRules: json("entitlement_rules")
       .$type<Array<{ minYears: number; maxYears: number | null; days: number }>>()
+      .notNull()
+      .default([]),
+    // Converts hours worked on a single date (a leaveCreditRequest work
+    // line) into a day credit — e.g. <4h -> 0, 4-8h -> 0.5, 8h+ -> 1. Same
+    // tiered shape as entitlementRules above, just keyed by hours instead
+    // of years of service. Empty = fall back to a flat 1 day per date
+    // (getCreditDaysForHours in server/leave.ts), so this is optional to
+    // configure, not required for credit-based types to function.
+    creditHourRules: json("credit_hour_rules")
+      .$type<Array<{ minHours: number; maxHours: number | null; days: number }>>()
       .notNull()
       .default([]),
     sortOrder: integer("sort_order").notNull().default(0),
@@ -3245,6 +3262,12 @@ export const leaveEntitlement = pgTable(
     usedDays: text("used_days").notNull().default("0"),
     pendingDays: text("pending_days").notNull().default("0"),
     carryForwardDays: text("carry_forward_days").notNull().default("0"),
+    // Credited by approveReplacementCredit as replacement-leave-style
+    // requests are approved (server/leave.ts) — additive like
+    // carryForwardDays/openingBalance below, so ensureEntitlement's
+    // entitledDays resync (which only recomputes from entitlementRules)
+    // never touches or wipes it.
+    earnedDays: text("earned_days").notNull().default("0"),
     // Manual starting balance carried in from before this system (e.g. migrating a running company)
     openingBalance: text("opening_balance").notNull().default("0"),
     openingBalanceSetBy: text("opening_balance_set_by").references(() => user.id),
@@ -3305,6 +3328,58 @@ export const leaveApplication = pgTable(
   ],
 );
 
+// The "earn" side of a credit-based leave type (e.g. Replacement Leave) —
+// distinct from leaveApplication (the "spend" side). Approving one of these
+// credits leaveEntitlement.earnedDays; it never touches usedDays/pendingDays
+// itself. See applyForReplacementCredit/approveReplacementCredit in
+// server/leave.ts.
+export const leaveCreditRequest = pgTable(
+  "leave_credit_request",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    requestNo: text("request_no").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    leaveTypeId: text("leave_type_id")
+      .notNull()
+      .references(() => leaveType.id),
+    leaveTypeName: text("leave_type_name").notNull(),
+    leaveTypeCode: text("leave_type_code").notNull(),
+    // Inclusive range of off-days/public holidays worked, in exchange for
+    // the credit — every calendar date in this range (weekends included,
+    // deliberately) gets its own itemized entry in workLines below.
+    dateFrom: text("date_from").notNull(),
+    dateUntil: text("date_until").notNull(),
+    totalDays: text("total_days").notNull(),
+    // One compulsory entry per date in [dateFrom, dateUntil] — the specific
+    // hours worked and reason for that day, so an approver reviews each day
+    // individually rather than trusting a single lump total. `days` is
+    // computed server-side from timeFrom/timeUntil against the leave type's
+    // creditHourRules at submission time and snapshotted here (same
+    // rationale as leaveApplication snapshotting leaveTypeName/Code) so it
+    // stays accurate even if the rules are edited later.
+    workLines: json("work_lines")
+      .$type<Array<{ date: string; timeFrom: string; timeUntil: string; reason: string; days: number }>>()
+      .notNull()
+      .default([]),
+    status: text("status").notNull().default("PENDING"),
+    reviewedBy: text("reviewed_by").references(() => user.id),
+    reviewedAt: timestamp("reviewed_at"),
+    reviewComment: text("review_comment"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("leave_credit_request_no_org_uidx").on(t.organizationId, t.requestNo),
+    index("leave_credit_request_user_idx").on(t.userId, t.organizationId),
+    index("leave_credit_request_status_idx").on(t.status, t.organizationId),
+  ],
+);
+
 export const leaveDocument = pgTable(
   "leave_document",
   {
@@ -3347,6 +3422,13 @@ export const leaveApplicationRelations = relations(leaveApplication, ({ one, man
   reviewedByUser: one(user, { fields: [leaveApplication.reviewedBy], references: [user.id] }),
   cancelledByUser: one(user, { fields: [leaveApplication.cancelledBy], references: [user.id] }),
   documents: many(leaveDocument),
+}));
+
+export const leaveCreditRequestRelations = relations(leaveCreditRequest, ({ one }) => ({
+  organization: one(organization, { fields: [leaveCreditRequest.organizationId], references: [organization.id] }),
+  user: one(user, { fields: [leaveCreditRequest.userId], references: [user.id] }),
+  leaveType: one(leaveType, { fields: [leaveCreditRequest.leaveTypeId], references: [leaveType.id] }),
+  reviewedByUser: one(user, { fields: [leaveCreditRequest.reviewedBy], references: [user.id] }),
 }));
 
 export const leaveDocumentRelations = relations(leaveDocument, ({ one }) => ({
@@ -3963,10 +4045,12 @@ export const schema = {
   leaveType,
   leaveEntitlement,
   leaveApplication,
+  leaveCreditRequest,
   leaveDocument,
   leaveTypeRelations,
   leaveEntitlementRelations,
   leaveApplicationRelations,
+  leaveCreditRequestRelations,
   leaveDocumentRelations,
   // claim management
   claimType,

@@ -240,6 +240,7 @@ export function LeaveBalancesClient({ members, leaveTypes, noticePolicies }: Pro
                       <TableHead>Leave Type</TableHead>
                       <TableHead className="text-right">Entitled</TableHead>
                       <TableHead className="text-right">Carry Forward</TableHead>
+                      <TableHead className="text-right">Earned</TableHead>
                       <TableHead className="text-right">Used / Pending</TableHead>
                       <TableHead className="w-40">Opening Balance</TableHead>
                       <TableHead className="w-40">Days Taken (opening)</TableHead>
@@ -263,6 +264,13 @@ export function LeaveBalancesClient({ members, leaveTypes, noticePolicies }: Pro
                           </TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">{fmtDays(b.entitledDays)}</TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">{fmtDays(b.carryForwardDays)}</TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground">
+                            {parseFloat(b.earnedDays) > 0 ? (
+                              <span className="text-blue-600 dark:text-blue-400 font-medium">+{fmtDays(b.earnedDays)}</span>
+                            ) : (
+                              fmtDays(b.earnedDays)
+                            )}
+                          </TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">
                             {fmtDays(b.usedDays)} / {fmtDays(b.pendingDays)}
                           </TableCell>
