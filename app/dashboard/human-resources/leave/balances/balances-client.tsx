@@ -263,7 +263,22 @@ export function LeaveBalancesClient({ members, leaveTypes, noticePolicies }: Pro
                             {withEmergencyLabel(b.leaveTypeName, b.emergencyThresholdDays != null)}
                           </TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">{fmtDays(b.entitledDays)}</TableCell>
-                          <TableCell className="text-right text-sm text-muted-foreground">{fmtDays(b.carryForwardDays)}</TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground">
+                            {b.carryForwardExpired ? (
+                              <span className="line-through" title={`Expired ${b.carryForwardExpiresOn}`}>
+                                {fmtDays(b.carryForwardDays)}
+                              </span>
+                            ) : (
+                              <>
+                                {fmtDays(b.carryForwardDays)}
+                                {b.carryForwardExpiresOn && (
+                                  <span className="block text-[10px] text-amber-600 dark:text-amber-400">
+                                    exp. {b.carryForwardExpiresOn}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">
                             {parseFloat(b.earnedDays) > 0 ? (
                               <span className="text-blue-600 dark:text-blue-400 font-medium">+{fmtDays(b.earnedDays)}</span>

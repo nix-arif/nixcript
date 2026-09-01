@@ -52,6 +52,11 @@ export type MyLeaveBalance = LeaveEntitlementRow & {
   remainingDays: string;
   openingBalanceSetByName: string | null;
   openingUsedDaysSetByName: string | null;
+  // True once today is past the leave type's carryForwardExpiryMonths
+  // cutoff for this row's year — carryForwardDays itself is left untouched
+  // (historical record) but is excluded from remainingDays once expired.
+  carryForwardExpired: boolean;
+  carryForwardExpiresOn: string | null;
   // Splits usedDays/pendingDays by the label actually recorded on each
   // application (leaveApplication.leaveTypeCode/Name) rather than this
   // type's own code — so Annual Leave's card can show how much of its
@@ -190,6 +195,22 @@ function calcHoursWorked(timeFrom: string, timeUntil: string): number {
   const [fh, fm] = timeFrom.split(":").map(Number);
   const [uh, um] = timeUntil.split(":").map(Number);
   return (uh * 60 + um - (fh * 60 + fm)) / 60;
+}
+
+// The last day of month `expiryMonths` (1-indexed) in `year` — e.g.
+// expiryMonths=3 -> 31 March of that year. `new Date(year, expiryMonths, 0)`
+// is JS's day-0-of-next-month idiom for "last day of this month".
+function carryForwardCutoff(expiryMonths: number, year: number): Date {
+  return new Date(year, expiryMonths, 0, 23, 59, 59);
+}
+
+// null expiryMonths = never expires (today's behavior for every existing
+// leave type, unless HR opts in). `year` is the entitlement row's year —
+// carryForwardDays on that row was carried IN from the prior year, and
+// expires N months into THIS year.
+function isCarryForwardExpired(expiryMonths: number | null, year: number): boolean {
+  if (!expiryMonths) return false;
+  return new Date() > carryForwardCutoff(expiryMonths, year);
 }
 
 async function generateApplicationNo(orgId: string): Promise<string> {
@@ -362,6 +383,7 @@ export async function createLeaveType(data: {
   maxDaysPerApplication?: number;
   carryForwardEnabled: boolean;
   maxCarryForward?: number;
+  carryForwardExpiryMonths?: number;
   emergencyThresholdDays?: number;
   allowDuringProbation?: boolean;
   blockedDuringNotice?: boolean;
@@ -384,6 +406,7 @@ export async function createLeaveType(data: {
     maxDaysPerApplication: data.maxDaysPerApplication ?? null,
     carryForwardEnabled: data.carryForwardEnabled,
     maxCarryForward: data.maxCarryForward ?? null,
+    carryForwardExpiryMonths: data.carryForwardExpiryMonths ?? null,
     emergencyThresholdDays: data.emergencyThresholdDays ?? null,
     allowDuringProbation: data.allowDuringProbation ?? true,
     blockedDuringNotice: data.blockedDuringNotice ?? false,
@@ -409,6 +432,7 @@ export async function updateLeaveType(
     maxDaysPerApplication: number | null;
     carryForwardEnabled: boolean;
     maxCarryForward: number | null;
+    carryForwardExpiryMonths: number | null;
     emergencyThresholdDays: number | null;
     allowDuringProbation: boolean;
     blockedDuringNotice: boolean;
@@ -594,6 +618,7 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
     maxDaysPerApplication: (d as { maxDaysPerApplication?: number }).maxDaysPerApplication ?? null,
     carryForwardEnabled: d.carryForwardEnabled,
     maxCarryForward: d.maxCarryForward ?? null,
+    carryForwardExpiryMonths: (d as { carryForwardExpiryMonths?: number }).carryForwardExpiryMonths ?? null,
     emergencyThresholdDays: (d as { emergencyThresholdDays?: number }).emergencyThresholdDays ?? null,
     allowDuringProbation: (d as { allowDuringProbation?: boolean }).allowDuringProbation ?? true,
     blockedDuringNotice: (d as { blockedDuringNotice?: boolean }).blockedDuringNotice ?? false,
@@ -671,7 +696,8 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
   return types.map((type, i) => {
     const ent = ents[i];
     const entitled = parseFloat(ent.entitledDays);
-    const carry = parseFloat(ent.carryForwardDays);
+    const carryExpired = isCarryForwardExpired(type.carryForwardExpiryMonths, ent.year);
+    const carry = carryExpired ? 0 : parseFloat(ent.carryForwardDays);
     const opening = parseFloat(ent.openingBalance);
     const earned = parseFloat(ent.earnedDays);
     const openingUsed = parseFloat(ent.openingUsedDays);
@@ -682,6 +708,7 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
     const breakdown = byLabel && byLabel.size > 0
       ? [...byLabel.values()].sort((a, b) => (a.code === type.code ? -1 : b.code === type.code ? 1 : 0))
       : [{ code: type.code, name: type.name, usedDays: ent.usedDays, pendingDays: ent.pendingDays }];
+    const cutoff = type.carryForwardExpiryMonths ? carryForwardCutoff(type.carryForwardExpiryMonths, ent.year) : null;
     return {
       ...ent,
       leaveTypeName: type.name,
@@ -692,6 +719,10 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
       remainingDays: remaining.toFixed(1),
       openingBalanceSetByName: ent.openingBalanceSetBy ? nameMap[ent.openingBalanceSetBy] ?? null : null,
       openingUsedDaysSetByName: ent.openingUsedDaysSetBy ? nameMap[ent.openingUsedDaysSetBy] ?? null : null,
+      carryForwardExpired: carryExpired,
+      carryForwardExpiresOn: cutoff
+        ? `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`
+        : null,
       breakdown,
     };
   });
@@ -1168,7 +1199,10 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
 
   const ent = await ensureEntitlement(orgId, userId, lt, year);
   const entitled = parseFloat(ent.entitledDays);
-  const carry = parseFloat(ent.carryForwardDays);
+  // Expired carry-forward can't fund this application — enforced here
+  // (not just hidden in the UI), same as computeBalances excludes it from
+  // the displayed remaining total.
+  const carry = isCarryForwardExpired(lt.carryForwardExpiryMonths, year) ? 0 : parseFloat(ent.carryForwardDays);
   const opening = parseFloat(ent.openingBalance);
   const earned = parseFloat(ent.earnedDays);
   const used = parseFloat(ent.usedDays);

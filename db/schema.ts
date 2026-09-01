@@ -3175,6 +3175,13 @@ export const leaveType = pgTable(
     maxDaysPerApplication: integer("max_days_per_application"),
     carryForwardEnabled: boolean("carry_forward_enabled").notNull().default(false),
     maxCarryForward: integer("max_carry_forward"),
+    // How many months into the new year a carry-forward stays usable, e.g.
+    // 3 = usable through 31 March, then forfeited — null = never expires
+    // (today's behavior). Doesn't touch the stored carryForwardDays value
+    // itself (kept as a historical record); only excludes it from the
+    // available-balance calc past the cutoff. See isCarryForwardExpired in
+    // server/leave.ts.
+    carryForwardExpiryMonths: integer("carry_forward_expiry_months"),
     // When set, an application against THIS type that's <= this many days is
     // auto-labeled "Emergency Leave" (leaveApplication.leaveTypeName/Code)
     // instead of this type's own name/code — but still draws from this

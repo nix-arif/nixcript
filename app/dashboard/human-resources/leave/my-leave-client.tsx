@@ -158,11 +158,16 @@ function StatusBadge({ status }: { status: string }) {
 function BalanceCard({ balance }: { balance: MyLeaveBalance }) {
   const entitled = parseFloat(balance.entitledDays);
   const carry = parseFloat(balance.carryForwardDays);
+  // remainingDays (server-computed) already excludes expired carry-forward
+  // from the balance — mirror that here so the progress bar/color threshold
+  // agree with the big number above them, while still showing the raw
+  // carried-in amount (with an "expired" note) in the breakdown below.
+  const carryEffective = balance.carryForwardExpired ? 0 : carry;
   const earned = parseFloat(balance.earnedDays);
   const used = parseFloat(balance.usedDays);
   const pending = parseFloat(balance.pendingDays);
   const remaining = parseFloat(balance.remainingDays);
-  const total = entitled + carry + earned;
+  const total = entitled + carryEffective + earned;
   const progressVal = total > 0 ? Math.min(100, ((used + pending) / total) * 100) : 0;
 
   const pct = total > 0 ? remaining / total : 1;
@@ -205,8 +210,25 @@ function BalanceCard({ balance }: { balance: MyLeaveBalance }) {
         </div>
         {carry > 0 && (
           <div className="flex justify-between">
-            <span>Carried fwd</span>
-            <span className="font-medium text-blue-600 dark:text-blue-400">+{formatDays(carry)}d</span>
+            <span>
+              Carried fwd
+              {balance.carryForwardExpired ? (
+                <span className="text-destructive"> (expired)</span>
+              ) : (
+                balance.carryForwardExpiresOn && (
+                  <span className="text-amber-600 dark:text-amber-400"> (expires {balance.carryForwardExpiresOn})</span>
+                )
+              )}
+            </span>
+            <span
+              className={
+                balance.carryForwardExpired
+                  ? "font-medium text-muted-foreground line-through"
+                  : "font-medium text-blue-600 dark:text-blue-400"
+              }
+            >
+              +{formatDays(carry)}d
+            </span>
           </div>
         )}
         {earned > 0 && (

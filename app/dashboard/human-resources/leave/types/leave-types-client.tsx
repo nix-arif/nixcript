@@ -270,6 +270,7 @@ interface FormData {
   maxDaysPerApplication: string;
   carryForwardEnabled: boolean;
   maxCarryForward: string;
+  carryForwardExpiryMonths: string;
   emergencyThresholdDays: string;
   entitlementRules: EntitlementRule[];
   creditHourRules: CreditHourRule[];
@@ -287,6 +288,7 @@ const defaultForm: FormData = {
   maxDaysPerApplication: "",
   carryForwardEnabled: false,
   maxCarryForward: "",
+  carryForwardExpiryMonths: "",
   emergencyThresholdDays: "",
   entitlementRules: [{ minYears: 0, maxYears: null, days: 0 }],
   creditHourRules: [],
@@ -305,6 +307,7 @@ function rowToForm(lt: LeaveTypeRow): FormData {
     maxDaysPerApplication: lt.maxDaysPerApplication?.toString() ?? "",
     carryForwardEnabled: lt.carryForwardEnabled,
     maxCarryForward: lt.maxCarryForward?.toString() ?? "",
+    carryForwardExpiryMonths: lt.carryForwardExpiryMonths?.toString() ?? "",
     emergencyThresholdDays: lt.emergencyThresholdDays?.toString() ?? "",
     entitlementRules: (lt.entitlementRules ?? []) as EntitlementRule[],
     creditHourRules: (lt.creditHourRules ?? []) as CreditHourRule[],
@@ -371,6 +374,9 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
         carryForwardEnabled: form.carryForwardEnabled,
         maxCarryForward: form.maxCarryForward
           ? parseInt(form.maxCarryForward, 10)
+          : undefined,
+        carryForwardExpiryMonths: form.carryForwardExpiryMonths
+          ? parseInt(form.carryForwardExpiryMonths, 10)
           : undefined,
         emergencyThresholdDays: form.emergencyThresholdDays
           ? parseInt(form.emergencyThresholdDays, 10)
@@ -579,12 +585,16 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                           variant="outline"
                           className="text-xs px-1.5 py-0 h-5 text-indigo-700 border-indigo-200 bg-indigo-50 dark:text-indigo-400 dark:border-indigo-700"
                           title={
-                            lt.maxCarryForward !== null
+                            (lt.maxCarryForward !== null
                               ? `Carry forward up to ${lt.maxCarryForward} days`
-                              : "Carry forward unlimited"
+                              : "Carry forward unlimited") +
+                            (lt.carryForwardExpiryMonths
+                              ? `, expires end of month ${lt.carryForwardExpiryMonths} each year`
+                              : "")
                           }
                         >
                           {lt.maxCarryForward !== null ? `CF ${lt.maxCarryForward}d` : "CF"}
+                          {lt.carryForwardExpiryMonths ? ` (${lt.carryForwardExpiryMonths}mo)` : ""}
                         </Badge>
                       )}
                       {lt.isCreditBased && (
@@ -789,17 +799,35 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                 <span className="text-sm font-medium">Enable Carry Forward</span>
               </label>
               {form.carryForwardEnabled && (
-                <div className="space-y-1.5 pl-6">
-                  <Label htmlFor="ltMaxCarryFwd">Max Carry Forward Days</Label>
-                  <input
-                    id="ltMaxCarryFwd"
-                    type="number"
-                    min={0}
-                    value={form.maxCarryForward}
-                    onChange={(e) => setForm((f) => ({ ...f, maxCarryForward: e.target.value }))}
-                    placeholder="Leave blank for unlimited"
-                    className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
+                <div className="grid grid-cols-2 gap-4 pl-6">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="ltMaxCarryFwd">Max Carry Forward Days</Label>
+                    <input
+                      id="ltMaxCarryFwd"
+                      type="number"
+                      min={0}
+                      value={form.maxCarryForward}
+                      onChange={(e) => setForm((f) => ({ ...f, maxCarryForward: e.target.value }))}
+                      placeholder="Leave blank for unlimited"
+                      className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="ltCarryFwdExpiry">Expires After (months)</Label>
+                    <input
+                      id="ltCarryFwdExpiry"
+                      type="number"
+                      min={1}
+                      max={12}
+                      value={form.carryForwardExpiryMonths}
+                      onChange={(e) => setForm((f) => ({ ...f, carryForwardExpiryMonths: e.target.value }))}
+                      placeholder="Never expires"
+                      className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      e.g. 3 = carried-forward days must be used by 31 March, then forfeited.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
