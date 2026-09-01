@@ -5,7 +5,7 @@ import { department, member, memberDepartment, user, userPermission, pendingDepa
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { and, eq, isNull, isNotNull, inArray } from "drizzle-orm";
+import { and, asc, eq, isNull, isNotNull, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { revalidatePath } from "next/cache";
 import { grantDepartmentPermissions, resyncAllMemberPermissions } from "@/lib/permissions/grant-defaults";
@@ -43,7 +43,8 @@ export async function getOrgMembers() {
     .from(member)
     .innerJoin(user, eq(member.userId, user.id))
     .leftJoin(profile, eq(profile.userId, member.userId))
-    .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt)));
+    .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt)))
+    .orderBy(asc(member.createdAt));
 
   // Fetch all dept assignments for this org in one query
   const assignments = await db
@@ -94,7 +95,8 @@ export async function getDeletedMembers() {
     .from(member)
     .innerJoin(user, eq(member.userId, user.id))
     .leftJoin(deleter, eq(member.deletedBy, deleter.id))
-    .where(and(eq(member.organizationId, orgId), isNotNull(member.deletedAt)));
+    .where(and(eq(member.organizationId, orgId), isNotNull(member.deletedAt)))
+    .orderBy(asc(member.createdAt));
 
   // Fetch dept assignments for deleted members (kept for restore)
   const memberIds = members.map((m) => m.memberId);
