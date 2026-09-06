@@ -14,7 +14,7 @@ import {
   type PurchaseOrderItemInput,
   type PrForPoConversion,
 } from "@/server/purchase-order";
-import { getProductByCode, getProductDetailsByCodes } from "@/server/products";
+import { getProductByCode, getProductDetailsByCodes, getDesignCodeImageUploadUrl } from "@/server/products";
 import { searchProductsByDesignCode } from "@/server/inventory";
 import type { Supplier } from "@/server/supplier";
 import { cn } from "@/lib/utils";
@@ -76,19 +76,32 @@ function uploadErrorMessage(err: unknown): string {
   return "Upload failed — please try again.";
 }
 
+// Nothing in this app tracks which extension a catalogue image actually got
+// uploaded with — the URL is always just guessed from the code. The bulk
+// uploader (getProductImageUploadUrls) and the design-code uploader
+// (getDesignCodeImageUploadUrl) both always write ".jpg" regardless of the
+// source file's real format, but anything filed outside those two paths
+// (e.g. someone dropping a file into R2 by hand) keeps its original
+// extension — ".jpeg" in particular is common from phone exports. Try each
+// in turn rather than assuming ".jpg" and silently showing "no image".
+const IMAGE_EXT_CANDIDATES = ["jpg", "jpeg", "png", "webp"];
+
 function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onReplace }: { productCode: string; lookupCode?: string; overrideUrl?: string; onReplace: () => void }) {
-  const [failed, setFailed] = useState(false);
+  const [extIdx, setExtIdx] = useState(0);
   const [open, setOpen]     = useState(false);
   // For an OEM item, our own product code is a private-label code we made
   // up — the catalog photo (if any) lives under the design house's own
   // design code instead, so that's what the lookup key falls back from.
   const catalogCode = lookupCode || productCode;
-  const catalogSrc = R2_PRODUCT_IMAGES && catalogCode ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(catalogCode)}.jpg` : "";
+  const exhausted = extIdx >= IMAGE_EXT_CANDIDATES.length;
+  const catalogSrc = R2_PRODUCT_IMAGES && catalogCode && !exhausted
+    ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(catalogCode)}.${IMAGE_EXT_CANDIDATES[extIdx]}`
+    : "";
   const src = overrideUrl || catalogSrc;
 
-  useEffect(() => { if (overrideUrl) setFailed(false); }, [overrideUrl]);
+  useEffect(() => { setExtIdx(0); }, [overrideUrl, catalogCode]);
 
-  if (!src || failed) {
+  if (!src || (!overrideUrl && exhausted)) {
     return (
       <button
         type="button"
@@ -110,7 +123,7 @@ function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onReplace }:
         className="block w-9 h-9 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} className="w-full h-full object-cover" alt="" onError={() => setFailed(true)} />
+        <img src={src} className="w-full h-full object-cover" alt="" onError={() => { if (!overrideUrl) setExtIdx((i) => i + 1); }} />
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -118,7 +131,7 @@ function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onReplace }:
           <DialogTitle className="sr-only">{productCode}</DialogTitle>
           <div className="relative bg-muted/30">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={src} className="w-full object-contain max-h-[65vh]" alt={productCode} onError={() => { setFailed(true); setOpen(false); }} />
+            <img src={src} className="w-full object-contain max-h-[65vh]" alt={productCode} onError={() => { if (!overrideUrl) setExtIdx((i) => i + 1); setOpen(false); }} />
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -704,11 +717,12 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     });
   }
 
-  async function handleItemImage(key: string, e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-
+  // One-off attachment scoped to just this PO line, stored in the isolated
+  // procurement-docs bucket (see getPoItemImageUploadUrl) — the fallback for
+  // any line that isn't an OEM item with a design code (see
+  // handleDesignCodeImageUpload below, which handles that case instead by
+  // filing into the shared catalogue bucket so it's reusable on future POs).
+  async function handleItemImageFile(key: string, file: File) {
     const err = validateImageFile(file);
     if (err) { toast.error(err); return; }
 
@@ -723,6 +737,44 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     } catch (err) {
       toast.error(uploadErrorMessage(err));
       updateItem(key, { _imageFile: undefined, _imageUploading: false });
+    }
+  }
+
+  // Files into the shared product-image catalogue bucket, keyed by this
+  // line's design code — the same bucket/key convention PoProductThumbnail
+  // already guesses at when it builds the image URL to display, so once
+  // this finishes, that same design code shows the image on every future PO
+  // line too, not just this one. Doesn't touch imageKey (that's the one-off
+  // per-line attachment field, untouched here) — just a fresh local preview
+  // until the page reloads and the guessed catalogue URL takes over for real.
+  async function handleDesignCodeImageUpload(key: string, designCode: string, file: File) {
+    const err = validateImageFile(file);
+    if (err) { toast.error(err); return; }
+
+    updateItem(key, { _imageUploading: true });
+    try {
+      const { uploadUrl } = await getDesignCodeImageUploadUrl(designCode, file.type);
+      const res = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      updateItem(key, { _imageUploading: false, _imagePreviewUrl: URL.createObjectURL(file) });
+      toast.success(`Image saved to the catalogue under design code "${designCode}"`);
+    } catch (err) {
+      toast.error(uploadErrorMessage(err));
+      updateItem(key, { _imageUploading: false });
+    }
+  }
+
+  function handleItemImage(key: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    const item = itemsRef.current.find((i) => i._key === key);
+    const designCode = item?.sourcingType === "oem" ? item.designBrandCode?.trim() : "";
+    if (designCode) {
+      handleDesignCodeImageUpload(key, designCode, file);
+    } else {
+      handleItemImageFile(key, file);
     }
   }
 

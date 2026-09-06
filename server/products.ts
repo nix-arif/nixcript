@@ -470,6 +470,25 @@ export async function getProductImageUploadUrls(
   );
 }
 
+// Lets an OEM line on a purchase order file a catalogue image directly under
+// its design code, rather than a product code — the design code is often
+// known before any matching catalogue product row exists (or ever will), so
+// there's no productCode to key it by yet. Stored in the exact same bucket
+// and key convention as getProductImageUploadUrls above (design code
+// standing in for product code), so the same guess-the-URL lookup used
+// everywhere else in the app (R2_PRODUCT_IMAGES_URL + code + ".jpg") finds
+// it without any special-casing on the read side.
+export async function getDesignCodeImageUploadUrl(designCode: string, contentType: string): Promise<{ uploadUrl: string }> {
+  await requireAccess("product:upload-image");
+  const cmd = new PutObjectCommand({
+    Bucket: PRODUCT_IMAGES_BUCKET,
+    Key: `${designCode.trim().replace(/\//g, ":")}.jpg`,
+    ContentType: contentType,
+  });
+  const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
+  return { uploadUrl };
+}
+
 export async function markProductImagesUploaded(productCodes: string[]): Promise<void> {
   if (!productCodes.length) return;
   const { orgId } = await requireAccess("product:upload-image");
