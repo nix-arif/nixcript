@@ -164,6 +164,10 @@ export interface CreateGoodsReceiptInput {
 export type GoodsReceiptItemEnriched = GoodsReceiptItemRow & {
   returnResolvedByName: string | null;
   repairResolvedByName: string | null;
+  // Resolved from returnResolutionPackingListId when the return's
+  // resolutionType is "replacement" — the packing list carrying the
+  // make-good shipment, so the UI can link straight to it.
+  returnResolutionPackingListNo: string | null;
 };
 
 export type GoodsReceiptWithItems = GoodsReceiptRow & {
@@ -171,6 +175,9 @@ export type GoodsReceiptWithItems = GoodsReceiptRow & {
   receivedByName: string | null;
   purchaseOrderNo: string | null;
   purchaseOrderPrNo: string | null;
+  // The PO's supplier — feeds the "replacement received" picker when
+  // resolving a return, which lists packing lists for this same supplier.
+  supplierId: string | null;
 };
 
 export type GoodsReceiptListRow = GoodsReceiptRow & {
@@ -216,7 +223,7 @@ export async function getGoodsReceiptDetail(id: string): Promise<GoodsReceiptWit
   const [items, userRows, poRows] = await Promise.all([
     db.select().from(goodsReceiptItem).where(eq(goodsReceiptItem.goodsReceiptId, id)),
     db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, gr.receivedBy)),
-    db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo })
+    db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierId: purchaseOrder.supplierId })
       .from(purchaseOrder)
       .where(eq(purchaseOrder.id, gr.purchaseOrderId)),
   ]);
@@ -227,10 +234,17 @@ export async function getGoodsReceiptDetail(id: string): Promise<GoodsReceiptWit
     : [];
   const resolverNameOf = (id: string | null) => (id ? (resolvers.find((r) => r.id === id)?.name ?? null) : null);
 
+  const resolutionPlIds = [...new Set(items.map((i) => i.returnResolutionPackingListId).filter((v): v is string => !!v))];
+  const resolutionPls = resolutionPlIds.length > 0
+    ? await db.select({ id: packingList.id, packingListNo: packingList.packingListNo }).from(packingList).where(inArray(packingList.id, resolutionPlIds))
+    : [];
+  const resolutionPlNoOf = (id: string | null) => (id ? (resolutionPls.find((p) => p.id === id)?.packingListNo ?? null) : null);
+
   const enrichedItems: GoodsReceiptItemEnriched[] = items.map((i) => ({
     ...i,
     returnResolvedByName: resolverNameOf(i.returnResolvedBy),
     repairResolvedByName: resolverNameOf(i.repairResolvedBy),
+    returnResolutionPackingListNo: resolutionPlNoOf(i.returnResolutionPackingListId),
   }));
 
   return {
@@ -239,6 +253,7 @@ export async function getGoodsReceiptDetail(id: string): Promise<GoodsReceiptWit
     receivedByName: userRows[0]?.name ?? null,
     purchaseOrderNo: poRows[0]?.poNo ?? null,
     purchaseOrderPrNo: poRows[0]?.prNo ?? null,
+    supplierId: poRows[0]?.supplierId ?? null,
   };
 }
 
@@ -269,7 +284,7 @@ export async function getGoodsReceiptDetailCentralized(id: string): Promise<Cent
   const [items, userRows, poRows] = await Promise.all([
     db.select().from(goodsReceiptItem).where(eq(goodsReceiptItem.goodsReceiptId, id)),
     db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, gr.receivedBy)),
-    db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo })
+    db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierId: purchaseOrder.supplierId })
       .from(purchaseOrder)
       .where(eq(purchaseOrder.id, gr.purchaseOrderId)),
   ]);
@@ -280,10 +295,17 @@ export async function getGoodsReceiptDetailCentralized(id: string): Promise<Cent
     : [];
   const resolverNameOf = (rid: string | null) => (rid ? (resolvers.find((r) => r.id === rid)?.name ?? null) : null);
 
+  const resolutionPlIds = [...new Set(items.map((i) => i.returnResolutionPackingListId).filter((v): v is string => !!v))];
+  const resolutionPls = resolutionPlIds.length > 0
+    ? await db.select({ id: packingList.id, packingListNo: packingList.packingListNo }).from(packingList).where(inArray(packingList.id, resolutionPlIds))
+    : [];
+  const resolutionPlNoOf = (id: string | null) => (id ? (resolutionPls.find((p) => p.id === id)?.packingListNo ?? null) : null);
+
   const enrichedItems: GoodsReceiptItemEnriched[] = items.map((i) => ({
     ...i,
     returnResolvedByName: resolverNameOf(i.returnResolvedBy),
     repairResolvedByName: resolverNameOf(i.repairResolvedBy),
+    returnResolutionPackingListNo: resolutionPlNoOf(i.returnResolutionPackingListId),
   }));
 
   let canAct: boolean;
@@ -300,6 +322,7 @@ export async function getGoodsReceiptDetailCentralized(id: string): Promise<Cent
     receivedByName: userRows[0]?.name ?? null,
     purchaseOrderNo: poRows[0]?.poNo ?? null,
     purchaseOrderPrNo: poRows[0]?.prNo ?? null,
+    supplierId: poRows[0]?.supplierId ?? null,
     organizationName,
     isOwnOrg: gr.organizationId === orgId,
     canAct,
@@ -438,6 +461,7 @@ export type PendingReturnRepairRow = {
   purchaseOrderId: string;
   poNo: string | null;
   prNo: string | null;
+  supplierId: string | null;
   supplierName: string | null;
   inspectedAt: Date | null;
   organizationId: string;
@@ -488,7 +512,7 @@ async function computeOutstandingIssues(orgIds: string[]): Promise<PendingReturn
   // automatically. Only writeOffShortfall/resolveShortfall stop it from
   // reappearing on its own.
   const confirmedPos = await db
-    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierSnapshot: purchaseOrder.supplierSnapshot, organizationId: purchaseOrder.organizationId })
+    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierId: purchaseOrder.supplierId, supplierSnapshot: purchaseOrder.supplierSnapshot, organizationId: purchaseOrder.organizationId })
     .from(purchaseOrder)
     .where(and(inArray(purchaseOrder.organizationId, orgIds), eq(purchaseOrder.status, "confirmed")));
   const confirmedPoIds = confirmedPos.map((p) => p.id);
@@ -561,6 +585,7 @@ async function computeOutstandingIssues(orgIds: string[]): Promise<PendingReturn
           purchaseOrderId: item.purchaseOrderId,
           poNo: po?.poNo ?? null,
           prNo: po?.prNo ?? null,
+          supplierId: po?.supplierId ?? null,
           supplierName: snap?.name ?? null,
           inspectedAt: lastInspectedByItem[item.id] ?? null,
           organizationId: po?.organizationId ?? "",
@@ -576,7 +601,7 @@ async function computeOutstandingIssues(orgIds: string[]): Promise<PendingReturn
   const [pos, orgs] = await Promise.all([
     poIds.length > 0
       ? db
-          .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierSnapshot: purchaseOrder.supplierSnapshot })
+          .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierId: purchaseOrder.supplierId, supplierSnapshot: purchaseOrder.supplierSnapshot })
           .from(purchaseOrder)
           .where(inArray(purchaseOrder.id, poIds))
       : Promise.resolve([]),
@@ -598,6 +623,7 @@ async function computeOutstandingIssues(orgIds: string[]): Promise<PendingReturn
       purchaseOrderItemId: null,
       poNo: po?.poNo ?? null,
       prNo: po?.prNo ?? null,
+      supplierId: po?.supplierId ?? null,
       supplierName: snap?.name ?? null,
       inspectedAt: r.inspectedAt,
       organizationId: r.organizationId,

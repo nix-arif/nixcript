@@ -76,6 +76,35 @@ export async function getOrganizationProfile() {
   return existing;
 }
 
+// ── Cross-org branding lookup (name + brand color only) ───────────────────
+// For documents that must reflect the ISSUING organization's identity
+// (e.g. a discrepancy report addressed to a supplier) rather than whichever
+// org the downloader currently has active — e.g. a centralized/cross-org
+// viewer. Deliberately narrow: no certificate/document URLs, no auto-create,
+// so it's safe to call for an org other than the caller's own.
+export async function getOrganizationBranding(orgId: string) {
+  const [org] = await db
+    .select({ name: organization.name })
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+  if (!org) throw new Error("Organization not found");
+
+  const [profile] = await db
+    .select({
+      companyName: organizationProfile.companyName,
+      brandColor: organizationProfile.brandColor,
+    })
+    .from(organizationProfile)
+    .where(eq(organizationProfile.organizationId, orgId))
+    .limit(1);
+
+  return {
+    companyName: profile?.companyName ?? org.name,
+    brandColor: profile?.brandColor ?? "#1a56db",
+  };
+}
+
 // ── Upsert organization profile ────────────────────────────────────────────
 export async function upsertOrganizationProfile(
   data: Partial<

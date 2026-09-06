@@ -17,6 +17,14 @@ export default async function InspectPackingListPage({
   ]);
   if (!pl) notFound();
   if (pl.status !== "pending") redirect(`/dashboard/procurement/packing-list/${id}`);
-  const canApprove = await canApprovePackingListInspection(pl.organizationId);
-  return <InspectPackingListClient packingList={pl} businessType={profile?.businessType ?? "trading"} canApprove={canApprove} />;
+  const approval = await canApprovePackingListInspection(pl.organizationId);
+  return (
+    <InspectPackingListClient
+      packingList={pl}
+      businessType={profile?.businessType ?? "trading"}
+      canApprove={approval.canApprove}
+      currentUserId={approval.currentUserId}
+      selfApprovalAllowed={approval.selfApprovalAllowed}
+    />
+  );
 }

@@ -87,14 +87,15 @@ function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; pr
 interface Props {
   suppliers: PackableSupplier[];
   initialSupplierId?: string;
+  initialPurchaseOrderIds?: string[];
   businessType?: string;
 }
 
-export function CreatePackingListClient({ suppliers, initialSupplierId, businessType = "trading" }: Props) {
+export function CreatePackingListClient({ suppliers, initialSupplierId, initialPurchaseOrderIds, businessType = "trading" }: Props) {
   const router = useRouter();
   const showSourcing = businessType !== "trading";
   const [supplierId, setSupplierId] = useState(initialSupplierId ?? "");
-  const [items, setItems] = useState<PackableItem[]>([]);
+  const [allItems, setAllItems] = useState<PackableItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
   const [outstandingIssues, setOutstandingIssues] = useState<SupplierOutstandingIssue[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -103,19 +104,29 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, business
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [poFilterActive, setPoFilterActive] = useState(!!initialPurchaseOrderIds?.length);
+
+  const hasPoScope = !!(initialPurchaseOrderIds?.length && supplierId === initialSupplierId);
 
   useEffect(() => {
-    if (!supplierId) { setItems([]); setSelected({}); setQtys({}); setOutstandingIssues([]); return; }
+    if (!supplierId) { setAllItems([]); setSelected({}); setQtys({}); setOutstandingIssues([]); return; }
     setLoadingItems(true);
+    const scopedPoIds = supplierId === initialSupplierId ? initialPurchaseOrderIds : undefined;
     getPackableItemsForSupplier(supplierId)
       .then((rows) => {
-        setItems(rows);
-        setSelected({});
+        setAllItems(rows);
+        const preChecked = scopedPoIds?.length ? rows.filter((r) => scopedPoIds.includes(r.purchaseOrderId)) : [];
+        setSelected(Object.fromEntries(preChecked.map((r) => [r.purchaseOrderItemId, true])));
         setQtys(Object.fromEntries(rows.map((r) => [r.purchaseOrderItemId, String(r.qtyRemaining)])));
       })
       .finally(() => setLoadingItems(false));
     getSupplierOutstandingIssues(supplierId).then(setOutstandingIssues);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplierId]);
+
+  const items = poFilterActive && hasPoScope
+    ? allItems.filter((i) => initialPurchaseOrderIds!.includes(i.purchaseOrderId))
+    : allItems;
 
   const byPo = items.reduce<Record<string, PackableItem[]>>((acc, item) => {
     (acc[item.purchaseOrderId] ??= []).push(item);
@@ -286,6 +297,20 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, business
                 Items to Include {selectedCount > 0 && <span className="font-normal">({selectedCount} selected)</span>}
               </h2>
             </div>
+            {poFilterActive && hasPoScope && (
+              <div className="flex items-center justify-between gap-2 mb-3 text-[11px] text-muted-foreground bg-muted/40 rounded-md px-3 py-1.5">
+                <span>
+                  Showing items from {initialPurchaseOrderIds!.length} selected PO{initialPurchaseOrderIds!.length !== 1 ? "s" : ""} only.
+                </span>
+                <button
+                  type="button"
+                  className="underline hover:text-foreground shrink-0"
+                  onClick={() => setPoFilterActive(false)}
+                >
+                  Show all confirmed POs for this supplier
+                </button>
+              </div>
+            )}
             {loadingItems ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : items.length === 0 ? (

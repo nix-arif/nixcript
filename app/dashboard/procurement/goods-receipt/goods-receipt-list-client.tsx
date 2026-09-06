@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { type GoodsReceiptListRow, type PendingReturnRepairRow, writeOffShortfall, resolveShortfall } from "@/server/goods-receipt";
-import { resolveReceiptItemAction } from "@/server/packing-list";
+import { resolveReceiptItemAction, type ReturnResolutionInput } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
@@ -17,6 +17,7 @@ import {
   ChevronDownIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ResolveReturnDialog } from "./resolve-return-dialog";
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -32,9 +33,15 @@ export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, perm
   const [search, setSearch] = useState("");
   const [pending, setPending] = useState(pendingReturnsRepairs);
   const [resolving, setResolving] = useState<string | null>(null);
+  const [resolvingReturnRow, setResolvingReturnRow] = useState<PendingReturnRepairRow | null>(null);
+  const [submittingReturn, setSubmittingReturn] = useState(false);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
+  // Shortfall (resolveShortfall) and repair (resolveReceiptItemAction, no
+  // resolution detail needed) both just flip a status flag — return is the
+  // only category that needs the ResolveReturnDialog below, since it's the
+  // only one with an external counterparty worth recording how it settled.
   async function handleResolve(row: PendingReturnRepairRow) {
     const isShortfall = row.category === "shortfall";
     if (isShortfall && !row.purchaseOrderItemId) return;
@@ -45,7 +52,7 @@ export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, perm
       if (isShortfall) {
         await resolveShortfall(row.purchaseOrderItemId!);
       } else {
-        await resolveReceiptItemAction(row.goodsReceiptItemId!, row.category as "return" | "repair");
+        await resolveReceiptItemAction(row.goodsReceiptItemId!, "repair");
       }
       setPending((prev) => prev.filter((p) => !(
         isShortfall
@@ -57,6 +64,22 @@ export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, perm
       toast.error(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setResolving(null);
+    }
+  }
+
+  async function handleConfirmReturnResolution(resolution: ReturnResolutionInput) {
+    const itemId = resolvingReturnRow?.goodsReceiptItemId;
+    if (!itemId) return;
+    setSubmittingReturn(true);
+    try {
+      await resolveReceiptItemAction(itemId, "return", resolution);
+      setPending((prev) => prev.filter((p) => !(p.goodsReceiptItemId === itemId && p.category === "return")));
+      toast.success("Marked resolved");
+      setResolvingReturnRow(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setSubmittingReturn(false);
     }
   }
 
@@ -167,34 +190,47 @@ export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, perm
                     )}
                   </div>
                   {can("packing-list:inspect") && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1.5 h-7 text-xs shrink-0"
-                          disabled={resolving === key}
-                        >
-                          Action <ChevronDownIcon className="w-3 h-3" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {isShortfall ? (
-                          <>
-                            <DropdownMenuItem onClick={() => handleResolve(row)}>
-                              <CheckIcon className="w-3.5 h-3.5" /> Mark Resolved
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleWriteOff(row)}>
-                              <XIcon className="w-3.5 h-3.5" /> Write Off
-                            </DropdownMenuItem>
-                          </>
-                        ) : (
+                    isShortfall ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5 h-7 text-xs shrink-0"
+                            disabled={resolving === key}
+                          >
+                            Action <ChevronDownIcon className="w-3 h-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => handleResolve(row)}>
                             <CheckIcon className="w-3.5 h-3.5" /> Mark Resolved
                           </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                          <DropdownMenuItem onClick={() => handleWriteOff(row)}>
+                            <XIcon className="w-3.5 h-3.5" /> Write Off
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : isReturn ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 h-7 text-xs shrink-0"
+                        onClick={() => setResolvingReturnRow(row)}
+                      >
+                        <CheckIcon className="w-3.5 h-3.5" /> Mark Resolved
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 h-7 text-xs shrink-0"
+                        disabled={resolving === key}
+                        onClick={() => handleResolve(row)}
+                      >
+                        <CheckIcon className="w-3.5 h-3.5" /> Mark Resolved
+                      </Button>
+                    )
                   )}
                 </div>
               );
@@ -318,6 +354,19 @@ export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, perm
             ))}
           </div>
         </>
+      )}
+
+      {resolvingReturnRow && (
+        <ResolveReturnDialog
+          key={resolvingReturnRow.goodsReceiptItemId ?? undefined}
+          supplierId={resolvingReturnRow.supplierId}
+          targetOrgId={resolvingReturnRow.organizationId}
+          itemLabel={resolvingReturnRow.productCode || resolvingReturnRow.description || "this item"}
+          qty={resolvingReturnRow.qty}
+          submitting={submittingReturn}
+          onConfirm={handleConfirmReturnResolution}
+          onClose={() => setResolvingReturnRow(null)}
+        />
       )}
     </div>
   );

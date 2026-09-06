@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { type PackingListListRow, type PendingPackingListPo } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,8 +29,40 @@ interface Props {
 export function PackingListListClient({ initialLists, pendingPos, permissions }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+
+  const selectedIds = Object.keys(selected).filter((id) => selected[id]);
+  const selectedSupplierId = selectedIds.length > 0
+    ? pendingPos.find((p) => p.purchaseOrderId === selectedIds[0])?.supplierId ?? null
+    : null;
+
+  function toggleSelect(po: PendingPackingListPo) {
+    if (!po.supplierId) {
+      toast.error("This PO has no supplier on record and can't be packed yet");
+      return;
+    }
+    setSelected((prev) => {
+      const isSelected = !!prev[po.purchaseOrderId];
+      if (!isSelected && selectedSupplierId && po.supplierId !== selectedSupplierId) {
+        toast.error("Select purchase orders from a single supplier at a time — a packing list belongs to one supplier");
+        return prev;
+      }
+      const next = { ...prev };
+      if (isSelected) delete next[po.purchaseOrderId];
+      else next[po.purchaseOrderId] = true;
+      return next;
+    });
+  }
+
+  function goCreate(poIds: string[], supplierId: string | null) {
+    const params = new URLSearchParams();
+    if (supplierId) params.set("supplierId", supplierId);
+    if (poIds.length > 0) params.set("poIds", poIds.join(","));
+    const qs = params.toString();
+    router.push(`/dashboard/procurement/packing-list/create${qs ? `?${qs}` : ""}`);
+  }
 
   const filtered = initialLists.filter((pl) => {
     if (!search) return true;
@@ -57,47 +90,72 @@ export function PackingListListClient({ initialLists, pendingPos, permissions }:
 
       {pendingPos.length > 0 && (
         <div className="mb-5 border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/15 rounded-xl p-4">
-          <div className="flex items-center gap-1.5 mb-3">
-            <AlertCircleIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-            <h2 className="text-xs font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
-              Pending Packing List Creation <span className="font-normal normal-case">({pendingPos.length} confirmed PO{pendingPos.length !== 1 ? "s" : ""} not yet packed)</span>
-            </h2>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-1.5">
+              <AlertCircleIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              <h2 className="text-xs font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
+                Pending Packing List Creation <span className="font-normal normal-case">({pendingPos.length} confirmed PO{pendingPos.length !== 1 ? "s" : ""} not yet packed)</span>
+              </h2>
+            </div>
+            {can("packing-list:create") && selectedIds.length > 0 && (
+              <Button
+                size="sm"
+                className="gap-1.5 h-7 text-xs shrink-0"
+                onClick={() => goCreate(selectedIds, selectedSupplierId)}
+              >
+                <PlusIcon className="w-3 h-3" /> Create Packing List ({selectedIds.length} selected)
+              </Button>
+            )}
           </div>
           <div className="space-y-2">
-            {pendingPos.map((po) => (
-              <div
-                key={po.purchaseOrderId}
-                className="flex items-center justify-between gap-3 border border-amber-200/70 dark:border-amber-800/40 bg-background rounded-lg px-3 py-2"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <button
-                    className="font-mono text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline shrink-0"
-                    onClick={() => router.push(`/dashboard/procurement/purchase-order/${po.purchaseOrderId}`)}
-                  >
-                    {po.poNo ?? po.prNo ?? po.purchaseOrderId}
-                  </button>
-                  {po.supplierName && (
-                    <span className="flex items-center gap-1 text-[11px] text-muted-foreground truncate">
-                      <BuildingIcon className="w-3 h-3 shrink-0" />
-                      {po.supplierName}
+            {pendingPos.map((po) => {
+              const isSelected = !!selected[po.purchaseOrderId];
+              const isDisabled = !po.supplierId || (!isSelected && !!selectedSupplierId && po.supplierId !== selectedSupplierId);
+              return (
+                <div
+                  key={po.purchaseOrderId}
+                  className="flex items-center justify-between gap-3 border border-amber-200/70 dark:border-amber-800/40 bg-background rounded-lg px-3 py-2"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    {can("packing-list:create") && (
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={isDisabled}
+                        onChange={() => toggleSelect(po)}
+                        title={!po.supplierId ? "Missing supplier — can't create a packing list for this PO" : isDisabled ? "Only POs from the same supplier can be combined into one packing list" : undefined}
+                        className="shrink-0 disabled:opacity-30"
+                      />
+                    )}
+                    <button
+                      className="font-mono text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+                      onClick={() => router.push(`/dashboard/procurement/purchase-order/${po.purchaseOrderId}`)}
+                    >
+                      {po.poNo ?? po.prNo ?? po.purchaseOrderId}
+                    </button>
+                    {po.supplierName && (
+                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground truncate">
+                        <BuildingIcon className="w-3 h-3 shrink-0" />
+                        {po.supplierName}
+                      </span>
+                    )}
+                    <span className="text-[11px] text-muted-foreground shrink-0">
+                      {po.itemsRemaining} item{po.itemsRemaining !== 1 ? "s" : ""} remaining
                     </span>
+                  </div>
+                  {can("packing-list:create") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 h-7 text-xs shrink-0"
+                      onClick={() => goCreate([po.purchaseOrderId], po.supplierId)}
+                    >
+                      <PlusIcon className="w-3 h-3" /> Create Packing List
+                    </Button>
                   )}
-                  <span className="text-[11px] text-muted-foreground shrink-0">
-                    {po.itemsRemaining} item{po.itemsRemaining !== 1 ? "s" : ""} remaining
-                  </span>
                 </div>
-                {can("packing-list:create") && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5 h-7 text-xs shrink-0"
-                    onClick={() => router.push(`/dashboard/procurement/packing-list/create${po.supplierId ? `?supplierId=${po.supplierId}` : ""}`)}
-                  >
-                    <PlusIcon className="w-3 h-3" /> Create Packing List
-                  </Button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

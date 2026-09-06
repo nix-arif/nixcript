@@ -12,7 +12,7 @@ export default async function CentralizedInspectPackingListPage({ params }: { pa
   if (!data.canInspect || data.status !== "pending") redirect(`/dashboard/procurement/packing-list/centralized/${id}`);
 
   const { organizationName, businessType, ...packingList } = data;
-  const canApprove = await canApprovePackingListInspection(packingList.organizationId);
+  const approval = await canApprovePackingListInspection(packingList.organizationId);
 
   return (
     <InspectPackingListClient
@@ -21,7 +21,9 @@ export default async function CentralizedInspectPackingListPage({ params }: { pa
       submitFn={completePackingListInspectionCentralized}
       backHref={`/dashboard/procurement/packing-list/centralized/${id}`}
       organizationName={organizationName}
-      canApprove={canApprove}
+      canApprove={approval.canApprove}
+      currentUserId={approval.currentUserId}
+      selfApprovalAllowed={approval.selfApprovalAllowed}
     />
   );
 }

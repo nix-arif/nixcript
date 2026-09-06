@@ -28,6 +28,7 @@ import { createGoodsReceipt, type GoodsReceiptItemInput } from "@/server/goods-r
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
+import { isSelfActionAllowed } from "@/server/approval-settings";
 
 const s3 = new S3Client({
   region: "auto",
@@ -975,7 +976,7 @@ export interface InspectionLineDraftInput {
 // same packing list at the same time without stepping on each other; two
 // people editing the exact same line still just resolve last-write-wins,
 // same as any other field in this app.
-export async function saveInspectionLineDraft(packingListItemId: string, input: InspectionLineDraftInput): Promise<{ inspectedByName: string | null; inspectedAt: Date }> {
+export async function saveInspectionLineDraft(packingListItemId: string, input: InspectionLineDraftInput): Promise<{ inspectedByName: string | null; inspectedById: string; inspectedAt: Date }> {
   const { orgId, userId } = await getSession();
 
   const [row] = await db
@@ -1015,7 +1016,7 @@ export async function saveInspectionLineDraft(packingListItemId: string, input: 
     .where(eq(packingListItem.id, packingListItemId));
 
   const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
-  return { inspectedByName: u?.name ?? null, inspectedAt };
+  return { inspectedByName: u?.name ?? null, inspectedById: userId, inspectedAt };
 }
 
 // The approval stage that gates completePackingListInspection — a second
@@ -1078,14 +1079,28 @@ export async function approveInspectionLine(
 // packing-list:inspect, not packing-list:approve. Takes the packing list's
 // own org (not necessarily the caller's active org) so this works correctly
 // from the centralized cross-org inspect page too.
-export async function canApprovePackingListInspection(plOrganizationId: string): Promise<boolean> {
+//
+// Also returns what the page needs to hide the buttons on a *specific* line
+// rather than just the whole page: currentUserId (to compare against each
+// line's draftInspectedBy) and selfApprovalAllowed (the org's setting for
+// whether that comparison even matters) — mirrors the selfActionKey branch
+// in approveInspectionLine so the button's visibility never promises an
+// action the server would then reject.
+export async function canApprovePackingListInspection(plOrganizationId: string): Promise<{
+  canApprove: boolean;
+  currentUserId: string;
+  selfApprovalAllowed: boolean;
+}> {
   const { orgId, userId } = await getSession();
+  let canApprove = true;
   try {
     await assertCanApprovePackingList(plOrganizationId, orgId, userId);
-    return true;
   } catch {
-    return false;
+    canApprove = false;
   }
+  const selfActionKey = orgId === plOrganizationId ? "packing-list:approve" : "packing-list:approve:centralized";
+  const selfApprovalAllowed = await isSelfActionAllowed(plOrganizationId, selfActionKey);
+  return { canApprove, currentUserId: userId, selfApprovalAllowed };
 }
 
 export type InspectionLineState = {
@@ -1096,6 +1111,7 @@ export type InspectionLineState = {
   draftReturnNotes: string | null;
   draftRepairNotes: string | null;
   inspectedByName: string | null;
+  inspectedById: string | null;
   inspectedAt: Date | null;
   approvalStatus: string | null;
   approvalNotes: string | null;
@@ -1127,6 +1143,7 @@ export async function getInspectionLineStates(packingListId: string): Promise<In
     draftReturnNotes: r.draftReturnNotes,
     draftRepairNotes: r.draftRepairNotes,
     inspectedByName: nameOf(r.draftInspectedBy),
+    inspectedById: r.draftInspectedBy,
     inspectedAt: r.draftInspectedAt,
     approvalStatus: r.draftApprovalStatus,
     approvalNotes: r.draftApprovalNotes,
@@ -1299,12 +1316,26 @@ export async function deletePackingList(id: string): Promise<void> {
   revalidatePath("/dashboard/procurement/packing-list");
 }
 
+export interface ReturnResolutionInput {
+  type: "replacement" | "credited" | "written_off" | "other";
+  // Required (and only meaningful) when type is "replacement" — the packing
+  // list carrying the make-good shipment. The supplier may send that
+  // shipment before or after the physical return actually goes back, so
+  // this is always a manual pick, never inferred.
+  packingListId?: string;
+  notes?: string;
+}
+
 // A line can need both a return AND a repair at once (split across the
 // damaged quantity), so each is resolved independently by actionType.
+// Only "return" takes a resolution — it's the only side with an external
+// counterparty (the supplier) whose settlement is worth recording; a repair
+// is done in-house, so "resolved" already fully describes it.
 export async function resolveReceiptItemAction(
   goodsReceiptItemId: string,
   actionType: "return" | "repair",
-): Promise<{ resolvedByName: string | null; resolvedAt: Date }> {
+  resolution?: ReturnResolutionInput,
+): Promise<{ resolvedByName: string | null; resolvedAt: Date; resolutionType: string | null; resolutionPackingListNo: string | null }> {
   const { orgId, userId } = await getSession();
 
   const [row] = await db
@@ -1317,10 +1348,29 @@ export async function resolveReceiptItemAction(
   if (row.grStatus === "recalled") throw new Error("This goods receipt has been recalled — nothing to resolve");
 
   const resolvedAt = new Date();
+  let resolutionPackingListNo: string | null = null;
+
   if (actionType === "return") {
+    if (!resolution) throw new Error("Specify how this return was resolved");
+    if (resolution.type === "replacement") {
+      if (!resolution.packingListId) throw new Error("Select the packing list carrying the replacement");
+      const [pl] = await db
+        .select({ id: packingList.id, packingListNo: packingList.packingListNo, organizationId: packingList.organizationId })
+        .from(packingList)
+        .where(eq(packingList.id, resolution.packingListId));
+      if (!pl || pl.organizationId !== row.orgId) throw new Error("Packing list not found");
+      resolutionPackingListNo = pl.packingListNo;
+    }
     await db
       .update(goodsReceiptItem)
-      .set({ returnStatus: "resolved", returnResolvedBy: userId, returnResolvedAt: resolvedAt })
+      .set({
+        returnStatus: "resolved",
+        returnResolvedBy: userId,
+        returnResolvedAt: resolvedAt,
+        returnResolutionType: resolution.type,
+        returnResolutionPackingListId: resolution.type === "replacement" ? resolution.packingListId : null,
+        returnResolutionNotes: resolution.notes || null,
+      })
       .where(and(eq(goodsReceiptItem.id, goodsReceiptItemId), eq(goodsReceiptItem.returnStatus, "pending")));
   } else {
     await db
@@ -1337,5 +1387,34 @@ export async function resolveReceiptItemAction(
   revalidatePath("/dashboard/procurement/goods-receipt/centralized");
 
   const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
-  return { resolvedByName: u?.name ?? null, resolvedAt };
+  return {
+    resolvedByName: u?.name ?? null,
+    resolvedAt,
+    resolutionType: actionType === "return" ? resolution!.type : null,
+    resolutionPackingListNo,
+  };
+}
+
+// Feeds the "replacement received" picker when resolving a return — every
+// packing list recorded for this supplier, regardless of its own status,
+// since the replacement shipment may still be mid-inspection (or not even
+// started) at the moment the return itself gets marked resolved.
+// targetOrgId lets the centralized Outstanding Issues panel resolve a
+// return that belongs to a DIFFERENT org than the caller's active one —
+// without it, this would silently query the wrong org's packing lists and
+// the picker would just show nothing. Only allowed when the caller actually
+// owns that org (same check as every other cross-org read in this file).
+export async function getPackingListsForSupplier(supplierId: string, targetOrgId?: string): Promise<{ id: string; packingListNo: string; status: string; createdAt: Date }[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  let scopedOrgId = orgId;
+  if (targetOrgId && targetOrgId !== orgId) {
+    const ownerOrgIds = await getOwnerOrgIds(orgId);
+    if (!ownerOrgIds.includes(targetOrgId)) throw new Error("You don't have permission to view packing lists for that organization");
+    scopedOrgId = targetOrgId;
+  }
+  return db
+    .select({ id: packingList.id, packingListNo: packingList.packingListNo, status: packingList.status, createdAt: packingList.createdAt })
+    .from(packingList)
+    .where(and(eq(packingList.organizationId, scopedOrgId), eq(packingList.supplierId, supplierId)))
+    .orderBy(desc(packingList.createdAt));
 }

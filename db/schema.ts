@@ -2193,6 +2193,20 @@ export const goodsReceiptItem = pgTable(
     // pending -> resolved transition, independent of the repair side below.
     returnResolvedBy: text("return_resolved_by").references(() => user.id),
     returnResolvedAt: timestamp("return_resolved_at"),
+    // How the return was actually settled — set together with
+    // returnResolvedBy/At on the same pending -> resolved transition.
+    // "replacement" points at the packing list that carried the make-good
+    // shipment (supplier may send it before or after the physical return
+    // goes back, so this is recorded manually rather than inferred); the
+    // other reasons don't have a shipment to point at, just notes.
+    // onDelete: "set null" — this is an audit pointer, not a hard
+    // dependency: deleting the referenced (often still-uninspected) packing
+    // list must never block deleting it just because an unrelated return
+    // once cited it as the replacement. The resolution itself, and its
+    // notes, survive; only the dangling link clears.
+    returnResolutionType: text("return_resolution_type"), // "replacement" | "credited" | "written_off" | "other"
+    returnResolutionPackingListId: text("return_resolution_packing_list_id").references((): AnyPgColumn => packingList.id, { onDelete: "set null" }),
+    returnResolutionNotes: text("return_resolution_notes"),
     repairStatus: text("repair_status"), // "pending" | "resolved" — only set when qtyRepair > 0
     repairNotes: text("repair_notes"),
     repairResolvedBy: text("repair_resolved_by").references(() => user.id),
