@@ -188,7 +188,7 @@ async function generatePoNo(orgId: string): Promise<string> {
 
 export type PurchaseOrderRow = typeof purchaseOrder.$inferSelect;
 export type PurchaseOrderItem = typeof purchaseOrderItem.$inferSelect;
-export type PurchaseOrderItemEnriched = PurchaseOrderItem & { imageUrl: string | null };
+export type PurchaseOrderItemEnriched = PurchaseOrderItem & { imageUrl: string | null; acceptedQty: number };
 
 export interface PurchaseOrderItemInput {
   rowNo: number;
@@ -639,6 +639,35 @@ async function getPendingReturnRepairByPo(poIds: string[]): Promise<Map<string, 
   }
   return map;
 }
+// qtyGood, not qtyReceived — a line sent back to the supplier was never
+// actually kept, so it shouldn't count toward how much of the line is
+// genuinely accepted. Falls back to qtyReceived for the plain direct-GR flow
+// (no inspection split, qtyGood is null there). Recalled GRs are excluded —
+// a reversed receipt was never really accepted either. Mirrors the identical
+// pattern in getPackableItemsForSupplier (server/packing-list.ts) and
+// syncPoFulfillmentStatus (server/goods-receipt.ts).
+async function getAcceptedQtyByPoItem(poItemIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (poItemIds.length === 0) return map;
+
+  const rows = await db
+    .select({
+      purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId,
+      qtyGood: goodsReceiptItem.qtyGood,
+      qtyReceived: goodsReceiptItem.qtyReceived,
+    })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .where(and(inArray(goodsReceiptItem.purchaseOrderItemId, poItemIds), ne(goodsReceipt.status, "recalled")));
+
+  for (const r of rows) {
+    if (!r.purchaseOrderItemId) continue;
+    const accepted = parseFloat(r.qtyGood ?? r.qtyReceived ?? "0") || 0;
+    map.set(r.purchaseOrderItemId, (map.get(r.purchaseOrderItemId) ?? 0) + accepted);
+  }
+  return map;
+}
+
 // canEdit: true for the creator, anyone holding purchase-order:update in the
 // PO's own organization, or anyone holding purchase-order:update:centralized
 // — everyone else gets view-only access in the centralized view.
@@ -780,6 +809,7 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
       .orderBy(desc(goodsReceipt.createdAt)),
   ]);
 
+  const acceptedByItem = await getAcceptedQtyByPoItem(items.map((i) => i.id));
   const enrichedItems: PurchaseOrderItemEnriched[] = await Promise.all(
     items.map(async (i) => {
       let imageUrl: string | null = null;
@@ -789,7 +819,7 @@ export async function getPurchaseOrderDetail(id: string): Promise<PurchaseOrderW
           imageUrl = await getSignedUrl(s3, cmd, { expiresIn: 7200 });
         } catch {}
       }
-      return { ...i, imageUrl };
+      return { ...i, imageUrl, acceptedQty: acceptedByItem.get(i.id) ?? 0 };
     }),
   );
 
@@ -908,6 +938,7 @@ export async function getPurchaseOrderDetailCentralized(id: string): Promise<Cen
       .orderBy(desc(goodsReceipt.createdAt)),
   ]);
 
+  const acceptedByItem = await getAcceptedQtyByPoItem(items.map((i) => i.id));
   const enrichedItems: PurchaseOrderItemEnriched[] = await Promise.all(
     items.map(async (i) => {
       let imageUrl: string | null = null;
@@ -917,7 +948,7 @@ export async function getPurchaseOrderDetailCentralized(id: string): Promise<Cen
           imageUrl = await getSignedUrl(s3, cmd, { expiresIn: 7200 });
         } catch {}
       }
-      return { ...i, imageUrl };
+      return { ...i, imageUrl, acceptedQty: acceptedByItem.get(i.id) ?? 0 };
     }),
   );
 

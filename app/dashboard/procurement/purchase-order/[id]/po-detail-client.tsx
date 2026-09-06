@@ -95,6 +95,65 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
+// How much of each line has actually been accepted via a goods receipt
+// (qtyGood, not just qtyReceived — see getAcceptedQtyByPoItem in
+// server/purchase-order.ts) — a per-row background heatmap so a shortfall or
+// a fully-accepted line is visible at a glance without reading every number.
+const ACCEPTANCE_BANDS = [
+  { min: 0, max: 0, label: "Not yet received", swatch: "bg-transparent border border-border", row: "" },
+  { min: 0, max: 50, label: "< 50% accepted", swatch: "bg-red-100 dark:bg-red-900/40", row: "bg-red-50/70 dark:bg-red-950/20" },
+  { min: 50, max: 80, label: "50–79% accepted", swatch: "bg-amber-100 dark:bg-amber-900/40", row: "bg-amber-50/70 dark:bg-amber-950/20" },
+  { min: 80, max: 100, label: "80–99% accepted", swatch: "bg-lime-100 dark:bg-lime-900/40", row: "bg-lime-50/70 dark:bg-lime-950/20" },
+  { min: 100, max: 100, label: "100% accepted", swatch: "bg-green-100 dark:bg-green-900/40", row: "bg-green-50/70 dark:bg-green-900/20" },
+] as const;
+
+function acceptancePct(acceptedQty: number, orderedQty: number): number {
+  if (orderedQty <= 0) return 0;
+  return Math.min(100, (acceptedQty / orderedQty) * 100);
+}
+
+function acceptanceRowClass(pct: number): string {
+  if (pct <= 0) return "";
+  if (pct < 50) return ACCEPTANCE_BANDS[1].row;
+  if (pct < 80) return ACCEPTANCE_BANDS[2].row;
+  if (pct < 100) return ACCEPTANCE_BANDS[3].row;
+  return ACCEPTANCE_BANDS[4].row;
+}
+
+// Overrides the acceptance-percentage color above — once a shortfall is
+// written off, the business has stopped chasing it, so the row shouldn't
+// keep reading as an open red/amber problem just because the percentage
+// accepted happens to be low. Neutral, not part of the percentage ramp.
+// Two shades by degree: some of the line still came in fine before the rest
+// was given up on (lighter — a mixed outcome, not a total loss) vs nothing
+// ever arrived at all (darker — the whole line is a write-off).
+const WRITTEN_OFF_PARTIAL_ROW_CLASS = "bg-zinc-100/70 dark:bg-zinc-800/30";
+const WRITTEN_OFF_PARTIAL_SWATCH = "bg-zinc-200 dark:bg-zinc-700";
+const WRITTEN_OFF_FULL_ROW_CLASS = "bg-zinc-300/60 dark:bg-zinc-700/50";
+const WRITTEN_OFF_FULL_SWATCH = "bg-zinc-400 dark:bg-zinc-500";
+
+function AcceptanceLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] border border-border rounded-lg px-3 py-2 mb-3">
+      <span className="font-medium text-foreground">Row color</span>
+      {ACCEPTANCE_BANDS.map((band) => (
+        <span key={band.label} className="flex items-center gap-1.5 text-muted-foreground">
+          <span className={cn("w-2.5 h-2.5 rounded-sm shrink-0", band.swatch)} />
+          {band.label}
+        </span>
+      ))}
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        <span className={cn("w-2.5 h-2.5 rounded-sm shrink-0", WRITTEN_OFF_PARTIAL_SWATCH)} />
+        Partially written off
+      </span>
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        <span className={cn("w-2.5 h-2.5 rounded-sm shrink-0", WRITTEN_OFF_FULL_SWATCH)} />
+        Completely written off
+      </span>
+    </div>
+  );
+}
+
 // "Fulfilled" only means everything was physically received (see
 // maybeAutoFulfill in server/goods-receipt.ts) — it says nothing about
 // whether it was actually accepted. This flags the gap: received quantity
@@ -342,6 +401,7 @@ export function PurchaseOrderDetailClient({
               <p className="text-sm text-muted-foreground">No items</p>
             ) : (
               <div className="overflow-x-auto">
+                <AcceptanceLegend />
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border text-muted-foreground">
@@ -367,8 +427,29 @@ export function PurchaseOrderDetailClient({
                     </tr>
                   </thead>
                   <tbody>
-                    {order.items.map((item) => (
-                      <tr key={item.id} className="border-b border-border/40 last:border-0">
+                    {order.items.map((item) => {
+                      const ordered = parseFloat(item.qty ?? "0") || 0;
+                      const pct = acceptancePct(item.acceptedQty, ordered);
+                      // Only "written_off" is a genuine loss — writeOffShortfall
+                      // closes out whatever was still remaining at that moment
+                      // (ordered minus what had already been accepted), so
+                      // there's no separately-tracked write-off quantity to
+                      // read back; it's derived the same way reopening it would
+                      // recompute the gap. "resolved" isn't a loss (the
+                      // shortfall was settled some other way), so it's excluded.
+                      const writtenOffQty = item.shortfallClosedStatus === "written_off" ? Math.max(0, ordered - item.acceptedQty) : 0;
+                      // Fully written off: nothing of the line ever arrived —
+                      // a total loss. Partially: some was accepted before the
+                      // rest was given up on — a mixed outcome, milder shade.
+                      const isFullyWrittenOff = item.shortfallClosedStatus === "written_off" && item.acceptedQty <= 0;
+                      const isPartiallyWrittenOff = item.shortfallClosedStatus === "written_off" && item.acceptedQty > 0;
+                      return (
+                      <tr key={item.id} className={cn(
+                        "border-b border-border/40 last:border-0",
+                        isFullyWrittenOff ? WRITTEN_OFF_FULL_ROW_CLASS
+                          : isPartiallyWrittenOff ? WRITTEN_OFF_PARTIAL_ROW_CLASS
+                          : acceptanceRowClass(pct),
+                      )}>
                         <td className="py-2 pr-3 align-top text-muted-foreground">{item.rowNo}</td>
                         {showSourcing && (
                           <>
@@ -469,6 +550,18 @@ export function PurchaseOrderDetailClient({
                             </div>
                           )}
                           {item.description || "—"}
+                          {isFullyWrittenOff && (
+                            <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-zinc-200 text-zinc-800 border border-zinc-400 dark:bg-zinc-700/60 dark:text-zinc-200 dark:border-zinc-600">
+                              <XIcon className="w-3 h-3 shrink-0" />
+                              Completely written off
+                            </span>
+                          )}
+                          {isPartiallyWrittenOff && (
+                            <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-700 border border-zinc-300 dark:bg-zinc-800/60 dark:text-zinc-300 dark:border-zinc-700">
+                              <XIcon className="w-3 h-3 shrink-0" />
+                              Partially written off — {writtenOffQty} {item.uom || ""}
+                            </span>
+                          )}
                           {item.descriptionSource === "product" && (
                             <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
                               <DatabaseIcon className="w-3 h-3 shrink-0" />from catalogue
@@ -493,7 +586,14 @@ export function PurchaseOrderDetailClient({
                         <td className="py-2 pr-3 align-top">
                           <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
                         </td>
-                        <td className="py-2 pr-3 align-top text-right tabular-nums">{item.qty}</td>
+                        <td className="py-2 pr-3 align-top text-right tabular-nums">
+                          {item.qty}
+                          {item.acceptedQty > 0 && (
+                            <div className="text-[10px] text-muted-foreground font-normal">
+                              {item.acceptedQty} accepted ({Math.round(pct)}%)
+                            </div>
+                          )}
+                        </td>
                         <td className="py-2 pr-3 align-top text-muted-foreground">{item.uom || "—"}</td>
                         {!hidePricing && (
                           <>
@@ -503,7 +603,8 @@ export function PurchaseOrderDetailClient({
                           </>
                         )}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

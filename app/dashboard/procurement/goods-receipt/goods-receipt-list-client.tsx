@@ -4,7 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
-import { type GoodsReceiptListRow, type PendingReturnRepairRow, writeOffShortfall, resolveShortfall } from "@/server/goods-receipt";
+import {
+  type GoodsReceiptListRow, type PendingReturnRepairRow, type ClosedShortfallRow,
+  writeOffShortfall, resolveShortfall, getClosedShortfalls, reopenShortfall,
+} from "@/server/goods-receipt";
 import { resolveReceiptItemAction, type ReturnResolutionInput } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +17,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import {
   PlusIcon, SearchIcon, XIcon,
   TruckIcon, BuildingIcon, CalendarIcon, PackageIcon, FileTextIcon, ArrowRightIcon, AlertCircleIcon, CheckIcon,
-  ChevronDownIcon,
+  ChevronDownIcon, ArchiveIcon, RotateCcwIcon, ChevronRightIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ResolveReturnDialog } from "./resolve-return-dialog";
@@ -35,8 +38,42 @@ export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, perm
   const [resolving, setResolving] = useState<string | null>(null);
   const [resolvingReturnRow, setResolvingReturnRow] = useState<PendingReturnRepairRow | null>(null);
   const [submittingReturn, setSubmittingReturn] = useState(false);
+  const [showClosedShortfalls, setShowClosedShortfalls] = useState(false);
+  const [closedShortfalls, setClosedShortfalls] = useState<ClosedShortfallRow[] | null>(null);
+  const [loadingClosed, setLoadingClosed] = useState(false);
+  const [reopeningId, setReopeningId] = useState<string | null>(null);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+  const isOwner = permissions.includes("*");
+
+  async function toggleClosedShortfalls() {
+    const next = !showClosedShortfalls;
+    setShowClosedShortfalls(next);
+    if (next && closedShortfalls === null) {
+      setLoadingClosed(true);
+      try {
+        setClosedShortfalls(await getClosedShortfalls());
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Couldn't load closed shortfalls");
+        setClosedShortfalls([]);
+      } finally {
+        setLoadingClosed(false);
+      }
+    }
+  }
+
+  async function handleReopen(row: ClosedShortfallRow) {
+    setReopeningId(row.purchaseOrderItemId);
+    try {
+      await reopenShortfall(row.purchaseOrderItemId);
+      setClosedShortfalls((prev) => prev?.filter((r) => r.purchaseOrderItemId !== row.purchaseOrderItemId) ?? null);
+      toast.success("Shortfall reopened — it's back on the Outstanding Issues list");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't reopen this shortfall");
+    } finally {
+      setReopeningId(null);
+    }
+  }
 
   // Shortfall (resolveShortfall) and repair (resolveReceiptItemAction, no
   // resolution detail needed) both just flip a status flag — return is the
@@ -236,6 +273,84 @@ export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, perm
               );
             })}
           </div>
+        </div>
+      )}
+
+      {isOwner && (
+        <div className="mb-5 border border-border rounded-xl overflow-hidden">
+          <button
+            type="button"
+            onClick={toggleClosedShortfalls}
+            className="w-full flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide hover:bg-muted/30 transition-colors"
+          >
+            {showClosedShortfalls ? <ChevronDownIcon className="w-3.5 h-3.5" /> : <ChevronRightIcon className="w-3.5 h-3.5" />}
+            <ArchiveIcon className="w-3.5 h-3.5" />
+            Closed Shortfalls
+            {closedShortfalls !== null && (
+              <span className="font-normal normal-case">({closedShortfalls.length})</span>
+            )}
+          </button>
+          {showClosedShortfalls && (
+            <div className="border-t border-border p-3">
+              {loadingClosed ? (
+                <p className="text-xs text-muted-foreground px-1">Loading…</p>
+              ) : !closedShortfalls || closedShortfalls.length === 0 ? (
+                <p className="text-xs text-muted-foreground px-1">No shortfalls have been marked resolved or written off.</p>
+              ) : (
+                <div className="space-y-2">
+                  {closedShortfalls.map((row) => (
+                    <div
+                      key={row.purchaseOrderItemId}
+                      className="flex items-center justify-between gap-3 border border-border/70 bg-muted/20 rounded-lg px-3 py-2"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-wrap">
+                        <span className={cn(
+                          "text-[10px] font-medium px-1.5 py-0.5 rounded-md border shrink-0",
+                          row.closedStatus === "written_off"
+                            ? "bg-muted text-muted-foreground border-border"
+                            : "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800",
+                        )}>
+                          {row.qty} {row.closedStatus === "written_off" ? "written off" : "resolved"}
+                        </span>
+                        <button
+                          className="font-mono text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+                          title="Open the purchase order"
+                          onClick={() => router.push(`/dashboard/procurement/purchase-order/${row.purchaseOrderId}`)}
+                        >
+                          PO {row.poNo ?? row.prNo ?? row.purchaseOrderId}
+                        </button>
+                        <span className="text-[11px] text-muted-foreground truncate">
+                          <span className="font-mono">{row.productCode}</span>
+                          {row.description && <span className="text-muted-foreground/80"> — {row.description}</span>}
+                        </span>
+                        {row.supplierName && (
+                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground truncate">
+                            <BuildingIcon className="w-3 h-3 shrink-0" />
+                            {row.supplierName}
+                          </span>
+                        )}
+                        {(row.closedByName || row.closedAt) && (
+                          <span className="text-[10px] text-muted-foreground/70 truncate shrink-0">
+                            {row.closedByName ? `by ${row.closedByName}` : ""}
+                            {row.closedAt && ` · ${formatDistanceToNow(new Date(row.closedAt), { addSuffix: true })}`}
+                          </span>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 h-7 text-xs shrink-0"
+                        disabled={reopeningId === row.purchaseOrderItemId}
+                        onClick={() => handleReopen(row)}
+                      >
+                        <RotateCcwIcon className="w-3.5 h-3.5" /> Reopen
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

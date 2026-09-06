@@ -11,9 +11,12 @@ import {
   addInspectionPhoto,
   deleteInspectionPhoto,
   approveInspectionLine,
+  getPendingReturnsForSupplier,
+  resolveReceiptItemAction,
   type PackingListWithItems,
   type InspectionPhoto,
   type InspectionPhotoCategory,
+  type PendingReturnForSupplier,
 } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -250,6 +253,75 @@ function RejectNoteBox({ onConfirm, onCancel }: { onConfirm: (notes?: string) =>
       <button type="button" onClick={onCancel} className="text-[9px] text-muted-foreground hover:text-foreground shrink-0">
         Cancel
       </button>
+    </div>
+  );
+}
+
+// Surfaces this supplier's still-open return-to-supplier lines (from any
+// earlier packing list) right where a person is about to receive a NEW one —
+// the point where "wait, isn't this the replacement for that?" actually
+// needs to occur to them, rather than only in the separate Outstanding
+// Issues panel they'd have to remember to go check. One click links the two
+// via the same resolveReceiptItemAction the manual dialog uses, just with
+// this packing list already known instead of picked from a dropdown.
+function SupplierPendingReturnsBanner({ supplierId, organizationId, packingListId, packingListNo }: { supplierId: string; organizationId: string; packingListId: string; packingListNo: string }) {
+  const [returns, setReturns] = useState<PendingReturnForSupplier[] | null>(null);
+  const [linkingId, setLinkingId] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    getPendingReturnsForSupplier(supplierId, organizationId)
+      .then(setReturns)
+      .catch(() => setReturns([]));
+  }, [supplierId, organizationId]);
+
+  async function handleLink(item: PendingReturnForSupplier) {
+    setLinkingId(item.goodsReceiptItemId);
+    try {
+      await resolveReceiptItemAction(item.goodsReceiptItemId, "return", { type: "replacement", packingListId });
+      setReturns((prev) => prev?.filter((r) => r.goodsReceiptItemId !== item.goodsReceiptItemId) ?? null);
+      toast.success("Linked as replacement");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't link this return");
+    } finally {
+      setLinkingId(null);
+    }
+  }
+
+  if (dismissed || !returns || returns.length === 0) return null;
+
+  return (
+    <div className="border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/15 rounded-lg px-3 py-2.5 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <span className="flex items-center gap-1.5 text-[11px] font-medium text-amber-800 dark:text-amber-300">
+          <AlertTriangleIcon className="w-3.5 h-3.5 shrink-0" />
+          This supplier has {returns.length} unresolved return{returns.length !== 1 ? "s" : ""} — is {packingListNo} the replacement for one of them?
+        </span>
+        <button type="button" onClick={() => setDismissed(true)} className="text-amber-700 dark:text-amber-400 hover:text-amber-900 shrink-0">
+          <XIcon className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="space-y-1">
+        {returns.map((r) => (
+          <div key={r.goodsReceiptItemId} className="flex items-center justify-between gap-3 text-[11px] bg-background/60 border border-amber-200/60 dark:border-amber-800/40 rounded-md px-2 py-1.5">
+            <span className="text-muted-foreground">
+              {r.qty} {r.uom || ""} of <span className="font-mono text-foreground">{r.productCode || r.description || "item"}</span>
+              {r.grNo && <> · returned on <span className="font-medium text-foreground">{r.grNo}</span></>}
+              {r.poNo && ` (${r.poNo})`}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 text-[10px] px-2 shrink-0"
+              disabled={linkingId === r.goodsReceiptItemId}
+              onClick={() => handleLink(r)}
+            >
+              {linkingId === r.goodsReceiptItemId ? "Linking…" : "Link as replacement"}
+            </Button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -598,6 +670,8 @@ export function InspectPackingListClient({
       />
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        <SupplierPendingReturnsBanner supplierId={pl.supplierId} organizationId={pl.organizationId} packingListId={pl.id} packingListNo={pl.packingListNo} />
+
         <section className="border border-border rounded-xl p-4 space-y-4 max-w-3xl">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Receipt Details</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

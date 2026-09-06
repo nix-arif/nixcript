@@ -18,7 +18,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc, inArray, ne } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, ne, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -405,6 +405,68 @@ export async function getSupplierOutstandingIssues(supplierId: string): Promise<
   }
 
   return [...byPl.values()];
+}
+
+export type PendingReturnForSupplier = {
+  goodsReceiptItemId: string;
+  qty: number;
+  uom: string | null;
+  productCode: string | null;
+  description: string | null;
+  grNo: string | null;
+  poNo: string | null;
+};
+
+// Still-open (returnStatus "pending") return-to-supplier lines for this
+// supplier, regardless of which PO or packing list they came from — surfaced
+// on the inspect page of a NEW packing list so the person receiving it can
+// notice "oh, this is the replacement for that" and link the two in one
+// click, instead of only discovering the connection later via the separate
+// Outstanding Issues panel (by which point they've forgotten the shipment
+// in front of them was the replacement). Unlike getSupplierOutstandingIssues
+// above, this checks resolution state directly since it drives an action
+// (resolveReceiptItemAction), not just a pointer.
+// targetOrgId mirrors getPackingListsForSupplier below — needed when the
+// inspect page is the centralized (cross-org) flow, where the packing list
+// being inspected belongs to a different org than the caller's active one.
+export async function getPendingReturnsForSupplier(supplierId: string, targetOrgId?: string): Promise<PendingReturnForSupplier[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  let scopedOrgId = orgId;
+  if (targetOrgId && targetOrgId !== orgId) {
+    const ownerOrgIds = await getOwnerOrgIds(orgId);
+    if (!ownerOrgIds.includes(targetOrgId)) throw new Error("You don't have permission to view returns for that organization");
+    scopedOrgId = targetOrgId;
+  }
+
+  const rows = await db
+    .select({
+      id: goodsReceiptItem.id,
+      qtyReturn: goodsReceiptItem.qtyReturn,
+      uom: goodsReceiptItem.uom,
+      productCode: goodsReceiptItem.productCode,
+      description: goodsReceiptItem.description,
+      grNo: goodsReceipt.grNo,
+      poNo: purchaseOrder.poNo,
+    })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .innerJoin(purchaseOrder, eq(goodsReceipt.purchaseOrderId, purchaseOrder.id))
+    .where(and(
+      eq(goodsReceipt.organizationId, scopedOrgId),
+      eq(purchaseOrder.supplierId, supplierId),
+      eq(goodsReceiptItem.returnStatus, "pending"),
+      ne(goodsReceipt.status, "recalled"),
+    ));
+
+  return rows.map((r) => ({
+    goodsReceiptItemId: r.id,
+    qty: parseFloat(r.qtyReturn ?? "0") || 0,
+    uom: r.uom,
+    productCode: r.productCode,
+    description: r.description,
+    grNo: r.grNo,
+    poNo: r.poNo,
+  }));
 }
 
 // Confirmed POs that still have items with nothing packed for them yet
@@ -1339,7 +1401,7 @@ export async function resolveReceiptItemAction(
   const { orgId, userId } = await getSession();
 
   const [row] = await db
-    .select({ id: goodsReceiptItem.id, orgId: goodsReceipt.organizationId, grStatus: goodsReceipt.status })
+    .select({ id: goodsReceiptItem.id, orgId: goodsReceipt.organizationId, grStatus: goodsReceipt.status, purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId })
     .from(goodsReceiptItem)
     .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
     .where(eq(goodsReceiptItem.id, goodsReceiptItemId));
@@ -1372,6 +1434,20 @@ export async function resolveReceiptItemAction(
         returnResolutionNotes: resolution.notes || null,
       })
       .where(and(eq(goodsReceiptItem.id, goodsReceiptItemId), eq(goodsReceiptItem.returnStatus, "pending")));
+
+    // "written_off" on a return means no replacement is ever coming for
+    // those units — so the PO item's own shortfall (the ordered-qty gap
+    // those units represent) shouldn't keep sitting open on Outstanding
+    // Issues or being offered as remaining-to-pack once that's decided.
+    // Only fills in an untouched (null) shortfall — never overwrites one
+    // someone already closed a different way, and never touches an already
+    // written-off one (nothing to update).
+    if (resolution.type === "written_off" && row.purchaseOrderItemId) {
+      await db
+        .update(purchaseOrderItem)
+        .set({ shortfallClosedStatus: "written_off", shortfallClosedBy: userId, shortfallClosedAt: resolvedAt })
+        .where(and(eq(purchaseOrderItem.id, row.purchaseOrderItemId), isNull(purchaseOrderItem.shortfallClosedStatus)));
+    }
   } else {
     await db
       .update(goodsReceiptItem)

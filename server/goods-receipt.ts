@@ -20,7 +20,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, or, ne, desc, inArray, isNull } from "drizzle-orm";
+import { eq, and, or, ne, desc, inArray, isNull, isNotNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -714,6 +714,108 @@ export async function writeOffShortfall(purchaseOrderItemId: string): Promise<vo
 // attestation, same trust level as resolveReceiptItemAction for return/repair.
 export async function resolveShortfall(purchaseOrderItemId: string): Promise<void> {
   await closeShortfall(purchaseOrderItemId, "resolved");
+}
+
+export type ClosedShortfallRow = {
+  purchaseOrderItemId: string;
+  qty: number;
+  productCode: string | null;
+  description: string | null;
+  purchaseOrderId: string;
+  poNo: string | null;
+  prNo: string | null;
+  supplierName: string | null;
+  closedStatus: string; // "resolved" | "written_off"
+  closedByName: string | null;
+  closedAt: Date | null;
+};
+
+// Shortfalls someone has already closed (resolveShortfall/writeOffShortfall
+// above) — once closed, a PO item drops out of both the Outstanding Issues
+// worklist (computeOutstandingIssues filters on isNull(shortfallClosedStatus))
+// and getPackableItemsForSupplier's remaining-qty math, so this is the only
+// place left to find one again. Owner-only to view, same as reopenShortfall
+// below — no point surfacing a list whose only action nobody but the owner
+// can take.
+export async function getClosedShortfalls(): Promise<ClosedShortfallRow[]> {
+  const { orgId } = await requireOwner();
+
+  const items = await db
+    .select({
+      id: purchaseOrderItem.id,
+      qty: purchaseOrderItem.qty,
+      productCode: purchaseOrderItem.productCode,
+      description: purchaseOrderItem.description,
+      purchaseOrderId: purchaseOrderItem.purchaseOrderId,
+      shortfallClosedStatus: purchaseOrderItem.shortfallClosedStatus,
+      shortfallClosedBy: purchaseOrderItem.shortfallClosedBy,
+      shortfallClosedAt: purchaseOrderItem.shortfallClosedAt,
+    })
+    .from(purchaseOrderItem)
+    .innerJoin(purchaseOrder, eq(purchaseOrderItem.purchaseOrderId, purchaseOrder.id))
+    .where(and(eq(purchaseOrder.organizationId, orgId), isNotNull(purchaseOrderItem.shortfallClosedStatus)));
+  if (items.length === 0) return [];
+
+  const poIds = [...new Set(items.map((i) => i.purchaseOrderId))];
+  const closedByIds = [...new Set(items.map((i) => i.shortfallClosedBy).filter((id): id is string => !!id))];
+  const [pos, closers] = await Promise.all([
+    db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, supplierSnapshot: purchaseOrder.supplierSnapshot })
+      .from(purchaseOrder).where(inArray(purchaseOrder.id, poIds)),
+    closedByIds.length > 0
+      ? db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, closedByIds))
+      : Promise.resolve([]),
+  ]);
+  const poMap = Object.fromEntries(pos.map((p) => [p.id, p]));
+  const closerMap = Object.fromEntries(closers.map((c) => [c.id, c.name]));
+
+  return items
+    .map((item) => {
+      const po = poMap[item.purchaseOrderId];
+      const snap = po?.supplierSnapshot as { name?: string } | null;
+      return {
+        purchaseOrderItemId: item.id,
+        qty: parseFloat(item.qty ?? "0") || 0,
+        productCode: item.productCode,
+        description: item.description,
+        purchaseOrderId: item.purchaseOrderId,
+        poNo: po?.poNo ?? null,
+        prNo: po?.prNo ?? null,
+        supplierName: snap?.name ?? null,
+        closedStatus: item.shortfallClosedStatus!,
+        closedByName: item.shortfallClosedBy ? closerMap[item.shortfallClosedBy] ?? null : null,
+        closedAt: item.shortfallClosedAt,
+      };
+    })
+    .sort((a, b) => (b.closedAt?.getTime() ?? 0) - (a.closedAt?.getTime() ?? 0));
+}
+
+// Undoes resolveShortfall/writeOffShortfall. Closing a shortfall is a
+// business call anyone with packing-list:inspect can make, but reversing one
+// — silently reopening a gap the business had already decided to stop
+// chasing — needs tighter judgment, so this is owner-only, same restriction
+// as recallGoodsReceipt/deleteGoodsReceipt above. Scoped to the caller's own
+// active org only (no centralized cross-org variant), mirroring how those
+// two also only ever act on their own org even from the centralized GR
+// detail view — see isOwnOrg in gr-detail-client.tsx.
+export async function reopenShortfall(purchaseOrderItemId: string): Promise<void> {
+  const { orgId } = await requireOwner();
+
+  const [item] = await db
+    .select({ id: purchaseOrderItem.id, poOrgId: purchaseOrder.organizationId })
+    .from(purchaseOrderItem)
+    .innerJoin(purchaseOrder, eq(purchaseOrderItem.purchaseOrderId, purchaseOrder.id))
+    .where(eq(purchaseOrderItem.id, purchaseOrderItemId));
+  if (!item) throw new Error("Item not found");
+  if (item.poOrgId !== orgId) throw new Error("You don't have permission to do this");
+
+  await db
+    .update(purchaseOrderItem)
+    .set({ shortfallClosedStatus: null, shortfallClosedBy: null, shortfallClosedAt: null })
+    .where(eq(purchaseOrderItem.id, purchaseOrderItemId));
+
+  revalidatePath("/dashboard/procurement/goods-receipt");
+  revalidatePath("/dashboard/procurement/goods-receipt/centralized");
+  revalidatePath("/dashboard/procurement/packing-list");
 }
 
 export async function getConfirmedPosForGr(): Promise<ConfirmedPoForGr[]> {
