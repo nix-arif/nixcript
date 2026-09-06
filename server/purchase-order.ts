@@ -387,6 +387,7 @@ async function getOwnerOrgIds(orgId: string): Promise<string[]> {
 export async function searchCustomersForPo(query: string): Promise<{
   id: string;
   name: string;
+  title: string | null;
   memberships: { customerOrganizationId: string; orgName: string; isPrimary: boolean }[];
 }[]> {
   const { orgId } = await requireAccess("purchase-order:create");
@@ -394,7 +395,7 @@ export async function searchCustomersForPo(query: string): Promise<{
   const ownerOrgIds = await getOwnerOrgIds(orgId);
 
   const customers = await db
-    .select({ id: customer.id, name: customer.name })
+    .select({ id: customer.id, name: customer.name, title: customer.title })
     .from(customer)
     .where(and(inArray(customer.organizationId, ownerOrgIds), ilike(customer.name, `%${query.trim()}%`)))
     .orderBy(asc(customer.name))

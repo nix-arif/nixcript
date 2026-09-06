@@ -132,13 +132,19 @@ export function uploadErrorMessage(err: unknown): string {
 // in turn rather than assuming ".jpg" and silently showing "no image".
 export const IMAGE_EXT_CANDIDATES = ["jpg", "jpeg", "png", "webp"];
 
-export function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onReplace }: { productCode: string; lookupCode?: string; overrideUrl?: string; onReplace: () => void }) {
+// Resolves the image src for a catalogue-image lookup code (a product code,
+// or — for an OEM item — its design code, since our own product code there
+// is a private-label code we made up and the actual photo, if any, lives
+// under the design house's own code instead), trying each extension in
+// IMAGE_EXT_CANDIDATES in turn on 404. Shared by every place in the app that
+// shows this thumbnail (Create, Edit, the read-only Detail page) so a fix to
+// how the src is guessed can't land in one and silently miss the others —
+// that's exactly what happened before this was extracted: the Detail page's
+// own copy kept the old ".jpg", product-code-only guess after Create/Edit
+// gained the design-code fallback and the extension chain, so the same item
+// showed correctly in Edit and incorrectly on Detail.
+export function useCatalogImageSrc(catalogCode: string, overrideUrl?: string) {
   const [extIdx, setExtIdx] = useState(0);
-  const [open, setOpen]     = useState(false);
-  // For an OEM item, our own product code is a private-label code we made
-  // up — the catalog photo (if any) lives under the design house's own
-  // design code instead, so that's what the lookup key falls back from.
-  const catalogCode = lookupCode || productCode;
   const exhausted = extIdx >= IMAGE_EXT_CANDIDATES.length;
   const catalogSrc = R2_PRODUCT_IMAGES && catalogCode && !exhausted
     ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(catalogCode)}.${IMAGE_EXT_CANDIDATES[extIdx]}`
@@ -147,7 +153,19 @@ export function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onRep
 
   useEffect(() => { setExtIdx(0); }, [overrideUrl, catalogCode]);
 
-  if (!src || (!overrideUrl && exhausted)) {
+  function onImgError() {
+    if (!overrideUrl) setExtIdx((i) => i + 1);
+  }
+
+  return { src, onImgError, noImage: !src || (!overrideUrl && exhausted) };
+}
+
+export function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onReplace }: { productCode: string; lookupCode?: string; overrideUrl?: string; onReplace: () => void }) {
+  const [open, setOpen] = useState(false);
+  const catalogCode = lookupCode || productCode;
+  const { src, onImgError, noImage } = useCatalogImageSrc(catalogCode, overrideUrl);
+
+  if (noImage) {
     return (
       <button
         type="button"
@@ -169,7 +187,7 @@ export function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onRep
         className="block w-9 h-9 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} className="w-full h-full object-cover" alt="" onError={() => { if (!overrideUrl) setExtIdx((i) => i + 1); }} />
+        <img src={src} className="w-full h-full object-cover" alt="" onError={onImgError} />
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -177,7 +195,7 @@ export function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onRep
           <DialogTitle className="sr-only">{productCode}</DialogTitle>
           <div className="relative bg-muted/30">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={src} className="w-full object-contain max-h-[65vh]" alt={productCode} onError={() => { if (!overrideUrl) setExtIdx((i) => i + 1); setOpen(false); }} />
+            <img src={src} className="w-full object-contain max-h-[65vh]" alt={productCode} onError={() => { onImgError(); setOpen(false); }} />
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -451,11 +469,15 @@ export function CustomerPickerCell({
     }, 300);
   }
 
-  function pick(customerId: string, name: string, orgId: string | null, orgName: string | null) {
+  // customerName has no separate title field of its own — the title (Dr,
+  // Mr, Ms, Mdm, Prof) is prefixed straight into it at pick time so every
+  // display of this field (this chip, the PO PDF, etc.) always carries it
+  // without each of those needing to know about titles separately.
+  function pick(customerId: string, name: string, title: string | null, orgId: string | null, orgName: string | null) {
     onUpdate(item._key, {
       customerId,
       customerOrganizationId: orgId ?? undefined,
-      customerName: name,
+      customerName: title?.trim() ? `${title.trim()} ${name}` : name,
       customerOrganization: orgName ?? "",
     });
     setQuery("");
@@ -502,14 +524,14 @@ export function CustomerPickerCell({
           ) : results.length > 0 ? (
             results.map((r) => (
               <div key={r.id} className="border-b border-border/50 last:border-0">
-                <div className="px-2 pt-1.5 pb-0.5 font-medium truncate">{r.name}</div>
+                <div className="px-2 pt-1.5 pb-0.5 font-medium truncate">{r.title?.trim() ? `${r.title.trim()} ${r.name}` : r.name}</div>
                 {r.memberships.length > 0 ? (
                   r.memberships.map((m) => (
                     <button
                       key={m.customerOrganizationId}
                       type="button"
                       className="w-full text-left pl-4 pr-2 py-1 hover:bg-accent text-muted-foreground truncate flex items-center gap-1"
-                      onClick={() => pick(r.id, r.name, m.customerOrganizationId, m.orgName)}
+                      onClick={() => pick(r.id, r.name, r.title, m.customerOrganizationId, m.orgName)}
                     >
                       {m.orgName}
                       {m.isPrimary && <span className="text-[9px] text-muted-foreground/70">(primary)</span>}
@@ -519,7 +541,7 @@ export function CustomerPickerCell({
                   <button
                     type="button"
                     className="w-full text-left pl-4 pr-2 py-1 hover:bg-accent text-muted-foreground italic"
-                    onClick={() => pick(r.id, r.name, null, null)}
+                    onClick={() => pick(r.id, r.name, r.title, null, null)}
                   >
                     no organisation on file
                   </button>

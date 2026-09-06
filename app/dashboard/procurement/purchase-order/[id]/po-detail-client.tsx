@@ -23,19 +23,20 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useCatalogImageSrc } from "../_shared/po-item-fields";
 
-const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
-
-function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; productCode?: string | null }) {
+// lookupCode is the design code for an OEM item (falls back to productCode)
+// — see useCatalogImageSrc in the shared module, which also owns the
+// jpg/jpeg/png/webp extension fallback. Both this component and the
+// upload-capable PoProductThumbnail on Create/Edit go through that same
+// hook so a fix to how the image src is guessed can't land in one and miss
+// the other, which is exactly what happened before this was shared.
+function ItemImageThumb({ imageUrl, productCode, lookupCode }: { imageUrl: string | null; productCode?: string | null; lookupCode?: string | null }) {
   const [open, setOpen] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const catalogCode = lookupCode || productCode || "";
+  const { src, onImgError, noImage } = useCatalogImageSrc(catalogCode, imageUrl ?? undefined);
 
-  const catalogSrc = R2_PRODUCT_IMAGES && productCode
-    ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg`
-    : "";
-  const src = imageUrl || catalogSrc;
-
-  if (!src || failed) return <span className="text-muted-foreground">—</span>;
+  if (noImage) return <span className="text-muted-foreground">—</span>;
 
   return (
     <>
@@ -46,7 +47,7 @@ function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; pr
         title="View image"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} className="w-full h-full object-cover" alt="" onError={() => setFailed(true)} />
+        <img src={src} className="w-full h-full object-cover" alt="" onError={onImgError} />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
@@ -57,7 +58,7 @@ function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; pr
               src={src}
               className="w-full object-contain max-h-[65vh]"
               alt={productCode ?? ""}
-              onError={() => { setFailed(true); setOpen(false); }}
+              onError={() => { onImgError(); setOpen(false); }}
             />
             <button
               type="button"
@@ -584,7 +585,11 @@ export function PurchaseOrderDetailClient({
                           )}
                         </td>
                         <td className="py-2 pr-3 align-top">
-                          <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
+                          <ItemImageThumb
+                            imageUrl={item.imageUrl}
+                            productCode={item.productCode}
+                            lookupCode={item.sourcingType === "oem" ? item.designBrandCode?.trim() || undefined : undefined}
+                          />
                         </td>
                         <td className="py-2 pr-3 align-top text-right tabular-nums">
                           {item.qty}
