@@ -76,10 +76,14 @@ function uploadErrorMessage(err: unknown): string {
   return "Upload failed — please try again.";
 }
 
-function PoProductThumbnail({ productCode, overrideUrl, onReplace }: { productCode: string; overrideUrl?: string; onReplace: () => void }) {
+function PoProductThumbnail({ productCode, lookupCode, overrideUrl, onReplace }: { productCode: string; lookupCode?: string; overrideUrl?: string; onReplace: () => void }) {
   const [failed, setFailed] = useState(false);
   const [open, setOpen]     = useState(false);
-  const catalogSrc = R2_PRODUCT_IMAGES && productCode ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg` : "";
+  // For an OEM item, our own product code is a private-label code we made
+  // up — the catalog photo (if any) lives under the design house's own
+  // design code instead, so that's what the lookup key falls back from.
+  const catalogCode = lookupCode || productCode;
+  const catalogSrc = R2_PRODUCT_IMAGES && catalogCode ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(catalogCode)}.jpg` : "";
   const src = overrideUrl || catalogSrc;
 
   useEffect(() => { if (overrideUrl) setFailed(false); }, [overrideUrl]);
@@ -1753,6 +1757,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
                         ) : (
                           <PoProductThumbnail
                             productCode={item.productCode ?? ""}
+                            lookupCode={item.sourcingType === "oem" ? (item.designBrandCode?.trim() || undefined) : undefined}
                             overrideUrl={item._imagePreviewUrl}
                             onReplace={() => document.getElementById(`po-img-${item._key}`)?.click()}
                           />
