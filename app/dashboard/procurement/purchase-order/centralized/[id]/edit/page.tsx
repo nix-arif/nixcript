@@ -10,7 +10,7 @@ import { getSuppliers } from "@/server/supplier";
 import { EditPurchaseOrderClient } from "../../../[id]/edit/edit-po-client";
 
 export default async function CentralizedEditPurchaseOrderPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission("purchase-order:read:centralized");
+  const session = await requirePermission("purchase-order:read:centralized");
   const { id } = await params;
 
   const [order, suppliers, approvedSos, customerPos] = await Promise.all([
@@ -33,6 +33,8 @@ export default async function CentralizedEditPurchaseOrderPage({ params }: { par
       customerPos={customerPos}
       updateFn={updatePurchaseOrderCentralized}
       detailHref={`/dashboard/procurement/purchase-order/centralized/${id}`}
+      businessType={businessType}
+      currentUserName={session.user.name ?? ""}
     />
   );
 }

@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   updatePurchaseOrder,
   getSalesOrderItemsForPo,
   getPoSupplierQuotationUploadUrl,
-  getPoItemImageUploadUrl,
-  type PurchaseOrderItemInput,
   type PurchaseOrderWithItems,
 } from "@/server/purchase-order";
 import type { Supplier } from "@/server/supplier";
@@ -21,13 +19,25 @@ import { Highlight } from "@/components/highlight";
 import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon,
-  PlusIcon,
-  TrashIcon,
   PaperclipIcon,
   XIcon,
-  ImageIcon,
   SearchIcon,
 } from "lucide-react";
+import {
+  type LineItem,
+  newLine,
+  calcTotals,
+  CURRENCIES,
+  detectCurrency,
+  fmt,
+  useUpdateItem,
+  useAddLine,
+  useRemoveLine,
+  useHandleProductCodeBlur,
+  useItemImageHandlers,
+  useCleanupOrphanedImages,
+  PoItemsTable,
+} from "../../_shared/po-item-fields";
 
 interface ApprovedSo { id: string; soNo: string; customerName: string | null }
 interface CustomerPoOption { id: string; customerPoNo: string; customerName: string | null; amount: string }
@@ -39,38 +49,55 @@ interface Props {
   customerPos: CustomerPoOption[];
   updateFn?: typeof updatePurchaseOrder;
   detailHref?: string;
+  // Same meaning as on CreatePurchaseOrderClient — gates the OEM columns
+  // (sourcing type, design brand/code, emboss code) in PoItemsTable.
+  businessType?: string;
+  // Attributed to "X edited SPO" badges when the user changes a design/
+  // customer field here, same as on create.
+  currentUserName?: string;
 }
 
-interface LineItem extends PurchaseOrderItemInput {
-  _key: string;
-  _imageFile?: File;
-  _imageUploading?: boolean;
+// Every field on the saved item, not just the display-friendly ones — this
+// is the actual fix for the bug where editing a PO silently erased sourcing
+// type, design brand/code, emboss code, per-item customer, and set group
+// off every line, since the old version of this form only ever read 8 of
+// the ~25 fields a line item carries. See PurchaseOrderItemInput and
+// applyPurchaseOrderUpdate in server/purchase-order.ts — both already fully
+// support every field mapped here; the gap was purely on the read side.
+function orderItemToLine(i: PurchaseOrderWithItems["items"][number]): LineItem {
+  return {
+    _key: i.id,
+    rowNo: i.rowNo,
+    productId: i.productId ?? undefined,
+    productCode: i.productCode ?? "",
+    description: i.description ?? "",
+    qty: i.qty ?? "1",
+    uom: i.uom ?? "",
+    unitPrice: i.unitPrice ?? "0",
+    currency: i.currency ?? "MYR",
+    totalPrice: i.totalPrice ?? "0",
+    imageKey: i.imageKey ?? undefined,
+    _imagePreviewUrl: i.imageUrl ?? undefined,
+    descriptionSource: i.descriptionSource ?? undefined,
+    isAdditional: i.isAdditional ?? false,
+    editedBy: i.editedBy ?? undefined,
+    setGroupId: i.setGroupId ?? undefined,
+    setGroupLabel: i.setGroupLabel ?? undefined,
+    setQty: i.setQty ?? undefined,
+    customerId: i.customerId ?? undefined,
+    customerOrganizationId: i.customerOrganizationId ?? undefined,
+    customerName: i.customerName ?? "",
+    customerOrganization: i.customerOrganization ?? "",
+    customerPoNo: i.customerPoNo ?? "",
+    sourcingType: i.sourcingType ?? undefined,
+    designBrandName: i.designBrandName ?? "",
+    designBrandCode: i.designBrandCode ?? "",
+    privateLabelCode: i.privateLabelCode ?? "",
+    designBrandSource: i.designBrandSource ?? undefined,
+    privateLabelSource: i.privateLabelSource ?? undefined,
+    oemEditedBy: i.oemEditedBy ?? undefined,
+  };
 }
-
-function calcLine(item: LineItem): LineItem {
-  const qty = parseFloat(item.qty || "0") || 0;
-  const up = parseFloat(item.unitPrice || "0") || 0;
-  return { ...item, totalPrice: (qty * up).toFixed(2) };
-}
-
-function calcTotals(items: LineItem[], sstPct: string) {
-  const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0"), 0);
-  const sstAmt = (subtotal * (parseFloat(sstPct) || 0)) / 100;
-  return { subtotal, sstAmt, grand: subtotal + sstAmt };
-}
-
-const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
-
-function detectCurrency(items: { currency?: string | null }[]): string {
-  const counts: Record<string, number> = {};
-  for (const item of items) {
-    const c = item.currency;
-    if (c) counts[c] = (counts[c] ?? 0) + 1;
-  }
-  const [top] = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  return top?.[0] ?? "MYR";
-}
-const fmt = (n: number, currency: string) => `${currency} ${n.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
 function toDateInput(d: Date | string | null | undefined): string {
   if (!d) return "";
@@ -81,7 +108,10 @@ export function EditPurchaseOrderClient({
   order, suppliers, approvedSos, customerPos,
   updateFn = updatePurchaseOrder,
   detailHref,
+  businessType = "trading",
+  currentUserName = "",
 }: Props) {
+  const showSourcing = businessType !== "trading";
   const router = useRouter();
   const backUrl = detailHref ?? `/dashboard/procurement/purchase-order/${order.id}`;
 
@@ -118,30 +148,26 @@ export function EditPurchaseOrderClient({
 
   // Items
   const [items, setItems] = useState<LineItem[]>(
-    order.items.length > 0
-      ? order.items.map((i) => ({
-          _key: uid(),
-          rowNo: i.rowNo,
-          productCode: i.productCode ?? "",
-          description: i.description ?? "",
-          qty: i.qty ?? "1",
-          uom: i.uom ?? "",
-          unitPrice: i.unitPrice ?? "0",
-          currency: i.currency ?? "MYR",
-          totalPrice: i.totalPrice ?? "0",
-          imageKey: i.imageKey ?? undefined,
-        }))
-      : [{ _key: uid(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", currency: "MYR", totalPrice: "0" }],
+    order.items.length > 0 ? order.items.map(orderItemToLine) : [newLine(1)],
   );
 
   // PDF
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfKey, setPdfKey] = useState<string | undefined>(order.supplierQuotationKey ?? undefined);
   const [pdfUploading, setPdfUploading] = useState(false);
-  const pdfRef = useRef<HTMLInputElement>(null);
-
   const [saving, setSaving] = useState(false);
   const [loadingSoItems, setLoadingSoItems] = useState(false);
+
+  const committedRef = useRef(false);
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useCleanupOrphanedImages(itemsRef, committedRef);
+
+  const updateItem = useUpdateItem(setItems);
+  const addLine = useAddLine(setItems);
+  const removeLine = useRemoveLine({ itemsRef, setItems });
+  const handleProductCodeBlur = useHandleProductCodeBlur({ itemsRef, setItems });
+  const { handleItemImage, removeItemImage } = useItemImageHandlers({ itemsRef, updateItem });
 
   // SO search filter
   const filteredSos = approvedSos.filter((s) => {
@@ -168,46 +194,6 @@ export function EditPurchaseOrderClient({
     setSelectedCpos((prev) => prev.filter((c) => c.id !== id));
   }
 
-  function updateItem(key: string, patch: Partial<LineItem>) {
-    setItems((prev) =>
-      prev.map((i) => {
-        if (i._key !== key) return i;
-        const updated = { ...i, ...patch };
-        return ["qty", "unitPrice"].some((k) => k in patch) ? calcLine(updated) : updated;
-      }),
-    );
-  }
-
-  function addLine() {
-    setItems((prev) => [...prev, { _key: uid(), rowNo: prev.length + 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", currency: "MYR", totalPrice: "0" }]);
-  }
-
-  function removeLine(key: string) {
-    setItems((prev) => {
-      const next = prev.filter((i) => i._key !== key);
-      return next.map((i, idx) => ({ ...i, rowNo: idx + 1 }));
-    });
-  }
-
-  async function handleItemImage(key: string, e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    updateItem(key, { _imageFile: file, _imageUploading: true });
-    try {
-      const { key: r2Key, uploadUrl } = await getPoItemImageUploadUrl(file.name);
-      await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
-      updateItem(key, { imageKey: r2Key, _imageUploading: false });
-      toast.success("Image uploaded");
-    } catch {
-      toast.error("Failed to upload image");
-      updateItem(key, { _imageFile: undefined, _imageUploading: false });
-    }
-  }
-
-  function removeItemImage(key: string) {
-    updateItem(key, { imageKey: undefined, _imageFile: undefined });
-  }
-
   async function handlePdfSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -230,7 +216,6 @@ export function EditPurchaseOrderClient({
   function removePdf() {
     setPdfFile(null);
     setPdfKey(undefined);
-    if (pdfRef.current) pdfRef.current.value = "";
   }
 
   async function handleSave() {
@@ -257,13 +242,13 @@ export function EditPurchaseOrderClient({
         notes: notes || undefined,
         expectedDeliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
         deliveryAddress: deliveryAddress || undefined,
-        items: items.map(({ _key, _imageFile, _imageUploading, ...rest }) => rest),
+        items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _cpoId, _codeEditing, ...rest }) => rest),
       });
+      committedRef.current = true;
       toast.success("Purchase order updated");
       router.push(backUrl);
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
       setSaving(false);
     }
   }
@@ -327,7 +312,7 @@ export function EditPurchaseOrderClient({
                   <span className="text-xs text-muted-foreground ml-2">— {selectedSo.customerName}</span>
                 )}
               </div>
-              <button onClick={() => { setSelectedSo(null); setItems([{ _key: uid(), rowNo: 1, productCode: "", description: "", qty: "1", uom: "", unitPrice: "0", totalPrice: "0" }]); }} className="text-muted-foreground hover:text-foreground shrink-0">
+              <button onClick={() => { setSelectedSo(null); setItems([newLine(1)]); }} className="text-muted-foreground hover:text-foreground shrink-0">
                 <XIcon className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -503,78 +488,25 @@ export function EditPurchaseOrderClient({
             <label className="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
               <PaperclipIcon className="w-4 h-4" />
               <span>Attach supplier quotation PDF</span>
-              <input ref={pdfRef} type="file" accept="application/pdf" className="hidden" onChange={handlePdfSelect} />
+              <input type="file" accept="application/pdf" className="hidden" onChange={handlePdfSelect} />
             </label>
           )}
         </section>
 
         {/* ── Items table ── */}
-        <section className="border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">
-              Items
-              {loadingSoItems && <span className="ml-2 text-xs font-normal text-muted-foreground">Loading from SO…</span>}
-            </h2>
-            <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={addLine} disabled={loadingSoItems}>
-              <PlusIcon className="w-3 h-3" /> Add row
-            </Button>
-          </div>
-
-          <div className="space-y-2">
-            {items.map((item) => (
-              <div key={item._key} className="border border-border/50 rounded-lg p-3">
-                <div className="grid grid-cols-12 gap-2 items-start">
-                  <div className="col-span-1 pt-1.5 text-xs text-muted-foreground text-center">{item.rowNo}</div>
-
-                  <div className="col-span-4 space-y-1.5">
-                    <Input value={item.productCode ?? ""} onChange={(e) => updateItem(item._key, { productCode: e.target.value })} placeholder="Product code" className="h-7 text-xs" />
-                    <Input value={item.description ?? ""} onChange={(e) => updateItem(item._key, { description: e.target.value })} placeholder="Description" className="h-7 text-xs" />
-                  </div>
-
-                  <div className="col-span-2 space-y-1.5">
-                    <Input value={item.qty} onChange={(e) => updateItem(item._key, { qty: e.target.value })} placeholder="Qty" className="h-7 text-xs text-right" />
-                    <Input value={item.uom ?? ""} onChange={(e) => updateItem(item._key, { uom: e.target.value })} placeholder="UOM" className="h-7 text-xs" />
-                  </div>
-
-                  <div className="col-span-3 space-y-1.5">
-                    <div className="flex gap-1">
-                      <Input value={item.currency ?? "MYR"} onChange={(e) => updateItem(item._key, { currency: e.target.value.toUpperCase().slice(0, 3) })} className="h-7 text-xs w-14 shrink-0 font-mono" maxLength={3} />
-                      <Input value={item.unitPrice ?? "0"} onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })} placeholder="Unit price" className="h-7 text-xs text-right flex-1" />
-                    </div>
-                    <div className="h-7 px-3 flex items-center justify-end text-xs text-muted-foreground font-mono bg-muted/30 rounded-md">
-                      {fmt(parseFloat(item.totalPrice || "0"), currency)}
-                    </div>
-                  </div>
-
-                  <div className="col-span-2 flex items-start gap-1 pt-0.5">
-                    <div className="flex-1">
-                      {item.imageKey || item._imageFile ? (
-                        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                          <ImageIcon className="w-3 h-3" />
-                          <span className="truncate flex-1">
-                            {item._imageUploading ? "Uploading…" : (item._imageFile?.name ?? "Image attached")}
-                          </span>
-                          {!item._imageUploading && (
-                            <button onClick={() => removeItemImage(item._key)}><XIcon className="w-3 h-3" /></button>
-                          )}
-                        </div>
-                      ) : (
-                        <label className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer transition-colors">
-                          <ImageIcon className="w-3 h-3" />
-                          <span>Add image</span>
-                          <input type="file" accept="image/*" className="hidden" onChange={(e) => handleItemImage(item._key, e)} />
-                        </label>
-                      )}
-                    </div>
-                    <button onClick={() => removeLine(item._key)} disabled={items.length === 1} className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 mt-0.5">
-                      <TrashIcon className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+        <PoItemsTable
+          items={items}
+          showSourcing={showSourcing}
+          currency={currency}
+          currentUserName={currentUserName}
+          loadingSoItems={loadingSoItems}
+          updateItem={updateItem}
+          addLine={addLine}
+          removeLine={removeLine}
+          handleProductCodeBlur={handleProductCodeBlur}
+          handleItemImage={handleItemImage}
+          removeItemImage={removeItemImage}
+        />
 
         {/* ── Pricing summary ── */}
         <section className="border border-border rounded-xl p-4">
