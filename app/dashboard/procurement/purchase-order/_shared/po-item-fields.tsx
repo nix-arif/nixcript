@@ -349,6 +349,81 @@ export function DesignCodeCell({
 // directory — their primary organisation snapshots onto the line
 // automatically via the existing customer ↔ customerOrganization link, so
 // there's nothing to separately type or keep in sync.
+// The "LOOSE ITEMS"-style tag grouping several rows into one set — normally
+// only ever arrives via spreadsheet import (guessed from a title row above
+// the item table) or inherited from a PR, with no way to add or fix one by
+// hand afterward. Click the tag (or the dashed placeholder when there isn't
+// one yet) to edit it inline; blurring with it empty clears the tag. A new
+// tag gets a fresh setGroupId so it reads as its own group rather than
+// silently joining whatever group last held this id.
+function SetGroupLabelCell({
+  item,
+  onUpdate,
+}: {
+  item: LineItem;
+  onUpdate: (key: string, patch: Partial<LineItem>) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(item.setGroupLabel ?? "");
+
+  useEffect(() => {
+    setValue(item.setGroupLabel ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item._key]);
+
+  function commit() {
+    const trimmed = value.trim();
+    onUpdate(item._key, {
+      setGroupLabel: trimmed || undefined,
+      setGroupId: trimmed ? (item.setGroupId ?? uid()) : undefined,
+    });
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") { setValue(item.setGroupLabel ?? ""); setEditing(false); }
+        }}
+        placeholder="Set/group name…"
+        className="h-5 w-28 text-[10px] border border-input rounded px-1 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+    );
+  }
+
+  if (item.setGroupLabel) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        title="Click to edit"
+        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-900/40 transition-colors"
+      >
+        <TagIcon className="w-2.5 h-2.5 shrink-0" />
+        {item.setGroupLabel}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title="Add a set/group tag"
+      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground transition-colors"
+    >
+      <TagIcon className="w-2.5 h-2.5 shrink-0" />
+      Add tag
+    </button>
+  );
+}
+
 export function CustomerPickerCell({
   item,
   onUpdate,
@@ -919,12 +994,7 @@ export function PoItemsTable({
                       )
                     ) : (
                       <div className="mb-1 flex flex-wrap items-center gap-1">
-                        {item.setGroupLabel && (
-                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
-                            <TagIcon className="w-2.5 h-2.5 shrink-0" />
-                            {item.setGroupLabel}
-                          </span>
-                        )}
+                        <SetGroupLabelCell item={item} onUpdate={updateItem} />
                         <CustomerPickerCell item={item} onUpdate={updateItem} />
                       </div>
                     )}
