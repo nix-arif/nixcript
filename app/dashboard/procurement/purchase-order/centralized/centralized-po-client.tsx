@@ -8,11 +8,48 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   SearchIcon, XIcon, TruckIcon, BuildingIcon, CalendarIcon,
   RefreshCwIcon, LayersIcon, ClipboardListIcon, EyeIcon,
+  ArrowUpDownIcon, CheckIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+type SortKey = "date" | "poNo" | "supplier" | "amount";
+type SortDir = "asc" | "desc";
+interface SortOption { key: SortKey; dir: SortDir; label: string }
+
+const SORT_OPTIONS: SortOption[] = [
+  { key: "date", dir: "desc", label: "Newest first" },
+  { key: "date", dir: "asc", label: "Oldest first" },
+  { key: "poNo", dir: "asc", label: "PO No (A→Z)" },
+  { key: "poNo", dir: "desc", label: "PO No (Z→A)" },
+  { key: "supplier", dir: "asc", label: "Supplier (A→Z)" },
+  { key: "supplier", dir: "desc", label: "Supplier (Z→A)" },
+  { key: "amount", dir: "desc", label: "Amount (High→Low)" },
+  { key: "amount", dir: "asc", label: "Amount (Low→High)" },
+];
+
+function sortOrders(orders: CentralizedPurchaseOrder[], sort: SortOption): CentralizedPurchaseOrder[] {
+  const sorted = [...orders].sort((a, b) => {
+    switch (sort.key) {
+      case "poNo":
+        return (a.poNo ?? "").localeCompare(b.poNo ?? "");
+      case "supplier": {
+        const an = (a.supplierSnapshot as { name?: string } | null)?.name ?? "";
+        const bn = (b.supplierSnapshot as { name?: string } | null)?.name ?? "";
+        return an.localeCompare(bn);
+      }
+      case "amount":
+        return (parseFloat(a.grandTotal ?? "0") || 0) - (parseFloat(b.grandTotal ?? "0") || 0);
+      case "date":
+      default:
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    }
+  });
+  return sort.dir === "asc" ? sorted : sorted.reverse();
+}
 
 const fmt = (v: string | number | null | undefined, currency = "MYR") =>
   `${currency} ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -41,12 +78,13 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortOption>(SORT_OPTIONS[0]);
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const orgs = [...new Set(pos.map((p) => p.organizationName))].sort();
 
-  const filtered = pos.filter((p) => {
+  const filtered = sortOrders(pos.filter((p) => {
     if (orgFilter && p.organizationName !== orgFilter) return false;
     if (!search) return true;
     const s = search.toLowerCase();
@@ -58,7 +96,7 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
       p.organizationName.toLowerCase().includes(s) ||
       p.customerPoNos.some((c) => c.toLowerCase().includes(s))
     );
-  });
+  }), sort);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -99,6 +137,22 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
             </button>
           )}
         </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-9 gap-1.5 text-xs shrink-0">
+              <ArrowUpDownIcon className="w-3.5 h-3.5" /> {sort.label}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {SORT_OPTIONS.map((opt) => (
+              <DropdownMenuItem key={opt.label} onClick={() => setSort(opt)} className="justify-between gap-3">
+                {opt.label}
+                {sort.label === opt.label && <CheckIcon className="w-3.5 h-3.5" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {orgs.length > 1 && (
           <div className="flex items-center gap-1 flex-wrap">
