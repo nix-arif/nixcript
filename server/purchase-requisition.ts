@@ -11,6 +11,7 @@ import {
   product,
   supplier,
   user,
+  member,
   stockLevel,
   organizationProfile,
 } from "@/db/schema";
@@ -76,6 +77,27 @@ async function requireAccess(permission: string) {
   const perms = await getUserPermissions(userId, orgId);
   if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
   return { session, orgId, userId };
+}
+
+// Every org owned by the same owner as the given org (includes the org
+// itself) — mirrors the identical helper in server/supplier.ts. A supplier
+// created under a sibling org owned by the same person otherwise never
+// shows up here, since supplier.organizationId is strictly per-org.
+async function getOwnerOrgIds(orgId: string): Promise<string[]> {
+  const [ownerRow] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+    .limit(1);
+
+  if (!ownerRow) return [orgId];
+
+  const rows = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerRow.userId), eq(member.role, "owner")));
+
+  return rows.map((r) => r.organizationId);
 }
 
 async function generatePrNo(orgId: string): Promise<string> {
@@ -496,10 +518,12 @@ export async function cancelPurchaseRequisition(id: string): Promise<void> {
 export async function searchSuppliersForPr(query: string) {
   if (!query.trim()) return [];
   const { orgId } = await requireAccess("purchase-requisition:read");
+  const orgIds = await getOwnerOrgIds(orgId);
+  const orgFilter = orgIds.length === 1 ? eq(supplier.organizationId, orgIds[0]) : inArray(supplier.organizationId, orgIds);
   return db
     .select({ id: supplier.id, name: supplier.name })
     .from(supplier)
-    .where(and(eq(supplier.organizationId, orgId), ilike(supplier.name, `%${query}%`)))
+    .where(and(orgFilter, ilike(supplier.name, `%${query}%`)))
     .orderBy(asc(supplier.name))
     .limit(20);
 }

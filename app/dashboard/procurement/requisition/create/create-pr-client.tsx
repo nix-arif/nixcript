@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createPurchaseRequisition,
+  submitPurchaseRequisition,
   searchSuppliersForPr,
   getSoItemsForPr,
   getSoDeliveryInfo,
@@ -133,6 +134,12 @@ type SoOption = { id: string; soNo: string };
 
 // ── Supplier autocomplete ─────────────────────────────────────────────────────
 
+// Shows as a plain search input until a supplier is picked, then collapses
+// to a compact badge (matching CustomerPickerCell's chip convention in
+// app/dashboard/procurement/purchase-order/_shared/po-item-fields.tsx) —
+// clicking the badge (or clicking away without picking anything new) toggles
+// back to editing, so the row doesn't stay a wide always-open input once a
+// value is set.
 function SupplierCell({
   value,
   onSelect,
@@ -142,37 +149,68 @@ function SupplierCell({
   onSelect: (id: string, name: string) => void;
   onClear: () => void;
 }) {
+  const [editing, setEditing] = useState(!value);
   const [query, setQuery]   = useState(value);
   const [results, setResults] = useState<{ id: string; name: string }[]>([]);
   const [open, setOpen]     = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setQuery(value); }, [value]);
+  useEffect(() => { if (!editing) setQuery(value); }, [value, editing]);
 
   useEffect(() => {
-    if (!query.trim() || query === value) { setResults([]); return; }
+    if (!editing || !query.trim() || query === value) { setResults([]); return; }
     const t = setTimeout(async () => {
       const r = await searchSuppliersForPr(query);
       setResults(r);
       setOpen(r.length > 0);
     }, 250);
     return () => clearTimeout(t);
-  }, [query, value]);
+  }, [query, value, editing]);
 
   useEffect(() => {
     function close(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        if (value) { setQuery(value); setEditing(false); }
+      }
     }
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, []);
+  }, [value]);
+
+  if (!editing && value) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        title="Click to change supplier"
+        className="inline-flex items-center gap-1 max-w-full text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60 hover:bg-muted/70 transition-colors"
+      >
+        <span className="truncate">{value}</span>
+        <span
+          role="button"
+          tabIndex={-1}
+          onClick={(e) => { e.stopPropagation(); onClear(); }}
+          className="hover:text-foreground shrink-0"
+        >
+          <XIcon className="w-2.5 h-2.5" />
+        </span>
+      </button>
+    );
+  }
 
   return (
     <div ref={ref} className="relative">
       <div className="flex items-center gap-1">
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search supplier…" className="h-7 text-xs" />
+        <Input
+          autoFocus={!!value}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search supplier…"
+          className="h-7 text-xs"
+        />
         {value && (
-          <button onClick={onClear} className="text-muted-foreground hover:text-foreground">
+          <button onClick={() => { onClear(); setQuery(""); }} className="text-muted-foreground hover:text-foreground">
             <XIcon className="w-3.5 h-3.5" />
           </button>
         )}
@@ -183,7 +221,7 @@ function SupplierCell({
             <button
               key={r.id}
               className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
-              onClick={() => { onSelect(r.id, r.name); setQuery(r.name); setOpen(false); }}
+              onClick={() => { onSelect(r.id, r.name); setQuery(r.name); setOpen(false); setEditing(false); }}
             >
               {r.name}
             </button>
@@ -249,7 +287,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
   const [notes, setNotes]         = useState("");
   const [linkedSoId, setLinkedSoId] = useState<string | undefined>(initialSoId);
   const [linkedSoNo, setLinkedSoNo] = useState<string | undefined>();
-  const [saving, setSaving]       = useState(false);
+  const [savingMode, setSavingMode] = useState<"draft" | "submit" | null>(null);
   const [loadingSo, setLoadingSo] = useState(false);
   const [togglingExclude, setTogglingExclude] = useState<string | null>(null);
   const [prType, setPrType]       = useState<"customer_order" | "sample_demo">("customer_order");
@@ -472,7 +510,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
       return acc;
     }, {});
 
-  async function handleSave() {
+  async function handleSave(submit: boolean) {
     const validLines = lines.filter((l) => l.description || l.productCode);
     if (!validLines.length) { toast.error("Add at least one item"); return; }
 
@@ -481,7 +519,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
     const cpoId  = cpoIds.length === 1 ? cpoIds[0]! : undefined;
     const cpoNo  = cpoId ? validLines.find((l) => l._cpoId === cpoId)?._cpoNo ?? undefined : undefined;
 
-    setSaving(true);
+    setSavingMode(submit ? "submit" : "draft");
     try {
       const pr = await createPurchaseRequisition({
         salesOrderId: prType === "customer_order" ? linkedSoId : undefined,
@@ -517,13 +555,16 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
           setQty: l._setQty ?? null,
         })),
       });
+      if (submit) {
+        await submitPurchaseRequisition(pr.id);
+      }
       committedRef.current = true;
-      toast.success("Purchase requisition created");
+      toast.success(submit ? "Purchase requisition submitted for approval" : "Purchase requisition saved as draft");
       router.push(`/dashboard/procurement/requisition/${pr.id}`);
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
     } finally {
-      setSaving(false);
+      setSavingMode(null);
     }
   }
 
@@ -546,8 +587,11 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
             <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => router.back()}>
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              {saving ? "Saving…" : "Create Requisition"}
+            <Button variant="outline" size="sm" onClick={() => handleSave(false)} disabled={savingMode !== null}>
+              {savingMode === "draft" ? "Saving…" : "Save as Draft"}
+            </Button>
+            <Button size="sm" onClick={() => handleSave(true)} disabled={savingMode !== null}>
+              {savingMode === "submit" ? "Submitting…" : "Submit for Approval"}
             </Button>
           </div>
         }
@@ -1023,8 +1067,11 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
 
       <div className="flex justify-end gap-2 pb-6">
         <Button variant="ghost" size="sm" onClick={() => router.back()}>Cancel</Button>
-        <Button size="sm" onClick={handleSave} disabled={saving}>
-          {saving ? "Saving…" : "Create Requisition"}
+        <Button variant="outline" size="sm" onClick={() => handleSave(false)} disabled={savingMode !== null}>
+          {savingMode === "draft" ? "Saving…" : "Save as Draft"}
+        </Button>
+        <Button size="sm" onClick={() => handleSave(true)} disabled={savingMode !== null}>
+          {savingMode === "submit" ? "Submitting…" : "Submit for Approval"}
         </Button>
       </div>
     </div>
