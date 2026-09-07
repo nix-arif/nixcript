@@ -8,11 +8,48 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import {
   PlusIcon, SearchIcon, XIcon, TruckIcon,
   BuildingIcon, CalendarIcon, ClipboardListIcon, PackageIcon, ArrowRightIcon, AlertCircleIcon,
+  ArrowUpDownIcon, CheckIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+type SortKey = "date" | "poNo" | "supplier" | "amount";
+type SortDir = "asc" | "desc";
+interface SortOption { key: SortKey; dir: SortDir; label: string }
+
+const SORT_OPTIONS: SortOption[] = [
+  { key: "date", dir: "desc", label: "Newest first" },
+  { key: "date", dir: "asc", label: "Oldest first" },
+  { key: "poNo", dir: "asc", label: "PO No (A→Z)" },
+  { key: "poNo", dir: "desc", label: "PO No (Z→A)" },
+  { key: "supplier", dir: "asc", label: "Supplier (A→Z)" },
+  { key: "supplier", dir: "desc", label: "Supplier (Z→A)" },
+  { key: "amount", dir: "desc", label: "Amount (High→Low)" },
+  { key: "amount", dir: "asc", label: "Amount (Low→High)" },
+];
+
+function sortOrders(orders: PurchaseOrderListRow[], sort: SortOption): PurchaseOrderListRow[] {
+  const sorted = [...orders].sort((a, b) => {
+    switch (sort.key) {
+      case "poNo":
+        return (a.poNo ?? "").localeCompare(b.poNo ?? "");
+      case "supplier": {
+        const an = (a.supplierSnapshot as { name?: string } | null)?.name ?? "";
+        const bn = (b.supplierSnapshot as { name?: string } | null)?.name ?? "";
+        return an.localeCompare(bn);
+      }
+      case "amount":
+        return (parseFloat(a.grandTotal ?? "0") || 0) - (parseFloat(b.grandTotal ?? "0") || 0);
+      case "date":
+      default:
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    }
+  });
+  return sort.dir === "asc" ? sorted : sorted.reverse();
+}
 
 const fmt = (v: string | number | null | undefined, currency = "MYR") =>
   `${currency} ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -71,6 +108,7 @@ interface Props {
 export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions, currentUserId }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortOption>(SORT_OPTIONS[0]);
   const { isSwitchingOrg, setOrgSwitching } = useAppStore();
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
@@ -80,7 +118,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
   // Only show real supplier POs (confirmed/fulfilled/cancelled)
   const poOnly = initialOrders.filter((o) => PO_STATUSES.has(o.status));
 
-  const filtered = poOnly.filter((o) => {
+  const filtered = sortOrders(poOnly.filter((o) => {
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = o.supplierSnapshot as any;
@@ -92,7 +130,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
       o.createdByName?.toLowerCase().includes(s) ||
       o.customerPoNos.some((c) => c.toLowerCase().includes(s))
     );
-  });
+  }), sort);
 
   return (
     <div className="p-6">
@@ -108,19 +146,36 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
         }
       />
 
-      <div className="relative mb-4">
-        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by PO no., supplier, status..."
-          className="pl-9 h-9 text-sm"
-        />
-        {search && (
-          <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-            <XIcon className="w-3.5 h-3.5" />
-          </button>
-        )}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="relative flex-1">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by PO no., supplier, status..."
+            className="pl-9 h-9 text-sm"
+          />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+              <XIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-9 gap-1.5 text-xs shrink-0">
+              <ArrowUpDownIcon className="w-3.5 h-3.5" /> {sort.label}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {SORT_OPTIONS.map((opt) => (
+              <DropdownMenuItem key={opt.label} onClick={() => setSort(opt)} className="justify-between gap-3">
+                {opt.label}
+                {sort.label === opt.label && <CheckIcon className="w-3.5 h-3.5" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {pendingPrs.length > 0 && (

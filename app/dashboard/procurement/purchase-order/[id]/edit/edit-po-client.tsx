@@ -219,7 +219,9 @@ export function EditPurchaseOrderClient({
   }
 
   async function handleSave() {
-    if (!selectedSo) { toast.error("A linked sales order is required"); return; }
+    if (!selectedSo) {
+      if (!confirm("No sales order link to this PO — save anyway without one?")) return;
+    }
     if (!supplierId) { toast.error("Supplier is required"); return; }
     const hasItems = items.some((i) => i.description || i.productCode);
     if (!hasItems) { toast.error("Add at least one item"); return; }
@@ -231,7 +233,7 @@ export function EditPurchaseOrderClient({
       await updateFn({
         id: order.id,
         supplierId,
-        salesOrderId: selectedSo!.id,
+        salesOrderId: selectedSo?.id,
         customerPoIds: selectedCpos.map((c) => c.id),
         supplierQuotationKey: pdfKey,
         currency,
