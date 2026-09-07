@@ -169,6 +169,18 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
                           <Highlight text={p.prNo} query={search} />
                         </span>
                       )}
+                      {p.itemCustomers.map((c) => (
+                        <span key={`${c.name}-${c.organization}`} className="inline-flex items-center gap-1">
+                          {c.organization && (
+                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                              {c.organization}
+                            </span>
+                          )}
+                          <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                            {c.name}
+                          </span>
+                        </span>
+                      ))}
                       {!p.canEdit && (
                         <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5">
                           <EyeIcon className="w-2.5 h-2.5 shrink-0" /> View only
