@@ -11,6 +11,7 @@ import {
   fulfillPurchaseOrder,
   cancelPurchaseOrder,
   deletePurchaseOrder,
+  updatePurchaseOrderNumber,
   type PurchaseOrderWithItems,
 } from "@/server/purchase-order";
 import { Button } from "@/components/ui/button";
@@ -175,6 +176,81 @@ function PendingActionBadge({ pendingReturnQty, pendingRepairQty }: { pendingRet
   );
 }
 
+// Owner-only inline edit — uniqueness (per org) is enforced server-side by
+// updatePurchaseOrderNumber, which checks the same constraint the DB itself
+// enforces (purchase_order_no_org_uidx) and returns a clean error on a
+// collision instead of a raw constraint violation. Anyone else just sees the
+// plain PO number, no edit affordance.
+function PoNumberField({
+  poId,
+  poNo,
+  isOwner,
+  onUpdated,
+}: {
+  poId: string;
+  poNo: string;
+  isOwner: boolean;
+  onUpdated: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(poNo);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { setValue(poNo); }, [poNo]);
+
+  async function commit() {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === poNo) {
+      setValue(poNo);
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await updatePurchaseOrderNumber(poId, trimmed);
+      onUpdated(trimmed);
+      toast.success("PO number updated");
+      setEditing(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't update PO number");
+      setValue(poNo);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!isOwner) return <p className="text-xs font-mono">{poNo}</p>;
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        disabled={saving}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") { setValue(poNo); setEditing(false); }
+        }}
+        className="h-6 w-36 text-xs font-mono border border-input rounded px-1.5 bg-background disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title="Click to edit (owner only)"
+      className="flex items-center gap-1 text-xs font-mono hover:text-foreground text-left group"
+    >
+      {poNo}
+      <PencilIcon className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+    </button>
+  );
+}
+
 export function PurchaseOrderDetailClient({
   order,
   permissions,
@@ -204,11 +280,13 @@ export function PurchaseOrderDetailClient({
   const showSourcing = businessType !== "trading";
   const router = useRouter();
   const [status, setStatus] = useState(order.status ?? "confirmed");
+  const [poNo, setPoNo] = useState(order.poNo);
   const [actioning, setActioning] = useState<string | null>(null);
   const [pdfWithImages, setPdfWithImages] = useState(true);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => { setStatus(order.status ?? "confirmed"); }, [order.status]);
+  useEffect(() => { setPoNo(order.poNo); }, [order.poNo]);
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = permissions.includes("*");
@@ -780,12 +858,12 @@ export function PurchaseOrderDetailClient({
           <section className="border border-border rounded-xl p-4 space-y-2.5">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Details</h2>
 
-            {order.poNo && (
+            {poNo && (
               <div className="flex items-start gap-2">
                 <TruckIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                 <div>
                   <p className="text-[10px] text-muted-foreground">PO Number</p>
-                  <p className="text-xs font-mono">{order.poNo}</p>
+                  <PoNumberField poId={order.id} poNo={poNo} isOwner={isOwner} onUpdated={(next) => { setPoNo(next); router.refresh(); }} />
                 </div>
               </div>
             )}

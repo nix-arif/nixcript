@@ -1459,6 +1459,40 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
   await db.delete(purchaseOrder).where(eq(purchaseOrder.id, id));
 }
 
+// Owner-only — the PO number is otherwise fixed once auto-generated (or
+// manually set) at creation, but a typo or a need to match the supplier's
+// own numbering sometimes has to be corrected after the fact. Checks the
+// same uniqueness the DB itself enforces (purchase_order_no_org_uidx) up
+// front so a collision surfaces as a clean message instead of a raw
+// constraint violation. Own-org only — no centralized variant — matching
+// deletePurchaseOrder/recallPurchaseOrder, which are also owner-only actions
+// scoped to just the caller's own active org.
+export async function updatePurchaseOrderNumber(id: string, poNo: string): Promise<void> {
+  const { orgId } = await requireOwner();
+
+  const trimmed = poNo.trim();
+  if (!trimmed) throw new Error("PO number can't be empty");
+
+  const [existing] = await db
+    .select({ id: purchaseOrder.id })
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
+  if (!existing) throw new Error("Purchase order not found");
+
+  const [clash] = await db
+    .select({ id: purchaseOrder.id })
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.poNo, trimmed), ne(purchaseOrder.id, id)));
+  if (clash) throw new Error(`PO number "${trimmed}" is already in use`);
+
+  await db.update(purchaseOrder).set({ poNo: trimmed }).where(eq(purchaseOrder.id, id));
+
+  revalidatePath("/dashboard/procurement/purchase-order");
+  revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
+  revalidatePath("/dashboard/procurement/purchase-order/centralized");
+  revalidatePath(`/dashboard/procurement/purchase-order/centralized/${id}`);
+}
+
 // ── Workflow actions ───────────────────────────────────────────────────────
 
 async function getPoForWorkflow(id: string, orgId: string) {
