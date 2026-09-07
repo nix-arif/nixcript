@@ -184,6 +184,7 @@ export const navConfig: NavGroup[] = [
       { title: "Default Permissions",  url: "/dashboard/admin/default-permissions", permission: "permission:read" },
       { title: "Approvals",            url: "/dashboard/admin/approvals",          permission: "permission:read" },
       { title: "Member Approvals",     url: "/dashboard/admin/member-approvals",   permission: "permission:read" },
+      { title: "Supplier Rules",       url: "/dashboard/admin/supplier-rules" },
     ],
   },
   {

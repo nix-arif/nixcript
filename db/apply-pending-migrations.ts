@@ -159,6 +159,50 @@ async function run() {
     console.log("  sheet_url added.");
   }
 
+  console.log("Applying migration 0046: intercompany org links");
+  async function addColIfMissing(table: string, column: string, ddl: string) {
+    const [col] = await sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = ${table} AND column_name = ${column}
+    `;
+    if (col) { console.log(`  ${table}.${column} already exists, skipping.`); return; }
+    await sql.query(ddl);
+    console.log(`  ${table}.${column} added.`);
+  }
+  await addColIfMissing("supplier", "linked_organization_id",
+    `ALTER TABLE "supplier" ADD COLUMN "linked_organization_id" text REFERENCES "organization"("id") ON DELETE SET NULL`);
+  await addColIfMissing("customer", "linked_organization_id",
+    `ALTER TABLE "customer" ADD COLUMN "linked_organization_id" text REFERENCES "organization"("id") ON DELETE SET NULL`);
+  await addColIfMissing("sales_order", "source_organization_id",
+    `ALTER TABLE "sales_order" ADD COLUMN "source_organization_id" text REFERENCES "organization"("id") ON DELETE SET NULL`);
+  await addColIfMissing("sales_order", "source_purchase_order_id",
+    `ALTER TABLE "sales_order" ADD COLUMN "source_purchase_order_id" text REFERENCES "purchase_order"("id") ON DELETE SET NULL`);
+
+  console.log("Applying migration 0047: restricted_supplier table");
+  const [restrictedSupplierTable] = await sql`
+    SELECT table_name FROM information_schema.tables WHERE table_name = 'restricted_supplier'
+  `;
+  if (restrictedSupplierTable) {
+    console.log("  restricted_supplier already exists, skipping.");
+  } else {
+    await sql`
+      CREATE TABLE "restricted_supplier" (
+        "id" text PRIMARY KEY NOT NULL,
+        "owner_user_id" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+        "supplier_name" text NOT NULL,
+        "supplier_name_normalized" text NOT NULL,
+        "designated_organization_id" text NOT NULL REFERENCES "organization"("id") ON DELETE CASCADE,
+        "notes" text,
+        "created_by" text NOT NULL REFERENCES "user"("id"),
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "updated_at" timestamp DEFAULT now() NOT NULL
+      )
+    `;
+    await sql`CREATE UNIQUE INDEX "restricted_supplier_owner_name_uidx" ON "restricted_supplier" ("owner_user_id", "supplier_name_normalized")`;
+    await sql`CREATE INDEX "restricted_supplier_owner_idx" ON "restricted_supplier" ("owner_user_id")`;
+    console.log("  restricted_supplier created.");
+  }
+
   console.log("All pending migrations applied.");
 }
 

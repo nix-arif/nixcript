@@ -38,6 +38,8 @@ import { createApprovedMovement } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 import { createNotification, getPoApprovers } from "@/server/notifications";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
+import { maybeCreateIntercompanySalesOrder } from "@/server/sales-order";
+import { assertSupplierAllowed } from "@/server/supplier-restrictions";
 
 // ── R2 supplier-quotation bucket ───────────────────────────────────────────
 const s3 = new S3Client({
@@ -1105,6 +1107,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
   if (!input.supplierId) throw new Error("Supplier is required");
 
   const [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
+  await assertSupplierAllowed(orgId, sup?.name);
   const supplierSnapshot: PurchaseOrderRow["supplierSnapshot"] = sup ? {
     name: sup.name,
     registrationNo: sup.registrationNo ?? undefined,
@@ -1267,6 +1270,10 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
     revalidatePath("/dashboard/procurement/requisition");
   }
 
+  // Every PO is created already confirmed (see status above) — if the
+  // supplier is linked to a sibling org, this fires the matching SO there.
+  await maybeCreateIntercompanySalesOrder(row.id);
+
   return row;
 }
 
@@ -1322,6 +1329,7 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
   let supplierSnapshot = existing.supplierSnapshot;
   if (input.supplierId && input.supplierId !== existing.supplierId) {
     const [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
+    await assertSupplierAllowed(existing.organizationId, sup?.name);
     if (sup) {
       supplierSnapshot = {
         name: sup.name,
@@ -1543,6 +1551,7 @@ export async function approvePurchaseOrder(id: string): Promise<void> {
   const poNo = po.poNo ?? await generatePoNo(orgId);
 
   await db.update(purchaseOrder).set({ status: "confirmed", poNo, approvedBy: userId, approvedAt: new Date() }).where(eq(purchaseOrder.id, id));
+  await maybeCreateIntercompanySalesOrder(id);
 
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
   revalidatePath("/dashboard/procurement/purchase-order");
@@ -1606,6 +1615,7 @@ export async function reconfirmPurchaseOrder(id: string): Promise<void> {
   if (po.status !== "draft") throw new Error("Only draft purchase orders can be re-confirmed");
   await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "re-confirm");
   await db.update(purchaseOrder).set({ status: "confirmed" }).where(eq(purchaseOrder.id, id));
+  await maybeCreateIntercompanySalesOrder(id);
 
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
   revalidatePath("/dashboard/procurement/purchase-order");

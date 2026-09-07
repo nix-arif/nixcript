@@ -6,6 +6,8 @@ import {
   salesOrderItem,
   salesOrderCounter,
   purchaseOrder,
+  purchaseOrderItem,
+  supplier,
   deliveryOrder,
   customer,
   customerPurchaseOrder,
@@ -244,6 +246,12 @@ export interface CreateSalesOrderInput {
   urgentAuthDate?: string;
   urgentPoExpectedBy?: string;
   urgentAuthNotes?: string;
+  // Traceability only, set solely by the internal intercompany trigger (see
+  // server/intercompany.ts) — never accepted from the client. Marks this SO
+  // as auto-created because a sibling org confirmed a PO against a supplier
+  // linked to this org.
+  sourceOrganizationId?: string;
+  sourcePurchaseOrderId?: string;
   items: SalesOrderItemInput[];
 }
 
@@ -568,8 +576,20 @@ export async function getSalesOrderForPrint(id: string) {
 // ── Mutations ──────────────────────────────────────────────────────────────
 
 export async function createSalesOrder(input: CreateSalesOrderInput): Promise<SalesOrderRow> {
-  const { orgId, userId, session } = await requireAccess("sales-order:create");
+  const { orgId, userId } = await requireAccess("sales-order:create");
+  return applyCreateSalesOrder(orgId, userId, input);
+}
 
+// Shared by the public createSalesOrder above (which authorizes the caller
+// against their own active org first) and maybeCreateIntercompanySalesOrder
+// in server/intercompany.ts (which writes into a *different* org — the
+// supplier's linked sibling — after already verifying that org is owned by
+// the same owner as the confirming PO). Deliberately not exported: this
+// file has "use server" at the top, so an exported async function becomes a
+// client-callable server action automatically: this one must stay an
+// internal implementation detail, reachable only from trusted server code
+// that has already done its own authorization.
+async function applyCreateSalesOrder(orgId: string, userId: string, input: CreateSalesOrderInput): Promise<SalesOrderRow> {
   // Build customer snapshot
   const customerSnapshot: SalesOrderRow["customerSnapshot"] = input.customerId
     ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
@@ -614,6 +634,8 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
       urgentAuthDate: input.urgentAuthDate ?? null,
       urgentPoExpectedBy: input.urgentPoExpectedBy ?? null,
       urgentAuthNotes: input.urgentAuthNotes ?? null,
+      sourceOrganizationId: input.sourceOrganizationId ?? null,
+      sourcePurchaseOrderId: input.sourcePurchaseOrderId ?? null,
       status: "pending-do",
       createdBy: userId,
     })
@@ -682,6 +704,113 @@ export async function createSalesOrder(input: CreateSalesOrderInput): Promise<Sa
 
   revalidatePath("/dashboard/sales/order");
   return row;
+}
+
+// Called (fire-and-forget-safe — never throws) right after a PO transitions
+// to "confirmed" in server/purchase-order.ts. If that PO's supplier is
+// linked to a sibling organization (supplier.linkedOrganizationId — same
+// owner), auto-creates a matching Sales Order there, pre-filled from the
+// PO's items. One-shot only: nothing here keeps the two documents in sync
+// afterward, and the idempotency check below means calling this again for
+// the same PO (e.g. recall + reconfirm) is always safe.
+//
+// Exported (required to reach applyCreateSalesOrder, which is private to
+// this file) but deliberately takes only a poId rather than trusting any
+// caller-supplied org/customer/item data — everything else is re-derived
+// and re-verified server-side, since an exported function in a "use server"
+// file is a public, directly client-callable action regardless of who it
+// was written for. Authorization is scoped to the PO's own org: the caller
+// must hold at least purchase-order:read there, and the PO itself must
+// belong to the caller's own active org (PO confirm actions are never
+// cross-org today — see createPurchaseOrder/approvePurchaseOrder/
+// reconfirmPurchaseOrder in server/purchase-order.ts, all scoped to the
+// caller's own active org only).
+export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<void> {
+  try {
+    const { orgId: callerOrgId, userId } = await requireAccess("purchase-order:read");
+
+    const [po] = await db.select().from(purchaseOrder).where(eq(purchaseOrder.id, poId));
+    if (!po || po.organizationId !== callerOrgId || po.status !== "confirmed" || !po.supplierId) return;
+
+    const [sup] = await db.select({ linkedOrganizationId: supplier.linkedOrganizationId }).from(supplier).where(eq(supplier.id, po.supplierId));
+    if (!sup?.linkedOrganizationId) return; // the common case — not a linked supplier, nothing to do
+
+    // Idempotency guard — prevents a duplicate SO if this PO is later
+    // recalled and reconfirmed (this function runs from that path too).
+    const [existingSo] = await db.select({ id: salesOrder.id }).from(salesOrder).where(eq(salesOrder.sourcePurchaseOrderId, poId)).limit(1);
+    if (existingSo) return;
+
+    // Re-verify the link is still valid — ownership could have changed
+    // since it was set on the supplier record.
+    const ownerOrgIds = await getAllOwnerOrgIds(userId, callerOrgId);
+    if (!ownerOrgIds.includes(sup.linkedOrganizationId)) return;
+    const targetOrgId = sup.linkedOrganizationId;
+
+    // Find (or provision) the customer record in the target org that
+    // represents this source org, so repeat POs against the same linked
+    // supplier reuse the same customer instead of creating a new one each time.
+    let [cust] = await db
+      .select({ id: customer.id })
+      .from(customer)
+      .where(and(eq(customer.organizationId, targetOrgId), eq(customer.linkedOrganizationId, callerOrgId)));
+    if (!cust) {
+      const [sourceOrg] = await db.select({ name: organization.name }).from(organization).where(eq(organization.id, callerOrgId));
+      const name = sourceOrg?.name ?? "Unknown organization";
+      const [created] = await db
+        .insert(customer)
+        .values({
+          id: nanoid(),
+          organizationId: targetOrgId,
+          name,
+          organizationName: name,
+          linkedOrganizationId: callerOrgId,
+          createdBy: userId,
+        })
+        .returning({ id: customer.id });
+      cust = created;
+    }
+
+    const poItems = await db
+      .select()
+      .from(purchaseOrderItem)
+      .where(eq(purchaseOrderItem.purchaseOrderId, poId))
+      .orderBy(asc(purchaseOrderItem.rowNo));
+    if (poItems.length === 0) return;
+
+    await applyCreateSalesOrder(targetOrgId, userId, {
+      customerId: cust.id,
+      deliveryDate: po.expectedDeliveryDate ?? undefined,
+      deliveryAddress: po.deliveryAddress ?? undefined,
+      sourceOrganizationId: callerOrgId,
+      sourcePurchaseOrderId: poId,
+      items: poItems.map((item) => ({
+        rowNo: item.rowNo,
+        productId: item.productId ?? undefined,
+        productCode: item.productCode ?? undefined,
+        description: item.description ?? undefined,
+        qty: item.qty ?? undefined,
+        uom: item.uom ?? undefined,
+        unitPrice: item.unitPrice ?? undefined,
+        totalPrice: item.totalPrice ?? undefined,
+        setGroupId: item.setGroupId ?? undefined,
+        setGroupLabel: item.setGroupLabel ?? undefined,
+        setQty: item.setQty ?? undefined,
+        sourcingType: item.sourcingType === "trading" || item.sourcingType === "oem" ? item.sourcingType : undefined,
+        designBrandName: item.designBrandName ?? undefined,
+        designBrandCode: item.designBrandCode ?? undefined,
+        privateLabelCode: item.privateLabelCode ?? undefined,
+        designBrandSource: item.designBrandSource === "catalog" || item.designBrandSource === "user" ? item.designBrandSource : undefined,
+        privateLabelSource: item.privateLabelSource === "auto" || item.privateLabelSource === "user" ? item.privateLabelSource : undefined,
+        isAdditional: item.isAdditional ?? undefined,
+        editedBy: item.editedBy ?? undefined,
+      })),
+    });
+
+    revalidatePath("/dashboard/sales/order");
+  } catch (e) {
+    // Must never block the PO confirmation itself from succeeding.
+    console.error("maybeCreateIntercompanySalesOrder failed:", e);
+  }
 }
 
 export async function updateSalesOrder(input: UpdateSalesOrderInput): Promise<SalesOrderRow> {

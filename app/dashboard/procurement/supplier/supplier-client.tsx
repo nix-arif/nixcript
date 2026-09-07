@@ -31,11 +31,16 @@ import {
   PhoneIcon,
   MailIcon,
   UserIcon,
+  Link2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
   initialSuppliers: Supplier[];
+  // The owner's other organizations — populates the "link to your
+  // organization" picker. Empty for single-org accounts, in which case the
+  // picker doesn't render at all.
+  ownerOrganizations: { id: string; name: string }[];
 }
 
 const EMPTY_FORM = {
@@ -46,10 +51,12 @@ const EMPTY_FORM = {
   contactNo: "",
   email: "",
   notes: "",
+  linkedOrganizationId: "",
 };
 
-export function SupplierClient({ initialSuppliers }: Props) {
+export function SupplierClient({ initialSuppliers, ownerOrganizations }: Props) {
   const [suppliers, setSuppliers] = useState(initialSuppliers);
+  const orgName = (id: string | null) => ownerOrganizations.find((o) => o.id === id)?.name ?? null;
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Supplier | null>(null);
@@ -81,13 +88,14 @@ export function SupplierClient({ initialSuppliers }: Props) {
       contactNo: s.contactNo ?? "",
       email: s.email ?? "",
       notes: s.notes ?? "",
+      linkedOrganizationId: s.linkedOrganizationId ?? "",
     });
     setOpen(true);
   }
 
   const f =
     (k: keyof typeof EMPTY_FORM) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
       setForm((prev) => ({ ...prev, [k]: e.target.value }));
 
   async function handleSave() {
@@ -196,6 +204,15 @@ export function SupplierClient({ initialSuppliers }: Props) {
                   {s.registrationNo && (
                     <span className="text-[11px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 font-mono">
                       <Highlight text={s.registrationNo} query={search} />
+                    </span>
+                  )}
+                  {s.linkedOrganizationId && orgName(s.linkedOrganizationId) && (
+                    <span
+                      className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800"
+                      title="This supplier is one of your other organizations"
+                    >
+                      <Link2Icon className="w-3 h-3 shrink-0" />
+                      {orgName(s.linkedOrganizationId)}
                     </span>
                   )}
                 </div>
@@ -320,6 +337,27 @@ export function SupplierClient({ initialSuppliers }: Props) {
                 rows={2}
               />
             </div>
+            {ownerOrganizations.length > 0 && (
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5">
+                  <Link2Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                  Link to your organization
+                </Label>
+                <select
+                  value={form.linkedOrganizationId}
+                  onChange={f("linkedOrganizationId")}
+                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">Not linked — a regular external supplier</option>
+                  {ownerOrganizations.map((o) => (
+                    <option key={o.id} value={o.id}>{o.name}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-muted-foreground">
+                  Confirming a PO against this supplier will auto-create a matching Sales Order there.
+                </p>
+              </div>
+            )}
 
             <div className="flex gap-2 pt-2">
               <Button className="flex-1" onClick={handleSave} disabled={saving}>

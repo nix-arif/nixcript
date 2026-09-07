@@ -1069,6 +1069,12 @@ export const customer = pgTable(
     department: text("department"), // ← keep as separate field
     contactNo: text("contact_no"), // ← add
     email: text("email"),
+    // Marks this customer record as actually representing one of the same
+    // owner's other organizations — auto-provisioned (and reused on
+    // subsequent orders) when a linked supplier's PO gets confirmed, see
+    // server/intercompany.ts. Mirrors supplier.linkedOrganizationId on the
+    // buy side.
+    linkedOrganizationId: text("linked_organization_id").references(() => organization.id, { onDelete: "set null" }),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
@@ -1510,6 +1516,13 @@ export const supplier = pgTable(
     contactNo: text("contact_no"),
     email: text("email"),
     notes: text("notes"),
+    // Marks this supplier record as actually being one of the same owner's
+    // other organizations — confirming a PO against it auto-creates a
+    // matching Sales Order there (see maybeCreateIntercompanySalesOrder in
+    // server/sales-order.ts). Set null (not cascaded) if that sibling org is
+    // ever deleted, since the supplier record itself is still valid, just
+    // no longer linked.
+    linkedOrganizationId: text("linked_organization_id").references(() => organization.id, { onDelete: "set null" }),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
@@ -1532,6 +1545,42 @@ export const supplierRelations = relations(supplier, ({ one }) => ({
     references: [user.id],
   }),
 }));
+
+// Owner-level governance: restricts a real-world supplier (matched by name,
+// not any one org's own supplier row — supplier records have no shared
+// identity across orgs) to being dealt with directly by only one of the
+// owner's organizations. Enforced in server/supplier-restrictions.ts's
+// assertSupplierAllowed, called from supplier/PR/PO creation in every org.
+// Scoped by ownerUserId (the actual invariant tying orgs together, same
+// resolution getOwnerOrgIds itself uses) rather than any single
+// organizationId, since the rule applies across every org that owner has.
+export const restrictedSupplier = pgTable(
+  "restricted_supplier",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    supplierName: text("supplier_name").notNull(), // as typed, for display
+    supplierNameNormalized: text("supplier_name_normalized").notNull(), // lower(trim(supplierName)) — matching + uniqueness
+    designatedOrganizationId: text("designated_organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    notes: text("notes"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("restricted_supplier_owner_name_uidx").on(t.ownerUserId, t.supplierNameNormalized),
+    index("restricted_supplier_owner_idx").on(t.ownerUserId),
+  ],
+);
 
 /* ============================================================================================================================================================================================================================================
    SALES ORDER TABLE
@@ -1600,6 +1649,15 @@ export const salesOrder = pgTable(
     customerPoId: text("customer_po_id").references((): AnyPgColumn => customerPurchaseOrder.id), // primary (first) for backward compat
     customerPoNo: text("customer_po_no"),
     customerPoLinks: json("customer_po_links").$type<{ customerPoId: string; customerPoNo: string }[]>(),
+
+    // Set only when this SO was auto-created because a sibling organization
+    // (same owner) confirmed a PO against a supplier linked to this org —
+    // see server/intercompany.ts. Traceability only: nothing here keeps this
+    // SO in sync with that PO afterward, it's a one-shot creation. Also
+    // doubles as the idempotency guard preventing a duplicate SO if that PO
+    // is later recalled and reconfirmed.
+    sourceOrganizationId: text("source_organization_id").references(() => organization.id, { onDelete: "set null" }),
+    sourcePurchaseOrderId: text("source_purchase_order_id").references((): AnyPgColumn => purchaseOrder.id, { onDelete: "set null" }),
 
     notes: text("notes"),
     status: text("status").notNull().default("draft"), // pending-do | pending-pr | submitted | confirmed | fulfilled | cancelled

@@ -24,6 +24,7 @@ import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import { notifyUsersWithPermission } from "@/server/notifications";
+import { assertSupplierAllowed } from "@/server/supplier-restrictions";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -315,6 +316,9 @@ export async function getPrsBySoId(soId: string): Promise<PrListRow[]> {
 
 export async function createPurchaseRequisition(input: CreatePrInput): Promise<PrRow> {
   const { orgId, userId } = await requireAccess("purchase-requisition:create");
+  for (const item of input.items) {
+    await assertSupplierAllowed(orgId, item.preferredSupplierName);
+  }
   const prNo = await generatePrNo(orgId);
 
   // Derive salesOrderNo from salesOrderId if client didn't supply it
@@ -387,6 +391,9 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
   if (!existing) throw new Error("Purchase requisition not found");
   if (existing.requestedBy !== userId) throw new Error("Only the creator can edit this purchase requisition");
   if (!["draft"].includes(existing.status)) throw new Error("Only draft requisitions can be edited");
+  for (const item of input.items) {
+    await assertSupplierAllowed(orgId, item.preferredSupplierName);
+  }
 
   let resolvedSoNo = input.salesOrderNo ?? null;
   if (input.salesOrderId && !resolvedSoNo) {
