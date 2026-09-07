@@ -312,6 +312,18 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                             <Highlight text={cpo} query={search} />
                           </span>
                         ))}
+                        {o.itemCustomers.map((c) => (
+                          <span key={`${c.name}-${c.organization}`} className="inline-flex items-center gap-1">
+                            {c.organization && (
+                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                                {c.organization}
+                              </span>
+                            )}
+                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                              {c.name}
+                            </span>
+                          </span>
+                        ))}
                       </div>
                       <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                         {snap?.name && (

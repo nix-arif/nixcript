@@ -16,12 +16,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon,
   PaperclipIcon,
   XIcon,
   SearchIcon,
+  AlertTriangleIcon,
 } from "lucide-react";
 import {
   type LineItem,
@@ -218,15 +220,19 @@ export function EditPurchaseOrderClient({
     setPdfKey(undefined);
   }
 
-  async function handleSave() {
-    if (!selectedSo) {
-      if (!confirm("No sales order link to this PO — save anyway without one?")) return;
-    }
+  const [showNoSoDialog, setShowNoSoDialog] = useState(false);
+
+  function handleSave() {
     if (!supplierId) { toast.error("Supplier is required"); return; }
     const hasItems = items.some((i) => i.description || i.productCode);
     if (!hasItems) { toast.error("Add at least one item"); return; }
     if (items.some((i) => i._imageUploading)) { toast.error("Please wait for image uploads to finish"); return; }
 
+    if (!selectedSo) { setShowNoSoDialog(true); return; }
+    doSave();
+  }
+
+  async function doSave() {
     setSaving(true);
     try {
       const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
@@ -543,6 +549,30 @@ export function EditPurchaseOrderClient({
           <Button variant="outline" onClick={() => router.push(backUrl)}>Cancel</Button>
         </div>
       </div>
+
+      <Dialog open={showNoSoDialog} onOpenChange={setShowNoSoDialog}>
+        <DialogContent className="sm:max-w-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex items-center justify-center w-9 h-9 rounded-full bg-amber-50 dark:bg-amber-900/20 shrink-0">
+              <AlertTriangleIcon className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div className="flex-1 min-w-0 pt-0.5">
+              <DialogTitle>No sales order linked</DialogTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                This purchase order isn&apos;t linked to a sales order. Save it anyway?
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-3">
+            <Button variant="outline" size="sm" onClick={() => setShowNoSoDialog(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => { setShowNoSoDialog(false); doSave(); }}>
+              Save anyway
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

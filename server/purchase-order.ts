@@ -607,9 +607,42 @@ export type PurchaseOrderWithItems = PurchaseOrderRow & {
 export type PurchaseOrderListRow = PurchaseOrderRow & {
   createdByName: string | null;
   customerPoNos: string[];
+  itemCustomers: { name: string; organization: string | null }[];
   pendingReturnQty: number;
   pendingRepairQty: number;
 };
+
+// The end-customer(s) a PO's lines are ultimately destined for (e.g. a
+// drop-ship OEM order allocated per hospital/doctor) — set per item, not on
+// the PO itself, so this collects the distinct (name, organization) pairs
+// across all of a PO's items for the list card badge. customerName already
+// carries the customer's title prefixed (see CustomerPickerCell), so no
+// further lookup against the customer table is needed here.
+async function getItemCustomersByPo(poIds: string[]): Promise<Map<string, { name: string; organization: string | null }[]>> {
+  const map = new Map<string, { name: string; organization: string | null }[]>();
+  if (poIds.length === 0) return map;
+
+  const rows = await db
+    .select({
+      purchaseOrderId: purchaseOrderItem.purchaseOrderId,
+      customerName: purchaseOrderItem.customerName,
+      customerOrganization: purchaseOrderItem.customerOrganization,
+    })
+    .from(purchaseOrderItem)
+    .where(inArray(purchaseOrderItem.purchaseOrderId, poIds));
+
+  for (const r of rows) {
+    const name = r.customerName?.trim();
+    if (!name) continue;
+    const organization = r.customerOrganization?.trim() || null;
+    const list = map.get(r.purchaseOrderId) ?? [];
+    if (!list.some((c) => c.name === name && c.organization === organization)) {
+      list.push({ name, organization });
+    }
+    map.set(r.purchaseOrderId, list);
+  }
+  return map;
+}
 
 // "Fulfilled" only ever tracks physical receipt (see maybeAutoFulfill in
 // server/goods-receipt.ts) — it says nothing about whether what arrived was
@@ -776,12 +809,16 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     arr.push(link.customerPoNo);
     cpoMap.set(link.purchaseOrderId, arr);
   }
-  const pendingByPo = await getPendingReturnRepairByPo(poIds);
+  const [pendingByPo, itemCustomersByPo] = await Promise.all([
+    getPendingReturnRepairByPo(poIds),
+    getItemCustomersByPo(poIds),
+  ]);
 
   return rows.map((r) => ({
     ...r,
     createdByName: nameOf(r.createdBy),
     customerPoNos: cpoMap.get(r.id) ?? [],
+    itemCustomers: itemCustomersByPo.get(r.id) ?? [],
     pendingReturnQty: pendingByPo.get(r.id)?.pendingReturnQty ?? 0,
     pendingRepairQty: pendingByPo.get(r.id)?.pendingRepairQty ?? 0,
   }));
@@ -897,12 +934,16 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
   );
   const orgPermsMap = new Map<string, string[]>([[orgId, callerPerms], ...otherOrgPermsEntries]);
   const hasCentralizedUpdate = hasAccess(callerPerms, "purchase-order:update:centralized");
-  const pendingByPo = await getPendingReturnRepairByPo(poIds);
+  const [pendingByPo, itemCustomersByPo] = await Promise.all([
+    getPendingReturnRepairByPo(poIds),
+    getItemCustomersByPo(poIds),
+  ]);
 
   return rows.map(({ po, organizationName }) => ({
     ...po,
     createdByName: nameOf(po.createdBy),
     customerPoNos: cpoMap.get(po.id) ?? [],
+    itemCustomers: itemCustomersByPo.get(po.id) ?? [],
     organizationName,
     canEdit: po.createdBy === userId || hasCentralizedUpdate || hasAccess(orgPermsMap.get(po.organizationId) ?? [], "purchase-order:update"),
     pendingReturnQty: pendingByPo.get(po.id)?.pendingReturnQty ?? 0,
