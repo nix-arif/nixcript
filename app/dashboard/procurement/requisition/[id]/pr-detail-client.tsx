@@ -18,6 +18,7 @@ import { getProductByCode } from "@/server/products";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AccountingInput } from "@/components/ui/accounting-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
@@ -26,6 +27,7 @@ import {
   DatabaseIcon, ShoppingCartIcon, LayersIcon,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useArrowFieldNav } from "@/hooks/use-arrow-field-nav";
 
 const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
 import { cn } from "@/lib/utils";
@@ -274,6 +276,8 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
   const linesRef = useRef(lines);
   useEffect(() => { linesRef.current = lines; }, [lines]);
   const [notes, setNotes] = useState(pr.notes ?? "");
+  const formRef = useRef<HTMLDivElement>(null);
+  const handleFieldNavKeyDown = useArrowFieldNav(formRef);
 
   const can = (p: string) => hasAccess(permissions, p);
   const isOwner = pr.requestedBy === currentUserId;
@@ -415,7 +419,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
   const displayItems = editing ? lines : pr.items;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" ref={formRef} onKeyDown={handleFieldNavKeyDown}>
       <PageHeader
         title={pr.prNo}
         description={`Purchase Requisition · ${fmtDate(pr.createdAt)}`}
@@ -600,7 +604,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
                         {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </td>
-                    <td className="px-2 py-1.5"><Input type="number" value={line.estimatedUnitCost ?? "0"} onChange={(e) => setLine(line._key, { estimatedUnitCost: e.target.value })} className="h-7 text-xs" /></td>
+                    <td className="px-2 py-1.5"><AccountingInput value={line.estimatedUnitCost ?? "0"} onValueChange={(raw) => setLine(line._key, { estimatedUnitCost: raw })} className="h-7 text-xs" /></td>
                     <td className="px-3 py-2 text-right tabular-nums font-medium">
                       <span className="text-[10px] text-muted-foreground mr-0.5">{line.currency ?? "MYR"}</span>
                       {calcTotal(line).toLocaleString("en-MY", { minimumFractionDigits: 2 })}

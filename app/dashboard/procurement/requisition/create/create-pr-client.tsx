@@ -15,9 +15,11 @@ import {
   type PrItemInput,
 } from "@/server/purchase-requisition";
 import { toggleSoItemPrExcluded } from "@/server/sales-order";
+import { useArrowFieldNav } from "@/hooks/use-arrow-field-nav";
 import { getProductByCode } from "@/server/products";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AccountingInput } from "@/components/ui/accounting-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
@@ -300,6 +302,8 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
   const [soCustomerAddress, setSoCustomerAddress] = useState<string | null>(null);
 
   const fileInputRef      = useRef<HTMLInputElement>(null);
+  const formRef           = useRef<HTMLDivElement>(null);
+  const handleFieldNavKeyDown = useArrowFieldNav(formRef);
   const uploadTargetKey   = useRef<string | null>(null);
   const committedRef      = useRef(false);
   const linesRef          = useRef(lines);
@@ -572,7 +576,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
   const dropdownRows  = soSearch.length >= 2 ? soResults : defaultSoRows;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" ref={formRef} onKeyDown={handleFieldNavKeyDown}>
       <input
         ref={fileInputRef}
         type="file"
@@ -860,7 +864,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <Input type="number" value={line.estimatedUnitCost ?? "0"} onChange={(e) => setLine(line._key, { estimatedUnitCost: e.target.value })} className="h-7 text-xs" />
+                      <AccountingInput value={line.estimatedUnitCost ?? "0"} onValueChange={(raw) => setLine(line._key, { estimatedUnitCost: raw })} className="h-7 text-xs" />
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-medium">
                       <span className="text-[10px] text-muted-foreground mr-0.5">{line.currency ?? "MYR"}</span>

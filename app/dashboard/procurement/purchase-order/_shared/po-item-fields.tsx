@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AccountingInput } from "@/components/ui/accounting-input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   XIcon, ImageIcon, UploadIcon, DatabaseIcon, LinkIcon, PencilIcon,
@@ -1106,11 +1107,10 @@ export function PoItemsTable({
 
                   {/* Unit Price */}
                   <td className="px-2 py-1.5">
-                    <Input
-                      type="number"
+                    <AccountingInput
                       value={item.unitPrice ?? "0"}
-                      onChange={(e) => updateItem(item._key, { unitPrice: e.target.value })}
-                      className="h-7 text-xs text-right"
+                      onValueChange={(raw) => updateItem(item._key, { unitPrice: raw })}
+                      className="h-7 text-xs"
                       placeholder="0.00"
                     />
                   </td>
