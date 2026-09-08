@@ -9,7 +9,7 @@
 // route those other orgs should use.
 
 import { db } from "@/db";
-import { restrictedSupplier, member, organization } from "@/db/schema";
+import { restrictedSupplier, member, organization, supplier } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, inArray, asc } from "drizzle-orm";
@@ -99,6 +99,22 @@ export async function getOwnerOrganizationsForRules(): Promise<{ id: string; nam
     .from(organization)
     .where(inArray(organization.id, ownerOrgIds))
     .orderBy(asc(organization.name));
+}
+
+// Distinct supplier names across every org the caller's owner controls —
+// powers the "Supplier name" autocomplete in the rule form so the owner can
+// pick a name that already exists somewhere instead of retyping it exactly.
+// Freeform names are still allowed (a rule can pre-empt a supplier no org
+// has added yet), so this is a suggestion list, not a closed set.
+export async function getSupplierNamesForRules(): Promise<string[]> {
+  const { orgId } = await requireOwner();
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+  const rows = await db
+    .selectDistinct({ name: supplier.name })
+    .from(supplier)
+    .where(inArray(supplier.organizationId, ownerOrgIds))
+    .orderBy(asc(supplier.name));
+  return rows.map((r) => r.name);
 }
 
 export interface CreateRestrictedSupplierRuleInput {

@@ -29,6 +29,7 @@ import {
 interface Props {
   initialRules: RestrictedSupplierRule[];
   ownerOrganizations: { id: string; name: string }[];
+  supplierNames: string[];
 }
 
 const EMPTY_FORM = {
@@ -37,7 +38,7 @@ const EMPTY_FORM = {
   notes: "",
 };
 
-export function SupplierRulesClient({ initialRules, ownerOrganizations }: Props) {
+export function SupplierRulesClient({ initialRules, ownerOrganizations, supplierNames }: Props) {
   const [rules, setRules] = useState(initialRules);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -184,9 +185,15 @@ export function SupplierRulesClient({ initialRules, ownerOrganizations }: Props)
                 value={form.supplierName}
                 onChange={f("supplierName")}
                 placeholder="e.g. ABC Medical Sdn Bhd"
+                list="supplier-rule-name-suggestions"
               />
+              <datalist id="supplier-rule-name-suggestions">
+                {supplierNames.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
               <p className="text-[11px] text-muted-foreground">
-                Matches any supplier record with this name (case-insensitive) across all your organizations.
+                Matches any supplier record with this name (case-insensitive) across all your organizations. Pick an existing supplier or type a new name.
               </p>
             </div>
             <div className="space-y-1.5">

@@ -260,6 +260,7 @@ export function PurchaseOrderDetailClient({
   organizationName,
   editHref,
   hidePricing = false,
+  canEditPoNumber,
 }: {
   order: PurchaseOrderWithItems;
   permissions: string[];
@@ -276,6 +277,14 @@ export function PurchaseOrderDetailClient({
   editHref?: string;
   // Centralized viewers who can't edit this PO see everything except money.
   hidePricing?: boolean;
+  // Overrides whether the PO number is editable — used by the centralized
+  // view, which always passes an empty `permissions` array (to keep every
+  // other owner-only action, like Delete, correctly own-org-only) but still
+  // needs to reflect the caller's real owner status just for this one field,
+  // since updatePurchaseOrderNumber supports editing across every org the
+  // caller's owner controls. Defaults to `isOwner` (the plain-permissions
+  // check) when not provided, preserving the regular per-org page's behavior.
+  canEditPoNumber?: boolean;
 }) {
   const showSourcing = businessType !== "trading";
   const router = useRouter();
@@ -863,7 +872,7 @@ export function PurchaseOrderDetailClient({
                 <TruckIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                 <div>
                   <p className="text-[10px] text-muted-foreground">PO Number</p>
-                  <PoNumberField poId={order.id} poNo={poNo} isOwner={isOwner} onUpdated={(next) => { setPoNo(next); router.refresh(); }} />
+                  <PoNumberField poId={order.id} poNo={poNo} isOwner={canEditPoNumber ?? isOwner} onUpdated={(next) => { setPoNo(next); router.refresh(); }} />
                 </div>
               </div>
             )}

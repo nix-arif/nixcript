@@ -44,3 +44,5 @@ next-env.d.ts
 .claude/worktrees/*
 
 e2e/.auth/
+
+.db-backups/

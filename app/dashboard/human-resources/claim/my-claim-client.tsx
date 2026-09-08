@@ -572,6 +572,55 @@ function Section({ title, badge, children }: { title: string; badge?: string; ch
 
 const inputCls = "border border-input rounded-md px-2 py-1.5 text-xs bg-background focus:outline-none focus:ring-2 focus:ring-ring w-full";
 
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+// Two plain <select>s instead of a native <input type="month">. Safari's
+// month/year input is a segmented widget (month + year) that can silently
+// desync — it keeps rendering the last valid "August 2026" text even after
+// a half-finished edit leaves the actual committed value empty — so a form
+// can look filled in and still fail the "^\d{4}-\d{2}$" check on submit.
+// Plain selects have no such native-widget state to get out of sync.
+function MonthYearPicker({ value, onChange }: { value: string; onChange: (period: string) => void }) {
+  const match = /^(\d{4})-(\d{2})$/.exec(value);
+  const selectedYear = match ? parseInt(match[1], 10) : undefined;
+  const selectedMonth = match ? parseInt(match[2], 10) : undefined;
+
+  const currentYear = new Date().getFullYear();
+  const years = new Set<number>();
+  for (let y = currentYear - 3; y <= currentYear + 1; y++) years.add(y);
+  if (selectedYear) years.add(selectedYear); // keep an out-of-range year (e.g. an old draft) selectable
+  const yearOptions = Array.from(years).sort((a, b) => b - a);
+
+  function commit(year: number | undefined, month: number | undefined) {
+    onChange(year && month ? `${year}-${String(month).padStart(2, "0")}` : "");
+  }
+
+  return (
+    <div className="flex gap-2">
+      <select
+        value={selectedMonth ?? ""}
+        onChange={(e) => commit(selectedYear ?? currentYear, e.target.value ? parseInt(e.target.value, 10) : undefined)}
+        className={inputCls}
+        required
+      >
+        <option value="">Month</option>
+        {MONTH_NAMES.map((name, idx) => (
+          <option key={name} value={idx + 1}>{name}</option>
+        ))}
+      </select>
+      <select
+        value={selectedYear ?? ""}
+        onChange={(e) => commit(e.target.value ? parseInt(e.target.value, 10) : undefined, selectedMonth)}
+        className={inputCls}
+        required
+      >
+        <option value="">Year</option>
+        {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+    </div>
+  );
+}
+
 // ── Summary Cards ──────────────────────────────────────────────────────────
 
 function SummaryCards({ applications, claimTypes }: { applications: ClaimApplicationWithDetails[]; claimTypes: ClaimTypeRow[] }) {
@@ -1209,10 +1258,14 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   async function handleCancel() {
     if (!cancelTarget) return;
     setCancelling(true);
-    const isDraft = cancelTarget.status === "DRAFT";
+    // DRAFT and CANCELLED both hard-delete server-side (server/claim.ts's
+    // deleteClaim also cleans up any attached documents from R2 in that
+    // branch) — PENDING/CHECKED instead soft-delete to CANCELLED, keeping
+    // the record and its documents around for audit.
+    const isHardDelete = cancelTarget.status === "DRAFT" || cancelTarget.status === "CANCELLED";
     try {
       await deleteClaim(cancelTarget.id);
-      toast.success(isDraft ? "Draft deleted" : "Claim withdrawn");
+      toast.success(isHardDelete ? "Claim deleted" : "Claim withdrawn");
       setCancelTarget(null);
       startTransition(() => router.refresh());
     } catch (err: unknown) {
@@ -1587,8 +1640,8 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                               Edit &amp; Resubmit
                             </Button>
                           )}
-                          {(app.status === "DRAFT" || app.status === "PENDING" || app.status === "CHECKED") && (
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setCancelTarget(app)} title={app.status === "DRAFT" ? "Delete draft" : "Withdraw"}>
+                          {(app.status === "DRAFT" || app.status === "PENDING" || app.status === "CHECKED" || app.status === "CANCELLED") && (
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setCancelTarget(app)} title={app.status === "DRAFT" || app.status === "CANCELLED" ? "Delete" : "Withdraw"}>
                               <XIcon className="h-3.5 w-3.5"/>
                             </Button>
                           )}
@@ -1606,20 +1659,24 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
       {/* Cancel Sheet */}
       <Sheet open={!!cancelTarget} onOpenChange={open => !open && setCancelTarget(null)}>
         <SheetContent className="w-full sm:max-w-md max-w-lg! overflow-y-auto px-10">
-          <SheetHeader className="mb-5"><SheetTitle>Cancel Claim</SheetTitle></SheetHeader>
+          <SheetHeader className="mb-5">
+            <SheetTitle>{cancelTarget?.status === "DRAFT" || cancelTarget?.status === "CANCELLED" ? "Delete Claim" : "Cancel Claim"}</SheetTitle>
+          </SheetHeader>
           <div className="space-y-4">
             <div className="rounded-md bg-destructive/10 border border-destructive/30 p-4 flex items-start gap-3">
               <AlertTriangleIcon className="h-4 w-4 text-destructive mt-0.5 shrink-0"/>
               <p className="text-sm text-destructive leading-relaxed">
                 {cancelTarget?.status === "DRAFT"
-                  ? <>Delete draft <strong>{cancelTarget?.claimTypeName} ({cancelTarget?.applicationNo})</strong>? This will permanently remove the draft.</>
+                  ? <>Delete draft <strong>{cancelTarget?.claimTypeName} ({cancelTarget?.applicationNo})</strong>? This will permanently remove the draft{cancelTarget?.documents.length ? " and its attached documents" : ""}.</>
+                  : cancelTarget?.status === "CANCELLED"
+                  ? <>Permanently delete <strong>{cancelTarget?.claimTypeName} ({cancelTarget?.applicationNo})</strong>? This will remove the claim{cancelTarget?.documents.length ? " and its attached documents" : ""} for good.</>
                   : <>Withdraw <strong>{cancelTarget?.claimTypeName} ({cancelTarget?.applicationNo})</strong> for <strong>{fmtAmount(cancelTarget?.amount ?? "0")}</strong>? This cannot be undone.</>
                 }
               </p>
             </div>
             <div className="flex gap-2 pt-2">
               <Button variant="destructive" onClick={handleCancel} disabled={cancelling} className="flex-1">
-                {cancelling ? "Deleting…" : cancelTarget?.status === "DRAFT" ? "Yes, Delete" : "Yes, Withdraw"}
+                {cancelling ? "Deleting…" : cancelTarget?.status === "DRAFT" || cancelTarget?.status === "CANCELLED" ? "Yes, Delete" : "Yes, Withdraw"}
               </Button>
               <Button variant="outline" onClick={() => setCancelTarget(null)} disabled={cancelling}>Keep</Button>
             </div>
@@ -1801,9 +1858,9 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
             {/* ── LOCAL FORM ─────────────────────────────────────────────── */}
             {formType === CLAIM_FORM.LOCAL && (<>
               <Section title="Claim Period">
-                <div className="flex flex-col gap-1.5 w-48">
+                <div className="flex flex-col gap-1.5 w-64">
                   <Label>Month / Year <span className="text-destructive">*</span></Label>
-                  <input type="month" value={claimPeriod} onChange={e => handlePeriodChange(e.target.value)} className={inputCls+" w-48"} required/>
+                  <MonthYearPicker value={claimPeriod} onChange={handlePeriodChange} />
                 </div>
               </Section>
 
@@ -2045,9 +2102,9 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
             {/* ── OVERSEAS FORM ──────────────────────────────────────────── */}
             {formType === CLAIM_FORM.OVERSEAS && (<>
               <Section title="Claim Period">
-                <div className="flex flex-col gap-1.5 w-48">
+                <div className="flex flex-col gap-1.5 w-64">
                   <Label>Month / Year <span className="text-destructive">*</span></Label>
-                  <input type="month" value={claimPeriod} onChange={e => handlePeriodChange(e.target.value)} className={inputCls+" w-48"} required/>
+                  <MonthYearPicker value={claimPeriod} onChange={handlePeriodChange} />
                 </div>
               </Section>
 
@@ -2128,9 +2185,9 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
             {/* ── ENTERTAINMENT FORM ─────────────────────────────────────── */}
             {formType === CLAIM_FORM.ENTERTAINMENT_FORM && (<>
               <Section title="Claim Period">
-                <div className="flex flex-col gap-1.5 w-48">
+                <div className="flex flex-col gap-1.5 w-64">
                   <Label>Month / Year <span className="text-destructive">*</span></Label>
-                  <input type="month" value={claimPeriod} onChange={e => handlePeriodChange(e.target.value)} className={inputCls+" w-48"} required/>
+                  <MonthYearPicker value={claimPeriod} onChange={handlePeriodChange} />
                 </div>
               </Section>
             </>)}

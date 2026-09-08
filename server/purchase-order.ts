@@ -1472,25 +1472,27 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
 // own numbering sometimes has to be corrected after the fact. Checks the
 // same uniqueness the DB itself enforces (purchase_order_no_org_uidx) up
 // front so a collision surfaces as a clean message instead of a raw
-// constraint violation. Own-org only — no centralized variant — matching
-// deletePurchaseOrder/recallPurchaseOrder, which are also owner-only actions
-// scoped to just the caller's own active org.
+// constraint violation. Resolvable across every org the caller's owner
+// controls — for the centralized view — same cross-org lookup pattern as
+// updatePurchaseOrderCentralized; uniqueness is checked against the PO's own
+// org, not necessarily the caller's currently active one.
 export async function updatePurchaseOrderNumber(id: string, poNo: string): Promise<void> {
   const { orgId } = await requireOwner();
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
 
   const trimmed = poNo.trim();
   if (!trimmed) throw new Error("PO number can't be empty");
 
   const [existing] = await db
-    .select({ id: purchaseOrder.id })
+    .select({ id: purchaseOrder.id, organizationId: purchaseOrder.organizationId })
     .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
+    .where(and(eq(purchaseOrder.id, id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Purchase order not found");
 
   const [clash] = await db
     .select({ id: purchaseOrder.id })
     .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.poNo, trimmed), ne(purchaseOrder.id, id)));
+    .where(and(eq(purchaseOrder.organizationId, existing.organizationId), eq(purchaseOrder.poNo, trimmed), ne(purchaseOrder.id, id)));
   if (clash) throw new Error(`PO number "${trimmed}" is already in use`);
 
   await db.update(purchaseOrder).set({ poNo: trimmed }).where(eq(purchaseOrder.id, id));
