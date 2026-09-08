@@ -190,7 +190,7 @@ function SupplierCell({
         <span
           role="button"
           tabIndex={-1}
-          onClick={(e) => { e.stopPropagation(); onClear(); }}
+          onClick={(e) => { e.stopPropagation(); onClear(); setQuery(""); setEditing(true); }}
           className="hover:text-foreground shrink-0"
         >
           <XIcon className="w-2.5 h-2.5" />

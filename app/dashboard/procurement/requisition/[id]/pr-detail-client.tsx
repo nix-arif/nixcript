@@ -50,6 +50,10 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Supplier autocomplete (same as create form) ───────────────────────────────
 
+// Shows as a plain search input until a supplier is picked, then collapses
+// to a compact badge (matching create-pr-client.tsx's SupplierCell) —
+// clicking the badge (or clicking away without picking anything new) toggles
+// back to editing.
 function SupplierCell({
   value,
   onSelect,
@@ -61,39 +65,81 @@ function SupplierCell({
   onClear: () => void;
   disabled?: boolean;
 }) {
-  const [query, setQuery] = useState(value);
+  const [editing, setEditing] = useState(!value);
+  const [query, setQuery]   = useState(value);
   const [results, setResults] = useState<{ id: string; name: string }[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen]     = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { if (!editing) setQuery(value); }, [value, editing]);
+
+  useEffect(() => {
+    if (!editing || !query.trim() || query === value) { setResults([]); return; }
+    const t = setTimeout(async () => {
+      const r = await searchSuppliersForPr(query);
+      setResults(r);
+      setOpen(r.length > 0);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query, value, editing]);
+
+  useEffect(() => {
+    function close(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        if (value) { setQuery(value); setEditing(false); }
+      }
+    }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [value]);
 
   if (disabled) return <span className="text-xs text-muted-foreground">{value || "—"}</span>;
 
+  if (!editing && value) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        title="Click to change supplier"
+        className="inline-flex items-center gap-1 max-w-full text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60 hover:bg-muted/70 transition-colors"
+      >
+        <span className="truncate">{value}</span>
+        <span
+          role="button"
+          tabIndex={-1}
+          onClick={(e) => { e.stopPropagation(); onClear(); setQuery(""); setEditing(true); }}
+          className="hover:text-foreground shrink-0"
+        >
+          <XIcon className="w-2.5 h-2.5" />
+        </span>
+      </button>
+    );
+  }
+
   return (
-    <div className="relative">
+    <div ref={ref} className="relative">
       <div className="flex items-center gap-1">
         <Input
+          autoFocus={!!value}
           value={query}
-          onChange={async (e) => {
-            setQuery(e.target.value);
-            if (e.target.value.trim()) {
-              const r = await searchSuppliersForPr(e.target.value);
-              setResults(r);
-              setOpen(r.length > 0);
-            } else {
-              setResults([]); setOpen(false);
-            }
-          }}
-          placeholder="Supplier…"
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search supplier…"
           className="h-7 text-xs"
         />
-        {value && <button onClick={onClear} className="text-muted-foreground hover:text-destructive text-xs">×</button>}
+        {value && (
+          <button onClick={() => { onClear(); setQuery(""); }} className="text-muted-foreground hover:text-foreground">
+            <XIcon className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
       {open && (
-        <div className="absolute z-50 left-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg text-xs w-48 max-h-40 overflow-y-auto">
+        <div className="absolute z-50 left-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg text-xs w-56 max-h-48 overflow-y-auto">
           {results.map((r) => (
             <button
               key={r.id}
-              className="w-full text-left px-3 py-2 hover:bg-muted/50"
-              onClick={() => { onSelect(r.id, r.name); setQuery(r.name); setOpen(false); }}
+              className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
+              onClick={() => { onSelect(r.id, r.name); setQuery(r.name); setOpen(false); setEditing(false); }}
             >
               {r.name}
             </button>
