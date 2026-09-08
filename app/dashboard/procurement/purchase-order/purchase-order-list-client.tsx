@@ -108,7 +108,7 @@ interface Props {
 export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions, currentUserId }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortOption>(SORT_OPTIONS[0]);
+  const [sort, setSort] = useState<SortOption>(SORT_OPTIONS.find((o) => o.key === "poNo" && o.dir === "desc")!);
   const { isSwitchingOrg, setOrgSwitching } = useAppStore();
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);

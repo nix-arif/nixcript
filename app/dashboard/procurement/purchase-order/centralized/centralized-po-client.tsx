@@ -78,7 +78,7 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortOption>(SORT_OPTIONS[0]);
+  const [sort, setSort] = useState<SortOption>(SORT_OPTIONS.find((o) => o.key === "poNo" && o.dir === "desc")!);
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
