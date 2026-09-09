@@ -1,5 +1,6 @@
 import { getPackingListDetail, getPackingListDetailCentralized } from "@/server/packing-list";
 import { getOrganizationBranding } from "@/server/organization-profile";
+import { getProductImageUrl } from "@/helper/product-image";
 import { db } from "@/db";
 import { purchaseOrderItem } from "@/db/schema";
 import { inArray } from "drizzle-orm";
@@ -18,7 +19,6 @@ interface Props {
 // there is one, but most items never get a photo attached during
 // inspection, so without this fallback the report would show no image at
 // all for the common case. Keyed by product code, same as the UI.
-const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
 
 // ── A4 ─────────────────────────────────────────────────────────────────────
 const W  = 595.28;
@@ -457,9 +457,7 @@ export async function GET(req: Request, { params }: Props) {
         if (shortfall <= 0 && returned <= 0) return null;
 
         const evidencePhotos = item.photos.filter((p) => p.category === "return");
-        const catalogImageUrl = R2_PRODUCT_IMAGES && item.productCode
-          ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(item.productCode)}.jpg`
-          : null;
+        const catalogImageUrl = item.productCode ? getProductImageUrl(item.productCode) || null : null;
         return {
           poLabel: poLabelById.get(item.purchaseOrderId) ?? item.purchaseOrderId,
           poLineNo: item.purchaseOrderItemId ? (poLineNoById.get(item.purchaseOrderItemId) ?? null) : null,

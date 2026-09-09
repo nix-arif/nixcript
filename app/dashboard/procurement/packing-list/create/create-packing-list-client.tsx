@@ -22,8 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-
-const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
+import { getProductImageUrl } from "@/helper/product-image";
 
 const PO_COLORS = [
   { bg: "bg-blue-50/50 dark:bg-blue-950/15", header: "bg-blue-100/70 dark:bg-blue-900/30", border: "border-blue-200 dark:border-blue-800/50", stripe: "bg-blue-100/60 dark:bg-blue-900/25" },
@@ -38,9 +37,7 @@ function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; pr
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const catalogSrc = R2_PRODUCT_IMAGES && productCode
-    ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg`
-    : "";
+  const catalogSrc = productCode ? getProductImageUrl(productCode) : "";
   const src = imageUrl || catalogSrc;
 
   if (!src || failed) return <span className="text-muted-foreground">—</span>;

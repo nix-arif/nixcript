@@ -21,6 +21,7 @@ import {
   type PurchaseOrderItemInput,
 } from "@/server/purchase-order";
 import { getProductByCode, getDesignCodeImageUploadUrl } from "@/server/products";
+import { getProductImageUrl } from "@/helper/product-image";
 import { searchProductsByDesignCode } from "@/server/inventory";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
@@ -33,7 +34,6 @@ import {
   AlertTriangleIcon, TagIcon, ClipboardListIcon, PlusIcon, TrashIcon,
 } from "lucide-react";
 
-const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -147,8 +147,8 @@ export const IMAGE_EXT_CANDIDATES = ["jpg", "jpeg", "png", "webp"];
 export function useCatalogImageSrc(catalogCode: string, overrideUrl?: string) {
   const [extIdx, setExtIdx] = useState(0);
   const exhausted = extIdx >= IMAGE_EXT_CANDIDATES.length;
-  const catalogSrc = R2_PRODUCT_IMAGES && catalogCode && !exhausted
-    ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(catalogCode)}.${IMAGE_EXT_CANDIDATES[extIdx]}`
+  const catalogSrc = catalogCode && !exhausted
+    ? getProductImageUrl(catalogCode, IMAGE_EXT_CANDIDATES[extIdx])
     : "";
   const src = overrideUrl || catalogSrc;
 

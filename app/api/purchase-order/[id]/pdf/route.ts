@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { getProductImageUrl } from "@/helper/product-image";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -19,7 +20,6 @@ const s3 = new S3Client({
 });
 
 const PROCUREMENT_BUCKET = process.env.R2_PROCUREMENT_IMAGES_BUCKET!;
-const CATALOG_URL        = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
 
 async function fetchImageBytes(url: string): Promise<{ bytes: Uint8Array; format: "jpg" | "png" } | null> {
   try {
@@ -71,8 +71,8 @@ export async function GET(req: Request, { params }: Props) {
         }
 
         // Fallback to public catalog image
-        if (!imgUrl && item.productCode && CATALOG_URL) {
-          imgUrl = `${CATALOG_URL}/${encodeURIComponent(item.productCode)}.jpg`;
+        if (!imgUrl && item.productCode) {
+          imgUrl = getProductImageUrl(item.productCode);
         }
 
         if (imgUrl) {

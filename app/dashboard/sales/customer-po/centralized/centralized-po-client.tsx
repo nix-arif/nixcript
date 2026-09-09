@@ -16,6 +16,7 @@ import {
   BuildingIcon,
   RefreshCwIcon,
   LayersIcon,
+  Link2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -168,6 +169,15 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={p.organizationName} query={search} />
                       </span>
+                      {p.isIntercompany && (
+                        <span
+                          className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-800"
+                          title="Auto-created from a sibling organization's purchase order — not a real external customer"
+                        >
+                          <Link2Icon className="w-3 h-3 shrink-0" />
+                          Intercompany
+                        </span>
+                      )}
                       {p.quotationNo && (
                         <span className="text-[10px] bg-muted/50 text-muted-foreground rounded px-1.5 py-0.5 font-mono">
                           QT: <Highlight text={p.quotationNo} query={search} />

@@ -130,32 +130,73 @@ export async function generatePurchaseOrderPdf(data: Data, options: PoPdfOptions
     }
   }
 
-  // ── Column widths ─────────────────────────────────────────────────────────
-  const C_NO   = 22;
-  const C_IMG  = withImages ? 126 : 0;   // image column (0 when disabled)
-  const C_CODE = 62;
-  const C_QTY  = 32;
-  const C_UOM  = 36;
-  const C_UP   = 72;
-  const C_TOT  = 76;
-  const C_DESC = CW - C_NO - C_IMG - C_CODE - C_QTY - C_UOM - C_UP - C_TOT;
+  // ── OEM vs Trading layout ─────────────────────────────────────────────────
+  // A PO prints with the OEM-column table the moment any line is OEM-sourced
+  // — the two layouts aren't mixed row-by-row within one table, the whole
+  // document picks one. Picture Ref (OEM's reference picture column) is
+  // controlled by the same with-images/no-images toggle as the trading
+  // layout's image column — toggled off, the column is removed entirely
+  // (width redistributed to Description), not just left blank.
+  const isOem = items.some((item) => item.sourcingType === "oem");
+  const showOemPicture = isOem && withImages;
 
-  const X_NO   = ML;
-  const X_IMG  = X_NO   + C_NO;
-  const X_CODE = X_IMG  + C_IMG;
-  const X_DESC = X_CODE + C_CODE;
-  const X_QTY  = X_DESC + C_DESC;
-  const X_UOM  = X_QTY  + C_QTY;
-  const X_UP   = X_UOM  + C_UOM;
-  const X_TOT  = X_UP   + C_UP;
+  // ── Column widths ─────────────────────────────────────────────────────────
+  const C_NO = isOem ? 16 : 22;
+
+  let C_IMG = 0, C_CODE = 0, C_BRAND = 0, C_BCODE = 0, C_EMBOSS = 0, C_PIC = 0;
+  let X_NO: number, X_IMG = 0, X_CODE = 0, X_BRAND = 0, X_BCODE = 0, X_EMBOSS = 0, X_DESC: number, X_PIC = 0, X_QTY: number, X_UOM: number, X_UP: number, X_TOT: number;
+  let C_DESC: number, C_QTY: number, C_UOM: number, C_UP: number, C_TOT: number;
+
+  if (isOem) {
+    C_BRAND  = 58;
+    C_BCODE  = 50;
+    C_EMBOSS = 50;
+    C_PIC    = showOemPicture ? 80 : 0;
+    C_QTY    = 22;
+    C_UOM    = 28;
+    C_UP     = 55;
+    C_TOT    = 55;
+    C_DESC   = CW - C_NO - C_BRAND - C_BCODE - C_EMBOSS - C_PIC - C_QTY - C_UOM - C_UP - C_TOT;
+
+    X_NO     = ML;
+    X_BRAND  = X_NO     + C_NO;
+    X_BCODE  = X_BRAND  + C_BRAND;
+    X_EMBOSS = X_BCODE  + C_BCODE;
+    X_DESC   = X_EMBOSS + C_EMBOSS;
+    X_PIC    = X_DESC   + C_DESC;
+    X_QTY    = X_PIC    + C_PIC;
+    X_UOM    = X_QTY    + C_QTY;
+    X_UP     = X_UOM    + C_UOM;
+    X_TOT    = X_UP     + C_UP;
+  } else {
+    C_IMG  = withImages ? 126 : 0;   // image column (0 when disabled)
+    C_CODE = 62;
+    C_QTY  = 32;
+    C_UOM  = 36;
+    C_UP   = 72;
+    C_TOT  = 76;
+    C_DESC = CW - C_NO - C_IMG - C_CODE - C_QTY - C_UOM - C_UP - C_TOT;
+
+    X_NO   = ML;
+    X_IMG  = X_NO   + C_NO;
+    X_CODE = X_IMG  + C_IMG;
+    X_DESC = X_CODE + C_CODE;
+    X_QTY  = X_DESC + C_DESC;
+    X_UOM  = X_QTY  + C_QTY;
+    X_UP   = X_UOM  + C_UOM;
+    X_TOT  = X_UP   + C_UP;
+  }
 
   const FS_DESC = tfs === "small" ? 8   : tfs === "large" ? 11   : 9.5;
   const FS_CODE = tfs === "small" ? 7.5 : tfs === "large" ? 10   : 9;
   const FS_NUM  = tfs === "small" ? 7.5 : tfs === "large" ? 9.5  : 8.5;
   const LH      = tfs === "small" ? 10  : tfs === "large" ? 13.5 : 11.5;
-  // Minimum row height: taller when images are shown so the thumbnail fits
-  const IMG_SZ  = 108;
-  const RH_MIN  = withImages ? IMG_SZ + 12 : 24;
+  // Minimum row height: taller when images are shown so the thumbnail fits.
+  // OEM's reference picture is smaller than the trading layout's product
+  // photo — there are many more columns competing for width.
+  const IMG_SZ  = isOem ? 64 : 108;
+  const showAnyImage = showOemPicture || (!isOem && withImages);
+  const RH_MIN  = showAnyImage ? IMG_SZ + 12 : 24;
 
   // ── Pre-compute row heights ───────────────────────────────────────────────
   type RowInfo = { item: typeof items[number]; descLines: string[]; rowH: number };
@@ -176,7 +217,10 @@ export async function generatePurchaseOrderPdf(data: Data, options: PoPdfOptions
   }) + 6 + QL_BAND_H;
 
   const DIVIDER_GAP  = 18;
-  const TABLE_HDR_H  = 22;
+  // OEM's narrow reference columns need their labels wrapped across several
+  // lines ("Best Medical Code to Emboss" wraps to 4 lines at 50pt wide) —
+  // the trading header stays a single line.
+  const TABLE_HDR_H  = isOem ? 44 : 22;
   const INFO_FS      = 9;
   const INFO_LH      = INFO_FS + 3;
   const IPAD_T       = 10;
@@ -406,20 +450,48 @@ export async function generatePurchaseOrderPdf(data: Data, options: PoPdfOptions
 
     const labelColor = tHdrStyle === "filled-dark" ? C_WHITE : accent;
 
-    const thdrs = [
-      { label: "No",          x: X_NO,   w: C_NO   },
-      ...(withImages ? [{ label: "Image", x: X_IMG, w: C_IMG }] : []),
-      { label: "Code",        x: X_CODE, w: C_CODE  },
-      { label: "Description", x: X_DESC, w: C_DESC  },
-      { label: "Qty",         x: X_QTY,  w: C_QTY   },
-      { label: "UOM",         x: X_UOM,  w: C_UOM   },
-      { label: "Unit Price",  x: X_UP,   w: C_UP    },
-      { label: "Total",       x: X_TOT,  w: C_TOT   },
-    ];
+    const thdrs = isOem
+      ? [
+          { label: "No",                         x: X_NO,     w: C_NO     },
+          { label: "Design Brand Name to Refer",  x: X_BRAND,  w: C_BRAND  },
+          { label: "Design Brand Code to Refer",  x: X_BCODE,  w: C_BCODE  },
+          { label: "Best Medical Code to Emboss", x: X_EMBOSS, w: C_EMBOSS },
+          { label: "Description",                 x: X_DESC,   w: C_DESC   },
+          ...(showOemPicture ? [{ label: "Picture Ref", x: X_PIC, w: C_PIC }] : []),
+          { label: "Qty",                         x: X_QTY,    w: C_QTY    },
+          { label: "OUM",                         x: X_UOM,    w: C_UOM    },
+          { label: "Price/Pc",                    x: X_UP,     w: C_UP     },
+          { label: "Price",                       x: X_TOT,    w: C_TOT    },
+        ]
+      : [
+          { label: "No",          x: X_NO,   w: C_NO   },
+          ...(withImages ? [{ label: "Image", x: X_IMG, w: C_IMG }] : []),
+          { label: "Code",        x: X_CODE, w: C_CODE  },
+          { label: "Description", x: X_DESC, w: C_DESC  },
+          { label: "Qty",         x: X_QTY,  w: C_QTY   },
+          { label: "UOM",         x: X_UOM,  w: C_UOM   },
+          { label: "Unit Price",  x: X_UP,   w: C_UP    },
+          { label: "Total",       x: X_TOT,  w: C_TOT   },
+        ];
+    // OEM's narrower columns need their (much longer) labels wrapped across
+    // multiple lines; the trading header stays a single centered line.
+    const HDR_FS = isOem ? 6.5 : 7.5;
     for (const col of thdrs) {
-      const tw = fontB.widthOfTextAtSize(col.label, 7.5);
-      const tx = col.x + (col.w - tw) / 2;
-      page.drawText(col.label.toUpperCase(), { x: tx, y: tHdrY + 8, size: 7.5, font: fontB, color: labelColor });
+      const label = col.label.toUpperCase();
+      if (isOem) {
+        const lines = wrap(label, fontB, HDR_FS, Math.max(col.w - 6, 10));
+        let hy = tHdrY + TABLE_HDR_H - 9;
+        for (const line of lines) {
+          const tw = fontB.widthOfTextAtSize(line, HDR_FS);
+          const tx = col.x + (col.w - tw) / 2;
+          page.drawText(line, { x: tx, y: hy, size: HDR_FS, font: fontB, color: labelColor });
+          hy -= HDR_FS + 2;
+        }
+      } else {
+        const tw = fontB.widthOfTextAtSize(label, HDR_FS);
+        const tx = col.x + (col.w - tw) / 2;
+        page.drawText(label, { x: tx, y: tHdrY + 8, size: HDR_FS, font: fontB, color: labelColor });
+      }
     }
     // Bottom rule (all styles)
     page.drawRectangle({ x: ML, y: tHdrY, width: CW, height: tHdrStyle === "filled-dark" ? 0 : 1.8, color: accent });
@@ -444,33 +516,68 @@ export async function generatePurchaseOrderPdf(data: Data, options: PoPdfOptions
       const noW   = fontB.widthOfTextAtSize(noStr, 7);
       page.drawText(noStr, { x: badgeX + (BADGE_SZ - noW) / 2, y: badgeY + 3, size: 7, font: fontB, color: C_WHITE });
 
-      // ── Product image ────────────────────────────────────────────────────
-      if (withImages && C_IMG > 0) {
-        const img = embeddedItemImgs.get(item.rowNo);
-        const IMG_TOP_PAD = 6;
-        if (img) {
-          const scale = Math.min(IMG_SZ / img.height, IMG_SZ / img.width, 1);
-          const iw = img.width  * scale;
-          const ih = img.height * scale;
-          page.drawImage(img, {
-            x: X_IMG + (C_IMG - iw) / 2, y: curY - IMG_TOP_PAD - ih,
-            width: iw, height: ih,
-          });
-        } else {
-          // Placeholder box when no image
-          const bx = X_IMG + (C_IMG - IMG_SZ) / 2;
-          const by = curY - IMG_TOP_PAD - IMG_SZ;
-          page.drawRectangle({
-            x: bx, y: by, width: IMG_SZ, height: IMG_SZ,
-            color: rgb(0.95, 0.95, 0.95), borderColor: C_LINE, borderWidth: 0.5,
-          });
-        }
-      }
+      if (isOem) {
+        // ── OEM reference columns ──────────────────────────────────────────
+        page.drawText(trunc(item.designBrandName ?? "—", fontR, FS_CODE, C_BRAND - TABLE_PAD), {
+          x: X_BRAND + TABLE_PAD, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
+        });
+        page.drawText(trunc(item.designBrandCode ?? "—", fontB, FS_CODE, C_BCODE - TABLE_PAD), {
+          x: X_BCODE + TABLE_PAD, y: textBaseline, size: FS_CODE, font: fontB, color: accent,
+        });
+        page.drawText(trunc(item.privateLabelCode ?? "—", fontB, FS_CODE, C_EMBOSS - TABLE_PAD), {
+          x: X_EMBOSS + TABLE_PAD, y: textBaseline, size: FS_CODE, font: fontB, color: accent,
+        });
 
-      // Code
-      page.drawText(trunc(item.productCode ?? "—", fontB, FS_CODE, C_CODE - TABLE_PAD), {
-        x: X_CODE + TABLE_PAD, y: textBaseline, size: FS_CODE, font: fontB, color: accent,
-      });
+        // ── Picture Ref ──────────────────────────────────────────────────
+        if (showOemPicture) {
+          const img = embeddedItemImgs.get(item.rowNo);
+          const IMG_TOP_PAD = 6;
+          if (img) {
+            const scale = Math.min(IMG_SZ / img.height, IMG_SZ / img.width, 1);
+            const iw = img.width  * scale;
+            const ih = img.height * scale;
+            page.drawImage(img, {
+              x: X_PIC + (C_PIC - iw) / 2, y: curY - IMG_TOP_PAD - ih,
+              width: iw, height: ih,
+            });
+          } else {
+            const bx = X_PIC + (C_PIC - IMG_SZ) / 2;
+            const by = curY - IMG_TOP_PAD - IMG_SZ;
+            page.drawRectangle({
+              x: bx, y: by, width: IMG_SZ, height: IMG_SZ,
+              color: rgb(0.95, 0.95, 0.95), borderColor: C_LINE, borderWidth: 0.5,
+            });
+          }
+        }
+      } else {
+        // ── Product image ──────────────────────────────────────────────────
+        if (withImages && C_IMG > 0) {
+          const img = embeddedItemImgs.get(item.rowNo);
+          const IMG_TOP_PAD = 6;
+          if (img) {
+            const scale = Math.min(IMG_SZ / img.height, IMG_SZ / img.width, 1);
+            const iw = img.width  * scale;
+            const ih = img.height * scale;
+            page.drawImage(img, {
+              x: X_IMG + (C_IMG - iw) / 2, y: curY - IMG_TOP_PAD - ih,
+              width: iw, height: ih,
+            });
+          } else {
+            // Placeholder box when no image
+            const bx = X_IMG + (C_IMG - IMG_SZ) / 2;
+            const by = curY - IMG_TOP_PAD - IMG_SZ;
+            page.drawRectangle({
+              x: bx, y: by, width: IMG_SZ, height: IMG_SZ,
+              color: rgb(0.95, 0.95, 0.95), borderColor: C_LINE, borderWidth: 0.5,
+            });
+          }
+        }
+
+        // Code
+        page.drawText(trunc(item.productCode ?? "—", fontB, FS_CODE, C_CODE - TABLE_PAD), {
+          x: X_CODE + TABLE_PAD, y: textBaseline, size: FS_CODE, font: fontB, color: accent,
+        });
+      }
 
       // Description
       let dy = textBaseline;

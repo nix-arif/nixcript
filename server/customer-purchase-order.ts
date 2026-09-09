@@ -138,13 +138,22 @@ export async function getNextCashSaleNo(): Promise<string> {
   return `CASH-SALE-${String(max + 1).padStart(2, "0")}`;
 }
 
-export async function getCustomerPos(): Promise<CustomerPo[]> {
+// isIntercompany marks a CPO created automatically from a sibling org's PO
+// (server/sales-order.ts's maybeCreateIntercompanySalesOrder) rather than a
+// real external customer's document — its customerId points at a customer
+// record with linkedOrganizationId set. Surfaced so the UI can badge it
+// instead of it silently blending in with genuine customer orders.
+export type CustomerPoListRow = CustomerPo & { isIntercompany: boolean };
+
+export async function getCustomerPos(): Promise<CustomerPoListRow[]> {
   const { orgId } = await requireAccess("customer-po:read");
-  return db
-    .select()
+  const rows = await db
+    .select({ po: customerPurchaseOrder, linkedOrganizationId: customer.linkedOrganizationId })
     .from(customerPurchaseOrder)
+    .leftJoin(customer, eq(customer.id, customerPurchaseOrder.customerId))
     .where(eq(customerPurchaseOrder.organizationId, orgId))
     .orderBy(desc(customerPurchaseOrder.createdAt));
+  return rows.map(({ po, linkedOrganizationId }) => ({ ...po, isIntercompany: !!linkedOrganizationId }));
 }
 
 // Returns every org owned by the same owner as the caller's active org (the
@@ -167,23 +176,28 @@ async function getAllOwnerOrgIds(userId: string, currentOrgId: string): Promise<
   return ids.length > 0 ? ids : [currentOrgId];
 }
 
-export type CentralizedCustomerPo = CustomerPo & { organizationName: string };
+export type CentralizedCustomerPo = CustomerPo & { organizationName: string; isIntercompany: boolean };
 
 // Cross-org view for members explicitly granted customer-po:read:centralized
 // — every Customer PO recorded under any org the same owner controls, not
-// just the caller's own active org.
+// just the caller's own active org. This is exactly where an intercompany
+// CPO is most likely to confuse someone — the "customer" on it is the name
+// of one of the very orgs also being aggregated in this same list — hence
+// isIntercompany, so the UI can badge it instead of it looking like a
+// duplicate or a data error.
 export async function getCustomerPosCentralized(): Promise<CentralizedCustomerPo[]> {
   const { orgId, userId } = await requireAccess("customer-po:read:centralized");
   const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
 
   const rows = await db
-    .select({ po: customerPurchaseOrder, organizationName: organization.name })
+    .select({ po: customerPurchaseOrder, organizationName: organization.name, linkedOrganizationId: customer.linkedOrganizationId })
     .from(customerPurchaseOrder)
     .innerJoin(organization, eq(organization.id, customerPurchaseOrder.organizationId))
+    .leftJoin(customer, eq(customer.id, customerPurchaseOrder.customerId))
     .where(inArray(customerPurchaseOrder.organizationId, ownerOrgIds))
     .orderBy(desc(customerPurchaseOrder.createdAt));
 
-  return rows.map(({ po, organizationName }) => ({ ...po, organizationName }));
+  return rows.map(({ po, organizationName, linkedOrganizationId }) => ({ ...po, organizationName, isIntercompany: !!linkedOrganizationId }));
 }
 
 export async function getOpenCustomerPos(): Promise<CustomerPoSearchResult[]> {
@@ -591,11 +605,24 @@ export interface CustomerPoSummaryRow {
 export async function getCustomerPoSummary(): Promise<CustomerPoSummaryRow[]> {
   const { orgId } = await requireAccess("customer-po:read");
 
-  const cpos = await db
-    .select()
-    .from(customerPurchaseOrder)
-    .where(eq(customerPurchaseOrder.organizationId, orgId))
-    .orderBy(desc(customerPurchaseOrder.createdAt));
+  // Excludes intercompany CPOs (auto-created by maybeCreateIntercompanySalesOrder
+  // from a sibling org's PO — see customer.linkedOrganizationId) — this is a
+  // revenue/fulfillment view of real external customer business, and an
+  // intercompany "sale" would otherwise silently inflate it with what's
+  // actually just goods moving between the owner's own organizations.
+  const allCustomers = await db
+    .select({ id: customer.id, linkedOrganizationId: customer.linkedOrganizationId })
+    .from(customer)
+    .where(eq(customer.organizationId, orgId));
+  const intercompanyCustomerIds = new Set(allCustomers.filter((c) => c.linkedOrganizationId).map((c) => c.id));
+
+  const cpos = (
+    await db
+      .select()
+      .from(customerPurchaseOrder)
+      .where(eq(customerPurchaseOrder.organizationId, orgId))
+      .orderBy(desc(customerPurchaseOrder.createdAt))
+  ).filter((c) => !c.customerId || !intercompanyCustomerIds.has(c.customerId));
 
   if (cpos.length === 0) return [];
 

@@ -520,6 +520,47 @@ export async function checkProductCodesExist(
   return Object.fromEntries(unique.map((c) => [c, found.has(c)]));
 }
 
+// For a filename-derived code that didn't exact-match anything (see
+// codeFromFilename in upload-images-client.tsx): looks for a real product
+// whose code is identical once all punctuation is stripped. This is what
+// covers Windows uploaders — macOS Finder silently rewrites a typed "/" to
+// ":" on disk, which codeFromFilename already reverses, but Windows forbids
+// both "/" and ":" in filenames outright, so there's no single character to
+// reverse and a Windows user must have substituted something else (a "-",
+// a "_", or dropped it) when naming the file. Only ever a suggestion the
+// user must accept — silently guessing which punctuation to insert back
+// would risk corrupting a code that legitimately differs by more than
+// punctuation. Returns null (no suggestion) unless exactly one product
+// matches after normalizing, so an ambiguous or genuinely-new code is never
+// papered over.
+export async function suggestProductCodeMatches(codes: string[]): Promise<Record<string, string | null>> {
+  if (!codes.length) return {};
+  const { orgId } = await requireAccess("product:upload-image");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const unique = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
+  if (unique.length === 0) return {};
+
+  const result: Record<string, string | null> = {};
+  await Promise.all(
+    unique.map(async (code) => {
+      const normalized = code.replace(/[^a-zA-Z0-9]/g, "");
+      if (!normalized) { result[code] = null; return; }
+      const rows = await db
+        .select({ productCode: product.productCode })
+        .from(product)
+        .where(
+          and(
+            inArray(product.organizationId, ownerOrgIds),
+            sql`regexp_replace(${product.productCode}, '[^a-zA-Z0-9]', '', 'g') = ${normalized}`,
+          ),
+        )
+        .limit(2);
+      result[code] = rows.length === 1 ? rows[0].productCode : null;
+    }),
+  );
+  return result;
+}
+
 export async function setProductRental(productId: string, isRental: boolean) {
   const { orgId } = await requireAccess("product:seed");
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);

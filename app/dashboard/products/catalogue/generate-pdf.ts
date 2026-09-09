@@ -1,5 +1,6 @@
 import { PDFDocument, PDFFont, PDFPage, rgb, StandardFonts } from "pdf-lib";
 import { trunc, sanitizeText, hLine } from "@/app/dashboard/sales/quotation/[id]/print/_pdf-header";
+import { getProductImageUrl } from "@/helper/product-image";
 
 type CatalogueRow = {
   no: number;
@@ -168,10 +169,9 @@ export async function generateCataloguePdf(config: GenerateOptions) {
 
   // ── Pre-fetch images ───────────────────────────────────────────────────────
   const imageCache: Record<string, Uint8Array | null> = {};
-  const base = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
   for (const row of rows) {
     for (const ext of ["jpg", "jpeg", "png", "webp"]) {
-      const bytes = await fetchImageBytes(`${base}/${encodeURIComponent(row.productCode)}.${ext}`);
+      const bytes = await fetchImageBytes(getProductImageUrl(row.productCode, ext));
       if (bytes) { imageCache[row.productCode] = bytes; break; }
     }
   }

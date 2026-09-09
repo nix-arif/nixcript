@@ -29,8 +29,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { getProductImageUrl } from "@/helper/product-image";
 
-const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
 const AUTOSAVE_DEBOUNCE_MS = 800;
 const POLL_INTERVAL_MS = 5000;
 
@@ -80,9 +80,7 @@ function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; pr
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const catalogSrc = R2_PRODUCT_IMAGES && productCode
-    ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg`
-    : "";
+  const catalogSrc = productCode ? getProductImageUrl(productCode) : "";
   const src = imageUrl || catalogSrc;
 
   if (!src || failed) return <span className="text-muted-foreground">—</span>;

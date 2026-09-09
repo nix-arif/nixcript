@@ -10,7 +10,7 @@ import {
   AlertCircleIcon, RefreshCwIcon, CheckIcon, Loader2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getProductImageUploadUrls, checkProductCodesExist, markProductImagesUploaded } from "@/server/products";
+import { getProductImageUploadUrls, checkProductCodesExist, suggestProductCodeMatches, markProductImagesUploaded } from "@/server/products";
 
 const MAX_FILES = 50;
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -56,8 +56,14 @@ type ImageEntry = {
   errorMsg?: string;
 };
 
+// A real filesystem file can never contain "/" in its name, so a product
+// code like "H333-14/0.4" can only ever arrive here as "H333-14:0.4.jpg" —
+// the same ":" substitution getProductImageUploadUrls/getDesignCodeImageUploadUrl
+// already apply going the other way when building the R2 key. Reverse it
+// here, or every slash-containing code gets misread as an unrecognized new
+// product instead of matching its existing catalogue entry.
 function codeFromFilename(name: string) {
-  return name.replace(/\.[^/.]+$/, "").trim();
+  return name.replace(/\.[^/.]+$/, "").trim().replace(/:/g, "/");
 }
 
 function UploadStateIcon({ state }: { state: UploadState }) {
@@ -71,7 +77,12 @@ export function UploadImagesClient() {
   const [entries, setEntries]   = useState<ImageEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [drag, setDrag]         = useState(false);
-  const [existMap, setExistMap] = useState<Record<string, boolean>>({});
+  const [existMap, setExistMap]     = useState<Record<string, boolean>>({});
+  // Suggested "did you mean" real product code for an entry whose exact
+  // code didn't match anything — see suggestProductCodeMatches in
+  // server/products.ts for why this only ever exists as an accept-or-ignore
+  // suggestion, never an automatic rewrite.
+  const [suggestMap, setSuggestMap] = useState<Record<string, string | null>>({});
   const inputRef                = useRef<HTMLInputElement>(null);
   const checkTimerRef           = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -83,7 +94,7 @@ export function UploadImagesClient() {
 
   // Debounced DB check whenever entries change
   useEffect(() => {
-    if (!entries.length) { setExistMap({}); return; }
+    if (!entries.length) { setExistMap({}); setSuggestMap({}); return; }
     if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
     checkTimerRef.current = setTimeout(async () => {
       const codes = [...new Set(entries.map((e) => e.productCode).filter(Boolean))];
@@ -91,6 +102,13 @@ export function UploadImagesClient() {
       try {
         const map = await checkProductCodesExist(codes);
         setExistMap(map);
+        const unmatched = codes.filter((c) => !map[c]);
+        if (unmatched.length > 0) {
+          const suggestions = await suggestProductCodeMatches(unmatched);
+          setSuggestMap(suggestions);
+        } else {
+          setSuggestMap({});
+        }
       } catch { /* silent */ }
     }, 600);
   }, [entries]);
@@ -266,7 +284,7 @@ export function UploadImagesClient() {
               </Button>
             )}
             <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground"
-              onClick={() => { entries.forEach((e) => URL.revokeObjectURL(e.previewUrl)); setEntries([]); setExistMap({}); }}>
+              onClick={() => { entries.forEach((e) => URL.revokeObjectURL(e.previewUrl)); setEntries([]); setExistMap({}); setSuggestMap({}); }}>
               Clear all
             </Button>
           </div>
@@ -278,6 +296,7 @@ export function UploadImagesClient() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3 mb-5">
           {entries.map((entry) => {
             const exists = entry.productCode ? existMap[entry.productCode] : undefined;
+            const suggestion = entry.productCode && exists === false ? suggestMap[entry.productCode] : null;
             return (
               <div key={entry.id} className={cn(
                 "relative group rounded-xl border bg-background overflow-hidden flex flex-col",
@@ -330,7 +349,10 @@ export function UploadImagesClient() {
                         <CheckCircleIcon className="w-2.5 h-2.5" /> Found
                       </span>
                     ) : exists === false ? (
-                      <span className="text-[9px] text-amber-500 flex items-center gap-0.5">
+                      <span
+                        className="text-[9px] text-amber-500 flex items-center gap-0.5"
+                        title="Windows and macOS both disallow some characters (like &quot;/&quot;) in filenames, so a code containing one may not match its file name exactly — double-check the code above."
+                      >
                         <AlertCircleIcon className="w-2.5 h-2.5" /> New product
                       </span>
                     ) : null}
@@ -338,6 +360,17 @@ export function UploadImagesClient() {
                       <span className="text-[9px] text-red-500 ml-auto truncate">{entry.errorMsg}</span>
                     )}
                   </div>
+                  {suggestion && (
+                    <button
+                      type="button"
+                      onClick={() => updateCode(entry.id, suggestion)}
+                      disabled={entry.uploadState === "uploading" || entry.uploadState === "done"}
+                      className="w-full text-left text-[9px] text-blue-600 dark:text-blue-400 hover:underline truncate"
+                      title="Your file system may not allow the exact product code as a filename — this looks like the same code with punctuation stripped out"
+                    >
+                      Use &quot;{suggestion}&quot;?
+                    </button>
+                  )}
                 </div>
               </div>
             );

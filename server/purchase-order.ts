@@ -435,7 +435,6 @@ export async function searchCustomersForPo(query: string): Promise<{
 export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: string; customerName: string | null }[]> {
   const { orgId } = await requireAccess("purchase-order:read");
 
-  // Show all confirmed SOs — item-level filtering in getSalesOrderItemsForPo handles partial orders
   const rows = await db
     .select({
       id: salesOrder.id,
@@ -451,10 +450,52 @@ export async function getApprovedSalesOrders(): Promise<{ id: string; soNo: stri
     )
     .orderBy(desc(salesOrder.createdAt));
 
-  return rows.map((r) => {
-    const snap = r.customerSnapshot as any;
-    return { id: r.id, soNo: r.soNo, customerName: snap?.name ?? null };
-  });
+  if (rows.length === 0) return [];
+  const soIds = rows.map((r) => r.id);
+
+  // Same "already covered" logic as getSalesOrderItemsForPo: an item is
+  // covered once its productCode appears on an active (non-cancelled) PO
+  // already linked to that SO. A SO with zero uncovered items is fully
+  // "done" — every item it has is already on order — so there's nothing
+  // left a new PO from this picker could add, and it's filtered out here
+  // rather than only surfacing that fact after the user's already picked it.
+  const allItems = await db
+    .select({ salesOrderId: salesOrderItem.salesOrderId, productCode: salesOrderItem.productCode })
+    .from(salesOrderItem)
+    .where(inArray(salesOrderItem.salesOrderId, soIds));
+
+  const activePOs = await db
+    .select({ id: purchaseOrder.id, salesOrderId: purchaseOrder.salesOrderId })
+    .from(purchaseOrder)
+    .where(and(inArray(purchaseOrder.salesOrderId, soIds), sql`${purchaseOrder.status} != 'cancelled'`));
+  const poIdToSoId = new Map(activePOs.map((p) => [p.id, p.salesOrderId]));
+
+  const orderedCodesBySo = new Map<string, Set<string>>();
+  if (activePOs.length > 0) {
+    const orderedItems = await db
+      .select({ purchaseOrderId: purchaseOrderItem.purchaseOrderId, productCode: purchaseOrderItem.productCode })
+      .from(purchaseOrderItem)
+      .where(inArray(purchaseOrderItem.purchaseOrderId, activePOs.map((p) => p.id)));
+    for (const item of orderedItems) {
+      const soId = poIdToSoId.get(item.purchaseOrderId);
+      if (!soId || !item.productCode) continue;
+      if (!orderedCodesBySo.has(soId)) orderedCodesBySo.set(soId, new Set());
+      orderedCodesBySo.get(soId)!.add(item.productCode);
+    }
+  }
+
+  const hasUncoveredItems = new Set<string>();
+  for (const item of allItems) {
+    const ordered = orderedCodesBySo.get(item.salesOrderId);
+    if (!item.productCode || !ordered?.has(item.productCode)) hasUncoveredItems.add(item.salesOrderId);
+  }
+
+  return rows
+    .filter((r) => hasUncoveredItems.has(r.id))
+    .map((r) => {
+      const snap = r.customerSnapshot as any;
+      return { id: r.id, soNo: r.soNo, customerName: snap?.name ?? null };
+    });
 }
 
 export async function getActiveCustomerPos(): Promise<{ id: string; customerPoNo: string; customerName: string | null; amount: string }[]> {
@@ -469,10 +510,26 @@ export async function getActiveCustomerPos(): Promise<{ id: string; customerPoNo
     .from(customerPurchaseOrder)
     .where(and(eq(customerPurchaseOrder.organizationId, orgId), inArray(customerPurchaseOrder.status, ["received", "acknowledged"])))
     .orderBy(desc(customerPurchaseOrder.createdAt));
-  return rows.map((r) => {
-    const snap = r.customerSnapshot as any;
-    return { id: r.id, customerPoNo: r.customerPoNo, customerName: snap?.name ?? null, amount: r.amount };
-  });
+
+  if (rows.length === 0) return [];
+
+  // A CPO has no partial/remaining-items concept the way a SO does — it's
+  // fulfilled by a single PO — so "done" here means it already has at least
+  // one active (non-cancelled) PO linked to it via purchaseOrderCustomerPo.
+  const cpoIds = rows.map((r) => r.id);
+  const linked = await db
+    .select({ customerPoId: purchaseOrderCustomerPo.customerPoId })
+    .from(purchaseOrderCustomerPo)
+    .innerJoin(purchaseOrder, eq(purchaseOrder.id, purchaseOrderCustomerPo.purchaseOrderId))
+    .where(and(inArray(purchaseOrderCustomerPo.customerPoId, cpoIds), sql`${purchaseOrder.status} != 'cancelled'`));
+  const linkedSet = new Set(linked.map((l) => l.customerPoId));
+
+  return rows
+    .filter((r) => !linkedSet.has(r.id))
+    .map((r) => {
+      const snap = r.customerSnapshot as any;
+      return { id: r.id, customerPoNo: r.customerPoNo, customerName: snap?.name ?? null, amount: r.amount };
+    });
 }
 
 export async function getDefaultDeliveryAddress(): Promise<string> {

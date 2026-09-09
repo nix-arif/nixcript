@@ -17,6 +17,7 @@ import {
 import { toggleSoItemPrExcluded } from "@/server/sales-order";
 import { useArrowFieldNav } from "@/hooks/use-arrow-field-nav";
 import { getProductByCode } from "@/server/products";
+import { getProductImageUrl } from "@/helper/product-image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AccountingInput } from "@/components/ui/accounting-input";
@@ -33,7 +34,6 @@ import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
 
 const CURRENCIES = ["MYR", "USD", "EUR", "SGD", "GBP", "AUD", "JPY", "CNY", "IDR", "THB"];
-const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
 
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -71,7 +71,7 @@ function ProductImageCell({
 }) {
   const [failed, setFailed] = useState(false);
   const [open, setOpen]     = useState(false);
-  const src = overrideUrl || (R2_PRODUCT_IMAGES && productCode ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg` : "");
+  const src = overrideUrl || (productCode ? getProductImageUrl(productCode) : "");
 
   // Reset failed when a fresh override URL arrives (e.g. after user uploads a replacement)
   useEffect(() => { if (overrideUrl) setFailed(false); }, [overrideUrl]);

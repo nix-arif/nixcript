@@ -577,7 +577,7 @@ export function InvoiceListClient({
                         <td className="px-3 py-2.5 max-w-35">
                           {snap?.name ? (
                             <span className="text-xs wrap-break-word leading-snug">
-                              <Highlight text={snap.name} query={searchInput} />
+                              {snap.title ? `${snap.title} ` : ""}<Highlight text={snap.name} query={searchInput} />
                             </span>
                           ) : (
                             <span className="text-xs text-muted-foreground/50 italic">—</span>

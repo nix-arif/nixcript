@@ -749,8 +749,12 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
     // Find (or provision) the customer record in the target org that
     // represents this source org, so repeat POs against the same linked
     // supplier reuse the same customer instead of creating a new one each time.
+    // customer.linkedOrganizationId being set is also what marks this — and
+    // any Customer PO created against it — as intercompany rather than a
+    // real external customer, everywhere else that needs to tell them apart
+    // (the centralized Customer PO list, the per-org revenue summary).
     let [cust] = await db
-      .select({ id: customer.id })
+      .select({ id: customer.id, name: customer.name })
       .from(customer)
       .where(and(eq(customer.organizationId, targetOrgId), eq(customer.linkedOrganizationId, callerOrgId)));
     if (!cust) {
@@ -766,7 +770,7 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
           linkedOrganizationId: callerOrgId,
           createdBy: userId,
         })
-        .returning({ id: customer.id });
+        .returning({ id: customer.id, name: customer.name });
       cust = created;
     }
 
@@ -777,8 +781,47 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
       .orderBy(asc(purchaseOrderItem.rowNo));
     if (poItems.length === 0) return;
 
+    // The sending org's PO number *is* the receiving org's Customer PO
+    // reference — customerPurchaseOrder.customerPoNo is defined as exactly
+    // that ("the PO number on customer's document"). Creating this keeps
+    // the auto-created SO inside the normal CPO → SO → PR → SPO → Packing
+    // List → GR traceability chain instead of skipping it.
+    const [cpo] = await db
+      .insert(customerPurchaseOrder)
+      .values({
+        id: nanoid(),
+        organizationId: targetOrgId,
+        customerPoNo: po.poNo ?? po.id,
+        customerId: cust.id,
+        customerSnapshot: { name: cust.name },
+        items: poItems.map((item) => ({
+          rowNo: item.rowNo,
+          productCode: item.productCode ?? "",
+          description: item.description ?? "",
+          qty: item.qty ?? "1",
+          uom: item.uom ?? "",
+          unitPrice: item.unitPrice ?? "0",
+          discountPct: "0",
+          totalPrice: item.totalPrice ?? "0",
+          lineType: "sell",
+          setGroupId: item.setGroupId ?? undefined,
+          setGroupLabel: item.setGroupLabel ?? undefined,
+          setQty: item.setQty ?? undefined,
+        })),
+        amount: po.grandTotal ?? "0",
+        currency: po.currency ?? "MYR",
+        receivedDate: new Date(),
+        deliveryDate: po.expectedDeliveryDate ?? null,
+        deliveryAddress: po.deliveryAddress ?? null,
+        status: "received",
+        createdBy: userId,
+      })
+      .returning();
+
     await applyCreateSalesOrder(targetOrgId, userId, {
       customerId: cust.id,
+      customerPoId: cpo.id,
+      customerPoNo: cpo.customerPoNo,
       deliveryDate: po.expectedDeliveryDate ?? undefined,
       deliveryAddress: po.deliveryAddress ?? undefined,
       sourceOrganizationId: callerOrgId,
@@ -807,6 +850,7 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
     });
 
     revalidatePath("/dashboard/sales/order");
+    revalidatePath("/dashboard/sales/customer-po");
   } catch (e) {
     // Must never block the PO confirmation itself from succeeding.
     console.error("maybeCreateIntercompanySalesOrder failed:", e);

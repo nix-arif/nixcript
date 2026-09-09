@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   getCustomerPos,
   deleteCustomerPo,
-  type CustomerPo,
+  type CustomerPoListRow,
 } from "@/server/customer-purchase-order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import {
   BuildingIcon,
   LayoutListIcon,
   PackageIcon,
+  Link2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -44,7 +45,7 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
-export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialPos: CustomerPo[]; canCreateSo?: boolean }) {
+export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialPos: CustomerPoListRow[]; canCreateSo?: boolean }) {
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
   const [search, setSearch] = useState("");
@@ -144,6 +145,15 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
                         <Highlight text={p.customerPoNo} query={search} />
                       </span>
                       <StatusBadge status={p.status} />
+                      {p.isIntercompany && (
+                        <span
+                          className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800"
+                          title="Auto-created from a sibling organization's purchase order"
+                        >
+                          <Link2Icon className="w-3 h-3 shrink-0" />
+                          Intercompany
+                        </span>
+                      )}
                       {p.quotationNo && (
                         <span className="text-[10px] bg-muted/50 text-muted-foreground rounded px-1.5 py-0.5 font-mono">
                           QT: <Highlight text={p.quotationNo} query={search} />

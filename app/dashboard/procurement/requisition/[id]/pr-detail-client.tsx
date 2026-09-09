@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { getProductImageUrl } from "@/helper/product-image";
 import {
   submitPurchaseRequisition,
   approvePurchaseRequisition,
@@ -154,16 +155,12 @@ function SupplierCell({
 
 // ── Read-only image thumbnail ─────────────────────────────────────────────────
 
-const R2_PRODUCT_IMAGES = process.env.NEXT_PUBLIC_R2_PRODUCT_IMAGES_URL ?? "";
-
 function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; productCode?: string | null }) {
   const [open, setOpen]   = useState(false);
   const [failed, setFailed] = useState(false);
 
   // Custom uploaded image takes priority; otherwise fall back to public catalog URL.
-  const catalogSrc = R2_PRODUCT_IMAGES && productCode
-    ? `${R2_PRODUCT_IMAGES}/${encodeURIComponent(productCode)}.jpg`
-    : "";
+  const catalogSrc = productCode ? getProductImageUrl(productCode) : "";
   const src = imageUrl || catalogSrc;
 
   if (!src || failed) {

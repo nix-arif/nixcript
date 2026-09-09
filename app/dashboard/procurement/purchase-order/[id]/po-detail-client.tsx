@@ -293,9 +293,40 @@ export function PurchaseOrderDetailClient({
   const [actioning, setActioning] = useState<string | null>(null);
   const [pdfWithImages, setPdfWithImages] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   useEffect(() => { setStatus(order.status ?? "confirmed"); }, [order.status]);
   useEffect(() => { setPoNo(order.poNo); }, [order.poNo]);
+
+  // window.open(apiUrl) used to navigate a new tab straight to the route —
+  // on failure (e.g. opening the PDF from the centralized view while a
+  // different org is active, so the PO isn't found under that org) that tab
+  // just showed the raw "Not Found"/"Forbidden" text response instead of a
+  // proper in-app error. Fetching it ourselves lets a failure surface as a
+  // toast instead — the blank tab is opened synchronously first (so popup
+  // blockers still allow it, since it happens within the click handler) and
+  // is only pointed at the PDF once the fetch actually succeeds; on failure
+  // it's closed instead of left showing an error page.
+  async function handleDownloadPdf() {
+    const newTab = window.open("", "_blank");
+    setDownloadingPdf(true);
+    try {
+      const res = await fetch(`/api/purchase-order/${order.id}/pdf${pdfWithImages ? "?withImages=1" : ""}`);
+      if (!res.ok) {
+        const text = (await res.text().catch(() => "")).trim();
+        throw new Error(text || `Failed to download PDF (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (newTab) newTab.location.href = url;
+      else window.open(url, "_blank");
+    } catch (err) {
+      newTab?.close();
+      toast.error(err instanceof Error ? err.message : "Failed to download PDF");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = permissions.includes("*");
@@ -407,10 +438,11 @@ export function PurchaseOrderDetailClient({
               <div className="flex items-center rounded-md border border-border overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => window.open(`/api/purchase-order/${order.id}/pdf${pdfWithImages ? "?withImages=1" : ""}`, "_blank")}
-                  className="flex items-center gap-1.5 px-3 h-8 text-xs font-medium hover:bg-muted transition-colors"
+                  disabled={downloadingPdf}
+                  onClick={handleDownloadPdf}
+                  className="flex items-center gap-1.5 px-3 h-8 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
                 >
-                  <PrinterIcon className="w-3.5 h-3.5" /> PDF
+                  <PrinterIcon className="w-3.5 h-3.5" /> {downloadingPdf ? "Generating…" : "PDF"}
                 </button>
                 <div className="w-px h-5 bg-border" />
                 <button
