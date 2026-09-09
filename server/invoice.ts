@@ -20,6 +20,7 @@ import {
   ledgerEntryInvoice,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
+import { getOrganizationProfile } from "@/server/organization-profile";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
@@ -453,6 +454,70 @@ export async function getInvoiceDetail(id: string): Promise<InvoiceWithDetails |
     items,
     expenses,
     createdByName: nameOf(inv.createdBy),
+  };
+}
+
+export type InvoiceForPdfResult = {
+  invoice: InvoiceRow;
+  items: InvoiceItem[];
+  expenses: InvoiceExpense[];
+  org: {
+    companyName: string;
+    companyAddress: string | null;
+    taxNo: string | null;
+    brandColor: string | null;
+    phone: string | null;
+    email: string | null;
+    website: string | null;
+    oldSsmNo: string | null;
+    newSsmNo: string | null;
+    mdaEstablishmentNo: string | null;
+    mofNo: string | null;
+    headerLayout: string | null;
+    orgNameSize: string | null;
+    orgNameBold: number | null;
+    orgNameUppercase: number | null;
+  };
+};
+
+export async function getInvoiceForPdf(id: string): Promise<InvoiceForPdfResult | null> {
+  const { orgId } = await requireAccess("invoice:read");
+  const [inv] = await db
+    .select()
+    .from(invoice)
+    .where(and(eq(invoice.id, id), eq(invoice.organizationId, orgId)));
+  if (!inv) return null;
+
+  const [items, expenses, orgProfile] = await Promise.all([
+    db.select().from(invoiceItem).where(eq(invoiceItem.invoiceId, id)).orderBy(asc(invoiceItem.rowNo)),
+    db.select().from(invoiceExpense).where(eq(invoiceExpense.invoiceId, id)).orderBy(asc(invoiceExpense.createdAt)),
+    getOrganizationProfile(),
+  ]);
+
+  const liveCustomers = await getLiveCustomerMap(inv.customerId ? [inv.customerId] : []);
+  const live = inv.customerId ? liveCustomers.get(inv.customerId) : undefined;
+
+  return {
+    invoice: { ...inv, customerSnapshot: mergeSnapshot(inv.customerSnapshot, live) },
+    items,
+    expenses,
+    org: {
+      companyName:        orgProfile.companyName ?? "Company",
+      companyAddress:     orgProfile.companyAddress ?? null,
+      taxNo:              orgProfile.taxNo ?? null,
+      brandColor:         orgProfile.brandColor ?? null,
+      phone:              orgProfile.phone ?? null,
+      email:              orgProfile.email ?? null,
+      website:            orgProfile.website ?? null,
+      oldSsmNo:           orgProfile.oldSsmNo ?? null,
+      newSsmNo:           orgProfile.newSsmNo ?? null,
+      mdaEstablishmentNo: orgProfile.mdaEstablishmentNo ?? null,
+      mofNo:              orgProfile.mofNo ?? null,
+      headerLayout:       orgProfile.headerLayout ?? null,
+      orgNameSize:        orgProfile.orgNameSize ?? null,
+      orgNameBold:        orgProfile.orgNameBold ?? null,
+      orgNameUppercase:   orgProfile.orgNameUppercase ?? null,
+    },
   };
 }
 

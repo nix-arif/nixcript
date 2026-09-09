@@ -19,6 +19,7 @@ import {
   product as productTable,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
+import { getOrganizationProfile } from "@/server/organization-profile";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
@@ -408,6 +409,85 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
     createdByName: nameOf(do_.createdBy),
     invoiceId: invoiceRows[0]?.id ?? null,
     invoiceNo: invoiceRows[0]?.invoiceNo ?? null,
+  };
+}
+
+export type DoForPdfItem = DeliveryOrderItem & {
+  unitPrice: string | null;
+  totalPrice: string | null;
+};
+
+export type DoForPdfResult = {
+  order: DeliveryOrderRow;
+  items: DoForPdfItem[];
+  org: {
+    companyName: string;
+    companyAddress: string | null;
+    taxNo: string | null;
+    brandColor: string | null;
+    phone: string | null;
+    email: string | null;
+    website: string | null;
+    oldSsmNo: string | null;
+    newSsmNo: string | null;
+    mdaEstablishmentNo: string | null;
+    mofNo: string | null;
+    headerLayout: string | null;
+    orgNameSize: string | null;
+    orgNameBold: number | null;
+    orgNameUppercase: number | null;
+  };
+};
+
+// Delivery order items carry no pricing of their own — only an optional
+// soItemId link back to the sales order line it fulfils. Pricing here is
+// sourced by joining through that link; items without one (e.g. the
+// case-tracking-sync-generated DOs) simply have no price to show.
+export async function getDoForPdf(id: string): Promise<DoForPdfResult | null> {
+  const { orgId } = await requireAccess("delivery-order:read");
+  const [do_] = await db
+    .select()
+    .from(deliveryOrder)
+    .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
+  if (!do_) return null;
+
+  const [items, orgProfile] = await Promise.all([
+    db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderItem.rowNo)),
+    getOrganizationProfile(),
+  ]);
+
+  const soItemIds = items.map((i) => i.soItemId).filter((v): v is string => !!v);
+  const soItems = soItemIds.length
+    ? await db.select({ id: salesOrderItem.id, unitPrice: salesOrderItem.unitPrice, totalPrice: salesOrderItem.totalPrice })
+        .from(salesOrderItem)
+        .where(inArray(salesOrderItem.id, soItemIds))
+    : [];
+  const priceBySoItemId = new Map(soItems.map((s) => [s.id, s]));
+
+  return {
+    order: do_,
+    items: items.map((item) => ({
+      ...item,
+      unitPrice: item.soItemId ? (priceBySoItemId.get(item.soItemId)?.unitPrice ?? null) : null,
+      totalPrice: item.soItemId ? (priceBySoItemId.get(item.soItemId)?.totalPrice ?? null) : null,
+    })),
+    org: {
+      companyName:        orgProfile.companyName ?? "Company",
+      companyAddress:     orgProfile.companyAddress ?? null,
+      taxNo:              orgProfile.taxNo ?? null,
+      brandColor:         orgProfile.brandColor ?? null,
+      phone:              orgProfile.phone ?? null,
+      email:              orgProfile.email ?? null,
+      website:            orgProfile.website ?? null,
+      oldSsmNo:           orgProfile.oldSsmNo ?? null,
+      newSsmNo:           orgProfile.newSsmNo ?? null,
+      mdaEstablishmentNo: orgProfile.mdaEstablishmentNo ?? null,
+      mofNo:              orgProfile.mofNo ?? null,
+      headerLayout:       orgProfile.headerLayout ?? null,
+      orgNameSize:        orgProfile.orgNameSize ?? null,
+      orgNameBold:        orgProfile.orgNameBold ?? null,
+      orgNameUppercase:   orgProfile.orgNameUppercase ?? null,
+    },
   };
 }
 

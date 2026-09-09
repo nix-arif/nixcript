@@ -18,6 +18,7 @@ import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, PackageIcon,
   SendIcon, CheckIcon, AlertCircleIcon, XIcon, ReceiptIcon, BookOpenIcon,
+  PrinterIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -74,8 +75,30 @@ export function InvoiceDetailClient({
   const [status, setStatus] = useState(invoice.status ?? "draft");
   const [actioning, setActioning] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   useEffect(() => { setStatus(invoice.status ?? "draft"); }, [invoice.status]);
+
+  async function handleDownloadPdf() {
+    const newTab = window.open("", "_blank");
+    setDownloadingPdf(true);
+    try {
+      const res = await fetch(`/api/invoice/${invoice.id}/pdf`);
+      if (!res.ok) {
+        const text = (await res.text().catch(() => "")).trim();
+        throw new Error(text || `Failed to download PDF (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (newTab) newTab.location.href = url;
+      else window.open(url, "_blank");
+    } catch (err) {
+      newTab?.close();
+      toast.error(err instanceof Error ? err.message : "Failed to download PDF");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = invoice.createdBy === currentUserId;
@@ -132,6 +155,9 @@ export function InvoiceDetailClient({
                 <TrashIcon className="w-3.5 h-3.5" /> Delete
               </Button>
             )}
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleDownloadPdf} disabled={downloadingPdf}>
+              <PrinterIcon className="w-3.5 h-3.5" /> {downloadingPdf ? "Generating…" : "PDF"}
+            </Button>
             <StatusBadge status={status} />
           </div>
         }

@@ -15,6 +15,7 @@ import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, PackageIcon, MapPinIcon,
   TruckIcon, RotateCcwIcon, LinkIcon, ReceiptIcon, CheckCircle2Icon,
+  PrinterIcon, DollarSignIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -45,8 +46,31 @@ export function DeliveryOrderDetailClient({
   const [status, setStatus] = useState(order.status ?? "draft");
   const [actioning, setActioning] = useState<"deliver" | "return" | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [pdfWithPrice, setPdfWithPrice] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   useEffect(() => { setStatus(order.status ?? "draft"); }, [order.status]);
+
+  async function handleDownloadPdf() {
+    const newTab = window.open("", "_blank");
+    setDownloadingPdf(true);
+    try {
+      const res = await fetch(`/api/delivery-order/${order.id}/pdf${pdfWithPrice ? "?withPrice=1" : ""}`);
+      if (!res.ok) {
+        const text = (await res.text().catch(() => "")).trim();
+        throw new Error(text || `Failed to download PDF (HTTP ${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (newTab) newTab.location.href = url;
+      else window.open(url, "_blank");
+    } catch (err) {
+      newTab?.close();
+      toast.error(err instanceof Error ? err.message : "Failed to download PDF");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = order.createdBy === currentUserId;
@@ -134,6 +158,31 @@ export function DeliveryOrderDetailClient({
                 <TrashIcon className="w-3.5 h-3.5" /> Delete
               </Button>
             )}
+            <div className="flex items-center rounded-md border border-border overflow-hidden">
+              <button
+                type="button"
+                disabled={downloadingPdf}
+                onClick={handleDownloadPdf}
+                className="flex items-center gap-1.5 px-3 h-8 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                <PrinterIcon className="w-3.5 h-3.5" /> {downloadingPdf ? "Generating…" : "PDF"}
+              </button>
+              <div className="w-px h-5 bg-border" />
+              <button
+                type="button"
+                onClick={() => setPdfWithPrice((v) => !v)}
+                title={pdfWithPrice ? "Price ON — click to exclude" : "Price OFF — click to include"}
+                className={cn(
+                  "flex items-center gap-1 px-2 h-8 text-xs transition-colors",
+                  pdfWithPrice
+                    ? "bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-400"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <DollarSignIcon className="w-3.5 h-3.5" />
+                <span>{pdfWithPrice ? "with price" : "no price"}</span>
+              </button>
+            </div>
             {!isDraft && <StatusBadge status={status} />}
           </div>
         }
