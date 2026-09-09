@@ -25,6 +25,7 @@ import {
   AlertCircleIcon,
   TruckIcon,
   BuildingIcon,
+  UserIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
 } from "lucide-react";
@@ -576,15 +577,27 @@ export function InvoiceListClient({
                           ) : (
                             <span className="text-xs text-muted-foreground/50 italic">—</span>
                           )}
-                          {inv.salesPersonName && (
-                            <span className="text-[10px] text-muted-foreground block truncate">
-                              Sales: <Highlight text={inv.salesPersonName} query={searchInput} />
-                            </span>
-                          )}
-                          {inv.applicationSpecialistName && inv.applicationSpecialistName !== inv.salesPersonName && (
-                            <span className="text-[10px] text-muted-foreground block truncate">
-                              Specialist: <Highlight text={inv.applicationSpecialistName} query={searchInput} />
-                            </span>
+                          {(inv.salesPersonName || inv.applicationSpecialistName) && (
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {inv.salesPersonName && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-muted/50 text-muted-foreground border border-border/60"
+                                  title="Sales person"
+                                >
+                                  <UserIcon className="w-2.5 h-2.5 shrink-0" />
+                                  <Highlight text={inv.salesPersonName} query={searchInput} />
+                                </span>
+                              )}
+                              {inv.applicationSpecialistName && inv.applicationSpecialistName !== inv.salesPersonName && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800"
+                                  title="Application specialist"
+                                >
+                                  <UserIcon className="w-2.5 h-2.5 shrink-0" />
+                                  <Highlight text={inv.applicationSpecialistName} query={searchInput} />
+                                </span>
+                              )}
+                            </div>
                           )}
                         </td>
 
