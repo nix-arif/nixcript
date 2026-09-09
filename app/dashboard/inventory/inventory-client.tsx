@@ -163,7 +163,7 @@ function ProductSearch({ value, initialLabel, onChange }: { value: string; initi
   );
 }
 
-function ExpiringLotsAlert({ lots }: { lots: ExpiringLot[] }) {
+function ExpiringLotsAlert({ lots, formatWarehouse }: { lots: ExpiringLot[]; formatWarehouse: (label: string) => string }) {
   const [dismissed, setDismissed] = useState(false);
   const [expanded, setExpanded] = useState(true);
 
@@ -560,7 +560,7 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
       </div>
 
       {/* Expiring Lots Alert */}
-      <ExpiringLotsAlert lots={expiringLots}/>
+      <ExpiringLotsAlert lots={expiringLots} formatWarehouse={formatWarehouse}/>
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">

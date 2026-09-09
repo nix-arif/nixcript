@@ -15,7 +15,7 @@ import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, PackageIcon, MapPinIcon,
   TruckIcon, RotateCcwIcon, LinkIcon, ReceiptIcon, CheckCircle2Icon,
-  PrinterIcon, DollarSignIcon,
+  PrinterIcon, DollarSignIcon, Loader2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -52,7 +52,6 @@ export function DeliveryOrderDetailClient({
   useEffect(() => { setStatus(order.status ?? "draft"); }, [order.status]);
 
   async function handleDownloadPdf() {
-    const newTab = window.open("", "_blank");
     setDownloadingPdf(true);
     try {
       const res = await fetch(`/api/delivery-order/${order.id}/pdf${pdfWithPrice ? "?withPrice=1" : ""}`);
@@ -62,10 +61,14 @@ export function DeliveryOrderDetailClient({
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      if (newTab) newTab.location.href = url;
-      else window.open(url, "_blank");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${order.doNo}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } catch (err) {
-      newTab?.close();
       toast.error(err instanceof Error ? err.message : "Failed to download PDF");
     } finally {
       setDownloadingPdf(false);
@@ -165,7 +168,8 @@ export function DeliveryOrderDetailClient({
                 onClick={handleDownloadPdf}
                 className="flex items-center gap-1.5 px-3 h-8 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
               >
-                <PrinterIcon className="w-3.5 h-3.5" /> {downloadingPdf ? "Generating…" : "PDF"}
+                {downloadingPdf ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> : <PrinterIcon className="w-3.5 h-3.5" />}
+                {downloadingPdf ? "Generating…" : "PDF"}
               </button>
               <div className="w-px h-5 bg-border" />
               <button

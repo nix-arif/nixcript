@@ -18,7 +18,7 @@ import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, PackageIcon,
   SendIcon, CheckIcon, AlertCircleIcon, XIcon, ReceiptIcon, BookOpenIcon,
-  PrinterIcon,
+  PrinterIcon, Loader2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -80,7 +80,6 @@ export function InvoiceDetailClient({
   useEffect(() => { setStatus(invoice.status ?? "draft"); }, [invoice.status]);
 
   async function handleDownloadPdf() {
-    const newTab = window.open("", "_blank");
     setDownloadingPdf(true);
     try {
       const res = await fetch(`/api/invoice/${invoice.id}/pdf`);
@@ -90,10 +89,14 @@ export function InvoiceDetailClient({
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      if (newTab) newTab.location.href = url;
-      else window.open(url, "_blank");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${invoice.invoiceNo}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } catch (err) {
-      newTab?.close();
       toast.error(err instanceof Error ? err.message : "Failed to download PDF");
     } finally {
       setDownloadingPdf(false);
@@ -156,7 +159,8 @@ export function InvoiceDetailClient({
               </Button>
             )}
             <Button variant="outline" size="sm" className="gap-1.5" onClick={handleDownloadPdf} disabled={downloadingPdf}>
-              <PrinterIcon className="w-3.5 h-3.5" /> {downloadingPdf ? "Generating…" : "PDF"}
+              {downloadingPdf ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> : <PrinterIcon className="w-3.5 h-3.5" />}
+              {downloadingPdf ? "Generating…" : "PDF"}
             </Button>
             <StatusBadge status={status} />
           </div>
