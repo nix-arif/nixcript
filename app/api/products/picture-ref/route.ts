@@ -202,17 +202,26 @@ export async function POST(req: NextRequest) {
     // catalogue rather than the org currently active in this session (e.g. a
     // "bolton" item sourced through a different owned org). Since productCode
     // is only unique per-org, the same code can resolve to different products
-    // in different orgs — so this searches every org the caller OWNS (not
-    // just anyone they're a member of, to avoid pulling in data from an org
-    // where they only hold a limited role) and picks the best candidate per
-    // row rather than assuming the active org is authoritative.
-    const ownedOrgs = await db
-      .select({ organizationId: member.organizationId, orgName: organization.name })
+    // in different orgs — so this searches every org sharing the same owner
+    // as the caller's active org (not just orgs the caller personally owns —
+    // anyone holding product:read gets the full cross-org catalogue here,
+    // matching the getOwnerOrgIds pattern used everywhere else in the app)
+    // and picks the best candidate per row rather than assuming the active
+    // org is authoritative.
+    const [ownerRow] = await db
+      .select({ userId: member.userId })
       .from(member)
-      .innerJoin(organization, eq(organization.id, member.organizationId))
-      .where(and(eq(member.userId, session.user.id), eq(member.role, "owner")));
+      .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+      .limit(1);
+    const ownedOrgs = ownerRow
+      ? await db
+          .select({ organizationId: member.organizationId, orgName: organization.name })
+          .from(member)
+          .innerJoin(organization, eq(organization.id, member.organizationId))
+          .where(and(eq(member.userId, ownerRow.userId), eq(member.role, "owner")))
+      : [];
     const searchOrgIds = new Set(ownedOrgs.map((o) => o.organizationId));
-    searchOrgIds.add(orgId); // always include the active org even if not "owner" there
+    searchOrgIds.add(orgId); // always include the active org even if it has no owner on record
     const orgNameById = new Map(ownedOrgs.map((o) => [o.organizationId, o.orgName]));
 
     const codes = [...new Set(inRows.map((r) => r.brandCode))];

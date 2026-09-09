@@ -51,6 +51,12 @@ const SURGEON_ALIASES: Record<string, string> = {
   "Dr. Yahya Mohd Aripin":              "Dr Yahya Mohd Aripin",
   // Title correction
   "Mr Ussof Eskaandar bin Mohd Hussain": "Dr Ussof Eskaandar bin Mohd Hussain",
+  // Sheet uses a shorthand first-name-only form for these two — map to the
+  // full canonical name so they merge into the existing customer record
+  // instead of creating a duplicate shorthand one.
+  "Mr Syed":  "Dr Syed Alwi Syed Abd Kadir",
+  "Mr Navin": "Dr Navinakathiresu Muthukumarasamy",
+  "Dr Fardi": "Dr Ahmad Fardi Bin Sulaiman",
 };
 
 export interface ParsedSurgeon {
