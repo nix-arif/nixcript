@@ -515,12 +515,6 @@ export function InvoiceListClient({
                     <th className="px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap hidden xl:table-cell">
                       Categories
                     </th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap hidden xl:table-cell">
-                      Sales Person
-                    </th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap hidden xl:table-cell">
-                      App. Specialist
-                    </th>
                     <Th k="status">Status</Th>
                     <Th k="grandTotal" className="text-right">Billed</Th>
                     <Th k="outstanding" className="text-right">Outstanding</Th>
@@ -584,7 +578,12 @@ export function InvoiceListClient({
                           )}
                           {inv.salesPersonName && (
                             <span className="text-[10px] text-muted-foreground block truncate">
-                              <Highlight text={inv.salesPersonName} query={searchInput} />
+                              Sales: <Highlight text={inv.salesPersonName} query={searchInput} />
+                            </span>
+                          )}
+                          {inv.applicationSpecialistName && inv.applicationSpecialistName !== inv.salesPersonName && (
+                            <span className="text-[10px] text-muted-foreground block truncate">
+                              Specialist: <Highlight text={inv.applicationSpecialistName} query={searchInput} />
                             </span>
                           )}
                         </td>
@@ -620,22 +619,6 @@ export function InvoiceListClient({
                             </div>
                           ) : (
                             <span className="text-xs text-muted-foreground/50">—</span>
-                          )}
-                        </td>
-
-                        <td className="px-3 py-2.5 hidden xl:table-cell">
-                          {inv.salesPersonName ? (
-                            <span className="text-xs"><Highlight text={inv.salesPersonName} query={searchInput} /></span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground/40">—</span>
-                          )}
-                        </td>
-
-                        <td className="px-3 py-2.5 hidden xl:table-cell">
-                          {inv.applicationSpecialistName ? (
-                            <span className="text-xs"><Highlight text={inv.applicationSpecialistName} query={searchInput} /></span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground/40">—</span>
                           )}
                         </td>
 
@@ -701,7 +684,7 @@ export function InvoiceListClient({
 
                 <tfoot>
                   <tr className="bg-muted/20 border-t border-border">
-                    <td colSpan={9} className="px-3 py-2.5 text-xs font-medium text-muted-foreground">
+                    <td colSpan={7} className="px-3 py-2.5 text-xs font-medium text-muted-foreground">
                       {sorted.length} invoice{sorted.length !== 1 ? "s" : ""} on page
                     </td>
                     <td className="px-3 py-2.5 text-right">
