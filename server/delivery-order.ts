@@ -832,11 +832,21 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
       salesOrderId: input.salesOrderId ?? null,
       salesOrderNo: input.salesOrderNo ?? null,
       customerId: input.customerId ?? null,
+      customerPoId: input.customerPoId ?? null,
+      customerPoNo: input.customerPoNo ?? null,
       deliveredTo: input.deliveredTo ?? null,
       deliveryAddress: input.deliveryAddress ?? null,
       deliveryDate: input.deliveryDate ?? null,
       notes: input.notes ?? null,
       status: input.status ?? existing.status,
+      isCaseDo: input.isCaseDo ?? existing.isCaseDo,
+      salesPersonId: input.salesPersonId ?? null,
+      salesPersonName: input.salesPersonName ?? null,
+      applicationSpecialistId: input.applicationSpecialistId ?? null,
+      applicationSpecialistName: input.applicationSpecialistName ?? null,
+      caseDate: input.caseDate ?? null,
+      mrnNo: input.mrnNo ?? null,
+      categoryIds: input.categoryIds ?? existing.categoryIds,
     })
     .where(eq(deliveryOrder.id, input.id))
     .returning();
@@ -859,6 +869,44 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
       })),
     );
   }
+  return row;
+}
+
+export interface UpdateDeliveryOrderCaseInfoInput {
+  id: string;
+  customerPoId?: string | null;
+  customerPoNo?: string | null;
+  mrnNo?: string | null;
+  caseDate?: Date | null;
+}
+
+// Narrow, status-independent update for case DOs only. Unlike
+// updateDeliveryOrder (draft-only, rewrites items), this touches nothing
+// but the CPO link and case MRN/date — the fields that legitimately change
+// after a case is already delivered/invoiced, once the hospital issues its
+// CPO and the case needs to be resubmitted to their purchasing dept.
+export async function updateDeliveryOrderCaseInfo(input: UpdateDeliveryOrderCaseInfoInput): Promise<DeliveryOrderRow> {
+  const { orgId } = await requireAccess("delivery-order:update");
+  const [existing] = await db
+    .select()
+    .from(deliveryOrder)
+    .where(and(eq(deliveryOrder.id, input.id), eq(deliveryOrder.organizationId, orgId)));
+  if (!existing) throw new Error("Delivery order not found");
+  if (!existing.isCaseDo) throw new Error("This action is only available for case delivery orders");
+
+  const [row] = await db
+    .update(deliveryOrder)
+    .set({
+      customerPoId: input.customerPoId ?? null,
+      customerPoNo: input.customerPoNo ?? null,
+      mrnNo: input.mrnNo ?? null,
+      caseDate: input.caseDate ?? null,
+    })
+    .where(eq(deliveryOrder.id, input.id))
+    .returning();
+
+  revalidatePath("/dashboard/fulfillment/delivery");
+  revalidatePath(`/dashboard/fulfillment/delivery/${input.id}`);
   return row;
 }
 

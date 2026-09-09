@@ -7,15 +7,22 @@ import {
   deleteDeliveryOrder,
   deliverDeliveryOrder,
   returnDeliveryOrder,
+  updateDeliveryOrderCaseInfo,
   type DeliveryOrderWithItems,
 } from "@/server/delivery-order";
+import { getCustomerPosByCustomer, type CustomerPo } from "@/server/customer-purchase-order";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, PackageIcon, MapPinIcon,
   TruckIcon, RotateCcwIcon, LinkIcon, ReceiptIcon, CheckCircle2Icon,
-  PrinterIcon, DollarSignIcon, Loader2Icon,
+  PrinterIcon, DollarSignIcon, Loader2Icon, ChevronDownIcon, StethoscopeIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -49,7 +56,58 @@ export function DeliveryOrderDetailClient({
   const [pdfWithPrice, setPdfWithPrice] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
+  const [cpoOptions, setCpoOptions] = useState<CustomerPo[]>([]);
+  const [loadingCpos, setLoadingCpos] = useState(false);
+  const [selectedCpoId, setSelectedCpoId] = useState("");
+  const [manualCpoNo, setManualCpoNo] = useState(order.customerPoNo ?? "");
+  const [mrnNoInput, setMrnNoInput] = useState(order.mrnNo ?? "");
+  const [caseDateInput, setCaseDateInput] = useState(() =>
+    order.caseDate ? new Date(order.caseDate).toISOString().slice(0, 10) : "",
+  );
+  const [savingCaseInfo, setSavingCaseInfo] = useState(false);
+
   useEffect(() => { setStatus(order.status ?? "draft"); }, [order.status]);
+
+  async function openCaseDialog() {
+    setSelectedCpoId(order.customerPoId ?? "");
+    setManualCpoNo(order.customerPoId ? "" : (order.customerPoNo ?? ""));
+    setMrnNoInput(order.mrnNo ?? "");
+    setCaseDateInput(order.caseDate ? new Date(order.caseDate).toISOString().slice(0, 10) : "");
+    setCaseDialogOpen(true);
+    if (order.customerId) {
+      setLoadingCpos(true);
+      try {
+        const pos = await getCustomerPosByCustomer(order.customerId);
+        setCpoOptions(pos);
+      } catch {
+        setCpoOptions([]);
+      } finally {
+        setLoadingCpos(false);
+      }
+    }
+  }
+
+  async function handleSaveCaseInfo() {
+    setSavingCaseInfo(true);
+    try {
+      const selectedCpo = cpoOptions.find((p) => p.id === selectedCpoId) ?? null;
+      await updateDeliveryOrderCaseInfo({
+        id: order.id,
+        customerPoId: selectedCpo?.id ?? null,
+        customerPoNo: selectedCpo ? selectedCpo.customerPoNo : (manualCpoNo.trim() || null),
+        mrnNo: mrnNoInput.trim() || null,
+        caseDate: caseDateInput ? new Date(caseDateInput) : null,
+      });
+      toast.success("Case details updated");
+      setCaseDialogOpen(false);
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update case details");
+    } finally {
+      setSavingCaseInfo(false);
+    }
+  }
 
   async function handleDownloadPdf() {
     setDownloadingPdf(true);
@@ -421,8 +479,114 @@ export function DeliveryOrderDetailClient({
               )}
             </div>
           </section>
+
+          {/* Case details — CPO link + MRN, re-entered once the hospital issues its CPO */}
+          {order.isCaseDo && (
+            <section className="border border-border rounded-xl p-4 space-y-2.5">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Case Details</h2>
+                {can("delivery-order:update") && (
+                  <button
+                    type="button"
+                    onClick={openCaseDialog}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    title="Update case details"
+                  >
+                    <PencilIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {order.caseType && (
+                <div className="flex items-start gap-2">
+                  <StethoscopeIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Case type</p>
+                    <p className="text-xs">{order.caseType}</p>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-start gap-2">
+                <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground">Case date</p>
+                  <p className="text-xs">{order.caseDate ? fmtDate(order.caseDate) : "—"}</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <ReceiptIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground">MRN No</p>
+                  <p className="text-xs font-mono">{order.mrnNo || "—"}</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <LinkIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[10px] text-muted-foreground">Customer PO</p>
+                  <p className="text-xs font-mono">{order.customerPoNo || "—"}</p>
+                </div>
+              </div>
+            </section>
+          )}
         </div>
       </div>
+
+      <Dialog open={caseDialogOpen} onOpenChange={setCaseDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update Case Details — {order.doNo}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Customer Purchase Order</Label>
+              {loadingCpos ? (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground h-9">
+                  <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> Loading customer POs…
+                </div>
+              ) : cpoOptions.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="relative">
+                    <select
+                      className="w-full h-9 rounded-md border border-border bg-background px-3 pr-8 text-sm appearance-none"
+                      value={selectedCpoId}
+                      onChange={(e) => { setSelectedCpoId(e.target.value); if (e.target.value) setManualCpoNo(""); }}
+                    >
+                      <option value="">— Select customer PO (optional) —</option>
+                      {cpoOptions.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.customerPoNo}{p.customerSnapshot?.organizationName ? ` · ${p.customerSnapshot.organizationName}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  </div>
+                  {!selectedCpoId && (
+                    <Input value={manualCpoNo} onChange={(e) => setManualCpoNo(e.target.value)} placeholder="Or enter PO number manually" className="h-8 text-xs" />
+                  )}
+                </div>
+              ) : (
+                <Input value={manualCpoNo} onChange={(e) => setManualCpoNo(e.target.value)} placeholder="Customer PO no. (manual entry)" className="h-9 text-sm" />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">MRN No</Label>
+              <Input value={mrnNoInput} onChange={(e) => setMrnNoInput(e.target.value)} placeholder="Medical record no." className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Case Date</Label>
+              <Input type="date" value={caseDateInput} onChange={(e) => setCaseDateInput(e.target.value)} className="h-9 text-sm" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setCaseDialogOpen(false)} disabled={savingCaseInfo}>Cancel</Button>
+            <Button size="sm" onClick={handleSaveCaseInfo} disabled={savingCaseInfo} className="gap-1.5">
+              {savingCaseInfo && <Loader2Icon className="w-3.5 h-3.5 animate-spin" />}
+              {savingCaseInfo ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
