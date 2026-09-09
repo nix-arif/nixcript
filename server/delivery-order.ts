@@ -464,12 +464,26 @@ export async function getDoForPdf(id: string): Promise<DoForPdfResult | null> {
     : [];
   const priceBySoItemId = new Map(soItems.map((s) => [s.id, s]));
 
+  // Case-tracking-sync-generated DOs have a single item with no soItemId
+  // link (they were never built from a real sales order). Their price is
+  // still known — it's the total on the invoice already raised against
+  // this exact DO — so fall back to that for the one-item case.
+  let fallbackPrice: string | null = null;
+  if (items.length === 1 && !items[0].soItemId) {
+    const [linkedInvoice] = await db
+      .select({ grandTotal: invoice.grandTotal })
+      .from(invoice)
+      .where(and(eq(invoice.deliveryOrderId, id), eq(invoice.organizationId, orgId)))
+      .limit(1);
+    fallbackPrice = linkedInvoice?.grandTotal ?? null;
+  }
+
   return {
     order: do_,
     items: items.map((item) => ({
       ...item,
-      unitPrice: item.soItemId ? (priceBySoItemId.get(item.soItemId)?.unitPrice ?? null) : null,
-      totalPrice: item.soItemId ? (priceBySoItemId.get(item.soItemId)?.totalPrice ?? null) : null,
+      unitPrice: item.soItemId ? (priceBySoItemId.get(item.soItemId)?.unitPrice ?? null) : fallbackPrice,
+      totalPrice: item.soItemId ? (priceBySoItemId.get(item.soItemId)?.totalPrice ?? null) : fallbackPrice,
     })),
     org: {
       companyName:        orgProfile.companyName ?? "Company",

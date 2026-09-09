@@ -314,7 +314,7 @@ export function DeliveryOrderDetailClient({
                   {actioning === "return" ? "Updating…" : "Mark as Returned"}
                 </Button>
               )}
-              {isDelivered && can("invoice:create") && (
+              {isDelivered && !order.invoiceId && can("invoice:create") && (
                 <Button
                   size="sm"
                   variant="outline"
