@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { cancelPackingList, deletePackingList, type PackingListWithItems } from "@/server/packing-list";
+import { cancelPackingList, deletePackingList, getInspectionLineStates, type InspectionLineState, type PackingListWithItems } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import {
@@ -27,6 +27,11 @@ const PO_COLORS = [
   { bg: "bg-pink-50/50 dark:bg-pink-950/15", header: "bg-pink-100/70 dark:bg-pink-900/30", border: "border-pink-200 dark:border-pink-800/50", stripe: "bg-pink-100/60 dark:bg-pink-900/25" },
   { bg: "bg-teal-50/50 dark:bg-teal-950/15", header: "bg-teal-100/70 dark:bg-teal-900/30", border: "border-teal-200 dark:border-teal-800/50", stripe: "bg-teal-100/60 dark:bg-teal-900/25" },
 ] as const;
+
+// Matches the inspect form's own polling cadence — this view piggybacks on
+// the exact same live-state endpoint, so keeping them in sync means an
+// inspector's edit shows up here roughly as fast as it does on their own screen.
+const POLL_INTERVAL_MS = 5000;
 
 // Catalogue images can be filed under either code (see getDesignCodeImageUploadUrl
 // in server/products.ts) — an OEM line's design code is often known before any
@@ -176,15 +181,62 @@ export function PackingListDetailClient({
   const status = STATUS[pl.status] ?? { label: pl.status, className: "bg-muted text-muted-foreground" };
   const snap = pl.supplierSnapshot as { name?: string; address?: string; contactPerson?: string; contactNo?: string; email?: string } | null;
   const isPending = pl.status === "pending";
-  const showInspectionResults = !isPending;
-  const hasDiscrepancies = pl.items.some((item) => {
+  // getInspectionLineStates requires packing-list:inspect on this PL's own
+  // org — only someone who could plausibly be the one inspecting (or
+  // approving) it live is worth polling for; a pure read-only viewer can't
+  // call it anyway, and while still pending there's nothing finalized yet to
+  // show them regardless.
+  const isInspector = can("packing-list:inspect");
+  const showInspectionResults = !isPending || isInspector;
+
+  // Live per-item inspection state — polled while inspection is in progress
+  // so someone viewing this detail page sees an inspector's line-by-line
+  // qty/approval/photo updates without needing to reload, the same way the
+  // inspect form itself shows other inspectors' progress live.
+  const [liveStates, setLiveStates] = useState<Record<string, InspectionLineState>>({});
+  useEffect(() => {
+    if (!isPending || !isInspector) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const states = await getInspectionLineStates(pl.id);
+        if (cancelled) return;
+        setLiveStates(Object.fromEntries(states.map((s) => [s.packingListItemId, s])));
+      } catch {
+        // Silent — a missed poll just means we retry on the next tick.
+      }
+    }
+    poll();
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [pl.id, isPending, isInspector]);
+
+  const items = pl.items.map((item) => {
+    const live = liveStates[item.id];
+    if (!live) return item;
+    return {
+      ...item,
+      draftQtyReceived: live.draftQtyReceived,
+      draftQtyReturn: live.draftQtyReturn,
+      draftQtyRepair: live.draftQtyRepair,
+      draftReturnNotes: live.draftReturnNotes,
+      draftRepairNotes: live.draftRepairNotes,
+      draftInspectedByName: live.inspectedByName,
+      draftInspectedAt: live.inspectedAt,
+      draftApprovalStatus: live.approvalStatus,
+      draftApprovedByName: live.approvedByName,
+      draftApprovedAt: live.approvedAt,
+      photos: live.photos,
+    };
+  });
+  const hasDiscrepancies = items.some((item) => {
     const expected = parseFloat(item.qtyExpected) || 0;
     const received = parseFloat(item.draftQtyReceived ?? item.qtyExpected) || 0;
     const returned = parseFloat(item.draftQtyReturn ?? "0") || 0;
     return received < expected || returned > 0;
   });
 
-  const byPo = pl.items.reduce<Record<string, typeof pl.items>>((acc, item) => {
+  const byPo = items.reduce<Record<string, typeof items>>((acc, item) => {
     (acc[item.purchaseOrderId] ??= []).push(item);
     return acc;
   }, {});
@@ -255,12 +307,12 @@ export function PackingListDetailClient({
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-6">
       <PageHeader
         title={pl.packingListNo}
         description={`Packing List${organizationName ? ` · ${organizationName}` : ""} · ${fmtDate(pl.createdAt)}`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>

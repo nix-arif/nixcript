@@ -48,7 +48,7 @@ export default async function DashboardLayout({
             </div>
           </div>
         </header>
-        <div className="flex flex-1 flex-col min-h-0">
+        <div className="flex flex-1 flex-col min-h-0 min-w-0">
           <NavigationLoader>{children}</NavigationLoader>
         </div>
       </SidebarInset>
