@@ -173,6 +173,9 @@ export const navConfig: NavGroup[] = [
       { title: "My Travel Forms",  url: "/dashboard/human-resources/travel",             permission: "travel:read:own"  },
       { title: "Travel Approvals", url: "/dashboard/human-resources/travel/approvals",   permission: "travel:approve"   },
       { title: "All Travel Forms", url: "/dashboard/human-resources/travel/all",         permission: "travel:read:all"  },
+      { title: "My Allowances",       url: "/dashboard/human-resources/allowance",       permission: "allowance:read:own" },
+      { title: "Allowance Statement", url: "/dashboard/human-resources/allowance/all",   permission: "allowance:read:all" },
+      { title: "Allowance Rates",     url: "/dashboard/human-resources/allowance/rates", permission: "allowance:manage"   },
     ],
   },
   {

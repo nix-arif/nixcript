@@ -1037,6 +1037,10 @@ export const organizationProfile = pgTable("organization_profile", {
     >()
     .default([]),
 
+  // Category allowance: how the rate is shared when an invoice lists more
+  // than one sales person — full_each | split | primary_only.
+  allowanceMultiSalesPersonMode: text("allowance_multi_sales_person_mode").default("full_each"),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -3925,6 +3929,132 @@ export const documentCategory = pgTable(
 
 export const documentCategoryRelations = relations(documentCategory, ({ one }) => ({
   organization: one(organization, { fields: [documentCategory.organizationId], references: [organization.id] }),
+}));
+
+/* =========================
+   CATEGORY ALLOWANCE (sales person / application specialist)
+========================= */
+
+// One row per (org, category) — the rate a sales person / application
+// specialist earns for a case tagged with this category. Null rate = that
+// role doesn't earn for this category. Separate weekday/weekend rates since
+// case work is commonly paid differently on weekends.
+export const categoryAllowanceRate = pgTable(
+  "category_allowance_rate",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => documentCategory.id, { onDelete: "cascade" }),
+
+    salesPersonWeekdayRate: text("sales_person_weekday_rate"),
+    salesPersonWeekendRate: text("sales_person_weekend_rate"),
+    salesPersonHolidayRate: text("sales_person_holiday_rate"),
+    appSpecialistWeekdayRate: text("app_specialist_weekday_rate"),
+    appSpecialistWeekendRate: text("app_specialist_weekend_rate"),
+    appSpecialistHolidayRate: text("app_specialist_holiday_rate"),
+
+    isActive: boolean("is_active").default(true).notNull(),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("category_allowance_rate_org_cat_uidx").on(t.organizationId, t.categoryId),
+    index("category_allowance_rate_org_idx").on(t.organizationId),
+  ],
+);
+
+export const categoryAllowanceRateRelations = relations(categoryAllowanceRate, ({ one }) => ({
+  organization: one(organization, { fields: [categoryAllowanceRate.organizationId], references: [organization.id] }),
+  category: one(documentCategory, { fields: [categoryAllowanceRate.categoryId], references: [documentCategory.id] }),
+}));
+
+// Org-defined public holiday calendar — a case falling on one of these
+// dates earns the (optional, higher) holiday allowance rate instead of the
+// weekday/weekend rate. Takes precedence even if the date also falls on a
+// weekend.
+export const publicHoliday = pgTable(
+  "public_holiday",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    date: text("date").notNull(), // YYYY-MM-DD
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("public_holiday_org_date_uidx").on(t.organizationId, t.date),
+    index("public_holiday_org_idx").on(t.organizationId),
+  ],
+);
+
+export const publicHolidayRelations = relations(publicHoliday, ({ one }) => ({
+  organization: one(organization, { fields: [publicHoliday.organizationId], references: [organization.id] }),
+}));
+
+// One row per (invoice, role, category) that actually earned an allowance —
+// itemized rather than collapsed, so the statement can show a breakdown
+// when an invoice carries more than one rated category. Generated/refreshed
+// automatically whenever the source invoice is created or edited (see
+// recomputeInvoiceAllowances in server/invoice-allowance.ts); once a row is
+// marked "paid" it's treated as locked and left untouched by later recomputes.
+export const invoiceAllowance = pgTable(
+  "invoice_allowance",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    invoiceId: text("invoice_id")
+      .notNull()
+      .references(() => invoice.id, { onDelete: "cascade" }),
+    invoiceNo: text("invoice_no").notNull(),
+
+    userId: text("user_id").notNull().references(() => user.id),
+    userName: text("user_name").notNull(),
+    role: text("role").notNull(), // sales_person | app_specialist
+
+    categoryId: text("category_id").references(() => documentCategory.id, { onDelete: "set null" }),
+    categoryName: text("category_name").notNull(),
+
+    dayType: text("day_type").notNull(), // weekday | weekend
+    rate: text("rate").notNull(),
+    amount: text("amount").notNull(),
+    caseDate: timestamp("case_date"),
+
+    status: text("status").default("pending").notNull(), // pending | paid
+    paidAt: timestamp("paid_at"),
+    paidBy: text("paid_by").references(() => user.id),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("invoice_allowance_invoice_user_role_cat_uidx").on(t.invoiceId, t.userId, t.role, t.categoryId, t.dayType),
+    index("invoice_allowance_org_idx").on(t.organizationId),
+    index("invoice_allowance_invoice_idx").on(t.invoiceId),
+    index("invoice_allowance_user_idx").on(t.userId),
+  ],
+);
+
+export const invoiceAllowanceRelations = relations(invoiceAllowance, ({ one }) => ({
+  organization: one(organization, { fields: [invoiceAllowance.organizationId], references: [organization.id] }),
+  invoice: one(invoice, { fields: [invoiceAllowance.invoiceId], references: [invoice.id] }),
+  user: one(user, { fields: [invoiceAllowance.userId], references: [user.id] }),
+  category: one(documentCategory, { fields: [invoiceAllowance.categoryId], references: [documentCategory.id] }),
+  paidByUser: one(user, { fields: [invoiceAllowance.paidBy], references: [user.id], relationName: "invoiceAllowancePaidBy" }),
 }));
 
 /* =========================

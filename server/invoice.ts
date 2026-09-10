@@ -18,9 +18,11 @@ import {
   ledgerEntry,
   ledgerLine,
   ledgerEntryInvoice,
+  invoiceAllowance,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getOrganizationProfile } from "@/server/organization-profile";
+import { recomputeInvoiceAllowances } from "@/server/invoice-allowance";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
@@ -818,6 +820,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
 
   revalidatePath("/dashboard/fulfillment/invoice");
   await refreshInvoiceStats(orgId);
+  await recomputeInvoiceAllowances(row.id);
   return row;
 }
 
@@ -923,6 +926,7 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
 
   revalidatePath("/dashboard/fulfillment/invoice");
   await refreshInvoiceStats(orgId);
+  await recomputeInvoiceAllowances(row.id);
   return row;
 }
 
@@ -931,6 +935,9 @@ export async function deleteInvoice(id: string): Promise<void> {
   const [existing] = await db.select().from(invoice).where(and(eq(invoice.id, id), eq(invoice.organizationId, orgId)));
   if (!existing) throw new Error("Invoice not found");
   if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled invoices can be deleted");
+  const [paidAllowance] = await db.select({ id: invoiceAllowance.id }).from(invoiceAllowance)
+    .where(and(eq(invoiceAllowance.invoiceId, id), eq(invoiceAllowance.status, "paid"))).limit(1);
+  if (paidAllowance) throw new Error("Cannot delete this invoice — it has a paid allowance record");
   await db.delete(invoice).where(eq(invoice.id, id));
   revalidatePath("/dashboard/fulfillment/invoice");
   await refreshInvoiceStats(orgId);
@@ -981,6 +988,7 @@ export async function cancelInvoice(id: string): Promise<void> {
   if (["paid", "cancelled"].includes(existing.status)) throw new Error("Cannot cancel a paid or already cancelled invoice");
   await db.update(invoice).set({ status: "cancelled" }).where(eq(invoice.id, id));
   await refreshInvoiceStats(orgId);
+  await recomputeInvoiceAllowances(id);
 }
 
 export interface CreateInvoiceManualInput extends CreateInvoiceInput {
@@ -1125,5 +1133,6 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
 
   revalidatePath("/dashboard/fulfillment/invoice");
   await refreshInvoiceStats(orgId);
+  await recomputeInvoiceAllowances(row.id);
   return row;
 }

@@ -103,7 +103,11 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
   const canAdjust = permissions.includes("inventory:adjust") || permissions.includes("*") || isOwner;
 
   // ── New Movement sheet ─────────────────────────────────────────────────────
-  const FIELD_RESTRICTED = [MOVEMENT_TYPE.OPENING, MOVEMENT_TYPE.STOCK_IN];
+  // Opening Balance is temporarily allowed for field warehouses too, to seed
+  // initial rep balances during rollout — remove MOVEMENT_TYPE.OPENING from
+  // this list once that transition is done, so field stock goes back to
+  // being replenished only via Transfer (an auditable warehouse origin).
+  const FIELD_RESTRICTED = [MOVEMENT_TYPE.STOCK_IN];
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjProductId, setAdjProductId] = useState("");
   const [adjProductLabel, setAdjProductLabel] = useState("");
@@ -482,7 +486,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
                   <Select value={editType} onValueChange={setEditType}>
                     <SelectTrigger><SelectValue/></SelectTrigger>
                     <SelectContent>
-                      {!editWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>}
+                      <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>
                       {!editWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.STOCK_IN}>Stock In ↑</SelectItem>}
                       <SelectItem value={MOVEMENT_TYPE.STOCK_OUT}>Stock Out ↓</SelectItem>
                       <SelectItem value={MOVEMENT_TYPE.ADJUSTMENT}>Adjustment</SelectItem>
@@ -603,7 +607,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
               <Select value={adjType} onValueChange={setAdjType}>
                 <SelectTrigger><SelectValue/></SelectTrigger>
                 <SelectContent>
-                  {!adjWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>}
+                  <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>
                   {!adjWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.STOCK_IN}>Stock In ↑</SelectItem>}
                   <SelectItem value={MOVEMENT_TYPE.STOCK_OUT}>Stock Out ↓</SelectItem>
                   <SelectItem value={MOVEMENT_TYPE.ADJUSTMENT}>Adjustment</SelectItem>

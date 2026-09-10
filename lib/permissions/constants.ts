@@ -146,6 +146,11 @@ export const ALL_PERMISSIONS = [
   { key: "claim:manage",   label: "Manage Claim Types" },
   { key: "claim:read:all", label: "View All Employees' Claims" },
 
+  // Allowance management (category-based sales person / app specialist allowance)
+  { key: "allowance:read:own", label: "View Own Allowance Statement" },
+  { key: "allowance:read:all", label: "View All Employees' Allowance Statements" },
+  { key: "allowance:manage",   label: "Manage Category Allowance Rates" },
+
   // Travel form (pre-trip authorization)
   { key: "travel:read:own", label: "View Own Travel Forms" },
   { key: "travel:apply",    label: "Submit Travel Form" },
@@ -346,6 +351,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage", "claim:read:all",
       "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all",
       "travel:read:own", "travel:apply", "travel:approve", "travel:manage", "travel:read:all",
+      "allowance:read:own", "allowance:read:all", "allowance:manage",
     ],
     member: [
       "member:read",
@@ -355,6 +361,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "claim:read:own", "claim:apply",
       "leave:read:own", "leave:apply",
       "travel:read:own", "travel:apply",
+      "allowance:read:own",
     ],
   },
 
@@ -660,5 +667,11 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Claim Manager",
     description: "Submit claims and manage claim types. Checker/approver access is granted separately via Admin → Approvals.",
     permissions: ["claim:read:own", "claim:apply", "claim:manage"],
+  },
+  {
+    id: "allowance-manager",
+    label: "Allowance Manager",
+    description: "Configure category allowance rates and view/pay every employee's allowance statement — without full HR-manager rights.",
+    permissions: ["allowance:read:own", "allowance:read:all", "allowance:manage"],
   },
 ];
