@@ -1,13 +1,14 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, member, user, product, staffStockLimit } from "@/db/schema";
+import { stockLevel, stockMovement, member, user, product, staffStockLimit, organizationProfile, stockLot } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { eq, and, inArray, sql, desc } from "drizzle-orm";
+import { eq, and, inArray, sql, desc, isNull, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { MOVEMENT_TYPE, REF_TYPE, fieldWarehouseLabel } from "@/lib/inventory/constants";
+import { applyToLot } from "@/lib/inventory/apply-to-lot";
 import { revalidatePath } from "next/cache";
 
 async function getSession() {
@@ -33,6 +34,7 @@ export interface RepStockItem {
   qty: number;
   unitCost: string | null;
   isRental: boolean;
+  lots: { lotNo: string; expiryDate: Date | null; quantity: string }[];
 }
 
 export interface RepSummary {
@@ -52,6 +54,9 @@ export interface OrgMember {
 export interface FieldTransferItem {
   productId: string;
   qty: number;
+  lotId?: string;
+  lotNo?: string;
+  expiryDate?: Date | null;
 }
 
 export interface FieldTransferInput {
@@ -71,10 +76,17 @@ export interface FieldMovementRow {
   quantity: string;
   referenceNo: string;
   notes: string | null;
+  lotNo: string | null;
+  expiryDate: Date | null;
   createdAt: Date;
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────────
+
+export async function getMainWarehouseLabel(): Promise<string> {
+  const { orgId } = await requireAccess("inventory:read");
+  return getMainWarehouseLabelInternal(orgId);
+}
 
 export async function getFieldReps(): Promise<OrgMember[]> {
   const { orgId } = await requireAccess("inventory:read");
@@ -104,6 +116,19 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
     .innerJoin(product, eq(product.id, stockLevel.productId))
     .where(and(eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, label)));
 
+  const lots = await db
+    .select({ productId: stockLot.productId, lotNo: stockLot.lotNo, expiryDate: stockLot.expiryDate, quantity: stockLot.quantity })
+    .from(stockLot)
+    .where(and(eq(stockLot.organizationId, orgId), eq(stockLot.warehouseLabel, label)))
+    .orderBy(asc(stockLot.expiryDate), asc(stockLot.lotNo));
+  const lotsByProduct = new Map<string, RepStockItem["lots"]>();
+  for (const l of lots) {
+    if (parseFloat(l.quantity) <= 0) continue;
+    const arr = lotsByProduct.get(l.productId) ?? [];
+    arr.push({ lotNo: l.lotNo, expiryDate: l.expiryDate, quantity: l.quantity });
+    lotsByProduct.set(l.productId, arr);
+  }
+
   return rows
     .map((r) => ({
       productId: r.productId,
@@ -113,6 +138,7 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
       qty: parseFloat(r.qty),
       unitCost: r.unitCost,
       isRental: r.isRental,
+      lots: lotsByProduct.get(r.productId) ?? [],
     }))
     .filter((r) => r.qty > 0);
 }
@@ -143,6 +169,7 @@ export async function getAllRepFieldStock(): Promise<RepSummary[]> {
       productCode: product.productCode,
       description: product.description,
       uom: product.uom,
+      isRental: product.isRental,
     })
     .from(stockLevel)
     .innerJoin(product, eq(product.id, stockLevel.productId))
@@ -156,6 +183,23 @@ export async function getAllRepFieldStock(): Promise<RepSummary[]> {
     ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, repIds))
     : [];
   const userMap = Object.fromEntries(repUsers.map((u) => [u.id, u.name ?? u.id]));
+
+  const lotRows = await db
+    .select({ productId: stockLot.productId, warehouseLabel: stockLot.warehouseLabel, lotNo: stockLot.lotNo, expiryDate: stockLot.expiryDate, quantity: stockLot.quantity })
+    .from(stockLot)
+    .where(and(
+      eq(stockLot.organizationId, orgId),
+      sql`${stockLot.warehouseLabel} LIKE 'Field:%'`,
+    ))
+    .orderBy(asc(stockLot.expiryDate), asc(stockLot.lotNo));
+  const lotsByKey = new Map<string, RepStockItem["lots"]>();
+  for (const l of lotRows) {
+    if (parseFloat(l.quantity) <= 0) continue;
+    const key = `${l.warehouseLabel}:${l.productId}`;
+    const arr = lotsByKey.get(key) ?? [];
+    arr.push({ lotNo: l.lotNo, expiryDate: l.expiryDate, quantity: l.quantity });
+    lotsByKey.set(key, arr);
+  }
 
   const repMap = new Map<string, RepSummary>();
   for (const row of rows) {
@@ -179,6 +223,8 @@ export async function getAllRepFieldStock(): Promise<RepSummary[]> {
       uom: row.uom ?? null,
       qty,
       unitCost: row.unitCost,
+      isRental: row.isRental,
+      lots: lotsByKey.get(`${row.warehouseLabel}:${row.productId}`) ?? [],
     });
     rep.totalItems += qty;
   }
@@ -199,6 +245,8 @@ export async function getFieldMovements(repId?: string): Promise<FieldMovementRo
       quantity: stockMovement.quantity,
       referenceNo: stockMovement.referenceNo,
       notes: stockMovement.notes,
+      lotNo: stockMovement.lotNo,
+      expiryDate: stockMovement.expiryDate,
       createdAt: stockMovement.createdAt,
     })
     .from(stockMovement)
@@ -213,6 +261,45 @@ export async function getFieldMovements(repId?: string): Promise<FieldMovementRo
 }
 
 // ── Mutations ─────────────────────────────────────────────────────────────────
+
+// The org's primary warehouse — same resolution as getWarehouses() in
+// server/inventory.ts (first configured warehouseAddresses entry, "Default"
+// if none set up), duplicated here so transferToRep/returnFromRep don't need
+// to double-gate on inventory:read just to find out their own org's label.
+async function getMainWarehouseLabelInternal(orgId: string): Promise<string> {
+  const [profile] = await db
+    .select({ warehouseAddresses: organizationProfile.warehouseAddresses })
+    .from(organizationProfile)
+    .where(eq(organizationProfile.organizationId, orgId))
+    .limit(1);
+  const addresses = (profile?.warehouseAddresses as { label?: string }[] | null) ?? [];
+  return addresses.find((w) => w.label?.trim())?.label ?? "Default";
+}
+
+// Product catalogues and physical stock can live under different sibling
+// orgs in the same ownership group (e.g. products catalogued under one org,
+// all physical stock centralized under another) — same "owner org group"
+// concept searchProducts()/getInventory() already use in server/inventory.ts.
+// Duplicated here (rather than importing that file's private helper) so the
+// product lookup in transferToRep/returnFromRep can match products across
+// the group instead of only the active org, which is what search already
+// lets the user find and select in the first place.
+async function getOwnerOrgIdsInternal(currentOrgId: string): Promise<string[]> {
+  const [ownerMember] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner"), isNull(member.deletedAt)))
+    .limit(1);
+  if (!ownerMember) return [currentOrgId];
+
+  const ownedOrgs = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
+
+  const ids = ownedOrgs.map((o) => o.organizationId);
+  return ids.length ? ids : [currentOrgId];
+}
 
 async function updateStockLevel(orgId: string, productId: string, warehouseLabel: string, delta: number, unitCost: string | null, now: Date) {
   const [existing] = await db.select().from(stockLevel)
@@ -240,7 +327,10 @@ export async function transferToRep(input: FieldTransferInput): Promise<string> 
   const year = new Date().getFullYear();
   const referenceNo = `FT-${year}-${transferId.slice(0, 6).toUpperCase()}`;
   const fieldLabel = fieldWarehouseLabel(input.repId);
+  const mainLabel = await getMainWarehouseLabelInternal(orgId);
+  const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
   const now = new Date();
+  let processedCount = 0;
 
   for (const item of input.items) {
     if (item.qty <= 0) continue;
@@ -250,11 +340,12 @@ export async function transferToRep(input: FieldTransferInput): Promise<string> 
       .leftJoin(stockLevel, and(
         eq(stockLevel.productId, product.id),
         eq(stockLevel.organizationId, orgId),
-        eq(stockLevel.warehouseLabel, "Default"),
+        eq(stockLevel.warehouseLabel, mainLabel),
       ))
-      .where(and(eq(product.id, item.productId), eq(product.organizationId, orgId)))
+      .where(and(eq(product.id, item.productId), inArray(product.organizationId, ownerOrgIds)))
       .limit(1);
     if (!prod) continue;
+    processedCount++;
 
     // Same per-person holding cap stock-request.ts enforces on staff
     // warehouse requests — a rep's field warehouse is the same kind of
@@ -276,18 +367,43 @@ export async function transferToRep(input: FieldTransferInput): Promise<string> 
       }
     }
 
-    const srcBalance = await updateStockLevel(orgId, item.productId, "Default", -item.qty, null, now);
+    // The neon-http driver used by `db` has no transaction support, so these
+    // writes can't be made atomic. The lot-specific check is the one most
+    // likely to fail (insufficient quantity in that exact lot even though
+    // the aggregate total looks fine) — running it first, before any
+    // quantity is actually moved, keeps a failed transfer from leaving the
+    // aggregate stockLevel and the per-lot stockLot out of sync with each
+    // other.
+    let lotId: string | undefined;
+    if (item.lotNo) {
+      await applyToLot({
+        orgId, productId: item.productId, warehouseLabel: mainLabel,
+        lotNo: item.lotNo, expiryDate: item.expiryDate, signed: -item.qty,
+      });
+      const dest = await applyToLot({
+        orgId, productId: item.productId, warehouseLabel: fieldLabel,
+        lotNo: item.lotNo, expiryDate: item.expiryDate, signed: item.qty, unitCost: prod.unitCost,
+      });
+      lotId = dest.lotId;
+    }
+
+    const srcBalance = await updateStockLevel(orgId, item.productId, mainLabel, -item.qty, null, now);
     await updateStockLevel(orgId, item.productId, fieldLabel, item.qty, prod.unitCost, now);
 
     await db.insert(stockMovement).values({
       id: nanoid(), organizationId: orgId, productId: item.productId,
-      productCode: prod.productCode, warehouseLabel: "Default", warehouseTo: fieldLabel,
+      productCode: prod.productCode, warehouseLabel: mainLabel, warehouseTo: fieldLabel,
       movementType: MOVEMENT_TYPE.FIELD_OUT,
       quantity: (-item.qty).toFixed(4), balanceAfter: srcBalance.toFixed(4),
       referenceType: REF_TYPE.FIELD_TRANSFER, referenceId: transferId, referenceNo,
       notes: `Field transfer to ${input.repName}${input.notes ? ` — ${input.notes}` : ""}`,
+      lotNo: item.lotNo, expiryDate: item.expiryDate, lotId,
       status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
     });
+  }
+
+  if (processedCount === 0) {
+    throw new Error("No items were transferred — the selected product(s) could not be matched to this organization's catalogue.");
   }
 
   revalidatePath("/dashboard/inventory/field-stock");
@@ -301,34 +417,59 @@ export async function returnFromRep(input: FieldTransferInput): Promise<string> 
   const year = new Date().getFullYear();
   const referenceNo = `FR-${year}-${transferId.slice(0, 6).toUpperCase()}`;
   const fieldLabel = fieldWarehouseLabel(input.repId);
+  const mainLabel = await getMainWarehouseLabelInternal(orgId);
+  const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
   const now = new Date();
+  let processedCount = 0;
 
   for (const item of input.items) {
     if (item.qty <= 0) continue;
 
     const [prod] = await db.select({ productCode: product.productCode })
       .from(product)
-      .where(and(eq(product.id, item.productId), eq(product.organizationId, orgId)))
+      .where(and(eq(product.id, item.productId), inArray(product.organizationId, ownerOrgIds)))
       .limit(1);
     if (!prod) continue;
+    processedCount++;
 
     const [fieldLevel] = await db.select({ unitCost: stockLevel.unitCost })
       .from(stockLevel)
       .where(and(eq(stockLevel.organizationId, orgId), eq(stockLevel.productId, item.productId), eq(stockLevel.warehouseLabel, fieldLabel)))
       .limit(1);
 
+    // See the matching comment in transferToRep — no DB transactions
+    // available, so the lot check (most likely failure) runs before any
+    // quantity is actually moved.
+    let lotId: string | undefined;
+    if (item.lotNo) {
+      await applyToLot({
+        orgId, productId: item.productId, warehouseLabel: fieldLabel,
+        lotNo: item.lotNo, expiryDate: item.expiryDate, signed: -item.qty,
+      });
+      const dest = await applyToLot({
+        orgId, productId: item.productId, warehouseLabel: mainLabel,
+        lotNo: item.lotNo, expiryDate: item.expiryDate, signed: item.qty, unitCost: fieldLevel?.unitCost ?? null,
+      });
+      lotId = dest.lotId;
+    }
+
     const fieldBalance = await updateStockLevel(orgId, item.productId, fieldLabel, -item.qty, null, now);
-    await updateStockLevel(orgId, item.productId, "Default", item.qty, fieldLevel?.unitCost ?? null, now);
+    await updateStockLevel(orgId, item.productId, mainLabel, item.qty, fieldLevel?.unitCost ?? null, now);
 
     await db.insert(stockMovement).values({
       id: nanoid(), organizationId: orgId, productId: item.productId,
-      productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: "Default",
+      productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: mainLabel,
       movementType: MOVEMENT_TYPE.FIELD_RETURN,
       quantity: (-item.qty).toFixed(4), balanceAfter: fieldBalance.toFixed(4),
       referenceType: REF_TYPE.FIELD_TRANSFER, referenceId: transferId, referenceNo,
       notes: `Field return from ${input.repName}${input.notes ? ` — ${input.notes}` : ""}`,
+      lotNo: item.lotNo, expiryDate: item.expiryDate, lotId,
       status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
     });
+  }
+
+  if (processedCount === 0) {
+    throw new Error("No items were returned — the selected product(s) could not be matched to this organization's catalogue.");
   }
 
   revalidatePath("/dashboard/inventory/field-stock");

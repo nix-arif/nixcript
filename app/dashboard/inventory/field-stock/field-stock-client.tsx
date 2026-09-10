@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RepSummary, FieldMovementRow } from "@/server/field-stock";
 import { Button } from "@/components/ui/button";
@@ -116,16 +116,37 @@ export function FieldStockClient({ reps, movements }: Props) {
                     </thead>
                     <tbody>
                       {selectedRep.items.map((item) => (
-                        <tr key={item.productId} className="border-b border-border/50 last:border-0 hover:bg-muted/20">
-                          <td className="px-4 py-2.5 font-mono text-xs font-medium">{item.productCode}</td>
-                          <td className="px-4 py-2.5 text-sm">{item.description}</td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{item.uom ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
-                            <span className={cn(item.qty < 3 ? "text-amber-600 dark:text-amber-400" : "")}>
-                              {item.qty.toFixed(0)}
-                            </span>
-                          </td>
-                        </tr>
+                        <Fragment key={item.productId}>
+                          <tr className={cn("border-b border-border/50 hover:bg-muted/20", item.lots.length === 0 && "last:border-0")}>
+                            <td className="px-4 py-2.5 font-mono text-xs font-medium">{item.productCode}</td>
+                            <td className="px-4 py-2.5 text-sm">{item.description}</td>
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground">{item.uom ?? "—"}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
+                              <span className={cn(item.qty < 3 ? "text-amber-600 dark:text-amber-400" : "")}>
+                                {item.qty.toFixed(0)}
+                              </span>
+                            </td>
+                          </tr>
+                          {item.lots.length > 0 && (
+                            <tr className="border-b border-border/50 last:border-0 bg-muted/10">
+                              <td colSpan={4} className="px-4 py-2">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mr-1">Lots</span>
+                                  {item.lots.map((lot) => (
+                                    <span
+                                      key={lot.lotNo}
+                                      className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-background"
+                                    >
+                                      <span className="font-mono">{lot.lotNo}</span>
+                                      {lot.expiryDate && <span className="ml-1.5 opacity-70">exp {fmtDate(lot.expiryDate)}</span>}
+                                      <span className="ml-1.5 opacity-60">({parseFloat(lot.quantity).toFixed(0)})</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -144,6 +165,7 @@ export function FieldStockClient({ reps, movements }: Props) {
                         <th className="text-left px-4 py-2.5 font-medium">Date</th>
                         <th className="text-left px-4 py-2.5 font-medium">Type</th>
                         <th className="text-left px-4 py-2.5 font-medium">Product</th>
+                        <th className="text-left px-4 py-2.5 font-medium">Lot / Expiry</th>
                         <th className="text-right px-4 py-2.5 font-medium">Qty</th>
                         <th className="text-left px-4 py-2.5 font-medium">Reference</th>
                         <th className="text-left px-4 py-2.5 font-medium">Notes</th>
@@ -157,6 +179,14 @@ export function FieldStockClient({ reps, movements }: Props) {
                             <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(m.createdAt)}</td>
                             <td className={cn("px-4 py-2.5 text-xs font-medium", cfg.color)}>{cfg.label}</td>
                             <td className="px-4 py-2.5 font-mono text-xs">{m.productCode}</td>
+                            <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                              {m.lotNo ? (
+                                <>
+                                  <span className="font-mono">{m.lotNo}</span>
+                                  {m.expiryDate && <span className="ml-1 opacity-70">exp {fmtDate(m.expiryDate)}</span>}
+                                </>
+                              ) : "—"}
+                            </td>
                             <td className={cn("px-4 py-2.5 text-right tabular-nums text-xs font-medium",
                               parseFloat(m.quantity) < 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
                             )}>

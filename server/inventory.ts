@@ -10,6 +10,7 @@ import { isSelfActionAllowed } from "@/server/approval-settings";
 import { notifyUsersWithPermission } from "@/server/notifications";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, ilike, or, inArray, notInArray, isNull, isNotNull, lte } from "drizzle-orm";
+import { applyToLot } from "@/lib/inventory/apply-to-lot";
 import { revalidatePath } from "next/cache";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
@@ -95,53 +96,6 @@ async function getAllOwnerOrgIds(currentOrgId: string): Promise<string[]> {
   return ids.length ? ids : [currentOrgId];
 }
 
-// Upsert a stock_lot row and return its id + new quantity
-async function applyToLot(opts: {
-  orgId: string;
-  productId: string;
-  warehouseLabel: string;
-  lotNo: string;
-  expiryDate?: Date | null;
-  signed: number;
-  unitCost?: string | null;
-}): Promise<{ lotId: string; newQty: number }> {
-  const { orgId, productId, warehouseLabel, lotNo, expiryDate, signed, unitCost } = opts;
-
-  const [existing] = await db
-    .select()
-    .from(stockLot)
-    .where(and(
-      eq(stockLot.productId, productId),
-      eq(stockLot.organizationId, orgId),
-      eq(stockLot.warehouseLabel, warehouseLabel),
-      eq(stockLot.lotNo, lotNo),
-    ))
-    .limit(1);
-
-  if (existing) {
-    const newQty = parseFloat(existing.quantity) + signed;
-    if (newQty < 0) throw new Error(`Lot ${lotNo} has insufficient quantity`);
-    await db.update(stockLot)
-      .set({ quantity: newQty.toFixed(4), updatedAt: new Date() })
-      .where(eq(stockLot.id, existing.id));
-    return { lotId: existing.id, newQty };
-  } else {
-    if (signed < 0) throw new Error(`Lot ${lotNo} does not exist — cannot deduct`);
-    const lotId = nanoid();
-    await db.insert(stockLot).values({
-      id: lotId,
-      organizationId: orgId,
-      productId,
-      warehouseLabel,
-      lotNo,
-      expiryDate: expiryDate ?? null,
-      quantity: signed.toFixed(4),
-      reservedQty: "0",
-      unitCost: unitCost ?? null,
-    });
-    return { lotId, newQty: signed };
-  }
-}
 
 /* =========================
    QUERIES
