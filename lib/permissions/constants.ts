@@ -133,6 +133,7 @@ export const ALL_PERMISSIONS = [
   { key: "inventory:adjust",  label: "Submit Stock Movement" },
   { key: "inventory:manage",  label: "Manage Inventory Settings" },
   { key: "inventory:request", label: "Request Stock Allocation" },
+  { key: "inventory:create",  label: "Transfer Stock to Rep" },
 
   // Leave management
   { key: "leave:read:own", label: "View Own Leave Applications" },
@@ -404,7 +405,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "goods-receipt:create",
       "packing-list:create",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
-      "inventory:read", "inventory:adjust", "inventory:manage",
+      "inventory:read", "inventory:adjust", "inventory:manage", "inventory:create",
       "sales-order:read",
       "invoice:read",
       "member:read",
@@ -422,7 +423,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "goods-receipt:create",
       "packing-list:create",
       "supplier:read",
-      "inventory:read", "inventory:adjust",
+      "inventory:read", "inventory:adjust", "inventory:create",
       "sales-order:read",
       "invoice:read",
       "member:read",
@@ -609,8 +610,8 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
   {
     id: "inventory-staff",
     label: "Inventory Staff",
-    description: "View inventory and submit stock movements. Requires product read.",
-    permissions: ["inventory:read", "inventory:adjust", "product:read"],
+    description: "View inventory, submit stock movements, and transfer stock to field reps. Requires product read.",
+    permissions: ["inventory:read", "inventory:adjust", "inventory:create", "product:read"],
   },
   {
     id: "sales-staff",

@@ -33,6 +33,7 @@ export const KEY_GROUP: Record<string, string> = {
 
   "inventory:read": "inventory", "inventory:adjust": "inventory",
   "inventory:manage": "inventory", "inventory:request": "inventory",
+  "inventory:create": "inventory",
 
   "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr",
   "claim:read:own": "hr", "claim:apply": "hr", "claim:manage": "hr", "claim:read:all": "hr",

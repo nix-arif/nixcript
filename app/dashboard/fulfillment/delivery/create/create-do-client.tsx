@@ -1050,7 +1050,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
   }
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-4 sm:p-6 space-y-4">
       <PageHeader
         title="New Case DO"
         description="Case-based delivery order — deducts from rep's field stock automatically."
@@ -1064,7 +1064,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
       {/* Case details */}
       <section className="border border-border rounded-xl p-4">
         <h2 className="text-sm font-semibold mb-3">Case details</h2>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label className="text-xs">Case date <span className="text-destructive">*</span></Label>
             <input type="date" value={caseDate} onChange={(e) => setCaseDate(e.target.value)}
@@ -1386,16 +1386,16 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                 return (
                   <button key={item._key} type="button" onClick={() => toggleFieldItem(item)}
                     className={cn(
-                      "flex items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors w-full",
+                      "flex flex-wrap items-center gap-x-2.5 gap-y-1 px-3 py-2.5 text-xs text-left transition-colors w-full",
                       selected ? "bg-teal-600 text-white" : "hover:bg-teal-50/60 dark:hover:bg-teal-900/20"
                     )}>
                     <span className={cn("w-4 h-4 rounded border flex items-center justify-center shrink-0 text-[10px] font-bold",
                       selected ? "bg-white border-white text-teal-600" : "border-teal-300 dark:border-teal-700")}>
                       {selected ? "✓" : ""}
                     </span>
-                    <span className="font-mono font-medium">{item.productCode}</span>
-                    {item.description && <span className={cn("opacity-70 truncate", selected ? "" : "text-muted-foreground")}>{item.description}</span>}
-                    <span className="ml-auto shrink-0 flex items-center gap-2">
+                    <span className="font-mono font-medium shrink-0">{item.productCode}</span>
+                    {item.description && <span className={cn("opacity-70 truncate flex-1 min-w-20", selected ? "" : "text-muted-foreground")}>{item.description}</span>}
+                    <span className="w-full sm:w-auto flex items-center justify-between sm:justify-normal gap-2 sm:ml-auto shrink-0 pl-6 sm:pl-0">
                       {item.isRental ? (
                         <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-semibold border", selected ? "bg-white/20 border-white/30 text-white" : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700")}>rental</span>
                       ) : (
@@ -1479,7 +1479,40 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
             <PlusIcon className="w-3 h-3" /> Add row
           </Button>
         </div>
-        <div className="overflow-x-auto">
+        {/* Mobile: stacked cards (a 4-input-column table doesn't fit a phone screen) */}
+        <div className="flex flex-col gap-3 sm:hidden">
+          {extraItems.map((item) => (
+            <div key={item._key} className="rounded-lg border border-border p-3 flex flex-col gap-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 space-y-1">
+                  <Label className="text-[11px]">Code</Label>
+                  <ExtraProductCell item={item} />
+                </div>
+                <button onClick={() => setExtraItems((p) => p.filter((i) => i._key !== item._key))} disabled={extraItems.length === 1}
+                  className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 mt-5 shrink-0">
+                  <TrashIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px]">Description</Label>
+                <Input value={item.description} onChange={(e) => updateExtraItem(item._key, { description: e.target.value })} className="h-8 text-xs" placeholder="e.g. Machine rental — TKR set" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[11px]">Qty</Label>
+                  <Input type="number" min="1" value={item.qty} onChange={(e) => updateExtraItem(item._key, { qty: e.target.value })} className="h-8 text-xs" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px]">UOM</Label>
+                  <Input value={item.uom} onChange={(e) => updateExtraItem(item._key, { uom: e.target.value })} className="h-8 text-xs" placeholder="case/set/unit" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* sm and up: compact table */}
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border text-muted-foreground">
@@ -1516,11 +1549,11 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
         </div>
       </section>
 
-      <div className="flex gap-3 pb-8">
-        <Button onClick={handleSave} disabled={saving}>
+      <div className="flex flex-col sm:flex-row gap-3 pb-8">
+        <Button onClick={handleSave} disabled={saving} className="w-full sm:w-auto">
           {saving ? "Creating…" : "Create Case DO"}
         </Button>
-        <Button variant="outline" onClick={() => router.back()}>Cancel</Button>
+        <Button variant="outline" onClick={() => router.back()} className="w-full sm:w-auto">Cancel</Button>
       </div>
     </div>
   );

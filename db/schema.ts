@@ -3976,6 +3976,56 @@ export const categoryAllowanceRateRelations = relations(categoryAllowanceRate, (
   category: one(documentCategory, { fields: [categoryAllowanceRate.categoryId], references: [documentCategory.id] }),
 }));
 
+// Per-member override of category_allowance_rate — some individuals are
+// paid a different rate than the org default for a given category (e.g. a
+// senior staff member on a higher rate). When a row exists here for the
+// earner, it entirely replaces the category default for that role/day-type
+// combination; a null field falls back to the category default rather than
+// meaning "earns nothing" (unlike category_allowance_rate, where null means
+// no allowance at all) — this table only ever narrows down to "which of
+// these two rates applies," it never disables an otherwise-earned allowance.
+export const memberAllowanceRate = pgTable(
+  "member_allowance_rate",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => documentCategory.id, { onDelete: "cascade" }),
+
+    salesPersonWeekdayRate: text("sales_person_weekday_rate"),
+    salesPersonWeekendRate: text("sales_person_weekend_rate"),
+    salesPersonHolidayRate: text("sales_person_holiday_rate"),
+    appSpecialistWeekdayRate: text("app_specialist_weekday_rate"),
+    appSpecialistWeekendRate: text("app_specialist_weekend_rate"),
+    appSpecialistHolidayRate: text("app_specialist_holiday_rate"),
+
+    isActive: boolean("is_active").default(true).notNull(),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("member_allowance_rate_org_user_cat_uidx").on(t.organizationId, t.userId, t.categoryId),
+    index("member_allowance_rate_org_idx").on(t.organizationId),
+    index("member_allowance_rate_user_idx").on(t.userId),
+  ],
+);
+
+export const memberAllowanceRateRelations = relations(memberAllowanceRate, ({ one }) => ({
+  organization: one(organization, { fields: [memberAllowanceRate.organizationId], references: [organization.id] }),
+  user: one(user, { fields: [memberAllowanceRate.userId], references: [user.id] }),
+  category: one(documentCategory, { fields: [memberAllowanceRate.categoryId], references: [documentCategory.id] }),
+}));
+
 // Org-defined public holiday calendar — a case falling on one of these
 // dates earns the (optional, higher) holiday allowance rate instead of the
 // weekday/weekend rate. Takes precedence even if the date also falls on a

@@ -7,21 +7,27 @@ import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { SettingsIcon, CheckIcon, CalendarDaysIcon, TrashIcon, PlusIcon, InfoIcon } from "lucide-react";
+import { SettingsIcon, CheckIcon, CalendarDaysIcon, TrashIcon, PlusIcon, InfoIcon, UserCogIcon } from "lucide-react";
 import {
   upsertCategoryAllowanceRate,
   updateAllowanceSettings,
   createPublicHoliday,
   deletePublicHoliday,
+  upsertMemberAllowanceRate,
+  deleteMemberAllowanceRate,
   type CategoryAllowanceRateRow,
   type MultiSalesPersonMode,
   type PublicHolidayRow,
+  type MemberAllowanceRateRow,
+  type OrgMemberOption,
 } from "@/server/category-allowance-rate";
 
 interface Props {
   rates: CategoryAllowanceRateRow[];
   settings: { multiSalesPersonMode: MultiSalesPersonMode };
   holidays: PublicHolidayRow[];
+  memberRates: MemberAllowanceRateRow[];
+  members: OrgMemberOption[];
 }
 
 type Draft = {
@@ -69,7 +75,7 @@ function fmtHolidayDate(d: string): string {
   return new Date(y, m - 1, day).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function AllowanceRatesClient({ rates: initialRates, settings, holidays: initialHolidays }: Props) {
+export function AllowanceRatesClient({ rates: initialRates, settings, holidays: initialHolidays, memberRates: initialMemberRates, members }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
     Object.fromEntries(initialRates.map((r) => [r.categoryId, toDraft(r)])));
   const [saved, setSaved] = useState<Record<string, Draft>>(() =>
@@ -154,6 +160,62 @@ export function AllowanceRatesClient({ rates: initialRates, settings, holidays: 
       toast.error(err instanceof Error ? err.message : "Failed to remove holiday");
     } finally {
       setDeletingHolidayId(null);
+    }
+  }
+
+  const [memberRates, setMemberRates] = useState(initialMemberRates);
+  const [newRateUserId, setNewRateUserId] = useState("");
+  const [newRateCategoryId, setNewRateCategoryId] = useState("");
+  const [newRateDraft, setNewRateDraft] = useState<Draft>({
+    salesPersonWeekdayRate: "", salesPersonWeekendRate: "", salesPersonHolidayRate: "",
+    appSpecialistWeekdayRate: "", appSpecialistWeekendRate: "", appSpecialistHolidayRate: "",
+  });
+  const [addingMemberRate, setAddingMemberRate] = useState(false);
+  const [deletingMemberRateId, setDeletingMemberRateId] = useState<string | null>(null);
+
+  async function handleAddMemberRate() {
+    if (!newRateUserId || !newRateCategoryId) return;
+    setAddingMemberRate(true);
+    try {
+      await upsertMemberAllowanceRate({
+        userId: newRateUserId,
+        categoryId: newRateCategoryId,
+        salesPersonWeekdayRate: newRateDraft.salesPersonWeekdayRate.trim() || null,
+        salesPersonWeekendRate: newRateDraft.salesPersonWeekendRate.trim() || null,
+        salesPersonHolidayRate: newRateDraft.salesPersonHolidayRate.trim() || null,
+        appSpecialistWeekdayRate: newRateDraft.appSpecialistWeekdayRate.trim() || null,
+        appSpecialistWeekendRate: newRateDraft.appSpecialistWeekendRate.trim() || null,
+        appSpecialistHolidayRate: newRateDraft.appSpecialistHolidayRate.trim() || null,
+      });
+      const userName = members.find((m) => m.userId === newRateUserId)?.name ?? "";
+      const categoryName = initialRates.find((r) => r.categoryId === newRateCategoryId)?.categoryName ?? "";
+      setMemberRates((prev) => [
+        {
+          id: `${newRateUserId}|${newRateCategoryId}`, userId: newRateUserId, userName, categoryId: newRateCategoryId, categoryName,
+          ...newRateDraft, isActive: true,
+        },
+        ...prev.filter((r) => !(r.userId === newRateUserId && r.categoryId === newRateCategoryId)),
+      ]);
+      setNewRateUserId("");
+      setNewRateCategoryId("");
+      setNewRateDraft({ salesPersonWeekdayRate: "", salesPersonWeekendRate: "", salesPersonHolidayRate: "", appSpecialistWeekdayRate: "", appSpecialistWeekendRate: "", appSpecialistHolidayRate: "" });
+      toast.success("Special rate saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save special rate");
+    } finally {
+      setAddingMemberRate(false);
+    }
+  }
+
+  async function handleDeleteMemberRate(id: string) {
+    setDeletingMemberRateId(id);
+    try {
+      await deleteMemberAllowanceRate(id);
+      setMemberRates((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove special rate");
+    } finally {
+      setDeletingMemberRateId(null);
     }
   }
 
@@ -325,6 +387,98 @@ export function AllowanceRatesClient({ rates: initialRates, settings, holidays: 
           </Table>
         </div>
       )}
+
+      <section className="border border-border rounded-xl p-4 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold flex items-center gap-1.5">
+            <UserCogIcon className="w-4 h-4 text-muted-foreground" /> Special Rates
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Override the category default for a specific person — e.g. a senior staff member on a higher rate. A blank field here falls back to the category default rather than paying nothing.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-border/60 p-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={newRateUserId}
+              onChange={(e) => setNewRateUserId(e.target.value)}
+              className="h-8 px-2 border border-input rounded-md text-xs bg-background outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">Select person…</option>
+              {members.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
+            </select>
+            <select
+              value={newRateCategoryId}
+              onChange={(e) => setNewRateCategoryId(e.target.value)}
+              className="h-8 px-2 border border-input rounded-md text-xs bg-background outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">Select category…</option>
+              {initialRates.map((r) => <option key={r.categoryId} value={r.categoryId}>{r.categoryName}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {RATE_FIELDS.map((field) => (
+              <div key={field} className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-muted-foreground">{RATE_FIELD_LABELS[field]}</span>
+                <Input
+                  value={newRateDraft[field]}
+                  onChange={(e) => setNewRateDraft((prev) => ({ ...prev, [field]: e.target.value }))}
+                  placeholder="—"
+                  className="h-8 text-xs w-24"
+                />
+              </div>
+            ))}
+            <Button
+              size="sm" className="h-8 gap-1 text-xs self-end"
+              disabled={addingMemberRate || !newRateUserId || !newRateCategoryId}
+              onClick={handleAddMemberRate}
+            >
+              <PlusIcon className="w-3 h-3" /> Add
+            </Button>
+          </div>
+        </div>
+
+        {memberRates.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No special rates configured.</p>
+        ) : (
+          <div className="rounded-lg border border-border overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/40">
+                  <TableHead className="whitespace-nowrap">Person</TableHead>
+                  <TableHead className="whitespace-nowrap">Category</TableHead>
+                  {RATE_FIELDS.map((f) => (
+                    <TableHead key={f} className="w-24 whitespace-nowrap text-xs">{RATE_FIELD_LABELS[f]}</TableHead>
+                  ))}
+                  <TableHead className="w-12"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {memberRates.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="text-sm whitespace-nowrap">{r.userName}</TableCell>
+                    <TableCell className="text-sm whitespace-nowrap">{r.categoryName}</TableCell>
+                    {RATE_FIELDS.map((field) => (
+                      <TableCell key={field} className="text-xs text-muted-foreground">{r[field] ?? "—"}</TableCell>
+                    ))}
+                    <TableCell>
+                      <button
+                        type="button"
+                        disabled={deletingMemberRateId === r.id}
+                        onClick={() => handleDeleteMemberRate(r.id)}
+                        className="text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

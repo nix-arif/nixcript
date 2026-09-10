@@ -5,6 +5,7 @@ import {
   invoice,
   invoiceAllowance,
   categoryAllowanceRate,
+  memberAllowanceRate,
   documentCategory,
   organizationProfile,
   publicHoliday,
@@ -198,6 +199,35 @@ export async function recomputeInvoiceAllowances(invoiceId: string): Promise<voi
     ? { id: inv.applicationSpecialistId, name: inv.applicationSpecialistName ?? "" }
     : null;
 
+  // Per-member rate overrides — bypass the category default entirely for
+  // whichever earner/category/role/day-type they're configured for. A null
+  // field on the override row falls back to the category default (the
+  // override table only ever narrows which rate applies, it never disables
+  // an allowance the way a null category rate does).
+  const overrideUserIds = [...new Set([...salesEarners.map((p) => p.id), ...(appSpecEarner ? [appSpecEarner.id] : [])])];
+  const overrides = overrideUserIds.length > 0
+    ? await db.select().from(memberAllowanceRate).where(and(
+        eq(memberAllowanceRate.organizationId, inv.organizationId),
+        inArray(memberAllowanceRate.categoryId, rates.map((r) => r.categoryId)),
+        inArray(memberAllowanceRate.userId, overrideUserIds),
+        eq(memberAllowanceRate.isActive, true),
+      ))
+    : [];
+  const overrideByUserCategory = new Map(overrides.map((o) => [`${o.userId}|${o.categoryId}`, o]));
+
+  function effectiveRate(userId: string, categoryId: string, defaultRow: typeof rates[number], role: Role): string | null {
+    const override = overrideByUserCategory.get(`${userId}|${categoryId}`);
+    if (override) {
+      const overrideVal = role === "sales_person"
+        ? rateForDayType(dayType, override.salesPersonWeekdayRate, override.salesPersonWeekendRate, override.salesPersonHolidayRate)
+        : rateForDayType(dayType, override.appSpecialistWeekdayRate, override.appSpecialistWeekendRate, override.appSpecialistHolidayRate);
+      if (overrideVal) return overrideVal;
+    }
+    return role === "sales_person"
+      ? rateForDayType(dayType, defaultRow.salesPersonWeekdayRate, defaultRow.salesPersonWeekendRate, defaultRow.salesPersonHolidayRate)
+      : rateForDayType(dayType, defaultRow.appSpecialistWeekdayRate, defaultRow.appSpecialistWeekendRate, defaultRow.appSpecialistHolidayRate);
+  }
+
   type NewRow = typeof invoiceAllowance.$inferInsert;
   const newRows: NewRow[] = [];
 
@@ -221,22 +251,39 @@ export async function recomputeInvoiceAllowances(invoiceId: string): Promise<voi
   }
 
   for (const rate of rates) {
-    const spRate = rateForDayType(dayType, rate.salesPersonWeekdayRate, rate.salesPersonWeekendRate, rate.salesPersonHolidayRate);
-    if (spRate && salesEarners.length > 0) {
+    if (salesEarners.length > 0) {
       if (multiMode === "primary_only") {
         const primary = salesEarners.find((p) => p.id === inv.salesPersonId) ?? salesEarners[0];
-        pushRow(primary, "sales_person", rate.categoryId, spRate);
+        const r = effectiveRate(primary.id, rate.categoryId, rate, "sales_person");
+        if (r) pushRow(primary, "sales_person", rate.categoryId, r);
       } else if (multiMode === "split") {
-        const splitRate = (Number(spRate) / salesEarners.length).toFixed(2);
-        for (const p of salesEarners) pushRow(p, "sales_person", rate.categoryId, splitRate);
+        // Only earners on the plain category default share the split; anyone
+        // with their own override keeps their full negotiated rate — it
+        // isn't diluted just because other sales persons are also listed.
+        const defaultRate = rateForDayType(dayType, rate.salesPersonWeekdayRate, rate.salesPersonWeekendRate, rate.salesPersonHolidayRate);
+        const defaultEarners = salesEarners.filter((p) => {
+          const o = overrideByUserCategory.get(`${p.id}|${rate.categoryId}`);
+          const overrideVal = o ? rateForDayType(dayType, o.salesPersonWeekdayRate, o.salesPersonWeekendRate, o.salesPersonHolidayRate) : null;
+          return !overrideVal;
+        });
+        const splitRate = defaultRate && defaultEarners.length > 0 ? (Number(defaultRate) / defaultEarners.length).toFixed(2) : null;
+        for (const p of salesEarners) {
+          const r = effectiveRate(p.id, rate.categoryId, rate, "sales_person");
+          const isDefault = defaultEarners.includes(p);
+          const finalRate = isDefault ? splitRate : r;
+          if (finalRate) pushRow(p, "sales_person", rate.categoryId, finalRate);
+        }
       } else {
-        for (const p of salesEarners) pushRow(p, "sales_person", rate.categoryId, spRate);
+        for (const p of salesEarners) {
+          const r = effectiveRate(p.id, rate.categoryId, rate, "sales_person");
+          if (r) pushRow(p, "sales_person", rate.categoryId, r);
+        }
       }
     }
 
-    const asRate = rateForDayType(dayType, rate.appSpecialistWeekdayRate, rate.appSpecialistWeekendRate, rate.appSpecialistHolidayRate);
-    if (asRate && appSpecEarner) {
-      pushRow(appSpecEarner, "app_specialist", rate.categoryId, asRate);
+    if (appSpecEarner) {
+      const r = effectiveRate(appSpecEarner.id, rate.categoryId, rate, "app_specialist");
+      if (r) pushRow(appSpecEarner, "app_specialist", rate.categoryId, r);
     }
   }
 

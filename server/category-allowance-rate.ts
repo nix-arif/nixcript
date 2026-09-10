@@ -1,12 +1,12 @@
 "use server";
 
 import { db } from "@/db";
-import { categoryAllowanceRate, documentCategory, organizationProfile, publicHoliday } from "@/db/schema";
+import { categoryAllowanceRate, memberAllowanceRate, documentCategory, organizationProfile, publicHoliday, member, user } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 async function requireAccess(permission: string) {
@@ -130,6 +130,117 @@ export async function createPublicHoliday(input: { date: string; name: string })
 export async function deletePublicHoliday(id: string): Promise<void> {
   const { orgId } = await requireAccess("allowance:manage");
   await db.delete(publicHoliday).where(and(eq(publicHoliday.id, id), eq(publicHoliday.organizationId, orgId)));
+  revalidatePath("/dashboard/human-resources/allowance/rates");
+}
+
+export type MemberAllowanceRateRow = {
+  id: string;
+  userId: string;
+  userName: string;
+  categoryId: string;
+  categoryName: string;
+  salesPersonWeekdayRate: string | null;
+  salesPersonWeekendRate: string | null;
+  salesPersonHolidayRate: string | null;
+  appSpecialistWeekdayRate: string | null;
+  appSpecialistWeekendRate: string | null;
+  appSpecialistHolidayRate: string | null;
+  isActive: boolean;
+};
+
+// Every special (member-specific) rate configured for this org, newest first.
+export async function getMemberAllowanceRates(): Promise<MemberAllowanceRateRow[]> {
+  const { orgId } = await requireAccess("allowance:manage");
+  const rows = await db
+    .select({
+      id: memberAllowanceRate.id,
+      userId: memberAllowanceRate.userId,
+      userName: user.name,
+      categoryId: memberAllowanceRate.categoryId,
+      categoryName: documentCategory.name,
+      salesPersonWeekdayRate: memberAllowanceRate.salesPersonWeekdayRate,
+      salesPersonWeekendRate: memberAllowanceRate.salesPersonWeekendRate,
+      salesPersonHolidayRate: memberAllowanceRate.salesPersonHolidayRate,
+      appSpecialistWeekdayRate: memberAllowanceRate.appSpecialistWeekdayRate,
+      appSpecialistWeekendRate: memberAllowanceRate.appSpecialistWeekendRate,
+      appSpecialistHolidayRate: memberAllowanceRate.appSpecialistHolidayRate,
+      isActive: memberAllowanceRate.isActive,
+    })
+    .from(memberAllowanceRate)
+    .innerJoin(user, eq(user.id, memberAllowanceRate.userId))
+    .innerJoin(documentCategory, eq(documentCategory.id, memberAllowanceRate.categoryId))
+    .where(eq(memberAllowanceRate.organizationId, orgId))
+    .orderBy(desc(memberAllowanceRate.createdAt));
+  return rows;
+}
+
+// Members of this org, for the "which person gets a special rate" picker.
+export type OrgMemberOption = { userId: string; name: string };
+
+export async function getOrgMemberOptions(): Promise<OrgMemberOption[]> {
+  const { orgId } = await requireAccess("allowance:manage");
+  const rows = await db
+    .select({ userId: member.userId, name: user.name })
+    .from(member)
+    .innerJoin(user, eq(user.id, member.userId))
+    .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt)))
+    .orderBy(user.name);
+  return rows;
+}
+
+export async function upsertMemberAllowanceRate(input: {
+  userId: string;
+  categoryId: string;
+  salesPersonWeekdayRate?: string | null;
+  salesPersonWeekendRate?: string | null;
+  salesPersonHolidayRate?: string | null;
+  appSpecialistWeekdayRate?: string | null;
+  appSpecialistWeekendRate?: string | null;
+  appSpecialistHolidayRate?: string | null;
+  isActive?: boolean;
+}): Promise<void> {
+  const { orgId } = await requireAccess("allowance:manage");
+
+  const [category] = await db.select().from(documentCategory).where(and(eq(documentCategory.id, input.categoryId), eq(documentCategory.organizationId, orgId)));
+  if (!category) throw new Error("Category not found");
+  const [memberRow] = await db.select().from(member).where(and(eq(member.userId, input.userId), eq(member.organizationId, orgId)));
+  if (!memberRow) throw new Error("That person isn't a member of this organization");
+
+  await db
+    .insert(memberAllowanceRate)
+    .values({
+      id: nanoid(),
+      organizationId: orgId,
+      userId: input.userId,
+      categoryId: input.categoryId,
+      salesPersonWeekdayRate: input.salesPersonWeekdayRate ?? null,
+      salesPersonWeekendRate: input.salesPersonWeekendRate ?? null,
+      salesPersonHolidayRate: input.salesPersonHolidayRate ?? null,
+      appSpecialistWeekdayRate: input.appSpecialistWeekdayRate ?? null,
+      appSpecialistWeekendRate: input.appSpecialistWeekendRate ?? null,
+      appSpecialistHolidayRate: input.appSpecialistHolidayRate ?? null,
+      isActive: input.isActive ?? true,
+    })
+    .onConflictDoUpdate({
+      target: [memberAllowanceRate.organizationId, memberAllowanceRate.userId, memberAllowanceRate.categoryId],
+      set: {
+        salesPersonWeekdayRate: input.salesPersonWeekdayRate ?? null,
+        salesPersonWeekendRate: input.salesPersonWeekendRate ?? null,
+        salesPersonHolidayRate: input.salesPersonHolidayRate ?? null,
+        appSpecialistWeekdayRate: input.appSpecialistWeekdayRate ?? null,
+        appSpecialistWeekendRate: input.appSpecialistWeekendRate ?? null,
+        appSpecialistHolidayRate: input.appSpecialistHolidayRate ?? null,
+        isActive: input.isActive ?? true,
+        updatedAt: new Date(),
+      },
+    });
+
+  revalidatePath("/dashboard/human-resources/allowance/rates");
+}
+
+export async function deleteMemberAllowanceRate(id: string): Promise<void> {
+  const { orgId } = await requireAccess("allowance:manage");
+  await db.delete(memberAllowanceRate).where(and(eq(memberAllowanceRate.id, id), eq(memberAllowanceRate.organizationId, orgId)));
   revalidatePath("/dashboard/human-resources/allowance/rates");
 }
 
