@@ -664,6 +664,14 @@ export function InspectPackingListClient({
     return acc;
   }, {});
 
+  // Mirrors the server's own gate in applyPackingListInspection — every line
+  // needs an approval before completion is allowed, so the button reflects
+  // that up front instead of only failing after a click.
+  const totalItems = pl.items.length;
+  const approvedItems = Object.values(rows).filter((r) => r.approvalStatus === "approved").length;
+  const allApproved = approvedItems >= totalItems;
+  const canComplete = allApproved && !!receivedDate;
+
   return (
     <div className="p-6 space-y-6">
       <PageHeader
@@ -1087,20 +1095,15 @@ export function InspectPackingListClient({
           );
         })}
 
-        {(() => {
-          const total = pl.items.length;
-          const approved = Object.values(rows).filter((r) => r.approvalStatus === "approved").length;
-          if (approved >= total) return null;
-          return (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-              <ShieldQuestionIcon className="w-3 h-3 shrink-0" />
-              {approved} of {total} item{total !== 1 ? "s" : ""} approved — every item needs approval before inspection can be completed.
-            </p>
-          );
-        })()}
+        {!allApproved && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+            <ShieldQuestionIcon className="w-3 h-3 shrink-0" />
+            {approvedItems} of {totalItems} item{totalItems !== 1 ? "s" : ""} approved — every item needs approval before inspection can be completed.
+          </p>
+        )}
 
         <div className="flex gap-3">
-          <Button type="submit" disabled={completing} className="gap-1.5">
+          <Button type="submit" disabled={completing || !canComplete} className="gap-1.5" title={!canComplete ? "Every item must be approved before inspection can be completed" : undefined}>
             <ClipboardCheckIcon className="w-3.5 h-3.5" />
             {completing ? "Saving…" : "Complete Inspection"}
           </Button>

@@ -12,7 +12,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import {
   SearchIcon, XIcon, TruckIcon, BuildingIcon, CalendarIcon,
   RefreshCwIcon, LayersIcon, ClipboardListIcon, EyeIcon,
-  ArrowUpDownIcon, CheckIcon,
+  ArrowUpDownIcon, CheckIcon, TagIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -94,7 +94,8 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
       (p.prNo ?? "").toLowerCase().includes(s) ||
       snap?.name?.toLowerCase().includes(s) ||
       p.organizationName.toLowerCase().includes(s) ||
-      p.customerPoNos.some((c) => c.toLowerCase().includes(s))
+      p.customerPoNos.some((c) => c.toLowerCase().includes(s)) ||
+      p.setGroupLabels.some((set) => set.toLowerCase().includes(s))
     );
   }), sort);
 
@@ -128,7 +129,7 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by PO no., PR no., supplier, organization…"
+            placeholder="Search by PO no., PR no., supplier, organization, set name…"
             className="pl-9 h-9 text-sm"
           />
           {search && (
@@ -233,6 +234,12 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
                           <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
                             {c.name}
                           </span>
+                        </span>
+                      ))}
+                      {p.setGroupLabels.map((set) => (
+                        <span key={set} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                          <TagIcon className="w-2.5 h-2.5 shrink-0" />
+                          <Highlight text={set} query={search} />
                         </span>
                       ))}
                       {!p.canEdit && (

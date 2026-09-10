@@ -667,6 +667,7 @@ export type PurchaseOrderListRow = PurchaseOrderRow & {
   createdByName: string | null;
   customerPoNos: string[];
   itemCustomers: { name: string; organization: string | null }[];
+  setGroupLabels: string[];
   pendingReturnQty: number;
   pendingRepairQty: number;
 };
@@ -677,30 +678,47 @@ export type PurchaseOrderListRow = PurchaseOrderRow & {
 // across all of a PO's items for the list card badge. customerName already
 // carries the customer's title prefixed (see CustomerPickerCell), so no
 // further lookup against the customer table is needed here.
-async function getItemCustomersByPo(poIds: string[]): Promise<Map<string, { name: string; organization: string | null }[]>> {
-  const map = new Map<string, { name: string; organization: string | null }[]>();
-  if (poIds.length === 0) return map;
+//
+// Also collects each PO's distinct set-group labels (also per-item, not on
+// the PO itself) in the same pass, so the centralized Supplier PO list can
+// search by set name without a second round trip.
+async function getItemCustomersByPo(poIds: string[]): Promise<{
+  customers: Map<string, { name: string; organization: string | null }[]>;
+  setGroupLabels: Map<string, string[]>;
+}> {
+  const customers = new Map<string, { name: string; organization: string | null }[]>();
+  const setGroupLabels = new Map<string, string[]>();
+  if (poIds.length === 0) return { customers, setGroupLabels };
 
   const rows = await db
     .select({
       purchaseOrderId: purchaseOrderItem.purchaseOrderId,
       customerName: purchaseOrderItem.customerName,
       customerOrganization: purchaseOrderItem.customerOrganization,
+      setGroupLabel: purchaseOrderItem.setGroupLabel,
     })
     .from(purchaseOrderItem)
     .where(inArray(purchaseOrderItem.purchaseOrderId, poIds));
 
   for (const r of rows) {
     const name = r.customerName?.trim();
-    if (!name) continue;
-    const organization = r.customerOrganization?.trim() || null;
-    const list = map.get(r.purchaseOrderId) ?? [];
-    if (!list.some((c) => c.name === name && c.organization === organization)) {
-      list.push({ name, organization });
+    if (name) {
+      const organization = r.customerOrganization?.trim() || null;
+      const list = customers.get(r.purchaseOrderId) ?? [];
+      if (!list.some((c) => c.name === name && c.organization === organization)) {
+        list.push({ name, organization });
+      }
+      customers.set(r.purchaseOrderId, list);
     }
-    map.set(r.purchaseOrderId, list);
+
+    const setLabel = r.setGroupLabel?.trim();
+    if (setLabel) {
+      const list = setGroupLabels.get(r.purchaseOrderId) ?? [];
+      if (!list.includes(setLabel)) list.push(setLabel);
+      setGroupLabels.set(r.purchaseOrderId, list);
+    }
   }
-  return map;
+  return { customers, setGroupLabels };
 }
 
 // "Fulfilled" only ever tracks physical receipt (see maybeAutoFulfill in
@@ -868,7 +886,7 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     arr.push(link.customerPoNo);
     cpoMap.set(link.purchaseOrderId, arr);
   }
-  const [pendingByPo, itemCustomersByPo] = await Promise.all([
+  const [pendingByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
     getPendingReturnRepairByPo(poIds),
     getItemCustomersByPo(poIds),
   ]);
@@ -878,6 +896,7 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     createdByName: nameOf(r.createdBy),
     customerPoNos: cpoMap.get(r.id) ?? [],
     itemCustomers: itemCustomersByPo.get(r.id) ?? [],
+    setGroupLabels: setGroupLabelsByPo.get(r.id) ?? [],
     pendingReturnQty: pendingByPo.get(r.id)?.pendingReturnQty ?? 0,
     pendingRepairQty: pendingByPo.get(r.id)?.pendingRepairQty ?? 0,
   }));
@@ -993,7 +1012,7 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
   );
   const orgPermsMap = new Map<string, string[]>([[orgId, callerPerms], ...otherOrgPermsEntries]);
   const hasCentralizedUpdate = hasAccess(callerPerms, "purchase-order:update:centralized");
-  const [pendingByPo, itemCustomersByPo] = await Promise.all([
+  const [pendingByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
     getPendingReturnRepairByPo(poIds),
     getItemCustomersByPo(poIds),
   ]);
@@ -1003,6 +1022,7 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
     createdByName: nameOf(po.createdBy),
     customerPoNos: cpoMap.get(po.id) ?? [],
     itemCustomers: itemCustomersByPo.get(po.id) ?? [],
+    setGroupLabels: setGroupLabelsByPo.get(po.id) ?? [],
     organizationName,
     canEdit: po.createdBy === userId || hasCentralizedUpdate || hasAccess(orgPermsMap.get(po.organizationId) ?? [], "purchase-order:update"),
     pendingReturnQty: pendingByPo.get(po.id)?.pendingReturnQty ?? 0,

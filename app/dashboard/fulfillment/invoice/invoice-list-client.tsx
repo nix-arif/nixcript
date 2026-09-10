@@ -75,7 +75,7 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Sort ──────────────────────────────────────────────────────────────────
 
-type SortKey = "invoiceNo" | "customerPoNo" | "customer" | "hospital" | "status" | "grandTotal" | "outstanding" | "dueDate" | "caseDate";
+type SortKey = "invoiceNo" | "customerPoNo" | "customer" | "hospital" | "status" | "grandTotal" | "dueDate" | "caseDate";
 
 function SortIcon({ col, active, dir }: { col: SortKey; active: SortKey; dir: "asc" | "desc" }) {
   if (col !== active) return <ChevronsUpDownIcon className="w-3 h-3 text-muted-foreground/40" />;
@@ -267,11 +267,6 @@ export function InvoiceListClient({
         case "customerPoNo": return dir * (a.customerPoNo ?? "").localeCompare(b.customerPoNo ?? "");
         case "status":       return dir * a.status.localeCompare(b.status);
         case "grandTotal":   return dir * (parseMoney(a.grandTotal) - parseMoney(b.grandTotal));
-        case "outstanding": {
-          const outA = a.status === "paid" ? 0 : parseMoney(a.grandTotal) - parseMoney(a.paidAmount);
-          const outB = b.status === "paid" ? 0 : parseMoney(b.grandTotal) - parseMoney(b.paidAmount);
-          return dir * (outA - outB);
-        }
         case "dueDate": {
           const da = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
           const db_ = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
@@ -518,7 +513,6 @@ export function InvoiceListClient({
                     </th>
                     <Th k="status">Status</Th>
                     <Th k="grandTotal" className="text-right">Billed</Th>
-                    <Th k="outstanding" className="text-right">Outstanding</Th>
                     <Th k="dueDate" className="hidden lg:table-cell">Due</Th>
                     <th className="px-3 py-2.5 text-center text-[11px] font-medium text-muted-foreground uppercase tracking-wider w-10 hidden lg:table-cell">SOA</th>
                     <th className="px-3 py-2.5 w-16" />
@@ -641,17 +635,17 @@ export function InvoiceListClient({
                         </td>
 
                         <td className="px-3 py-2.5 text-right">
-                          <span className="text-xs font-mono tabular-nums font-medium">{fmtMoney(inv.grandTotal)}</span>
-                        </td>
-
-                        <td className="px-3 py-2.5 text-right">
-                          {outstanding > 0 ? (
-                            <span className={cn("text-xs font-mono tabular-nums font-medium", isOverdue ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400")}>
-                              {fmtMoney(outstanding.toFixed(2))}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground/50">—</span>
-                          )}
+                          <span
+                            className={cn(
+                              "text-xs font-mono tabular-nums font-medium",
+                              outstanding > 0
+                                ? isOverdue ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"
+                                : inv.status === "paid" ? "text-emerald-600 dark:text-emerald-400" : "",
+                            )}
+                            title={outstanding > 0 ? `${fmtMoney(outstanding.toFixed(2))} outstanding` : undefined}
+                          >
+                            {fmtMoney(inv.grandTotal)}
+                          </span>
                         </td>
 
                         <td className="px-3 py-2.5 whitespace-nowrap hidden lg:table-cell">
@@ -701,11 +695,11 @@ export function InvoiceListClient({
                       {sorted.length} invoice{sorted.length !== 1 ? "s" : ""} on page
                     </td>
                     <td className="px-3 py-2.5 text-right">
-                      <span className="text-xs font-mono tabular-nums font-semibold">{fmtMoney(footerTotals.billed.toFixed(2))}</span>
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <span className={cn("text-xs font-mono tabular-nums font-semibold", footerTotals.out > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>
-                        {fmtMoney(footerTotals.out.toFixed(2))}
+                      <span
+                        className={cn("text-xs font-mono tabular-nums font-semibold", footerTotals.out > 0 ? "text-amber-600 dark:text-amber-400" : "text-foreground")}
+                        title={footerTotals.out > 0 ? `${fmtMoney(footerTotals.out.toFixed(2))} outstanding` : undefined}
+                      >
+                        {fmtMoney(footerTotals.billed.toFixed(2))}
                       </span>
                     </td>
                     <td colSpan={3} className="hidden lg:table-cell" />
