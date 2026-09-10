@@ -849,6 +849,54 @@ const newCaseLine = (): CaseLineItem => ({
   _key: uid(), productCode: "", description: "", qty: "1", uom: "",
 });
 
+// Defined at module level (not nested in CaseDoForm) so it doesn't get a new
+// function identity — and get remounted, losing input focus — on every
+// keystroke-triggered re-render of the parent form.
+interface CaseExtraProductCellProps {
+  item: CaseLineItem;
+  onUpdate: (key: string, patch: Partial<CaseLineItem>) => void;
+}
+
+function CaseExtraProductCell({ item, onUpdate }: CaseExtraProductCellProps) {
+  const [q, setQ] = useState(item.productCode);
+  const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null }[]>([]);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleInput(val: string) {
+    setQ(val);
+    onUpdate(item._key, { productCode: val, productId: undefined });
+    if (debounce.current) clearTimeout(debounce.current);
+    if (!val.trim()) { setResults([]); return; }
+    debounce.current = setTimeout(async () => {
+      const r = await searchProducts(val);
+      setResults(r);
+      const exact = r.find((p) => p.productCode.toLowerCase() === val.trim().toLowerCase());
+      if (exact) { onUpdate(item._key, { productId: exact.id, productCode: exact.productCode, description: item.description || exact.description || "", uom: exact.uom ?? "" }); setResults([]); }
+    }, 300);
+  }
+
+  function pick(p: typeof results[0]) {
+    onUpdate(item._key, { productId: p.id, productCode: p.productCode, description: item.description || p.description || "", uom: p.uom ?? "" });
+    setQ(p.productCode); setResults([]);
+  }
+
+  return (
+    <div className="relative">
+      <Input value={q} onChange={(e) => handleInput(e.target.value)} className="h-7 text-xs" placeholder="Code / name…" />
+      {results.length > 0 && (
+        <div className="absolute z-50 top-full left-0 mt-0.5 w-56 rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto text-xs">
+          {results.map((p) => (
+            <button key={p.id} type="button" className="w-full text-left px-2 py-1.5 hover:bg-accent flex gap-2" onClick={() => pick(p)}>
+              <span className="font-mono font-medium">{p.productCode}</span>
+              <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" }: { categories?: DocumentCategoryRow[]; currentUserId?: string; currentUserName?: string }) {
   const router = useRouter();
 
@@ -956,46 +1004,6 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
       setCustResults(res.slice(0, 8));
     }, 300);
   }, []);
-
-  function ExtraProductCell({ item }: { item: CaseLineItem }) {
-    const [q, setQ] = useState(item.productCode);
-    const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null }[]>([]);
-    const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    function handleInput(val: string) {
-      setQ(val);
-      updateExtraItem(item._key, { productCode: val, productId: undefined });
-      if (debounce.current) clearTimeout(debounce.current);
-      if (!val.trim()) { setResults([]); return; }
-      debounce.current = setTimeout(async () => {
-        const r = await searchProducts(val);
-        setResults(r);
-        const exact = r.find((p) => p.productCode.toLowerCase() === val.trim().toLowerCase());
-        if (exact) { updateExtraItem(item._key, { productId: exact.id, productCode: exact.productCode, description: item.description || exact.description || "", uom: exact.uom ?? "" }); setResults([]); }
-      }, 300);
-    }
-
-    function pick(p: typeof results[0]) {
-      updateExtraItem(item._key, { productId: p.id, productCode: p.productCode, description: item.description || p.description || "", uom: p.uom ?? "" });
-      setQ(p.productCode); setResults([]);
-    }
-
-    return (
-      <div className="relative">
-        <Input value={q} onChange={(e) => handleInput(e.target.value)} className="h-7 text-xs" placeholder="Code / name…" />
-        {results.length > 0 && (
-          <div className="absolute z-50 top-full left-0 mt-0.5 w-56 rounded-md border border-border bg-background shadow-md max-h-40 overflow-y-auto text-xs">
-            {results.map((p) => (
-              <button key={p.id} type="button" className="w-full text-left px-2 py-1.5 hover:bg-accent flex gap-2" onClick={() => pick(p)}>
-                <span className="font-mono font-medium">{p.productCode}</span>
-                <span className="text-muted-foreground truncate">{p.description ?? ""}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
 
   const selectedRep = reps.find((r) => r.id === repId);
 
@@ -1486,7 +1494,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 space-y-1">
                   <Label className="text-[11px]">Code</Label>
-                  <ExtraProductCell item={item} />
+                  <CaseExtraProductCell item={item} onUpdate={updateExtraItem} />
                 </div>
                 <button onClick={() => setExtraItems((p) => p.filter((i) => i._key !== item._key))} disabled={extraItems.length === 1}
                   className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 mt-5 shrink-0">
@@ -1526,7 +1534,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
             <tbody>
               {extraItems.map((item) => (
                 <tr key={item._key} className="border-b border-border/50 last:border-0">
-                  <td className="py-1.5 pr-2"><ExtraProductCell item={item} /></td>
+                  <td className="py-1.5 pr-2"><CaseExtraProductCell item={item} onUpdate={updateExtraItem} /></td>
                   <td className="py-1.5 pr-2">
                     <Input value={item.description} onChange={(e) => updateExtraItem(item._key, { description: e.target.value })} className="h-7 text-xs" placeholder="e.g. Machine rental — TKR set" />
                   </td>

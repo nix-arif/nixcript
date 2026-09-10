@@ -76,14 +76,23 @@ function rowStateClasses(approvalStatus: string | null, zebra: boolean, zebraCla
   return cn(zebra && zebraClass, "border-l-4 border-l-transparent");
 }
 
-function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; productCode?: string | null }) {
+// Catalogue images can be filed under either code (see getDesignCodeImageUploadUrl
+// in server/products.ts) — an OEM line's design code is often known before any
+// matching catalogue product row (and its own product-code image) exists, so
+// design code is tried first, falling back to product code, with a genuine
+// uploaded packing-list photo always taking priority over either guess.
+function ItemImageThumb({ imageUrl, productCode, designBrandCode }: { imageUrl: string | null; productCode?: string | null; designBrandCode?: string | null }) {
   const [open, setOpen] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [idx, setIdx] = useState(0);
 
-  const catalogSrc = productCode ? getProductImageUrl(productCode) : "";
-  const src = imageUrl || catalogSrc;
+  const candidates = [
+    imageUrl,
+    designBrandCode?.trim() ? getProductImageUrl(designBrandCode.trim()) : "",
+    productCode?.trim() ? getProductImageUrl(productCode.trim()) : "",
+  ].filter(Boolean) as string[];
+  const src = candidates[idx];
 
-  if (!src || failed) return <span className="text-muted-foreground">—</span>;
+  if (!src) return <span className="text-muted-foreground">—</span>;
 
   return (
     <>
@@ -94,7 +103,7 @@ function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; pr
         title="View image"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} className="w-full h-full object-cover" alt="" onError={() => setFailed(true)} />
+        <img src={src} className="w-full h-full object-cover" alt="" onError={() => setIdx((i) => i + 1)} />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
@@ -105,7 +114,7 @@ function ItemImageThumb({ imageUrl, productCode }: { imageUrl: string | null; pr
               src={src}
               className="w-full object-contain max-h-[65vh]"
               alt={productCode ?? ""}
-              onError={() => { setFailed(true); setOpen(false); }}
+              onError={() => { setIdx((i) => i + 1); setOpen(false); }}
             />
             <button
               type="button"
@@ -930,7 +939,7 @@ export function InspectPackingListClient({
                           )}
                         </td>
                         <td className="py-2.5 pr-3">
-                          <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} />
+                          <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} designBrandCode={item.designBrandCode} />
                         </td>
                         <td className="py-2.5 pr-3 align-top w-48">
                           <div className="flex flex-col gap-1">

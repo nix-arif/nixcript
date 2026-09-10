@@ -961,7 +961,58 @@ export async function deleteStockMovement(id: string): Promise<void> {
     .limit(1);
   if (!mv) throw new Error("Movement not found");
 
+  // An APPROVED movement already moved real quantity into stock_level (and
+  // stock_lot, if lot-tracked) — deleting just the history row without
+  // undoing that leaves stock permanently out of sync with what actually
+  // happened. A PENDING/REJECTED movement never touched stock, so there's
+  // nothing to reverse.
+  if (mv.status === "APPROVED") {
+    const signed = parseFloat(mv.quantity);
+
+    // No DB transaction is available here (neon-http), so within each
+    // warehouse the lot reversal — the one most likely to fail, e.g. if a
+    // later movement already drew the lot down further — runs first, before
+    // the aggregate is touched, so a failed delete leaves no partial state.
+    async function reverseWarehouse(warehouseLabel: string, delta: number) {
+      if (mv.lotNo) {
+        await applyToLot({
+          orgId, productId: mv.productId, warehouseLabel,
+          lotNo: mv.lotNo!, expiryDate: mv.expiryDate, signed: delta,
+        });
+      }
+      const [existing] = await db
+        .select()
+        .from(stockLevel)
+        .where(and(eq(stockLevel.productId, mv.productId), eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, warehouseLabel)))
+        .limit(1);
+      if (existing) {
+        const newBalance = parseFloat(existing.quantity) + delta;
+        if (newBalance < 0) {
+          throw new Error(`Cannot delete — reversing this movement would take ${warehouseLabel} stock negative (later movements already drew it down).`);
+        }
+        await db.update(stockLevel)
+          .set({ quantity: newBalance.toFixed(4), updatedAt: new Date() })
+          .where(eq(stockLevel.id, existing.id));
+      }
+    }
+
+    // FIELD_OUT/FIELD_RETURN encode BOTH sides of a rep transfer in a single
+    // row (warehouseLabel = source, warehouseTo = the rep's field warehouse)
+    // — unlike TRANSFER, which records each side as its own independent
+    // row. Reversing only warehouseLabel here would fix the main warehouse
+    // but leave the rep's field stock wrong. The destination originally
+    // received the opposite of this row's own signed quantity (-signed), so
+    // undoing it means re-applying `signed` there; it runs first since it's
+    // the side most likely to fail (it's a subtraction, and later
+    // case-usage/returns may have already drawn that field stock down).
+    if ((mv.movementType === MOVEMENT_TYPE.FIELD_OUT || mv.movementType === MOVEMENT_TYPE.FIELD_RETURN) && mv.warehouseTo) {
+      await reverseWarehouse(mv.warehouseTo, signed);
+    }
+    await reverseWarehouse(mv.warehouseLabel, -signed);
+  }
+
   await db.delete(stockMovement).where(eq(stockMovement.id, id));
+  revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard/inventory/movements");
 }
 
