@@ -90,6 +90,15 @@ function trunc(text: string, font: PDFFont, size: number, maxW: number): string 
   return s + "…";
 }
 
+// Full date + time (not just the day) — who inspected/approved a line and
+// exactly when matters for a supplier-facing discrepancy claim.
+function fmtDateTime(d: Date | null): string {
+  if (!d) return "";
+  return new Date(d).toLocaleString("en-MY", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
 type IssueItem = {
   // Sequential position of this row within the report (1, 2, 3…) — distinct
   // from poLineNo below, since a packing list can span multiple POs and a
@@ -120,6 +129,13 @@ type IssueItem = {
   // — previously only the first one was ever shown and the rest silently
   // dropped; all of them are report-worthy evidence of the finding.
   evidenceImageUrls: string[];
+  // Inspection/approval happen per line (different reviewers can handle
+  // different rows of the same packing list) — so these are per-item, not a
+  // single document-level signature.
+  inspectedByName: string | null;
+  inspectedAt: Date | null;
+  approvedByName: string | null;
+  approvedAt: Date | null;
 };
 
 type CachedImage = { buffer: Buffer; extension: "jpeg" | "png" | "gif" };
@@ -203,7 +219,7 @@ async function buildXlsxResponse(
   };
 
   const maxEvidence = issues.reduce((max, i) => Math.max(max, i.evidenceImageUrls.length), 0);
-  const baseHeaders = ["No.", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", "Returned", "Return Notes"];
+  const baseHeaders = ["No.", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", "Returned", "Return Notes", "Inspected By", "Inspected At", "Approved By", "Approved At"];
   const evidenceHeaders = Array.from({ length: maxEvidence }, (_, i) => `Evidence Photo ${i + 1}`);
   const headers = [...baseHeaders, ...evidenceHeaders];
   const totalCols = headers.length;
@@ -265,6 +281,10 @@ async function buildXlsxResponse(
       issue.shortfall || null,
       issue.returned || null,
       issue.returnNotes,
+      issue.inspectedByName ?? "",
+      fmtDateTime(issue.inspectedAt),
+      issue.approvedByName ?? "",
+      fmtDateTime(issue.approvedAt),
       ...issue.evidenceImageUrls.map(() => ""),
     ]);
     row.height = ROW_HEIGHT_PT;
@@ -299,6 +319,10 @@ async function buildXlsxResponse(
     { width: 7 },   // Short
     { width: 9 },   // Returned
     { width: 32 },  // Return Notes
+    { width: 16 },  // Inspected By
+    { width: 16 },  // Inspected At
+    { width: 16 },  // Approved By
+    { width: 16 },  // Approved At
     ...evidenceHeaders.map(() => ({ width: 12 })),
   ];
 
@@ -322,6 +346,7 @@ type Measured = {
   returnLines: string[];
   evidenceRows: number;
   evidenceThumbsPerRow: number;
+  reviewLines: string[];
   height: number;
 };
 
@@ -361,6 +386,11 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
     ? Math.ceil(issue.evidenceImageUrls.length / evidenceThumbsPerRow)
     : 0;
 
+  const reviewBits: string[] = [];
+  if (issue.inspectedByName) reviewBits.push(`Inspected by ${issue.inspectedByName} on ${fmtDateTime(issue.inspectedAt)}`);
+  if (issue.approvedByName) reviewBits.push(`Approved by ${issue.approvedByName} on ${fmtDateTime(issue.approvedAt)}`);
+  const reviewLines = reviewBits.length > 0 ? wrap(reviewBits.join("  ·  "), fontR, 7, detMaxW) : [];
+
   const textH = headerLines.length * HEADER_LINE_H
     + brandLine.length * TEXT_LINE_H
     + descLines.length * TEXT_LINE_H
@@ -368,9 +398,10 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
     + (issue.shortfall > 0 ? TEXT_LINE_H : 0)
     + returnLines.length * RETURN_LINE_H
     + (evidenceRows > 0 ? EVID_LABEL_H + evidenceRows * (EVID_THUMB + EVID_GAP) : 0)
+    + reviewLines.length * RETURN_LINE_H
     + ROW_V_PAD;
 
-  return { issue, headerLines, brandLine, descLines, returnLines, evidenceRows, evidenceThumbsPerRow, height: Math.max(textH, ROW_MIN_H) };
+  return { issue, headerLines, brandLine, descLines, returnLines, evidenceRows, evidenceThumbsPerRow, reviewLines, height: Math.max(textH, ROW_MIN_H) };
 }
 
 // Invisible link over a thumbnail that opens the matching full-res file from
@@ -473,6 +504,10 @@ export async function GET(req: Request, { params }: Props) {
           returnNotes: item.draftReturnNotes ?? "",
           identityImageUrl: item.imageUrl ?? catalogImageUrl,
           evidenceImageUrls: evidencePhotos.map((p) => p.url),
+          inspectedByName: item.draftInspectedByName,
+          inspectedAt: item.draftInspectedAt,
+          approvedByName: item.draftApprovedByName,
+          approvedAt: item.draftApprovedAt,
         };
       })
       .filter((i): i is Omit<IssueItem, "no"> => i !== null)
@@ -721,6 +756,11 @@ export async function GET(req: Request, { params }: Props) {
             }
           });
           detY -= m.evidenceRows * (EVID_THUMB + EVID_GAP);
+        }
+
+        for (const line of m.reviewLines) {
+          page.drawText(line, { x: detX, y: detY, size: 7, font: fontR, color: C_LITE });
+          detY -= RETURN_LINE_H;
         }
 
         rowTopY = rowY;
