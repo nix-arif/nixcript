@@ -1,7 +1,7 @@
 import { db } from "@/db";
-import { stockLevel, stockMovement, product } from "@/db/schema";
+import { stockLevel, stockMovement, product, member } from "@/db/schema";
 import { nanoid } from "nanoid";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 import { MOVEMENT_TYPE } from "./constants";
 
 interface MovementParams {
@@ -18,11 +18,35 @@ interface MovementParams {
   notes?: string;
 }
 
+// A product's catalogue entry and its physical stock can live under
+// different sibling orgs sharing the same owner (e.g. products catalogued
+// under one org, all stock centralized under another — see the equivalent
+// resolver in server/field-stock.ts for the full story). Scoping the
+// product lookup to only `orgId` broke DO delivery/return/delete for any
+// such product; matching product search's own owner-group scope fixes it.
+async function getOwnerOrgIds(currentOrgId: string): Promise<string[]> {
+  const [ownerMember] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner"), isNull(member.deletedAt)))
+    .limit(1);
+  if (!ownerMember) return [currentOrgId];
+
+  const ownedOrgs = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
+
+  const ids = ownedOrgs.map((o) => o.organizationId);
+  return ids.length ? ids : [currentOrgId];
+}
+
 async function resolveProductCode(productId: string, orgId: string): Promise<string> {
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
   const [prod] = await db
     .select({ productCode: product.productCode })
     .from(product)
-    .where(and(eq(product.id, productId), eq(product.organizationId, orgId)))
+    .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds)))
     .limit(1);
   if (!prod) throw new Error(`Product ${productId} not found in org`);
   return prod.productCode;

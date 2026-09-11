@@ -1,4 +1,4 @@
-import { getPackingListDetail, getPackingListDetailCentralized } from "@/server/packing-list";
+import { getPackingListDetail, getPackingListDetailCentralized, type PackingListItemEnriched } from "@/server/packing-list";
 import { getOrganizationBranding } from "@/server/organization-profile";
 import { getProductImageUrl } from "@/helper/product-image";
 import { db } from "@/db";
@@ -99,6 +99,55 @@ function fmtDateTime(d: Date | null): string {
   });
 }
 
+// ── Report kinds ─────────────────────────────────────────────────────────
+// Two reports share this exact rendering pipeline: the supplier-facing
+// discrepancy report (short-received / returned-to-supplier lines) and the
+// in-house repair report (lines sent for internal repair instead). Same
+// layout, different data slice, labels, and photo category.
+type ReportKind = "return" | "repair";
+
+interface ReportConfig {
+  kind: ReportKind;
+  title: string;
+  filenameSuffix: string;
+  sheetName: string;
+  flagColumnLabel: string;
+  notesColumnLabel: string;
+  recipientLabel: string;
+  countNoun: string;
+  flagLineText: (qty: number, uom: string, notes: string) => string;
+  legendText: (prefix: string) => string;
+}
+
+const REPORT_CONFIGS: Record<ReportKind, ReportConfig> = {
+  return: {
+    kind: "return",
+    title: "SUPPLIER DISCREPANCY REPORT",
+    filenameSuffix: "discrepancy_report",
+    sheetName: "Discrepancies",
+    flagColumnLabel: "Returned",
+    notesColumnLabel: "Return Notes",
+    recipientLabel: "To",
+    countNoun: "with issues",
+    flagLineText: (qty, uom, notes) => `Returned: ${qty} ${uom} to supplier${notes ? ` — ${notes}` : ""}`,
+    legendText: (prefix) =>
+      `Full-resolution photos are bundled with this download in an images/ folder — ${prefix}-item-<No.>-photo.jpg and ${prefix}-item-<No.>-evidence-<n>.jpg (n = the numbered badge on each thumbnail below); some PDF viewers let you click a thumbnail to open its file directly.`,
+  },
+  repair: {
+    kind: "repair",
+    title: "IN-HOUSE REPAIR REPORT",
+    filenameSuffix: "repair_report",
+    sheetName: "Repairs",
+    flagColumnLabel: "Repair Qty",
+    notesColumnLabel: "Repair Notes",
+    recipientLabel: "Supplier",
+    countNoun: "sent for repair",
+    flagLineText: (qty, uom, notes) => `Sent for in-house repair: ${qty} ${uom}${notes ? ` — ${notes}` : ""}`,
+    legendText: (prefix) =>
+      `Full-resolution photos are bundled with this download in an images/ folder — ${prefix}-item-<No.>-photo.jpg and ${prefix}-item-<No.>-evidence-<n>.jpg (n = the numbered badge on each thumbnail below); some PDF viewers let you click a thumbnail to open its file directly.`,
+  },
+};
+
 type IssueItem = {
   // Sequential position of this row within the report (1, 2, 3…) — distinct
   // from poLineNo below, since a packing list can span multiple POs and a
@@ -118,6 +167,8 @@ type IssueItem = {
   expected: number;
   received: number;
   shortfall: number;
+  // Quantity flagged for THIS report's kind — returned-to-supplier qty on
+  // the return report, repair qty on the repair report.
   returned: number;
   returnNotes: string;
   // Product identification photo — the item's own uploaded image, falling
@@ -125,9 +176,10 @@ type IssueItem = {
   // photos below: this one shows WHAT the product is, not what's wrong
   // with this particular shipment.
   identityImageUrl: string | null;
-  // Every photo actually attached during inspection for this line's return
-  // — previously only the first one was ever shown and the rest silently
-  // dropped; all of them are report-worthy evidence of the finding.
+  // Every photo actually attached during inspection for this line, under
+  // this report's own photo category ("return" or "repair") — previously
+  // only the first one was ever shown and the rest silently dropped; all of
+  // them are report-worthy evidence of the finding.
   evidenceImageUrls: string[];
   // Inspection/approval happen per line (different reviewers can handle
   // different rows of the same packing list) — so these are per-item, not a
@@ -140,9 +192,9 @@ type IssueItem = {
 
 type CachedImage = { buffer: Buffer; extension: "jpeg" | "png" | "gif" };
 
-// Fetched once, shared between the PDF and Excel builders — best-effort per
-// image, a failed fetch just means that one row renders without a picture
-// rather than failing the whole report.
+// Fetched once, shared between both report kinds and both the PDF and Excel
+// builders — best-effort per image, a failed fetch just means that one row
+// renders without a picture rather than failing the whole report.
 async function fetchImages(urls: (string | null)[]): Promise<Map<string, CachedImage>> {
   const cache = new Map<string, CachedImage>();
   const unique = [...new Set(urls.filter((u): u is string => !!u))];
@@ -161,36 +213,90 @@ async function fetchImages(urls: (string | null)[]): Promise<Map<string, CachedI
   return cache;
 }
 
+// ── Line items ───────────────────────────────────────────────────────────
+
+function buildIssueItems(
+  items: PackingListItemEnriched[],
+  poLabelById: Map<string, string>,
+  poLineNoById: Map<string, number | null>,
+  kind: ReportKind,
+): IssueItem[] {
+  return items
+    .map((item): Omit<IssueItem, "no"> | null => {
+      const expected = parseFloat(item.qtyExpected) || 0;
+      const received = parseFloat(item.draftQtyReceived ?? item.qtyExpected) || 0;
+      const shortfall = Math.max(0, expected - received);
+      const returnQty = parseFloat(item.draftQtyReturn ?? "0") || 0;
+      const repairQty = parseFloat(item.draftQtyRepair ?? "0") || 0;
+      const flagQty = kind === "return" ? returnQty : repairQty;
+      const flagNotes = kind === "return" ? (item.draftReturnNotes ?? "") : (item.draftRepairNotes ?? "");
+      // The return report also surfaces a plain shortfall (received < expected)
+      // even with nothing formally returned; the repair report only ever
+      // includes a line when something was actually sent for repair.
+      const include = kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0;
+      if (!include) return null;
+
+      const evidencePhotos = item.photos.filter((p) => p.category === kind);
+      const catalogImageUrl = item.productCode ? getProductImageUrl(item.productCode) || null : null;
+      return {
+        poLabel: poLabelById.get(item.purchaseOrderId) ?? item.purchaseOrderId,
+        poLineNo: item.purchaseOrderItemId ? (poLineNoById.get(item.purchaseOrderItemId) ?? null) : null,
+        productCode: item.productCode ?? "",
+        designBrandName: item.designBrandName?.trim() ? item.designBrandName : null,
+        designBrandCode: item.designBrandCode?.trim() ? item.designBrandCode : null,
+        description: item.description ?? item.productCode ?? "",
+        uom: item.uom ?? "",
+        expected,
+        received,
+        shortfall,
+        returned: flagQty,
+        returnNotes: flagNotes,
+        identityImageUrl: item.imageUrl ?? catalogImageUrl,
+        evidenceImageUrls: evidencePhotos.map((p) => p.url),
+        inspectedByName: item.draftInspectedByName,
+        inspectedAt: item.draftInspectedAt,
+        approvedByName: item.draftApprovedByName,
+        approvedAt: item.draftApprovedAt,
+      };
+    })
+    .filter((i): i is Omit<IssueItem, "no"> => i !== null)
+    // Numbered only after filtering, so the sequence is 1..N over what this
+    // report actually shows, not the packing list's full item list.
+    .map((issue, idx) => ({ ...issue, no: idx + 1 }));
+}
+
 // ── Full-res image bundling ─────────────────────────────────────────────
 // The PDF only ever shows small thumbnails (limited page space), so the
 // same images fetched for those thumbnails are also handed out as
 // full-resolution files alongside the PDF, named to match the caption
 // printed under/on each thumbnail — a reader can go straight from a photo
 // in the report to its full-size file without guessing which is which.
+// Prefixed by report kind ("return"/"repair") since both reports' images
+// can end up bundled together in the same zip's images/ folder.
 function extOf(cached: CachedImage): string {
   return cached.extension === "jpeg" ? "jpg" : cached.extension;
 }
 
-function identityFilename(issue: IssueItem, images: Map<string, CachedImage>): string | null {
+function identityFilename(issue: IssueItem, images: Map<string, CachedImage>, prefix: string): string | null {
   if (!issue.identityImageUrl) return null;
   const cached = images.get(issue.identityImageUrl);
   if (!cached) return null;
-  return `item-${issue.no}-photo.${extOf(cached)}`;
+  return `${prefix}-item-${issue.no}-photo.${extOf(cached)}`;
 }
 
-function evidenceFilename(issue: IssueItem, idx: number, images: Map<string, CachedImage>): string | null {
+function evidenceFilename(issue: IssueItem, idx: number, images: Map<string, CachedImage>, prefix: string): string | null {
   const cached = images.get(issue.evidenceImageUrls[idx]);
   if (!cached) return null;
-  return `item-${issue.no}-evidence-${idx + 1}.${extOf(cached)}`;
+  return `${prefix}-item-${issue.no}-evidence-${idx + 1}.${extOf(cached)}`;
 }
 
-function buildImageZipEntries(issues: IssueItem[], images: Map<string, CachedImage>): { name: string; buffer: Buffer }[] {
+function buildImageZipEntries(issues: IssueItem[], images: Map<string, CachedImage>, prefix: string): { name: string; buffer: Buffer }[] {
   const entries: { name: string; buffer: Buffer }[] = [];
   for (const issue of issues) {
-    const idFn = identityFilename(issue, images);
+    const idFn = identityFilename(issue, images, prefix);
     if (idFn) entries.push({ name: `images/${idFn}`, buffer: images.get(issue.identityImageUrl!)!.buffer });
     issue.evidenceImageUrls.forEach((url, idx) => {
-      const fn = evidenceFilename(issue, idx, images);
+      const fn = evidenceFilename(issue, idx, images, prefix);
       if (fn) entries.push({ name: `images/${fn}`, buffer: images.get(url)!.buffer });
     });
   }
@@ -199,7 +305,8 @@ function buildImageZipEntries(issues: IssueItem[], images: Map<string, CachedIma
 
 // ── Excel ────────────────────────────────────────────────────────────────
 
-async function buildXlsxResponse(
+async function buildXlsxBuffer(
+  config: ReportConfig,
   packingListNo: string,
   supplierRefNo: string | null,
   supplierName: string,
@@ -207,9 +314,9 @@ async function buildXlsxResponse(
   brandColorHex: string,
   issues: IssueItem[],
   images: Map<string, CachedImage>,
-): Promise<Response> {
+): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet("Discrepancies");
+  const sheet = workbook.addWorksheet(config.sheetName);
   const accentArgb = `FF${brandColorHex.replace("#", "").toUpperCase()}`;
   const thinBorder: Partial<ExcelJS.Borders> = {
     top: { style: "thin", color: { argb: "FFD1D5DB" } },
@@ -219,13 +326,13 @@ async function buildXlsxResponse(
   };
 
   const maxEvidence = issues.reduce((max, i) => Math.max(max, i.evidenceImageUrls.length), 0);
-  const baseHeaders = ["No.", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", "Returned", "Return Notes", "Inspected By", "Inspected At", "Approved By", "Approved At"];
+  const baseHeaders = ["No.", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At"];
   const evidenceHeaders = Array.from({ length: maxEvidence }, (_, i) => `Evidence Photo ${i + 1}`);
   const headers = [...baseHeaders, ...evidenceHeaders];
   const totalCols = headers.length;
 
   sheet.mergeCells(1, 1, 1, totalCols);
-  sheet.getCell(1, 1).value = "SUPPLIER DISCREPANCY REPORT";
+  sheet.getCell(1, 1).value = config.title;
   sheet.getCell(1, 1).font = { bold: true, size: 14 };
 
   sheet.mergeCells(2, 1, 2, totalCols);
@@ -234,7 +341,7 @@ async function buildXlsxResponse(
 
   sheet.mergeCells(3, 1, 3, totalCols);
   const dateStr = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
-  sheet.getCell(3, 1).value = `To: ${supplierName}  ·  From: ${companyName}  ·  ${dateStr}`;
+  sheet.getCell(3, 1).value = `${config.recipientLabel}: ${supplierName}  ·  From: ${companyName}  ·  ${dateStr}`;
   sheet.getCell(3, 1).font = { size: 9, color: { argb: "FF888888" } };
 
   sheet.addRow([]);
@@ -251,7 +358,7 @@ async function buildXlsxResponse(
   const ROW_HEIGHT_PT = 62; // ~80px tall image plus a little breathing room
   const IMAGE_COL = baseHeaders.indexOf("Image");
   const DESC_COL = baseHeaders.indexOf("Description");
-  const NOTES_COL = baseHeaders.indexOf("Return Notes");
+  const NOTES_COL = baseHeaders.indexOf(config.notesColumnLabel);
   const EVIDENCE_START_COL = baseHeaders.length;
 
   function embedImage(url: string | null | undefined, colIndex0: number, rowIndex0: number) {
@@ -264,6 +371,8 @@ async function buildXlsxResponse(
       ext: { width: IMG_PX, height: IMG_PX },
     });
   }
+
+  const FLAG_COL = baseHeaders.indexOf(config.flagColumnLabel);
 
   issues.forEach((issue, i) => {
     const row = sheet.addRow([
@@ -296,7 +405,7 @@ async function buildXlsxResponse(
     });
     row.getCell(baseHeaders.indexOf("No.") + 1).font = { bold: true };
     if (issue.shortfall > 0) row.getCell(baseHeaders.indexOf("Short") + 1).font = { bold: true, color: { argb: "FF92400E" } };
-    if (issue.returned > 0) row.getCell(baseHeaders.indexOf("Returned") + 1).font = { bold: true, color: { argb: "FFB91C1C" } };
+    if (issue.returned > 0) row.getCell(FLAG_COL + 1).font = { bold: true, color: { argb: "FFB91C1C" } };
 
     // header(row1) + pl-no(row2) + to/from(row3) + blank(row4) + col-header(row5) + this row (1-indexed) -> 0-indexed anchor row
     const rowIndex0 = 5 + i;
@@ -317,8 +426,8 @@ async function buildXlsxResponse(
     { width: 9 },   // Expected
     { width: 9 },   // Received
     { width: 7 },   // Short
-    { width: 9 },   // Returned
-    { width: 32 },  // Return Notes
+    { width: 9 },   // flag qty
+    { width: 32 },  // flag notes
     { width: 16 },  // Inspected By
     { width: 16 },  // Inspected At
     { width: 16 },  // Approved By
@@ -327,13 +436,7 @@ async function buildXlsxResponse(
   ];
 
   const buf = await workbook.xlsx.writeBuffer();
-  const safeNo = packingListNo.replace(/[^a-z0-9]/gi, "_");
-  return new Response(buf as ArrayBuffer, {
-    headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="${safeNo}_discrepancy_report.xlsx"`,
-    },
-  });
+  return buf as unknown as Buffer;
 }
 
 // ── PDF ──────────────────────────────────────────────────────────────────
@@ -366,7 +469,7 @@ const EVID_THUMB = 34;
 const EVID_GAP = 5;
 const EVID_LABEL_H = 11;
 
-function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: number): Measured {
+function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: number, config: ReportConfig): Measured {
   const poLineText = issue.poLineNo !== null ? `  ·  PO Line ${issue.poLineNo}` : "";
   const headerLines = wrap(`[${issue.poLabel}]  ${issue.productCode}${poLineText}`, fontB, 8.5, detMaxW);
 
@@ -376,9 +479,7 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
   const brandLine = brandBits.length > 0 ? wrap(brandBits.join("  ·  "), fontR, 8, detMaxW) : [];
 
   const descLines = wrap(issue.description, fontR, 8, detMaxW);
-  const returnLine = issue.returned > 0
-    ? `Returned: ${issue.returned} ${issue.uom} to supplier${issue.returnNotes ? ` — ${issue.returnNotes}` : ""}`
-    : "";
+  const returnLine = issue.returned > 0 ? config.flagLineText(issue.returned, issue.uom, issue.returnNotes) : "";
   const returnLines = returnLine ? wrap(returnLine, fontR, 7.5, detMaxW) : [];
 
   const evidenceThumbsPerRow = Math.max(1, Math.floor(detMaxW / (EVID_THUMB + EVID_GAP)));
@@ -432,6 +533,249 @@ function addOpenFileLink(
   page.node.addAnnot(context.register(annot));
 }
 
+// Builds one full report PDF (either kind) as raw bytes — each report gets
+// its own PDFDocument since pdf-lib's embedded PDFImage objects can't be
+// shared across separate documents, so images are re-embedded per report
+// (only the ones that report's own issues actually reference).
+async function buildReportPdfBytes(
+  config: ReportConfig,
+  packingListNo: string,
+  supplierRefNo: string | null,
+  supplierName: string,
+  companyName: string,
+  issues: IssueItem[],
+  images: Map<string, CachedImage>,
+  accent: ReturnType<typeof rgb>,
+  accentDark: ReturnType<typeof rgb>,
+  hasBundledImages: boolean,
+  prefix: string,
+): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.create();
+  const fontR = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontB = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const neededUrls = new Set(issues.flatMap((i) => [i.identityImageUrl, ...i.evidenceImageUrls]).filter((u): u is string => !!u));
+  const pdfImageCache = new Map<string, PDFImage>();
+  for (const url of neededUrls) {
+    const cached = images.get(url);
+    if (!cached) continue;
+    try {
+      const img = cached.extension === "png" ? await pdfDoc.embedPng(cached.buffer) : await pdfDoc.embedJpg(cached.buffer);
+      pdfImageCache.set(url, img);
+    } catch { /* unsupported format — skip */ }
+  }
+
+  // ── Layout ─────────────────────────────────────────────────────────────
+  // One extra line of header room to explain the images/ folder naming
+  // convention, only when there's actually a zip with photos in it.
+  const HDR_H = hasBundledImages ? 90 : 78;
+  const COLHDR_H = 18;
+  const FOOTER_H = 20;
+  const availH = H - MT - HDR_H - COLHDR_H - MB - FOOTER_H;
+  const COL_DET = CW - NO_COL_W - IMG_COL_W;
+  const detMaxW = COL_DET - 16;
+
+  const measured = issues.map((issue) => measure(issue, fontR, fontB, detMaxW, config));
+
+  // Paginate by accumulated row height rather than a fixed row count, so
+  // no row's text, images, or evidence photos are ever cut off to fit a
+  // preset grid.
+  const pages: Measured[][] = [];
+  let current: Measured[] = [];
+  let currentH = 0;
+  for (const m of measured) {
+    if (current.length > 0 && currentH + m.height > availH) {
+      pages.push(current);
+      current = [];
+      currentH = 0;
+    }
+    current.push(m);
+    currentH += m.height;
+  }
+  if (current.length > 0) pages.push(current);
+
+  const totalPgs = pages.length;
+  const dateStr = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+
+  for (let pi = 0; pi < totalPgs; pi++) {
+    const page = pdfDoc.addPage([W, H]);
+    const pageRows = pages[pi];
+    const pageH = pageRows.reduce((sum, m) => sum + m.height, 0);
+
+    // Header band
+    page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: HDR_H, color: accentDark });
+    page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: 3, color: accent });
+    page.drawText(config.title, { x: ML, y: H - 24, size: 13, font: fontB, color: C_WHITE });
+    page.drawText(`Packing List ${packingListNo}${supplierRefNo ? `  ·  Supplier ref ${supplierRefNo}` : ""}`, {
+      x: ML, y: H - 40, size: 8.5, font: fontR, color: rgb(0.88, 0.88, 0.9),
+    });
+    page.drawText(`${config.recipientLabel}: ${sanitize(supplierName)}`, { x: ML, y: H - 54, size: 9, font: fontB, color: C_WHITE });
+    page.drawText(companyName, { x: ML, y: H - 66, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
+    if (hasBundledImages) {
+      const legend = config.legendText(prefix);
+      page.drawText(trunc(legend, fontR, 6.5, CW), { x: ML, y: H - 78, size: 6.5, font: fontR, color: rgb(0.75, 0.75, 0.8) });
+    }
+
+    const pgLabel = `Page ${pi + 1} / ${totalPgs}`;
+    page.drawText(pgLabel, { x: W - MR - fontB.widthOfTextAtSize(pgLabel, 9), y: H - 24, size: 9, font: fontB, color: rgb(0.85, 0.85, 0.9) });
+    page.drawText(dateStr, { x: W - MR - fontR.widthOfTextAtSize(dateStr, 7.5), y: H - 38, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
+    const countLabel = `${issues.length} line${issues.length !== 1 ? "s" : ""} ${config.countNoun}`;
+    page.drawText(countLabel, { x: W - MR - fontR.widthOfTextAtSize(countLabel, 7), y: H - 50, size: 7, font: fontR, color: rgb(0.65, 0.65, 0.7) });
+
+    // Column header
+    const tableTopY = H - HDR_H - COLHDR_H;
+    const tableBottomY = tableTopY - pageH;
+    page.drawRectangle({ x: ML, y: tableTopY, width: CW, height: COLHDR_H, color: accent });
+    page.drawText("NO.", { x: ML + (NO_COL_W - fontB.widthOfTextAtSize("NO.", 6.5)) / 2, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
+    page.drawText("IMAGE", { x: ML + NO_COL_W + (IMG_COL_W - fontB.widthOfTextAtSize("IMAGE", 6.5)) / 2, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
+    page.drawText("ITEM / ISSUE", { x: ML + NO_COL_W + IMG_COL_W + 8, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
+
+    page.drawLine({ start: { x: ML + NO_COL_W, y: tableBottomY }, end: { x: ML + NO_COL_W, y: tableTopY }, thickness: 0.3, color: C_LINE });
+    page.drawLine({ start: { x: ML + NO_COL_W + IMG_COL_W, y: tableBottomY }, end: { x: ML + NO_COL_W + IMG_COL_W, y: tableTopY }, thickness: 0.3, color: C_LINE });
+
+    let rowTopY = tableTopY;
+    for (let ri = 0; ri < pageRows.length; ri++) {
+      const m = pageRows[ri];
+      const issue = m.issue;
+      const rowH = m.height;
+      const rowY = rowTopY - rowH;
+
+      if (ri % 2 === 1) page.drawRectangle({ x: ML, y: rowY, width: CW, height: rowH, color: C_ALT });
+      page.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
+
+      const noStr = String(issue.no);
+      page.drawText(noStr, { x: ML + (NO_COL_W - fontB.widthOfTextAtSize(noStr, 9)) / 2, y: rowY + rowH / 2 - 3, size: 9, font: fontB, color: C_MID });
+
+      // Image + its filename caption sit together as one centered block —
+      // the caption only appears when that file actually made it into the
+      // bundled zip (a fetch failure just means no thumbnail, no caption).
+      const img = issue.identityImageUrl ? pdfImageCache.get(issue.identityImageUrl) : undefined;
+      const idFn = identityFilename(issue, images, prefix);
+      const blockY = rowY + (rowH - IMG_BLOCK_H) / 2;
+      const imgAreaY = idFn ? blockY + IMG_CAPTION_GAP + IMG_CAPTION_SIZE : blockY;
+      const imgAreaH = idFn ? IMG_SZ : IMG_BLOCK_H;
+      if (img) {
+        const scale = Math.min(IMG_SZ / img.height, IMG_SZ / img.width, 1);
+        const imgW = img.width * scale;
+        const imgH = img.height * scale;
+        page.drawImage(img, {
+          x: ML + NO_COL_W + (IMG_COL_W - imgW) / 2,
+          y: imgAreaY + (imgAreaH - imgH) / 2,
+          width: imgW,
+          height: imgH,
+        });
+      } else {
+        const ph = Math.min(IMG_SZ * 0.7, imgAreaH);
+        page.drawRectangle({ x: ML + NO_COL_W + (IMG_COL_W - ph) / 2, y: imgAreaY + (imgAreaH - ph) / 2, width: ph, height: ph, color: C_LINE });
+      }
+      if (idFn) {
+        const capText = trunc(idFn, fontR, IMG_CAPTION_SIZE, IMG_COL_W - 8);
+        page.drawText(capText, {
+          x: ML + NO_COL_W + (IMG_COL_W - fontR.widthOfTextAtSize(capText, IMG_CAPTION_SIZE)) / 2,
+          y: blockY,
+          size: IMG_CAPTION_SIZE,
+          font: fontR,
+          color: C_LITE,
+        });
+        addOpenFileLink(
+          pdfDoc,
+          page,
+          { x: ML + NO_COL_W, y: rowY, width: IMG_COL_W, height: rowH },
+          `images/${idFn}`,
+        );
+      }
+
+      const detX = ML + NO_COL_W + IMG_COL_W + 8;
+      let detY = rowY + rowH - 12;
+
+      for (const line of m.headerLines) {
+        page.drawText(line, { x: detX, y: detY, size: 8.5, font: fontB, color: accent });
+        detY -= HEADER_LINE_H;
+      }
+
+      for (const line of m.brandLine) {
+        page.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_BRAND });
+        detY -= TEXT_LINE_H;
+      }
+
+      for (const line of m.descLines) {
+        page.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_DARK });
+        detY -= TEXT_LINE_H;
+      }
+
+      const qtyStr = `Expected ${issue.expected}${issue.uom}  ·  Received ${issue.received}${issue.uom}`;
+      page.drawText(qtyStr, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MID });
+      detY -= TEXT_LINE_H;
+
+      if (issue.shortfall > 0) {
+        page.drawText(`Short by ${issue.shortfall} ${issue.uom}`, { x: detX, y: detY, size: 8, font: fontB, color: C_AMBER });
+        detY -= TEXT_LINE_H;
+      }
+
+      for (const line of m.returnLines) {
+        page.drawText(line, { x: detX, y: detY, size: 7.5, font: fontB, color: C_RED });
+        detY -= RETURN_LINE_H;
+      }
+
+      if (issue.evidenceImageUrls.length > 0) {
+        page.drawText(`Photos attached (${issue.evidenceImageUrls.length}):`, { x: detX, y: detY, size: 7, font: fontB, color: C_MID });
+        detY -= EVID_LABEL_H;
+
+        issue.evidenceImageUrls.forEach((url, ei) => {
+          const col = ei % m.evidenceThumbsPerRow;
+          const rowInGroup = Math.floor(ei / m.evidenceThumbsPerRow);
+          const thumbX = detX + col * (EVID_THUMB + EVID_GAP);
+          const thumbTopY = detY - rowInGroup * (EVID_THUMB + EVID_GAP);
+          const thumbY = thumbTopY - EVID_THUMB;
+
+          const evImg = pdfImageCache.get(url);
+          if (evImg) {
+            const scale = Math.min(EVID_THUMB / evImg.height, EVID_THUMB / evImg.width, 1);
+            page.drawImage(evImg, {
+              x: thumbX + (EVID_THUMB - evImg.width * scale) / 2,
+              y: thumbY + (EVID_THUMB - evImg.height * scale) / 2,
+              width: evImg.width * scale,
+              height: evImg.height * scale,
+            });
+            page.drawRectangle({ x: thumbX, y: thumbY, width: EVID_THUMB, height: EVID_THUMB, borderColor: C_LINE, borderWidth: 0.4 });
+          } else {
+            page.drawRectangle({ x: thumbX, y: thumbY, width: EVID_THUMB, height: EVID_THUMB, color: C_LINE });
+          }
+
+          // Numbered badge matching the file's "-evidence-<n>" suffix in
+          // the bundled zip, so a thumbnail here maps straight to its file.
+          const evFn = evidenceFilename(issue, ei, images, prefix);
+          if (evFn) {
+            const label = String(ei + 1);
+            const lblW = fontB.widthOfTextAtSize(label, 5.5) + 3;
+            page.drawRectangle({ x: thumbX, y: thumbY, width: lblW, height: 7.5, color: C_WHITE, opacity: 0.85 });
+            page.drawText(label, { x: thumbX + 1.5, y: thumbY + 1.8, size: 5.5, font: fontB, color: C_DARK });
+            addOpenFileLink(pdfDoc, page, { x: thumbX, y: thumbY, width: EVID_THUMB, height: EVID_THUMB }, `images/${evFn}`);
+          }
+        });
+        detY -= m.evidenceRows * (EVID_THUMB + EVID_GAP);
+      }
+
+      for (const line of m.reviewLines) {
+        page.drawText(line, { x: detX, y: detY, size: 7, font: fontR, color: C_LITE });
+        detY -= RETURN_LINE_H;
+      }
+
+      rowTopY = rowY;
+    }
+
+    page.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_LINE, borderWidth: 0.4 });
+
+    page.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.6, color: accent });
+    const footLeft = `${companyName.toUpperCase()}  ·  ${config.title}  ·  COMPUTER GENERATED DOCUMENT`;
+    page.drawText(trunc(footLeft, fontR, 7, CW * 0.75), { x: ML, y: MB + 8, size: 7, font: fontR, color: C_LITE });
+    const footRight = `${pi + 1} / ${totalPgs}`;
+    page.drawText(footRight, { x: W - MR - fontR.widthOfTextAtSize(footRight, 7), y: MB + 8, size: 7, font: fontR, color: C_LITE });
+  }
+
+  return pdfDoc.save();
+}
+
 export async function GET(req: Request, { params }: Props) {
   try {
     const { id } = await params;
@@ -479,63 +823,62 @@ export async function GET(req: Request, { params }: Props) {
       : [];
     const poLineNoById = new Map(poItemRows.map((r) => [r.id, r.rowNo]));
 
-    const issues: IssueItem[] = pl.items
-      .map((item): Omit<IssueItem, "no"> | null => {
-        const expected = parseFloat(item.qtyExpected) || 0;
-        const received = parseFloat(item.draftQtyReceived ?? item.qtyExpected) || 0;
-        const returned = parseFloat(item.draftQtyReturn ?? "0") || 0;
-        const shortfall = Math.max(0, expected - received);
-        if (shortfall <= 0 && returned <= 0) return null;
+    const returnIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "return");
+    const repairIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "repair");
+    const hasReturn = returnIssues.length > 0;
+    const hasRepair = repairIssues.length > 0;
 
-        const evidencePhotos = item.photos.filter((p) => p.category === "return");
-        const catalogImageUrl = item.productCode ? getProductImageUrl(item.productCode) || null : null;
-        return {
-          poLabel: poLabelById.get(item.purchaseOrderId) ?? item.purchaseOrderId,
-          poLineNo: item.purchaseOrderItemId ? (poLineNoById.get(item.purchaseOrderItemId) ?? null) : null,
-          productCode: item.productCode ?? "",
-          designBrandName: item.designBrandName?.trim() ? item.designBrandName : null,
-          designBrandCode: item.designBrandCode?.trim() ? item.designBrandCode : null,
-          description: item.description ?? item.productCode ?? "",
-          uom: item.uom ?? "",
-          expected,
-          received,
-          shortfall,
-          returned,
-          returnNotes: item.draftReturnNotes ?? "",
-          identityImageUrl: item.imageUrl ?? catalogImageUrl,
-          evidenceImageUrls: evidencePhotos.map((p) => p.url),
-          inspectedByName: item.draftInspectedByName,
-          inspectedAt: item.draftInspectedAt,
-          approvedByName: item.draftApprovedByName,
-          approvedAt: item.draftApprovedAt,
-        };
-      })
-      .filter((i): i is Omit<IssueItem, "no"> => i !== null)
-      // Numbered only after filtering, so the sequence is 1..N over what the
-      // report actually shows, not the packing list's full item list.
-      .map((issue, idx) => ({ ...issue, no: idx + 1 }));
-
-    if (issues.length === 0) {
-      return new Response("No discrepancies to report — every item was received in full", { status: 400 });
+    if (!hasReturn && !hasRepair) {
+      return new Response("Nothing to report — every item was received in full and nothing was sent for repair", { status: 400 });
     }
 
     // Branding must reflect the org that issued the Supplier PO (the packing
     // list's own org), not whichever org the downloader currently has active
     // — relevant when this is fetched via the centralized/cross-org fallback.
     const orgProfile = await getOrganizationBranding(pl.organizationId);
-    const allImageUrls = issues.flatMap((i) => [i.identityImageUrl, ...i.evidenceImageUrls]);
+    const allImageUrls = [...returnIssues, ...repairIssues].flatMap((i) => [i.identityImageUrl, ...i.evidenceImageUrls]);
     const images = await fetchImages(allImageUrls);
+    const supplierName = (pl.supplierSnapshot as { name?: string } | null)?.name ?? "Supplier";
+    const safeNo = pl.packingListNo.replace(/[^a-z0-9]/gi, "_");
 
     if (format === "xlsx") {
-      const supplierName = (pl.supplierSnapshot as { name?: string } | null)?.name ?? "Supplier";
-      return buildXlsxResponse(pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName, orgProfile.brandColor, issues, images);
+      const parts: { name: string; buf: Buffer }[] = [];
+      if (hasReturn) {
+        const buf = await buildXlsxBuffer(REPORT_CONFIGS.return, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName, orgProfile.brandColor, returnIssues, images);
+        parts.push({ name: `${safeNo}_discrepancy_report.xlsx`, buf });
+      }
+      if (hasRepair) {
+        const buf = await buildXlsxBuffer(REPORT_CONFIGS.repair, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName, orgProfile.brandColor, repairIssues, images);
+        parts.push({ name: `${safeNo}_repair_report.xlsx`, buf });
+      }
+
+      if (parts.length === 1) {
+        return new Response(parts[0].buf as unknown as ArrayBuffer, {
+          headers: {
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Content-Disposition": `attachment; filename="${parts[0].name}"`,
+          },
+        });
+      }
+
+      const zip = new JSZip();
+      for (const p of parts) zip.file(p.name, p.buf);
+      const zipBuf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+      const zipName = hasReturn ? `${safeNo}_discrepancy_report.zip` : `${safeNo}_repair_report.zip`;
+      return new Response(zipBuf as unknown as ArrayBuffer, {
+        headers: {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="${zipName}"`,
+        },
+      });
     }
 
     // The PDF can only ever show small thumbnails, so when there's at least
     // one photo, ship a zip with the PDF plus every photo at full size —
     // named to match the caption/number printed on its thumbnail.
-    const imageEntries = buildImageZipEntries(issues, images);
-    const hasBundledImages = imageEntries.length > 0;
+    const returnImageEntries = hasReturn ? buildImageZipEntries(returnIssues, images, "return") : [];
+    const repairImageEntries = hasRepair ? buildImageZipEntries(repairIssues, images, "repair") : [];
+    const allImageEntries = [...returnImageEntries, ...repairImageEntries];
 
     const accent = (() => {
       const hex = orgProfile.brandColor.replace("#", "");
@@ -552,250 +895,42 @@ export async function GET(req: Request, { params }: Props) {
       return rgb(Math.max(0, r * 0.55), Math.max(0, g * 0.55), Math.max(0, b * 0.55));
     })();
 
-    const pdfDoc = await PDFDocument.create();
-    const fontR = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const fontB = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-    // Embed each cached image once as a PDF XObject (pdf-lib embeds jpg/png
-    // only — a gif source, rare, just renders without a picture).
-    const pdfImageCache = new Map<string, PDFImage>();
-    for (const [url, cached] of images) {
-      try {
-        const img = cached.extension === "png" ? await pdfDoc.embedPng(cached.buffer) : await pdfDoc.embedJpg(cached.buffer);
-        pdfImageCache.set(url, img);
-      } catch { /* unsupported format — skip */ }
+    const pdfParts: { name: string; bytes: Uint8Array }[] = [];
+    if (hasReturn) {
+      const bytes = await buildReportPdfBytes(
+        REPORT_CONFIGS.return, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName,
+        returnIssues, images, accent, accentDark, returnImageEntries.length > 0, "return",
+      );
+      pdfParts.push({ name: `${safeNo}_discrepancy_report.pdf`, bytes });
+    }
+    if (hasRepair) {
+      const bytes = await buildReportPdfBytes(
+        REPORT_CONFIGS.repair, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName,
+        repairIssues, images, accent, accentDark, repairImageEntries.length > 0, "repair",
+      );
+      pdfParts.push({ name: `${safeNo}_repair_report.pdf`, bytes });
     }
 
-    // ── Layout ─────────────────────────────────────────────────────────────
-    // One extra line of header room to explain the images/ folder naming
-    // convention, only when there's actually a zip with photos in it.
-    const HDR_H = hasBundledImages ? 90 : 78;
-    const COLHDR_H = 18;
-    const FOOTER_H = 20;
-    const availH = H - MT - HDR_H - COLHDR_H - MB - FOOTER_H;
-    const COL_DET = CW - NO_COL_W - IMG_COL_W;
-    const detMaxW = COL_DET - 16;
-
-    const measured = issues.map((issue) => measure(issue, fontR, fontB, detMaxW));
-
-    // Paginate by accumulated row height rather than a fixed row count, so
-    // no row's text, images, or evidence photos are ever cut off to fit a
-    // preset grid.
-    const pages: Measured[][] = [];
-    let current: Measured[] = [];
-    let currentH = 0;
-    for (const m of measured) {
-      if (current.length > 0 && currentH + m.height > availH) {
-        pages.push(current);
-        current = [];
-        currentH = 0;
-      }
-      current.push(m);
-      currentH += m.height;
-    }
-    if (current.length > 0) pages.push(current);
-
-    const totalPgs = pages.length;
-    const dateStr  = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
-    const supplierName = (pl.supplierSnapshot as { name?: string } | null)?.name ?? "Supplier";
-
-    for (let pi = 0; pi < totalPgs; pi++) {
-      const page = pdfDoc.addPage([W, H]);
-      const pageRows = pages[pi];
-      const pageH = pageRows.reduce((sum, m) => sum + m.height, 0);
-
-      // Header band
-      page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: HDR_H, color: accentDark });
-      page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: 3, color: accent });
-      page.drawText("SUPPLIER DISCREPANCY REPORT", { x: ML, y: H - 24, size: 13, font: fontB, color: C_WHITE });
-      page.drawText(`Packing List ${pl.packingListNo}${pl.supplierRefNo ? `  ·  Supplier ref ${pl.supplierRefNo}` : ""}`, {
-        x: ML, y: H - 40, size: 8.5, font: fontR, color: rgb(0.88, 0.88, 0.9),
-      });
-      page.drawText(`To: ${sanitize(supplierName)}`, { x: ML, y: H - 54, size: 9, font: fontB, color: C_WHITE });
-      page.drawText(orgProfile.companyName, { x: ML, y: H - 66, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
-      if (hasBundledImages) {
-        const legend = "Full-resolution photos are bundled with this download in an images/ folder — item-<No.>-photo.jpg and item-<No.>-evidence-<n>.jpg (n = the numbered badge on each thumbnail below); some PDF viewers let you click a thumbnail to open its file directly.";
-        page.drawText(trunc(legend, fontR, 6.5, CW), { x: ML, y: H - 78, size: 6.5, font: fontR, color: rgb(0.75, 0.75, 0.8) });
-      }
-
-      const pgLabel = `Page ${pi + 1} / ${totalPgs}`;
-      page.drawText(pgLabel, { x: W - MR - fontB.widthOfTextAtSize(pgLabel, 9), y: H - 24, size: 9, font: fontB, color: rgb(0.85, 0.85, 0.9) });
-      page.drawText(dateStr, { x: W - MR - fontR.widthOfTextAtSize(dateStr, 7.5), y: H - 38, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
-      const countLabel = `${issues.length} line${issues.length !== 1 ? "s" : ""} with issues`;
-      page.drawText(countLabel, { x: W - MR - fontR.widthOfTextAtSize(countLabel, 7), y: H - 50, size: 7, font: fontR, color: rgb(0.65, 0.65, 0.7) });
-
-      // Column header
-      const tableTopY = H - HDR_H - COLHDR_H;
-      const tableBottomY = tableTopY - pageH;
-      page.drawRectangle({ x: ML, y: tableTopY, width: CW, height: COLHDR_H, color: accent });
-      page.drawText("NO.", { x: ML + (NO_COL_W - fontB.widthOfTextAtSize("NO.", 6.5)) / 2, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
-      page.drawText("IMAGE", { x: ML + NO_COL_W + (IMG_COL_W - fontB.widthOfTextAtSize("IMAGE", 6.5)) / 2, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
-      page.drawText("ITEM / ISSUE", { x: ML + NO_COL_W + IMG_COL_W + 8, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
-
-      page.drawLine({ start: { x: ML + NO_COL_W, y: tableBottomY }, end: { x: ML + NO_COL_W, y: tableTopY }, thickness: 0.3, color: C_LINE });
-      page.drawLine({ start: { x: ML + NO_COL_W + IMG_COL_W, y: tableBottomY }, end: { x: ML + NO_COL_W + IMG_COL_W, y: tableTopY }, thickness: 0.3, color: C_LINE });
-
-      let rowTopY = tableTopY;
-      for (let ri = 0; ri < pageRows.length; ri++) {
-        const m = pageRows[ri];
-        const issue = m.issue;
-        const rowH = m.height;
-        const rowY = rowTopY - rowH;
-
-        if (ri % 2 === 1) page.drawRectangle({ x: ML, y: rowY, width: CW, height: rowH, color: C_ALT });
-        page.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
-
-        const noStr = String(issue.no);
-        page.drawText(noStr, { x: ML + (NO_COL_W - fontB.widthOfTextAtSize(noStr, 9)) / 2, y: rowY + rowH / 2 - 3, size: 9, font: fontB, color: C_MID });
-
-        // Image + its filename caption sit together as one centered block —
-        // the caption only appears when that file actually made it into the
-        // bundled zip (a fetch failure just means no thumbnail, no caption).
-        const img = issue.identityImageUrl ? pdfImageCache.get(issue.identityImageUrl) : undefined;
-        const idFn = identityFilename(issue, images);
-        const blockY = rowY + (rowH - IMG_BLOCK_H) / 2;
-        const imgAreaY = idFn ? blockY + IMG_CAPTION_GAP + IMG_CAPTION_SIZE : blockY;
-        const imgAreaH = idFn ? IMG_SZ : IMG_BLOCK_H;
-        if (img) {
-          const scale = Math.min(IMG_SZ / img.height, IMG_SZ / img.width, 1);
-          const imgW = img.width * scale;
-          const imgH = img.height * scale;
-          page.drawImage(img, {
-            x: ML + NO_COL_W + (IMG_COL_W - imgW) / 2,
-            y: imgAreaY + (imgAreaH - imgH) / 2,
-            width: imgW,
-            height: imgH,
-          });
-        } else {
-          const ph = Math.min(IMG_SZ * 0.7, imgAreaH);
-          page.drawRectangle({ x: ML + NO_COL_W + (IMG_COL_W - ph) / 2, y: imgAreaY + (imgAreaH - ph) / 2, width: ph, height: ph, color: C_LINE });
-        }
-        if (idFn) {
-          const capText = trunc(idFn, fontR, IMG_CAPTION_SIZE, IMG_COL_W - 8);
-          page.drawText(capText, {
-            x: ML + NO_COL_W + (IMG_COL_W - fontR.widthOfTextAtSize(capText, IMG_CAPTION_SIZE)) / 2,
-            y: blockY,
-            size: IMG_CAPTION_SIZE,
-            font: fontR,
-            color: C_LITE,
-          });
-          addOpenFileLink(
-            pdfDoc,
-            page,
-            { x: ML + NO_COL_W, y: rowY, width: IMG_COL_W, height: rowH },
-            `images/${idFn}`,
-          );
-        }
-
-        const detX = ML + NO_COL_W + IMG_COL_W + 8;
-        let detY = rowY + rowH - 12;
-
-        for (const line of m.headerLines) {
-          page.drawText(line, { x: detX, y: detY, size: 8.5, font: fontB, color: accent });
-          detY -= HEADER_LINE_H;
-        }
-
-        for (const line of m.brandLine) {
-          page.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_BRAND });
-          detY -= TEXT_LINE_H;
-        }
-
-        for (const line of m.descLines) {
-          page.drawText(line, { x: detX, y: detY, size: 8, font: fontR, color: C_DARK });
-          detY -= TEXT_LINE_H;
-        }
-
-        const qtyStr = `Expected ${issue.expected}${issue.uom}  ·  Received ${issue.received}${issue.uom}`;
-        page.drawText(qtyStr, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MID });
-        detY -= TEXT_LINE_H;
-
-        if (issue.shortfall > 0) {
-          page.drawText(`Short by ${issue.shortfall} ${issue.uom}`, { x: detX, y: detY, size: 8, font: fontB, color: C_AMBER });
-          detY -= TEXT_LINE_H;
-        }
-
-        for (const line of m.returnLines) {
-          page.drawText(line, { x: detX, y: detY, size: 7.5, font: fontB, color: C_RED });
-          detY -= RETURN_LINE_H;
-        }
-
-        if (issue.evidenceImageUrls.length > 0) {
-          page.drawText(`Photos attached (${issue.evidenceImageUrls.length}):`, { x: detX, y: detY, size: 7, font: fontB, color: C_MID });
-          detY -= EVID_LABEL_H;
-
-          issue.evidenceImageUrls.forEach((url, ei) => {
-            const col = ei % m.evidenceThumbsPerRow;
-            const rowInGroup = Math.floor(ei / m.evidenceThumbsPerRow);
-            const thumbX = detX + col * (EVID_THUMB + EVID_GAP);
-            const thumbTopY = detY - rowInGroup * (EVID_THUMB + EVID_GAP);
-            const thumbY = thumbTopY - EVID_THUMB;
-
-            const evImg = pdfImageCache.get(url);
-            if (evImg) {
-              const scale = Math.min(EVID_THUMB / evImg.height, EVID_THUMB / evImg.width, 1);
-              page.drawImage(evImg, {
-                x: thumbX + (EVID_THUMB - evImg.width * scale) / 2,
-                y: thumbY + (EVID_THUMB - evImg.height * scale) / 2,
-                width: evImg.width * scale,
-                height: evImg.height * scale,
-              });
-              page.drawRectangle({ x: thumbX, y: thumbY, width: EVID_THUMB, height: EVID_THUMB, borderColor: C_LINE, borderWidth: 0.4 });
-            } else {
-              page.drawRectangle({ x: thumbX, y: thumbY, width: EVID_THUMB, height: EVID_THUMB, color: C_LINE });
-            }
-
-            // Numbered badge matching the file's "-evidence-<n>" suffix in
-            // the bundled zip, so a thumbnail here maps straight to its file.
-            const evFn = evidenceFilename(issue, ei, images);
-            if (evFn) {
-              const label = String(ei + 1);
-              const lblW = fontB.widthOfTextAtSize(label, 5.5) + 3;
-              page.drawRectangle({ x: thumbX, y: thumbY, width: lblW, height: 7.5, color: C_WHITE, opacity: 0.85 });
-              page.drawText(label, { x: thumbX + 1.5, y: thumbY + 1.8, size: 5.5, font: fontB, color: C_DARK });
-              addOpenFileLink(pdfDoc, page, { x: thumbX, y: thumbY, width: EVID_THUMB, height: EVID_THUMB }, `images/${evFn}`);
-            }
-          });
-          detY -= m.evidenceRows * (EVID_THUMB + EVID_GAP);
-        }
-
-        for (const line of m.reviewLines) {
-          page.drawText(line, { x: detX, y: detY, size: 7, font: fontR, color: C_LITE });
-          detY -= RETURN_LINE_H;
-        }
-
-        rowTopY = rowY;
-      }
-
-      page.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_LINE, borderWidth: 0.4 });
-
-      page.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.6, color: accent });
-      const footLeft = `${orgProfile.companyName.toUpperCase()}  ·  SUPPLIER DISCREPANCY REPORT  ·  COMPUTER GENERATED DOCUMENT`;
-      page.drawText(trunc(footLeft, fontR, 7, CW * 0.75), { x: ML, y: MB + 8, size: 7, font: fontR, color: C_LITE });
-      const footRight = `${pi + 1} / ${totalPgs}`;
-      page.drawText(footRight, { x: W - MR - fontR.widthOfTextAtSize(footRight, 7), y: MB + 8, size: 7, font: fontR, color: C_LITE });
-    }
-
-    const bytes = await pdfDoc.save();
-    const safeNo = pl.packingListNo.replace(/[^a-z0-9]/gi, "_");
-
-    if (!hasBundledImages) {
-      return new Response(Buffer.from(bytes), {
+    if (pdfParts.length === 1 && allImageEntries.length === 0) {
+      const only = pdfParts[0];
+      return new Response(Buffer.from(only.bytes), {
         headers: {
           "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="${safeNo}_discrepancy_report.pdf"`,
+          "Content-Disposition": `attachment; filename="${only.name}"`,
         },
       });
     }
 
     const zip = new JSZip();
-    zip.file(`${safeNo}_discrepancy_report.pdf`, Buffer.from(bytes));
-    for (const entry of imageEntries) zip.file(entry.name, entry.buffer);
+    for (const p of pdfParts) zip.file(p.name, Buffer.from(p.bytes));
+    for (const entry of allImageEntries) zip.file(entry.name, entry.buffer);
     const zipBuf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    const zipName = hasReturn ? `${safeNo}_discrepancy_report.zip` : `${safeNo}_repair_report.zip`;
 
     return new Response(zipBuf as unknown as ArrayBuffer, {
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${safeNo}_discrepancy_report.zip"`,
+        "Content-Disposition": `attachment; filename="${zipName}"`,
       },
     });
   } catch (e) {

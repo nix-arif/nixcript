@@ -115,7 +115,6 @@ export type DoForInvoice = {
 };
 
 const EDITABLE_STATUSES = new Set(["draft"]);
-const DELETABLE_STATUSES = new Set(["draft"]);
 
 // ── Fulfillment helpers ────────────────────────────────────────────────────
 
@@ -911,10 +910,81 @@ export async function updateDeliveryOrderCaseInfo(input: UpdateDeliveryOrderCase
 }
 
 export async function deleteDeliveryOrder(id: string): Promise<void> {
-  const { orgId } = await requireAccess("delivery-order:delete");
+  const { orgId, userId } = await requireAccess("delivery-order:delete");
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
-  if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft delivery orders can be deleted");
+  // draft never touched stock; delivered took stock out (reversed below);
+  // returned already put it back via returnDeliveryOrder — nothing left to
+  // reverse in either of those two once we get here.
+  if (!["draft", "delivered", "returned"].includes(existing.status)) {
+    throw new Error("This delivery order can't be deleted");
+  }
+
+  // Deleting a DO an invoice already references would orphan that invoice's
+  // link — block it rather than leave a dangling deliveryOrderId.
+  const [linkedInvoice] = await db
+    .select({ id: invoice.id, invoiceNo: invoice.invoiceNo })
+    .from(invoice)
+    .where(eq(invoice.deliveryOrderId, id))
+    .limit(1);
+  if (linkedInvoice) {
+    throw new Error(`Cannot delete — invoice ${linkedInvoice.invoiceNo} is linked to this delivery order`);
+  }
+
+  // Reverse whatever stock this DO actually moved, based on its real
+  // movement history rather than trusting `status` — a plain (SO-based) DO
+  // only takes stock out once marked "delivered", but a Case DO deducts the
+  // rep's field stock immediately at creation via a completely different
+  // movement type (CASE_USE/LOAN_OUT against a Field: warehouse) and its own
+  // `status` column stays "draft" forever, so a status-only check misses it
+  // entirely. Netting every movement this DO has ever recorded (out AND any
+  // prior partial return) per product+warehouse and crediting back only
+  // what's still net-outstanding also makes this safe to call on a DO
+  // that's already been partially or fully returned — nothing double-counts.
+  const allMovements = await db
+    .select({
+      productId: stockMovement.productId,
+      productCode: stockMovement.productCode,
+      warehouseLabel: stockMovement.warehouseLabel,
+      quantity: stockMovement.quantity,
+    })
+    .from(stockMovement)
+    .where(and(
+      eq(stockMovement.organizationId, orgId),
+      eq(stockMovement.referenceId, id),
+      inArray(stockMovement.movementType, [
+        MOVEMENT_TYPE.STOCK_OUT, MOVEMENT_TYPE.CASE_USE, MOVEMENT_TYPE.LOAN_OUT,
+        MOVEMENT_TYPE.RETURN, MOVEMENT_TYPE.LOAN_RETURN,
+      ]),
+    ));
+
+  const netByKey = new Map<string, { productId: string; productCode: string; warehouseLabel: string; net: number }>();
+  for (const mv of allMovements) {
+    const key = `${mv.productId}::${mv.warehouseLabel}`;
+    const entry = netByKey.get(key) ?? { productId: mv.productId, productCode: mv.productCode, warehouseLabel: mv.warehouseLabel, net: 0 };
+    entry.net += parseFloat(mv.quantity);
+    netByKey.set(key, entry);
+  }
+
+  await Promise.all(
+    [...netByKey.values()]
+      .filter((e) => e.net < 0)
+      .map((e) =>
+        createApprovedMovement({
+          orgId,
+          userId,
+          productId: e.productId,
+          warehouseLabel: e.warehouseLabel,
+          movementType: MOVEMENT_TYPE.RETURN,
+          quantity: Math.abs(e.net),
+          referenceType: REF_TYPE.DELIVERY_ORDER,
+          referenceId: id,
+          referenceNo: existing.doNo,
+          notes: `DO deleted — stock returned: ${e.productCode ?? ""}`.trim(),
+        }),
+      ),
+  );
+
   await db.delete(deliveryOrder).where(eq(deliveryOrder.id, id));
   revalidatePath("/dashboard/fulfillment/delivery");
   revalidatePath("/dashboard");

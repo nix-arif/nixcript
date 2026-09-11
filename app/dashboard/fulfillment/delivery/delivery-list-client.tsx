@@ -31,7 +31,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const EDITABLE_STATUSES  = new Set(["draft"]);
-const DELETABLE_STATUSES = new Set(["draft"]);
+const DELETABLE_STATUSES = new Set(["draft", "delivered", "returned"]);
 
 const fmtAmt = (v: string | null | undefined) =>
   v ? parseFloat(v).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
@@ -141,8 +141,11 @@ export function DeliveryOrderListClient({ initialOrders, total, page, pageSize, 
     pushParams({ page: p === 1 ? "" : String(p) });
   };
 
-  async function handleDelete(id: string, doNo: string) {
-    if (!confirm(`Delete ${doNo}? This cannot be undone.`)) return;
+  async function handleDelete(id: string, doNo: string, status: string) {
+    const confirmMsg = status === "delivered"
+      ? `Delete ${doNo}? The stock this order took out will be returned to its warehouse. This cannot be undone.`
+      : `Delete ${doNo}? This cannot be undone.`;
+    if (!confirm(confirmMsg)) return;
     setDeleting(id);
     try {
       await deleteDeliveryOrder(id);
@@ -393,9 +396,9 @@ export function DeliveryOrderListClient({ initialOrders, total, page, pageSize, 
                             <PencilIcon className="w-3.5 h-3.5" />
                           </Button>
                         )}
-                        {can("delivery-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
+                        {can("delivery-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && !o.invoiceId && (
                           <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
-                            disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.doNo)}>
+                            disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.doNo, o.status)}>
                             <TrashIcon className="w-3.5 h-3.5" />
                           </Button>
                         )}

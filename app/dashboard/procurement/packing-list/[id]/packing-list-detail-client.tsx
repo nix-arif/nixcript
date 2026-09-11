@@ -233,7 +233,8 @@ export function PackingListDetailClient({
     const expected = parseFloat(item.qtyExpected) || 0;
     const received = parseFloat(item.draftQtyReceived ?? item.qtyExpected) || 0;
     const returned = parseFloat(item.draftQtyReturn ?? "0") || 0;
-    return received < expected || returned > 0;
+    const repaired = parseFloat(item.draftQtyRepair ?? "0") || 0;
+    return received < expected || returned > 0 || repaired > 0;
   });
 
   const byPo = items.reduce<Record<string, typeof items>>((acc, item) => {

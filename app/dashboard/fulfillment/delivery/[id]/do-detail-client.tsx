@@ -160,11 +160,14 @@ export function DeliveryOrderDetailClient({
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete ${order.doNo}? This cannot be undone.`)) return;
+    const confirmMsg = status === "delivered"
+      ? `Delete ${order.doNo}? The stock this order took out will be returned to its warehouse. This cannot be undone.`
+      : `Delete ${order.doNo}? This cannot be undone.`;
+    if (!confirm(confirmMsg)) return;
     setDeleting(true);
     try {
       await deleteDeliveryOrder(order.id);
-      toast.success("Delivery order deleted");
+      toast.success(status === "delivered" ? "Delivery order deleted — stock returned" : "Delivery order deleted");
       router.push("/dashboard/fulfillment/delivery");
     } catch (e: any) {
       toast.error(e.message);
@@ -174,6 +177,8 @@ export function DeliveryOrderDetailClient({
 
   const isDraft = status === "draft";
   const isDelivered = status === "delivered";
+  const isReturned = status === "returned";
+  const canDelete = (isDraft || isDelivered || isReturned) && isOwner && !order.invoiceId && can("delivery-order:delete");
 
   return (
     <div className="p-6 space-y-6">
@@ -214,7 +219,7 @@ export function DeliveryOrderDetailClient({
                 <PencilIcon className="w-3.5 h-3.5" /> Edit
               </Button>
             )}
-            {isDraft && isOwner && can("delivery-order:delete") && (
+            {canDelete && (
               <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                 <TrashIcon className="w-3.5 h-3.5" /> Delete
               </Button>
