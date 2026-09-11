@@ -326,7 +326,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
             variant="ghost"
             size="sm"
             className="h-8 w-8 p-0 shrink-0"
-            onClick={() => router.push("/dashboard/sales/quotation")}
+            onClick={() => router.back()}
           >
             <ArrowLeftIcon className="w-4 h-4" />
           </Button>
