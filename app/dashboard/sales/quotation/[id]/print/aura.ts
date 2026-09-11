@@ -274,7 +274,7 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const TOTALS_H     = showIP && showTP ? (26 + Math.max(bank ? 52 : 0, (totRowCount + 1) * 16) + 20)
                      : showTP           ? 54
                      : 0;
-  const baseTermsRows  = 1 + (q.deliveryTerm ? 1 : 0) + (q.paymentTerm ? 1 : 0) + ((q as any).warranty ? 1 : 0);
+  const baseTermsRows  = 1 + (q.deliveryTerm ? 1 : 0) + (q.validUntil ? 1 : 0) + ((q as any).warranty ? 1 : 0);
   const totalTermsRows = baseTermsRows + (q.notes ? 1 : 0);
   const termsBoxH      = 16
     + baseTermsRows * 12
@@ -697,17 +697,17 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         const ROW_GAP = 4;
         const TLH = 12;
         const TLABELW = Math.max(
-          fontB.widthOfTextAtSize("Brand",    TFS),
-          fontB.widthOfTextAtSize("Delivery", TFS),
-          fontB.widthOfTextAtSize("Validity", TFS),
-          fontB.widthOfTextAtSize("Warranty", TFS),
-          fontB.widthOfTextAtSize("Notes",    TFS),
+          fontB.widthOfTextAtSize("Brand",       TFS),
+          fontB.widthOfTextAtSize("Delivery",    TFS),
+          fontB.widthOfTextAtSize("Valid until", TFS),
+          fontB.widthOfTextAtSize("Warranty",    TFS),
+          fontB.widthOfTextAtSize("Notes",       TFS),
         ) + 14;
         const TVALFITW = CW - TLPAD - TLABELW - TRPAD;
         const termsData: { label: string; value: string }[] = [
           { label: "Brand",    value: toSentenceCase(brandText) },
           ...(q.deliveryTerm ? [{ label: "Delivery", value: toSentenceCase(q.deliveryTerm) }] : []),
-          ...(q.paymentTerm  ? [{ label: "Validity", value: toSentenceCase(q.paymentTerm)  }] : []),
+          ...(q.validUntil   ? [{ label: "Valid until", value: fmtD(q.validUntil) }] : []),
           ...((q as any).warranty ? [{ label: "Warranty", value: toSentenceCase((q as any).warranty) }] : []),
           ...(q.notes ? [{ label: "Notes", value: q.notes }] : []),
         ];
