@@ -131,8 +131,18 @@ export async function getFieldReps(): Promise<OrgMember[]> {
   return [...byUser.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// A rep's field stock for a given product can live under whichever sibling
+// org actually transferred it to them (see resolveFieldStockOrg's twin logic
+// in server/delivery-order.ts) — not necessarily the org the caller is
+// currently viewing from. Searching only the active org here is what made a
+// Case DO's item picker show nothing for an application specialist whose
+// stock was transferred to them under a different org: their balance was
+// real, just invisible from this org's query. Search the whole owner group
+// and merge, so what's shown here always matches what the deduction side can
+// actually find and consume.
 export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
   const { orgId } = await requireAccess("inventory:read");
+  const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
   const label = fieldWarehouseLabel(repId);
   const rows = await db
     .select({
@@ -146,12 +156,12 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
     })
     .from(stockLevel)
     .innerJoin(product, eq(product.id, stockLevel.productId))
-    .where(and(eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, label)));
+    .where(and(inArray(stockLevel.organizationId, ownerOrgIds), eq(stockLevel.warehouseLabel, label)));
 
   const lots = await db
     .select({ productId: stockLot.productId, lotNo: stockLot.lotNo, expiryDate: stockLot.expiryDate, quantity: stockLot.quantity })
     .from(stockLot)
-    .where(and(eq(stockLot.organizationId, orgId), eq(stockLot.warehouseLabel, label)))
+    .where(and(inArray(stockLot.organizationId, ownerOrgIds), eq(stockLot.warehouseLabel, label)))
     .orderBy(asc(stockLot.expiryDate), asc(stockLot.lotNo));
   const lotsByProduct = new Map<string, RepStockItem["lots"]>();
   for (const l of lots) {
@@ -161,18 +171,31 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
     lotsByProduct.set(l.productId, arr);
   }
 
-  return rows
-    .map((r) => ({
+  // Same rep + product can have separate balances under more than one
+  // sibling org (rare, but possible) — merge into one pickable line so the
+  // qty shown is the true total this person is actually holding.
+  const byProduct = new Map<string, RepStockItem>();
+  for (const r of rows) {
+    const qty = parseFloat(r.qty);
+    if (qty <= 0) continue;
+    const existing = byProduct.get(r.productId);
+    if (existing) {
+      existing.qty += qty;
+      existing.lots = [...existing.lots, ...(lotsByProduct.get(r.productId) ?? [])];
+      continue;
+    }
+    byProduct.set(r.productId, {
       productId: r.productId,
       productCode: r.productCode,
       description: r.description ?? "",
       uom: r.uom ?? null,
-      qty: parseFloat(r.qty),
+      qty,
       unitCost: r.unitCost,
       isRental: r.isRental,
       lots: lotsByProduct.get(r.productId) ?? [],
-    }))
-    .filter((r) => r.qty > 0);
+    });
+  }
+  return [...byProduct.values()];
 }
 
 export async function getWarehouseStockQty(productId: string, warehouseLabel: string): Promise<number> {
