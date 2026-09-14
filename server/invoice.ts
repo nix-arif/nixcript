@@ -23,6 +23,7 @@ import {
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getOrganizationProfile } from "@/server/organization-profile";
 import { recomputeInvoiceAllowances } from "@/server/invoice-allowance";
+import { maybeCreateIntercompanyPoForCaseInvoice } from "@/server/purchase-order";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
@@ -821,6 +822,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
   revalidatePath("/dashboard/fulfillment/invoice");
   await refreshInvoiceStats(orgId);
   await recomputeInvoiceAllowances(row.id);
+  await maybeCreateIntercompanyPoForCaseInvoice(row.id);
   return row;
 }
 
@@ -927,6 +929,7 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
   revalidatePath("/dashboard/fulfillment/invoice");
   await refreshInvoiceStats(orgId);
   await recomputeInvoiceAllowances(row.id);
+  await maybeCreateIntercompanyPoForCaseInvoice(row.id);
   return row;
 }
 
@@ -1134,5 +1137,6 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
   revalidatePath("/dashboard/fulfillment/invoice");
   await refreshInvoiceStats(orgId);
   await recomputeInvoiceAllowances(row.id);
+  await maybeCreateIntercompanyPoForCaseInvoice(row.id);
   return row;
 }

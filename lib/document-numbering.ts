@@ -1,15 +1,19 @@
-export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "pl" | "do" | "inv" | "co";
+export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "pl" | "do" | "inv" | "co" | "icpo";
 
 export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string }> = {
-  qt:  { docCode: "QT",  label: "Quotation" },
-  so:  { docCode: "SO",  label: "Sales Order" },
-  pr:  { docCode: "PR",  label: "Purchase Requisition" },
-  po:  { docCode: "PO",  label: "Purchase Order" },
-  gr:  { docCode: "GR",  label: "Goods Receipt" },
-  pl:  { docCode: "PL",  label: "Packing List" },
-  do:  { docCode: "DO",  label: "Delivery Order" },
-  inv: { docCode: "INV", label: "Invoice" },
-  co:  { docCode: "CO",  label: "Consignment" },
+  qt:   { docCode: "QT",   label: "Quotation" },
+  so:   { docCode: "SO",   label: "Sales Order" },
+  pr:   { docCode: "PR",   label: "Purchase Requisition" },
+  po:   { docCode: "PO",   label: "Purchase Order" },
+  gr:   { docCode: "GR",   label: "Goods Receipt" },
+  pl:   { docCode: "PL",   label: "Packing List" },
+  do:   { docCode: "DO",   label: "Delivery Order" },
+  inv:  { docCode: "INV",  label: "Invoice" },
+  co:   { docCode: "CO",   label: "Consignment" },
+  // Auto-raised against a sibling org for stock a Case DO consumed (e.g. the
+  // Laser-category split) — a distinct code so it's never mistaken for, or
+  // numbered alongside, a real supplier PO.
+  icpo: { docCode: "ICPO", label: "Intercompany PO" },
 };
 
 export type NumberFormat = "standard" | "compact";

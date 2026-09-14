@@ -8,6 +8,7 @@ import {
   deliverDeliveryOrder,
   returnDeliveryOrder,
   updateDeliveryOrderCaseInfo,
+  updateDeliveryOrderNumber,
   type DeliveryOrderWithItems,
 } from "@/server/delivery-order";
 import { getCustomerPosByCustomer, type CustomerPo } from "@/server/customer-purchase-order";
@@ -40,6 +41,81 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
+// Owner-only inline edit — uniqueness (per org) is enforced server-side by
+// updateDeliveryOrderNumber, which checks the same constraint the DB itself
+// enforces (delivery_order_no_org_uidx) and returns a clean error on a
+// collision instead of a raw constraint violation. Anyone else just sees the
+// plain DO number, no edit affordance.
+function DoNumberField({
+  doId,
+  doNo,
+  isOwner,
+  onUpdated,
+}: {
+  doId: string;
+  doNo: string;
+  isOwner: boolean;
+  onUpdated: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(doNo);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { setValue(doNo); }, [doNo]);
+
+  async function commit() {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === doNo) {
+      setValue(doNo);
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateDeliveryOrderNumber(doId, trimmed);
+      onUpdated(trimmed);
+      toast.success("DO number updated");
+      setEditing(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't update DO number");
+      setValue(doNo);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!isOwner) return <p className="text-xs font-mono">{doNo}</p>;
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        disabled={saving}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") { setValue(doNo); setEditing(false); }
+        }}
+        className="h-6 w-36 text-xs font-mono border border-input rounded px-1.5 bg-background disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title="Click to edit (owner only)"
+      className="flex items-center gap-1 text-xs font-mono hover:text-foreground text-left group"
+    >
+      {doNo}
+      <PencilIcon className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+    </button>
+  );
+}
+
 export function DeliveryOrderDetailClient({
   order,
   permissions,
@@ -51,6 +127,7 @@ export function DeliveryOrderDetailClient({
 }) {
   const router = useRouter();
   const [status, setStatus] = useState(order.status ?? "draft");
+  const [doNo, setDoNo] = useState(order.doNo);
   const [actioning, setActioning] = useState<"deliver" | "return" | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [pdfWithPrice, setPdfWithPrice] = useState(false);
@@ -68,6 +145,7 @@ export function DeliveryOrderDetailClient({
   const [savingCaseInfo, setSavingCaseInfo] = useState(false);
 
   useEffect(() => { setStatus(order.status ?? "draft"); }, [order.status]);
+  useEffect(() => { setDoNo(order.doNo); }, [order.doNo]);
 
   async function openCaseDialog() {
     setSelectedCpoId(order.customerPoId ?? "");
@@ -135,6 +213,10 @@ export function DeliveryOrderDetailClient({
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = order.createdBy === currentUserId;
+  // Distinct from `isOwner` above (which means "created this record") — this
+  // is the org-owner role check, matching updateDeliveryOrderNumber's own
+  // gate, for the DO number edit affordance only.
+  const isOrgOwner = permissions.includes("*");
   const snap = order.customerSnapshot as any;
   const orgName = snap?.organizationName;
   const personName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
@@ -405,6 +487,14 @@ export function DeliveryOrderDetailClient({
           {/* Details */}
           <section className="border border-border rounded-xl p-4 space-y-2.5">
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Details</h2>
+
+            <div className="flex items-start gap-2">
+              <TruckIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+              <div>
+                <p className="text-[10px] text-muted-foreground">DO Number</p>
+                <DoNumberField doId={order.id} doNo={doNo} isOwner={isOrgOwner} onUpdated={(next) => { setDoNo(next); router.refresh(); }} />
+              </div>
+            </div>
 
             {/* Linked SO — clickable */}
             {order.salesOrderNo && (

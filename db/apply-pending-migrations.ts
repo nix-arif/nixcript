@@ -203,6 +203,27 @@ async function run() {
     console.log("  restricted_supplier created.");
   }
 
+  console.log("Applying migration 0050: intercompany PO (source_invoice_id + own counter)");
+  await addColIfMissing("purchase_order", "source_invoice_id",
+    `ALTER TABLE "purchase_order" ADD COLUMN "source_invoice_id" text REFERENCES "invoice"("id") ON DELETE SET NULL`);
+  const [icpoCounterTable] = await sql`
+    SELECT table_name FROM information_schema.tables WHERE table_name = 'intercompany_purchase_order_counter'
+  `;
+  if (icpoCounterTable) {
+    console.log("  intercompany_purchase_order_counter already exists, skipping.");
+  } else {
+    await sql`
+      CREATE TABLE "intercompany_purchase_order_counter" (
+        "id" text PRIMARY KEY NOT NULL,
+        "organization_id" text NOT NULL UNIQUE REFERENCES "organization"("id") ON DELETE CASCADE,
+        "year" integer NOT NULL,
+        "last_number" integer NOT NULL DEFAULT 0,
+        "updated_at" timestamp DEFAULT now() NOT NULL
+      )
+    `;
+    console.log("  intercompany_purchase_order_counter created.");
+  }
+
   console.log("All pending migrations applied.");
 }
 

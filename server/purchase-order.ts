@@ -5,7 +5,11 @@ import {
   purchaseOrder,
   purchaseOrderItem,
   purchaseOrderCounter,
+  intercompanyPurchaseOrderCounter,
   purchaseRequisitionCounter,
+  invoice,
+  deliveryOrder,
+  documentCategory,
   purchaseOrderCustomerPo,
   customerPurchaseOrder,
   purchaseRequisition,
@@ -184,6 +188,130 @@ async function generatePoNo(orgId: string): Promise<string> {
   }
 
   return buildDocumentNo(cfg, year, nextNo);
+}
+
+// Own counter — see intercompanyPurchaseOrderCounter in db/schema.ts for why
+// this is never allowed to share a sequence with generatePoNo.
+async function generateIntercompanyPoNo(orgId: string): Promise<string> {
+  const cfg = await getNumberingConfig(orgId, "icpo");
+  const year = new Date().getFullYear();
+
+  const existing = await db
+    .select()
+    .from(intercompanyPurchaseOrderCounter)
+    .where(eq(intercompanyPurchaseOrderCounter.organizationId, orgId))
+    .limit(1);
+
+  let nextNo: number;
+
+  if (existing.length === 0) {
+    await db.insert(intercompanyPurchaseOrderCounter).values({ id: nanoid(), organizationId: orgId, year, lastNumber: 1 });
+    nextNo = 1;
+  } else {
+    const counter = existing[0];
+    nextNo = counter.year === year ? counter.lastNumber + 1 : 1;
+    await db
+      .update(intercompanyPurchaseOrderCounter)
+      .set({ year, lastNumber: nextNo })
+      .where(eq(intercompanyPurchaseOrderCounter.organizationId, orgId));
+  }
+
+  return buildDocumentNo(cfg, year, nextNo);
+}
+
+// Auto-raises a value-only intercompany PO when a Case DO invoice is tagged
+// with this org's own "Laser" category — the business rule (per discussion):
+// Affirma keeps 30% of a laser case's invoiced amount and owes the remaining
+// 70% to Smart Innosys, regardless of which org's stock ledger the case's
+// CASE_USE deduction actually landed in (see resolveFieldStockOrg in
+// server/delivery-order.ts — that's a physical-inventory-accuracy concern,
+// separate from who economically owns/bills for the stock).
+//
+// Deliberately NOT wired through the normal PR→PO→GR→stock-in flow: the
+// physical stock already left the building when the case consumed it, so
+// this PO carries a single non-stock line (no productId) representing value
+// only, and is created already "confirmed" so maybeCreateIntercompanySalesOrder
+// fires immediately — no goods receipt should ever happen against it.
+//
+// Never blocks invoice creation from succeeding — same defensive shape as
+// maybeCreateIntercompanySalesOrder, which this ultimately calls into.
+export async function maybeCreateIntercompanyPoForCaseInvoice(invoiceId: string): Promise<void> {
+  try {
+    const [inv] = await db.select().from(invoice).where(eq(invoice.id, invoiceId)).limit(1);
+    if (!inv || !inv.deliveryOrderId) return;
+
+    const [do_] = await db
+      .select({ isCaseDo: deliveryOrder.isCaseDo })
+      .from(deliveryOrder)
+      .where(eq(deliveryOrder.id, inv.deliveryOrderId))
+      .limit(1);
+    if (!do_?.isCaseDo) return;
+
+    // "Laser" is an org-scoped documentCategory row (categories aren't
+    // shared across orgs — see server/document-category.ts), so it has to
+    // be looked up per-org rather than by a shared id.
+    const [laserCategory] = await db
+      .select({ id: documentCategory.id })
+      .from(documentCategory)
+      .where(and(eq(documentCategory.organizationId, inv.organizationId), sql`lower(${documentCategory.name}) = 'laser'`))
+      .limit(1);
+    if (!laserCategory || !inv.categoryIds?.includes(laserCategory.id)) return;
+
+    // Idempotency — a re-saved/reopened invoice must never raise this twice.
+    const [already] = await db.select({ id: purchaseOrder.id }).from(purchaseOrder).where(eq(purchaseOrder.sourceInvoiceId, invoiceId)).limit(1);
+    if (already) return;
+
+    const supplierRows = await db
+      .select({ id: supplier.id })
+      .from(supplier)
+      .where(and(eq(supplier.organizationId, inv.organizationId), sql`${supplier.linkedOrganizationId} IS NOT NULL`));
+    // No linked-supplier record covers this org yet (or more than one does,
+    // which is ambiguous) — this needs a person to set up/fix the supplier
+    // link (Procurement → Suppliers) before this can fire automatically.
+    if (supplierRows.length !== 1) return;
+    const supplierId = supplierRows[0].id;
+
+    const grandTotal = parseFloat(inv.grandTotal) || 0;
+    if (grandTotal <= 0) return;
+    const share = Math.round(grandTotal * 0.7 * 100) / 100;
+
+    const poNo = await generateIntercompanyPoNo(inv.organizationId);
+    const poId = nanoid();
+    const now = new Date();
+
+    await db.insert(purchaseOrder).values({
+      id: poId,
+      organizationId: inv.organizationId,
+      poNo,
+      supplierId,
+      sourceInvoiceId: invoiceId,
+      subtotal: share.toFixed(2),
+      grandTotal: share.toFixed(2),
+      currency: "MYR", // invoice carries no currency field of its own — this app is MYR-only throughout
+      status: "confirmed",
+      notes: `Auto-raised — 70% share of laser case invoice ${inv.invoiceNo}`,
+      createdBy: inv.createdBy,
+      approvedBy: inv.createdBy,
+      approvedAt: now,
+    });
+
+    await db.insert(purchaseOrderItem).values({
+      id: nanoid(),
+      purchaseOrderId: poId,
+      rowNo: 1,
+      description: `Laser case usage — Invoice ${inv.invoiceNo} (70% share)`,
+      qty: "1",
+      unitPrice: share.toFixed(2),
+      totalPrice: share.toFixed(2),
+      currency: "MYR", // invoice carries no currency field of its own — this app is MYR-only throughout
+    });
+
+    await maybeCreateIntercompanySalesOrder(poId);
+
+    revalidatePath("/dashboard/procurement/purchase-order");
+  } catch (e) {
+    console.error("maybeCreateIntercompanyPoForCaseInvoice failed:", e);
+  }
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────

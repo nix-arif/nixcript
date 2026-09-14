@@ -1957,6 +1957,15 @@ export const purchaseOrder = pgTable(
     // Supplier PDF quotation (stored in R2 private bucket supplier-quotation)
     supplierQuotationKey: text("supplier_quotation_key"),
 
+    // Set only for an auto-raised intercompany PO (see
+    // maybeCreateIntercompanyPoForCaseInvoice in server/purchase-order.ts) —
+    // the Case DO invoice that generated it, both for traceability (click
+    // through from the PO back to the case) and as the idempotency guard
+    // that stops the same invoice from ever generating this PO twice.
+    // onDelete: "set null" since deleting the invoice shouldn't be blocked
+    // by, or cascade into deleting, a PO that's since been acted on.
+    sourceInvoiceId: text("source_invoice_id").references((): AnyPgColumn => invoice.id, { onDelete: "set null" }),
+
     // Pricing
     subtotal: text("subtotal").notNull().default("0"),
     sst: text("sst").default("0"),
@@ -2077,6 +2086,25 @@ export const purchaseOrderItem = pgTable(
 );
 
 export const purchaseOrderCounter = pgTable("purchase_order_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+// Separate sequence from purchaseOrderCounter on purpose — intercompany POs
+// (auto-raised against a sibling org for stock a Case DO consumed, e.g. the
+// Laser-category 70/30 split between Affirma and Smart Innosys) must never
+// share numbers with regular supplier POs, so the two are trivially
+// distinguishable at a glance (see DocType "icpo" in lib/document-numbering.ts).
+export const intercompanyPurchaseOrderCounter = pgTable("intercompany_purchase_order_counter", {
   id: text("id").primaryKey(),
   organizationId: text("organization_id")
     .notNull()
@@ -4249,6 +4277,7 @@ export const schema = {
   purchaseOrder,
   purchaseOrderItem,
   purchaseOrderCounter,
+  intercompanyPurchaseOrderCounter,
   purchaseRequisitionCounter,
   purchaseRequisition,
   purchaseRequisitionItem,

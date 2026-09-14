@@ -2579,14 +2579,40 @@ async function rebuildSnapshotForRevision(
 export async function reviseQuotation(quotationId: string): Promise<string> {
   const { orgId, userId } = await requireAccess("quotation:create");
 
-  // 1. Load the source quotation (must belong to the user's active org)
+  // 1. Load the source quotation — across the whole owner-org group, not
+  // just the caller's currently active org. The detail page itself
+  // (getQuotationGroupAllDetails) already lets someone view a sibling org's
+  // quotation while a different org is active; revising must accept the
+  // same set, or clicking Revise on a quotation right in front of you fails
+  // with a "not found"-shaped error that has nothing to do with the real
+  // cause (an active-org mismatch, not a missing quotation).
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
+
   const [source] = await db
     .select()
     .from(quotation)
-    .where(and(eq(quotation.id, quotationId), eq(quotation.organizationId, orgId)))
+    .where(and(eq(quotation.id, quotationId), inArray(quotation.organizationId, ownerOrgIds)))
     .limit(1);
   if (!source) throw new Error("Quotation not found");
   if (source.status !== "final") throw new Error("Only finalized quotations can be revised");
+
+  // Everything below must operate within the quotation's OWN org, not
+  // whichever org the reviser currently happens to have active.
+  const sourceOrgId = source.organizationId;
+
+  // Widening the lookup to the whole owner-org group (above) means the
+  // caller's quotation:create in their OWN active org is no longer proof
+  // they're allowed to write into a sibling org's quotation — re-check the
+  // permission specifically against sourceOrgId so someone who can create
+  // quotations in Org A can't use that to revise Org B's just because they
+  // can view it.
+  if (sourceOrgId !== orgId) {
+    const sourcePerms = await getUserPermissions(userId, sourceOrgId);
+    if (!hasAccess(sourcePerms, "quotation:create")) {
+      throw new Error("You don't have permission to do this");
+    }
+  }
 
   // 2. Determine root of this quotation's revision chain
   const originalId = source.originalQuotationId ?? quotationId;
@@ -2605,7 +2631,7 @@ export async function reviseQuotation(quotationId: string): Promise<string> {
     .from(quotation)
     .where(
       and(
-        eq(quotation.organizationId, orgId),
+        eq(quotation.organizationId, sourceOrgId),
         or(eq(quotation.id, originalId), eq(quotation.originalQuotationId, originalId))
       )
     );
@@ -2620,7 +2646,7 @@ export async function reviseQuotation(quotationId: string): Promise<string> {
       rebuildSnapshotForRevision(
         source.customerId,
         source.customerSnapshot as { organizationName?: string } | null,
-        orgId,
+        sourceOrgId,
       ),
     ]);
 
@@ -2657,14 +2683,16 @@ export async function reviseQuotation(quotationId: string): Promise<string> {
     .where(eq(quotation.groupId, source.groupId))
     .orderBy(asc(quotation.isDummy));
 
-  // Rebuild snapshot once from the anchor (organizationId === orgId) so all
+  // Rebuild snapshot once from the anchor — the specific quotation the
+  // reviser actually clicked "Revise" on (source), not whichever group
+  // member happens to match the reviser's currently active org — so all
   // members in the new revision group get a consistent, fresh snapshot that
   // preserves the chosen customer org.
-  const anchorMember = groupMembers.find((m) => m.organizationId === orgId) ?? groupMembers[0];
+  const anchorMember = groupMembers.find((m) => m.id === quotationId) ?? source;
   const newCustomerSnapshot = await rebuildSnapshotForRevision(
     anchorMember?.customerId ?? null,
     (anchorMember?.customerSnapshot as { organizationName?: string } | null) ?? null,
-    orgId,
+    anchorMember?.organizationId ?? sourceOrgId,
   );
 
   // Load all items for the whole group in one query
@@ -2682,7 +2710,11 @@ export async function reviseQuotation(quotationId: string): Promise<string> {
     const memberBaseNo = member.quotationNo.replace(/-R\d+$/, "");
     const memberNewId = nanoid();
 
-    if (member.organizationId === orgId) newAnchorId = memberNewId;
+    // The returned id must be the revision of the SPECIFIC quotation the
+    // reviser clicked "Revise" on — matching by active org would leave
+    // newAnchorId empty (and the caller navigating to a blank edit URL) for
+    // anyone revising a group where no member belongs to their active org.
+    if (member.id === quotationId) newAnchorId = memberNewId;
 
     // Dummies are backdated 1-3 weekdays from the anchor's date,
     // but never before their own previous version's date.

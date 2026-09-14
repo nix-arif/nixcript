@@ -48,6 +48,19 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
+// For actions restricted to the organization owner regardless of any
+// individually granted permission — e.g. correcting the DO number.
+async function requireOwner() {
+  const { session, orgId, userId } = await getSession();
+  const [m] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
+    .limit(1);
+  if (!m || m.role !== "owner") throw new Error("Only the organization owner can do this");
+  return { session, orgId, userId };
+}
+
 
 // The org's actual configured warehouse — a caller-supplied "Default"
 // fallback silently diverges from this the moment an org sets up a real
@@ -983,6 +996,39 @@ export async function updateDeliveryOrderCaseInfo(input: UpdateDeliveryOrderCase
   revalidatePath("/dashboard/fulfillment/delivery");
   revalidatePath(`/dashboard/fulfillment/delivery/${input.id}`);
   return row;
+}
+
+// Owner-only — the DO number is otherwise fixed once auto-generated at
+// creation, but a typo or a need to match an external reference sometimes
+// has to be corrected after the fact. Checks the same uniqueness the DB
+// itself enforces (delivery_order_no_org_uidx) up front so a collision
+// surfaces as a clean message instead of a raw constraint violation.
+// Resolvable across every org the caller's owner controls, same as
+// updatePurchaseOrderNumber — uniqueness is checked against the DO's own
+// org, not necessarily the caller's currently active one.
+export async function updateDeliveryOrderNumber(id: string, doNoInput: string): Promise<void> {
+  const { orgId } = await requireOwner();
+  const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
+
+  const trimmed = doNoInput.trim();
+  if (!trimmed) throw new Error("DO number can't be empty");
+
+  const [existing] = await db
+    .select({ id: deliveryOrder.id, organizationId: deliveryOrder.organizationId })
+    .from(deliveryOrder)
+    .where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
+  if (!existing) throw new Error("Delivery order not found");
+
+  const [clash] = await db
+    .select({ id: deliveryOrder.id })
+    .from(deliveryOrder)
+    .where(and(eq(deliveryOrder.organizationId, existing.organizationId), eq(deliveryOrder.doNo, trimmed), ne(deliveryOrder.id, id)));
+  if (clash) throw new Error(`DO number "${trimmed}" is already in use`);
+
+  await db.update(deliveryOrder).set({ doNo: trimmed }).where(eq(deliveryOrder.id, id));
+
+  revalidatePath("/dashboard/fulfillment/delivery");
+  revalidatePath(`/dashboard/fulfillment/delivery/${id}`);
 }
 
 export async function deleteDeliveryOrder(id: string): Promise<void> {
