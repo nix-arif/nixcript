@@ -25,6 +25,11 @@ import {
 
 type Customer = Awaited<ReturnType<typeof getCustomer>>;
 interface LineItem extends DeliveryOrderItemInput { _key: string; originalQty?: string; }
+// A tagged sales person / application specialist — either a real member
+// (isExt false, id is their user id — carries otherOrgName when they belong
+// to a sibling org rather than the active one) or a plain typed name with no
+// linked account (isExt true, id is a locally-generated placeholder).
+interface PersonTag { id: string; name: string; isExt: boolean; otherOrgName?: string; }
 
 const TOTAL_COLS = 4; // code, description, qty, uom
 
@@ -909,13 +914,13 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
   const [loadingReps, setLoadingReps] = useState(true);
 
   // Application specialist (attends case, holds field stock) — tag input
-  const [appSpecs, setAppSpecs] = useState<{ id: string; name: string; isExt: boolean }[]>(sessionTag);
+  const [appSpecs, setAppSpecs] = useState<PersonTag[]>(sessionTag);
   const [asInput, setAsInput] = useState("");
   const asInputRef = useRef<HTMLInputElement>(null);
   const [loadingStock, setLoadingStock] = useState(false);
 
   // Sales person — tag input (members + external), mirrors quotation
-  const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>(sessionTag);
+  const [salesPersons, setSalesPersons] = useState<PersonTag[]>(sessionTag);
   const [spInput, setSpInput] = useState("");
   const spInputRef = useRef<HTMLInputElement>(null);
 
@@ -1128,6 +1133,9 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                   <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
                     {s.name.toLowerCase()}
                     {s.isExt && <span className="relative -top-0.5 text-[8px] font-bold leading-none">ext</span>}
+                    {s.otherOrgName && (
+                      <span className="relative -top-0.5 text-[8px] font-medium leading-none opacity-70">{s.otherOrgName}</span>
+                    )}
                     <button type="button"
                       onClick={(e) => { e.stopPropagation(); setAppSpecs((prev) => prev.filter((x) => x.id !== s.id)); }}
                       className="text-blue-500/60 hover:text-blue-700 ml-0.5">
@@ -1140,12 +1148,12 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                     const r = reps.find((x) => x.id === e.target.value);
                     if (!r) return;
                     if (appSpecs.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())) return;
-                    setAppSpecs((prev) => [...prev, { id: r.id, name: r.name, isExt: false }]);
+                    setAppSpecs((prev) => [...prev, { id: r.id, name: r.name, isExt: false, otherOrgName: r.otherOrgName }]);
                   }}
                   className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
                   <option value="">+ member</option>
                   {reps.filter((r) => !appSpecs.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())).map((r) => (
-                    <option key={r.id} value={r.id}>{r.name.toLowerCase()}</option>
+                    <option key={r.id} value={r.id}>{r.name.toLowerCase()}{r.otherOrgName ? ` — ${r.otherOrgName}` : ""}</option>
                   ))}
                 </select>
                 <input ref={asInputRef} type="text" value={asInput}
@@ -1209,6 +1217,9 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                   <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
                     {s.name.toLowerCase()}
                     {s.isExt && <span className="relative -top-0.5 text-[8px] font-bold leading-none">ext</span>}
+                    {s.otherOrgName && (
+                      <span className="relative -top-0.5 text-[8px] font-medium leading-none opacity-70">{s.otherOrgName}</span>
+                    )}
                     <button type="button"
                       onClick={(e) => { e.stopPropagation(); setSalesPersons((prev) => prev.filter((x) => x.id !== s.id)); }}
                       className="text-blue-500/60 hover:text-blue-700 ml-0.5">
@@ -1221,12 +1232,12 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                     const r = reps.find((x) => x.id === e.target.value);
                     if (!r) return;
                     if (salesPersons.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())) return;
-                    setSalesPersons((prev) => [...prev, { id: r.id, name: r.name, isExt: false }]);
+                    setSalesPersons((prev) => [...prev, { id: r.id, name: r.name, isExt: false, otherOrgName: r.otherOrgName }]);
                   }}
                   className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
                   <option value="">+ member</option>
                   {reps.filter((r) => !salesPersons.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())).map((r) => (
-                    <option key={r.id} value={r.id}>{r.name.toLowerCase()}</option>
+                    <option key={r.id} value={r.id}>{r.name.toLowerCase()}{r.otherOrgName ? ` — ${r.otherOrgName}` : ""}</option>
                   ))}
                 </select>
                 <input ref={spInputRef} type="text" value={spInput}

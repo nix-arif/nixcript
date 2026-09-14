@@ -26,7 +26,7 @@ import { recomputeInvoiceAllowances } from "@/server/invoice-allowance";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, or, sql, count } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, or, sql, count, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -601,7 +601,7 @@ export async function getOrgMembersForInvoice() {
     .select({ userId: member.userId, name: user.name, email: user.email })
     .from(member)
     .innerJoin(user, eq(user.id, member.userId))
-    .where(eq(member.organizationId, orgId))
+    .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt)))
     .orderBy(user.name);
   return rows;
 }

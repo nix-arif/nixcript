@@ -17,6 +17,8 @@ import {
   stockLevel,
   stockMovement,
   product as productTable,
+  organizationProfile,
+  member,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getOrganizationProfile } from "@/server/organization-profile";
@@ -46,6 +48,75 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId };
 }
 
+
+// The org's actual configured warehouse — a caller-supplied "Default"
+// fallback silently diverges from this the moment an org sets up a real
+// warehouse label (e.g. "Main Warehouse"), since no stock is ever tracked
+// under the literal string "Default" for that org. Same resolution as
+// getMainWarehouseLabelInternal in server/field-stock.ts, duplicated here so
+// this file doesn't need to import a private helper from another module.
+async function resolveMainWarehouseLabel(orgId: string): Promise<string> {
+  const [profile] = await db
+    .select({ warehouseAddresses: organizationProfile.warehouseAddresses })
+    .from(organizationProfile)
+    .where(eq(organizationProfile.organizationId, orgId))
+    .limit(1);
+  const addresses = (profile?.warehouseAddresses as { label?: string }[] | null) ?? [];
+  return addresses.find((w) => w.label?.trim())?.label ?? "Default";
+}
+
+// Every org owned by the same owner as currentOrgId — same "owner org group"
+// concept duplicated across server/inventory.ts, server/field-stock.ts,
+// lib/inventory/create-movement.ts etc. Needed below because a Case DO's
+// application specialist is sometimes a person whose real field stock for
+// the case's products was transferred to them under a SIBLING org (e.g. the
+// org that's actually responsible for that product category), not
+// necessarily the org the DO itself is being filed under.
+async function getOwnerOrgIdsInternal(currentOrgId: string): Promise<string[]> {
+  const [ownerMember] = await db
+    .select({ userId: member.userId })
+    .from(member)
+    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner"), isNull(member.deletedAt)))
+    .limit(1);
+  if (!ownerMember) return [currentOrgId];
+
+  const ownedOrgs = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
+
+  const ids = ownedOrgs.map((o) => o.organizationId);
+  return ids.length ? ids : [currentOrgId];
+}
+
+// A Case DO deducts from the application specialist's OWN field stock, which
+// may have been transferred to them under a different sibling org than the
+// one this DO is filed under (e.g. laser stock lives under Smart Innosys's
+// ledger even when the case is invoiced through Affirma). Prefer the DO's
+// own org when it already holds a positive balance there (the common,
+// single-org case — no behavior change); otherwise route the deduction to
+// whichever sibling org actually holds this rep's stock for this product, so
+// the org that's invoicing and the org whose inventory physically moved can
+// legitimately differ.
+async function resolveFieldStockOrg(preferredOrgId: string, productId: string, warehouseLabel: string): Promise<string> {
+  const ownerOrgIds = await getOwnerOrgIdsInternal(preferredOrgId);
+  if (ownerOrgIds.length === 1) return preferredOrgId;
+
+  const rows = await db
+    .select({ organizationId: stockLevel.organizationId, quantity: stockLevel.quantity })
+    .from(stockLevel)
+    .where(and(
+      inArray(stockLevel.organizationId, ownerOrgIds),
+      eq(stockLevel.productId, productId),
+      eq(stockLevel.warehouseLabel, warehouseLabel),
+    ));
+
+  const inPreferredOrg = rows.find((r) => r.organizationId === preferredOrgId);
+  if (inPreferredOrg && parseFloat(inPreferredOrg.quantity) > 0) return preferredOrgId;
+
+  const elsewhere = rows.find((r) => parseFloat(r.quantity) > 0);
+  return elsewhere?.organizationId ?? preferredOrgId;
+}
 
 async function generateDoNo(orgId: string): Promise<string> {
   const cfg = await getNumberingConfig(orgId, "do");
@@ -770,10 +841,12 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
         .from(productTable).where(eq(productTable.id, item.productId)).limit(1);
       if (!prod) continue;
 
+      const stockOrgId = await resolveFieldStockOrg(orgId, item.productId, fieldLabel);
+
       const [fieldLevel] = await db.select()
         .from(stockLevel)
         .where(and(
-          eq(stockLevel.organizationId, orgId),
+          eq(stockLevel.organizationId, stockOrgId),
           eq(stockLevel.productId, item.productId),
           eq(stockLevel.warehouseLabel, fieldLabel),
         )).limit(1);
@@ -787,10 +860,13 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       }
 
       const movementType = item.loanOut ? MT.LOAN_OUT : MT.CASE_USE;
-      const notes = item.loanOut ? `Loan out — ${doNo}` : `Case usage — ${doNo}`;
+      // A note only when the case's own org doesn't match where the stock
+      // actually lives — the common single-org case reads exactly as before.
+      const crossOrgNote = stockOrgId !== orgId ? ` (stock: sibling org)` : "";
+      const notes = (item.loanOut ? `Loan out — ${doNo}` : `Case usage — ${doNo}`) + crossOrgNote;
 
       await db.insert(stockMovement).values({
-        id: nanoid(), organizationId: orgId, productId: item.productId,
+        id: nanoid(), organizationId: stockOrgId, productId: item.productId,
         productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: null,
         movementType,
         quantity: (-qty).toFixed(4), balanceAfter: newQty.toFixed(4),
@@ -990,14 +1066,17 @@ export async function deleteDeliveryOrder(id: string): Promise<void> {
   revalidatePath("/dashboard");
 }
 
-export async function deliverDeliveryOrder(id: string, warehouseLabel = "Default"): Promise<void> {
+export async function deliverDeliveryOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("delivery-order:update");
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (existing.status !== "draft") throw new Error("Only draft delivery orders can be marked as delivered");
 
-  await db.update(deliveryOrder).set({ status: "delivered" }).where(eq(deliveryOrder.id, id));
+  const warehouseLabel = await resolveMainWarehouseLabel(orgId);
 
+  // Resolve the stock-out step before flipping status, so a genuinely
+  // insufficient balance blocks the whole delivery instead of leaving the DO
+  // marked "delivered" with its stock/SO-reservation side effects half done.
   const items = await db
     .select()
     .from(deliveryOrderItem)
@@ -1023,6 +1102,8 @@ export async function deliverDeliveryOrder(id: string, warehouseLabel = "Default
     ),
   );
 
+  await db.update(deliveryOrder).set({ status: "delivered" }).where(eq(deliveryOrder.id, id));
+
   // Release SO reservation and close the SO
   if (existing.salesOrderId) {
     await Promise.all([
@@ -1047,22 +1128,19 @@ export async function deliverDeliveryOrder(id: string, warehouseLabel = "Default
   revalidatePath("/dashboard");
 }
 
-export async function returnDeliveryOrder(id: string, warehouseLabel = "Default"): Promise<void> {
+export async function returnDeliveryOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("delivery-order:update");
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (existing.status !== "delivered") throw new Error("Only delivered orders can be marked as returned");
 
-  await db.update(deliveryOrder).set({ status: "returned" }).where(eq(deliveryOrder.id, id));
+  const warehouseLabel = await resolveMainWarehouseLabel(orgId);
 
   // RETURN movement — stock comes back in
   const items = await db
     .select()
     .from(deliveryOrderItem)
     .where(eq(deliveryOrderItem.deliveryOrderId, id));
-
-  revalidatePath("/dashboard/fulfillment/delivery");
-  revalidatePath("/dashboard");
 
   await Promise.all(
     items
@@ -1082,6 +1160,11 @@ export async function returnDeliveryOrder(id: string, warehouseLabel = "Default"
         }),
       ),
   );
+
+  await db.update(deliveryOrder).set({ status: "returned" }).where(eq(deliveryOrder.id, id));
+
+  revalidatePath("/dashboard/fulfillment/delivery");
+  revalidatePath("/dashboard");
 }
 
 export type PendingSoForDoRow = {
@@ -1239,6 +1322,11 @@ export async function returnRentalItems(
   if (!do_) throw new Error("Delivery order not found");
 
   const now = new Date();
+  // The original LOAN_OUT may have posted under a sibling org (see
+  // resolveFieldStockOrg above — the app specialist's field stock doesn't
+  // always live under this DO's own org), so the lookup and the return both
+  // need to search/act across the owner group, not just this DO's org.
+  const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
 
   for (const { movementId, returnQty } of returns) {
     if (returnQty <= 0) continue;
@@ -1248,19 +1336,20 @@ export async function returnRentalItems(
       .from(stockMovement)
       .where(and(
         eq(stockMovement.id, movementId),
-        eq(stockMovement.organizationId, orgId),
+        inArray(stockMovement.organizationId, ownerOrgIds),
         eq(stockMovement.movementType, MT.LOAN_OUT),
       ))
       .limit(1);
     if (!loanMovement) continue;
 
+    const movementOrgId = loanMovement.organizationId;
     const qty = Math.min(returnQty, Math.abs(parseFloat(loanMovement.quantity)));
 
     const [sl] = await db
       .select()
       .from(stockLevel)
       .where(and(
-        eq(stockLevel.organizationId, orgId),
+        eq(stockLevel.organizationId, movementOrgId),
         eq(stockLevel.productId, loanMovement.productId),
         eq(stockLevel.warehouseLabel, loanMovement.warehouseLabel),
       ))
@@ -1276,15 +1365,15 @@ export async function returnRentalItems(
     } else {
       const { nanoid: nid } = await import("nanoid");
       await db.insert(stockLevel).values({
-        id: nid(), organizationId: orgId, productId: loanMovement.productId,
+        id: nid(), organizationId: movementOrgId, productId: loanMovement.productId,
         warehouseLabel: loanMovement.warehouseLabel, quantity: newQty.toFixed(4),
-        reorderPoint: null, maxStock: null, unitCost: null, notes: null,
-        createdAt: now, updatedAt: now,
+        reorderPoint: null, maxStock: null, unitCost: null,
+        updatedAt: now,
       });
     }
 
     await db.insert(stockMovement).values({
-      id: nanoid(), organizationId: orgId,
+      id: nanoid(), organizationId: movementOrgId,
       productId: loanMovement.productId, productCode: loanMovement.productCode,
       warehouseLabel: loanMovement.warehouseLabel, warehouseTo: null,
       movementType: MT.LOAN_RETURN,

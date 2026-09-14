@@ -115,7 +115,12 @@ function LotPicker({ item, onSelect }: LotPickerProps) {
     <div className="flex flex-col gap-2 pt-1 border-t border-border/60">
       {item.lots.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Lot</p>
+          <p className={cn(
+            "text-[10px] font-medium uppercase tracking-wide",
+            item.selectedLotId ? "text-muted-foreground" : "text-destructive",
+          )}>
+            Lot{!item.selectedLotId && " — required, pick one"}
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {item.lots.map((lot) => (
               <button key={lot.id} type="button"
@@ -236,6 +241,16 @@ export function TransferClient({ reps, mainWarehouseLabel }: Props) {
     const validItems = items.filter((i) => i.productId && parseFloat(i.qty) > 0);
     if (validItems.length === 0) { toast.error("Add at least one item with qty > 0"); return; }
 
+    // Silently dropping the lot here (rather than requiring a pick) is what
+    // let lot-tracked items reach field stock with no lot/expiry attached —
+    // transferToRep/returnFromRep only write a stockLot row when lotNo is
+    // set, so an unselected lot meant that item's lot data just vanished.
+    const missingLot = validItems.find((i) => i.lots.length > 0 && !i.selectedLotId);
+    if (missingLot) {
+      toast.error(`Select a lot for ${missingLot.productCode} — it has ${missingLot.lots.length} lot(s) available`);
+      return;
+    }
+
     setSaving(true);
     try {
       const fn = direction === "to_rep" ? transferToRep : returnFromRep;
@@ -325,7 +340,7 @@ export function TransferClient({ reps, mainWarehouseLabel }: Props) {
         >
           <option value="">Select rep…</option>
           {reps.map((r) => (
-            <option key={r.id} value={r.id}>{r.name} ({r.role})</option>
+            <option key={r.id} value={r.id}>{r.name} ({r.role}{r.otherOrgName ? ` — ${r.otherOrgName}` : ""})</option>
           ))}
         </select>
       </section>

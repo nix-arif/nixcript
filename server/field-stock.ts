@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, member, user, product, staffStockLimit, organizationProfile, stockLot } from "@/db/schema";
+import { stockLevel, stockMovement, member, user, product, staffStockLimit, organizationProfile, stockLot, organization } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -49,6 +49,13 @@ export interface OrgMember {
   id: string;
   name: string;
   role: string;
+  // Set only when this person's membership comes from a sibling org (same
+  // owner group) rather than the caller's own active org — a shared staff
+  // member (e.g. a sales rep or application specialist covering several
+  // group companies) who doesn't belong to the active org directly. Lets
+  // pickers show which org they actually belong to instead of silently
+  // treating them as local.
+  otherOrgName?: string;
 }
 
 export interface FieldTransferItem {
@@ -88,15 +95,40 @@ export async function getMainWarehouseLabel(): Promise<string> {
   return getMainWarehouseLabelInternal(orgId);
 }
 
+// Members of every sibling org under the same owner, not just the active
+// org — a sales person / application specialist / field rep is often shared
+// across group companies (see resolveMainWarehouseLabel-style owner-group
+// pattern used throughout this file), and without this they were only
+// reachable by typing their name as free text, which never links to their
+// real user id — silently skipping CASE_USE stock deduction and leaving
+// them unpickable on the Field Stock transfer page for any org but their own.
 export async function getFieldReps(): Promise<OrgMember[]> {
   const { orgId } = await requireAccess("inventory:read");
+  const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
   const rows = await db
-    .select({ id: member.userId, name: user.name, role: member.role })
+    .select({ id: member.userId, name: user.name, role: member.role, organizationId: member.organizationId, orgName: organization.name })
     .from(member)
     .innerJoin(user, eq(user.id, member.userId))
-    .where(eq(member.organizationId, orgId))
+    .innerJoin(organization, eq(organization.id, member.organizationId))
+    .where(and(inArray(member.organizationId, ownerOrgIds), isNull(member.deletedAt)))
     .orderBy(user.name);
-  return rows.map((r) => ({ id: r.id, name: r.name ?? r.id, role: r.role }));
+
+  // The same person can hold a membership row in more than one sibling org —
+  // keep a single entry per person, preferring their own membership in the
+  // CURRENT org (so role reflects that) over a sibling-org one when both exist.
+  const byUser = new Map<string, OrgMember>();
+  for (const r of rows) {
+    const isCurrentOrg = r.organizationId === orgId;
+    const already = byUser.get(r.id);
+    if (already && !already.otherOrgName) continue;
+    byUser.set(r.id, {
+      id: r.id,
+      name: r.name ?? r.id,
+      role: r.role,
+      otherOrgName: isCurrentOrg ? undefined : r.orgName,
+    });
+  }
+  return [...byUser.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
