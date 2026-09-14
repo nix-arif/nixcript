@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { ClaimApplicationWithDetails } from "@/server/claim";
 import {
   checkClaim, rejectByChecker,
+  confirmClaimRejection, sendClaimRejectionBackToApprover,
   editClaimLineItem, toggleClaimLineItemSlash,
   editClaimEntertainmentDetail, toggleClaimEntertainmentDetailSlash,
 } from "@/server/claim";
@@ -24,7 +25,7 @@ import { cn } from "@/lib/utils";
 import {
   CheckIcon, XIcon, FileDownIcon, ClipboardListIcon,
   ArrowRightIcon, MapPinIcon, EyeIcon, CheckCircle2Icon, PencilIcon, PrinterIcon,
-  ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon,
+  ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon, AlertTriangleIcon, CornerUpLeftIcon,
 } from "lucide-react";
 import { EditBadge, SlashBadge } from "@/components/claim/line-item-annotations";
 
@@ -558,9 +559,10 @@ function ClaimDetailContent({
 
 interface Props {
   applications: ClaimApplicationWithDetails[];
+  rejectionReviews: ClaimApplicationWithDetails[];
 }
 
-export function ClaimCheckerClient({ applications }: Props) {
+export function ClaimCheckerClient({ applications, rejectionReviews }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -572,6 +574,15 @@ export function ClaimCheckerClient({ applications }: Props) {
   const [rejectTarget, setRejectTarget] = useState<ClaimApplicationWithDetails | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
+
+  // Approver's rejection, awaiting the checker's confirm-or-overturn decision.
+  const [confirmRejectTarget, setConfirmRejectTarget] = useState<ClaimApplicationWithDetails | null>(null);
+  const [confirmRejectComment, setConfirmRejectComment] = useState("");
+  const [confirmingRejection, setConfirmingRejection] = useState(false);
+
+  const [sendBackTarget, setSendBackTarget] = useState<ClaimApplicationWithDetails | null>(null);
+  const [sendBackComment, setSendBackComment] = useState("");
+  const [sendingBack, setSendingBack] = useState(false);
 
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
@@ -735,6 +746,33 @@ export function ClaimCheckerClient({ applications }: Props) {
     } finally { setRejecting(false); }
   }
 
+  async function handleConfirmRejection() {
+    if (!confirmRejectTarget) return;
+    setConfirmingRejection(true);
+    try {
+      await confirmClaimRejection(confirmRejectTarget.id, confirmRejectComment.trim() || undefined);
+      toast.success("Rejection confirmed — submitter notified");
+      setConfirmRejectTarget(null); setConfirmRejectComment("");
+      startTransition(() => router.refresh());
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to confirm rejection");
+    } finally { setConfirmingRejection(false); }
+  }
+
+  async function handleSendBack() {
+    if (!sendBackTarget) return;
+    if (!sendBackComment.trim()) { toast.error("Please explain why you're sending this back"); return; }
+    setSendingBack(true);
+    try {
+      await sendClaimRejectionBackToApprover(sendBackTarget.id, sendBackComment.trim());
+      toast.success("Sent back to the approver for reconsideration");
+      setSendBackTarget(null); setSendBackComment("");
+      startTransition(() => router.refresh());
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to send back");
+    } finally { setSendingBack(false); }
+  }
+
   return (
     <div className="p-6 flex flex-col gap-6">
       <div className="flex items-start justify-between">
@@ -751,14 +789,80 @@ export function ClaimCheckerClient({ applications }: Props) {
         )}
       </div>
 
-      {applications.length === 0 ? (
-        <div className="rounded-lg border border-border py-16 flex flex-col items-center gap-3 text-center">
-          <CheckCircle2Icon className="h-10 w-10 text-green-400"/>
-          <div>
-            <p className="font-semibold text-foreground">All caught up!</p>
-            <p className="text-sm text-muted-foreground mt-0.5">No pending claims to check.</p>
+      {rejectionReviews.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangleIcon className="h-4 w-4 text-amber-600"/>
+            <h2 className="text-sm font-semibold text-foreground">Rejection Reviews</h2>
+            <Badge className="bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700">
+              {rejectionReviews.length} awaiting confirmation
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            An approver rejected these — confirm to notify the submitter, or send back if you disagree.
+          </p>
+          <div className="rounded-lg border border-amber-200 dark:border-amber-800 overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-amber-50/60 dark:bg-amber-950/20">
+                  <TableHead className="w-40">Applicant</TableHead>
+                  <TableHead>Claim Type</TableHead>
+                  <TableHead className="w-28 text-right">Amount</TableHead>
+                  <TableHead>Approver&apos;s Reason</TableHead>
+                  <TableHead className="w-56 text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rejectionReviews.map((app) => (
+                  <TableRow key={app.id}>
+                    <TableCell>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-sm font-medium leading-snug">{app.applicantName ?? "Unknown"}</span>
+                        <span className="font-mono text-xs text-muted-foreground">{app.applicationNo}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">{app.claimTypeName}</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">{fmtAmount(app.amount)}</TableCell>
+                    <TableCell className="max-w-xs">
+                      <p className="text-sm text-muted-foreground truncate" title={app.reviewComment ?? ""}>{app.reviewComment ?? "—"}</p>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setViewTarget(app)}>
+                          <EyeIcon className="h-3 w-3"/>View
+                        </Button>
+                        <Button
+                          size="sm" variant="outline" className="h-7 gap-1 text-xs"
+                          onClick={() => { setSendBackTarget(app); setSendBackComment(""); }}
+                        >
+                          <CornerUpLeftIcon className="h-3 w-3"/>Send Back
+                        </Button>
+                        <Button
+                          size="sm" variant="destructive" className="h-7 gap-1 text-xs"
+                          onClick={() => { setConfirmRejectTarget(app); setConfirmRejectComment(""); }}
+                        >
+                          <XIcon className="h-3 w-3"/>Confirm Reject
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         </div>
+      )}
+
+      {applications.length === 0 ? (
+        rejectionReviews.length === 0 && (
+          <div className="rounded-lg border border-border py-16 flex flex-col items-center gap-3 text-center">
+            <CheckCircle2Icon className="h-10 w-10 text-green-400"/>
+            <div>
+              <p className="font-semibold text-foreground">All caught up!</p>
+              <p className="text-sm text-muted-foreground mt-0.5">No pending claims to check.</p>
+            </div>
+          </div>
+        )
       ) : (
         <div className="rounded-lg border border-border overflow-hidden">
           <Table>
@@ -934,6 +1038,90 @@ export function ClaimCheckerClient({ applications }: Props) {
                   {rejecting ? "Rejecting…" : "Reject Claim"}
                 </Button>
                 <Button variant="outline" onClick={() => setRejectTarget(null)} disabled={rejecting}>Cancel</Button>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Confirm Rejection Sheet */}
+      <Sheet open={!!confirmRejectTarget} onOpenChange={open => !open && setConfirmRejectTarget(null)}>
+        <SheetContent className="w-full sm:max-w-md max-w-lg! overflow-y-auto px-10">
+          <SheetHeader className="mb-5"><SheetTitle>Confirm Rejection</SheetTitle></SheetHeader>
+          {confirmRejectTarget && (
+            <div className="space-y-4">
+              <div className="rounded-md bg-muted/40 border border-border p-4 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Applicant</span>
+                  <span className="font-medium">{confirmRejectTarget.applicantName ?? "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Claim type</span>
+                  <span className="font-medium">{confirmRejectTarget.claimTypeName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Amount</span>
+                  <span className="font-medium">{fmtAmount(confirmRejectTarget.amount)}</span>
+                </div>
+              </div>
+              <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-3 space-y-1">
+                <p className="text-xs font-semibold text-amber-800 dark:text-amber-400">Approver&apos;s reason</p>
+                <p className="text-sm text-foreground">{confirmRejectTarget.reviewComment ?? "—"}</p>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Confirming will finalize this claim as rejected and notify the submitter.
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="confirmRejectComment">Your note <span className="text-muted-foreground font-normal text-xs">(optional, internal only)</span></Label>
+                <Textarea id="confirmRejectComment" value={confirmRejectComment} onChange={e => setConfirmRejectComment(e.target.value)} placeholder="Add an optional internal note…" rows={2}/>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button variant="destructive" className="flex-1" onClick={handleConfirmRejection} disabled={confirmingRejection}>
+                  {confirmingRejection ? "Confirming…" : "Confirm Rejection"}
+                </Button>
+                <Button variant="outline" onClick={() => setConfirmRejectTarget(null)} disabled={confirmingRejection}>Cancel</Button>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Send Back to Approver Sheet */}
+      <Sheet open={!!sendBackTarget} onOpenChange={open => !open && setSendBackTarget(null)}>
+        <SheetContent className="w-full sm:max-w-md max-w-lg! overflow-y-auto px-10">
+          <SheetHeader className="mb-5"><SheetTitle>Send Back to Approver</SheetTitle></SheetHeader>
+          {sendBackTarget && (
+            <div className="space-y-4">
+              <div className="rounded-md bg-muted/40 border border-border p-4 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Applicant</span>
+                  <span className="font-medium">{sendBackTarget.applicantName ?? "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Claim type</span>
+                  <span className="font-medium">{sendBackTarget.claimTypeName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Amount</span>
+                  <span className="font-medium">{fmtAmount(sendBackTarget.amount)}</span>
+                </div>
+              </div>
+              <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-3 space-y-1">
+                <p className="text-xs font-semibold text-amber-800 dark:text-amber-400">Approver&apos;s reason</p>
+                <p className="text-sm text-foreground">{sendBackTarget.reviewComment ?? "—"}</p>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                This returns the claim to the approver&apos;s queue for reconsideration — the submitter is not notified yet.
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="sendBackComment">Reason <span className="text-destructive">*</span></Label>
+                <Textarea id="sendBackComment" value={sendBackComment} onChange={e => setSendBackComment(e.target.value)} placeholder="Explain why you disagree with this rejection (required)…" rows={3} required/>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={handleSendBack} disabled={sendingBack || !sendBackComment.trim()}>
+                  {sendingBack ? "Sending…" : "Send Back to Approver"}
+                </Button>
+                <Button variant="outline" onClick={() => setSendBackTarget(null)} disabled={sendingBack}>Cancel</Button>
               </div>
             </div>
           )}

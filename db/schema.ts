@@ -3622,7 +3622,11 @@ export const claimApplication = pgTable(
     quantity: text("quantity"),
     ratePerUnit: text("rate_per_unit"),
     amount: text("amount").notNull().default("0"),     // total in MYR
-    status: text("status").notNull().default("PENDING"), // DRAFT | PENDING | CHECKED | APPROVED | REJECTED | CANCELLED
+    status: text("status").notNull().default("PENDING"), // DRAFT | PENDING | CHECKED | APPROVED | REJECTION_REVIEW | REJECTED | CANCELLED
+    // REJECTION_REVIEW = approver rejected, awaiting the checker's confirm-or-
+    // overturn decision (see rejectClaim/confirmClaimRejection/
+    // sendClaimRejectionBackToApprover in server/claim.ts) — not yet a final
+    // REJECTED, so the submitter isn't told until the checker confirms.
     // Checker (first-level review)
     checkedBy: text("checked_by").references(() => user.id),
     checkedAt: timestamp("checked_at"),

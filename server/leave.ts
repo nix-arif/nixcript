@@ -116,6 +116,21 @@ function calculateWorkingDays(startDate: string, endDate: string, isHalfDay: boo
   return days;
 }
 
+// Calendar days between today and the leave's start date — how much advance
+// notice this application actually gives, which is what the Emergency Leave
+// classification below is keyed on. Deliberately calendar days (not working
+// days, unlike calculateWorkingDays above) and deliberately about how SOON
+// the leave starts, not how LONG it runs — a 1-day leave applied for a month
+// ahead is properly planned; a 2-week leave applied for tomorrow is not.
+// Negative when the start date has already passed (a backdated application)
+// — that's even less notice than zero, so it still counts as emergency.
+function calculateNoticeDays(startDate: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(startDate + "T00:00:00");
+  return Math.round((start.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
 // Every calendar date in [dateFrom, dateUntil] inclusive — unlike
 // calculateWorkingDays above, weekends are NOT skipped: the entire premise
 // of a replacement-credit claim is that the person worked on a day they
@@ -494,9 +509,10 @@ export async function seedDefaultLeaveTypes(): Promise<void> {
       allowHalfDay: true,
       carryForwardEnabled: true,
       maxCarryForward: 8,
-      // Applications of 2 days or fewer are auto-labeled Emergency Leave —
-      // still drawn from this same Annual Leave balance, not a separate
-      // pool. Adjust per org via Leave Types settings.
+      // Applications giving 2 days' notice or less (i.e. applied for the
+      // leave's own start date within 2 days) are auto-labeled Emergency
+      // Leave — still drawn from this same Annual Leave balance, not a
+      // separate pool. Adjust per org via Leave Types settings.
       emergencyThresholdDays: 2,
       // Common Malaysian SME practice: new hires accrue Annual Leave from
       // day one, but can't actually apply for it until confirmed permanent;
@@ -1286,12 +1302,14 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
     );
   }
 
-  // Emergency Leave isn't a separate balance — it's a short-application
-  // label on whichever type has emergencyThresholdDays set (normally
-  // Annual Leave). leaveTypeId keeps pointing at the real type (lt) so the
+  // Emergency Leave isn't a separate balance — it's a short-notice label on
+  // whichever type has emergencyThresholdDays set (normally Annual Leave),
+  // based on how soon the leave starts relative to today, not how long it
+  // runs. leaveTypeId keeps pointing at the real type (lt) so the
   // entitlement above is still what gets debited; only the display
   // name/code recorded on the application changes.
-  const isEmergency = lt.emergencyThresholdDays != null && totalDays <= lt.emergencyThresholdDays;
+  const noticeDays = calculateNoticeDays(data.startDate);
+  const isEmergency = lt.emergencyThresholdDays != null && noticeDays <= lt.emergencyThresholdDays;
   const appliedName = isEmergency ? "Emergency Leave" : lt.name;
   const appliedCode = isEmergency ? "EMERG" : lt.code;
 

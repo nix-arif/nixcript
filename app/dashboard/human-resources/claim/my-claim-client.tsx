@@ -310,10 +310,14 @@ function StatusBadge({ status }: { status: string }) {
     PENDING:   "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700",
     CHECKED:   "bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700",
     APPROVED:  "bg-green-100 text-green-800 border-green-200 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700",
+    // Approver rejected it, but the checker hasn't confirmed yet — deliberately
+    // NOT styled/labeled like REJECTED, since it isn't final and the submitter
+    // shouldn't be told a rejection reason that might still get overturned.
+    REJECTION_REVIEW: "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700",
     REJECTED:  "bg-red-100 text-red-800 border-red-200 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700",
     CANCELLED: "bg-muted text-muted-foreground border-border hover:bg-muted",
   };
-  const labels: Record<string,string> = { DRAFT:"Draft", PENDING:"Pending", CHECKED:"Checked", APPROVED:"Approved", REJECTED:"Rejected", CANCELLED:"Cancelled" };
+  const labels: Record<string,string> = { DRAFT:"Draft", PENDING:"Pending", CHECKED:"Checked", APPROVED:"Approved", REJECTION_REVIEW:"Under Review", REJECTED:"Rejected", CANCELLED:"Cancelled" };
   return <Badge className={`border text-xs ${map[status] ?? "border-border"}`}>{labels[status] ?? status}</Badge>;
 }
 
@@ -704,6 +708,16 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   const [claimPeriod, setClaimPeriod] = useState("");
   const [note, setNote] = useState("");
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([]);
+  // Documents from a previous submission that aren't tied to any line-item
+  // row (claim_document.lineItemId === null) — how Overseas/Entertainment
+  // claims attach receipts at all (they have no per-row file picker), and
+  // occasionally present on Local claims too (a combined receipt covering
+  // several items). Without surfacing these here, editing a rejected claim
+  // of this kind showed "Receipt / Supporting Documents" as completely
+  // empty even though a receipt was genuinely still attached underneath —
+  // only visible, easy to miss, in the separate read-only "Currently
+  // Attached Documents" list. See loadAppIntoForm.
+  const [existingUnlinkedDocs, setExistingUnlinkedDocs] = useState<ClaimDocumentRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [calculatingRows, setCalculatingRows] = useState<Set<string>>(new Set());
 
@@ -954,6 +968,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   function resetForm() {
     setEditingApp(null);
     setSelectedTypeId(""); setClaimPeriod(""); setNote(""); setQueuedFiles([]);
+    setExistingUnlinkedDocs([]);
     setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
     setOvMyrRows([]); setOvFxRows([]); setOvOtherRows([]);
     setEntRows([emptyEntRow()]);
@@ -1024,6 +1039,24 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     setDeletingDocId(null);
   }
 
+  // Same removal as handleDeleteDocument, but for a pre-existing unlinked
+  // document rendered inline in the Receipt/Supporting Documents section
+  // (see existingUnlinkedDocs) rather than the read-only summary list.
+  async function removeExistingUnlinkedDoc(docId: string) {
+    setDeletingDocId(docId);
+    try {
+      await deleteClaimDocument(docId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove document");
+      setDeletingDocId(null);
+      return;
+    }
+    setExistingUnlinkedDocs(prev => prev.filter(d => d.id !== docId));
+    setEditingApp(prev => prev ? { ...prev, documents: prev.documents.filter(d => d.id !== docId) } : prev);
+    toast.success("Document removed");
+    setDeletingDocId(null);
+  }
+
   // Downloads a claim's PDF, surfacing the server's actual error text on failure
   // instead of leaving the user with a blank tab or a silent failed download.
   async function handleDownloadPdf(appId: string, applicationNo: string) {
@@ -1060,6 +1093,12 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     // to literally read "Draft".
     setNote(app.status === "DRAFT" && app.description === "Draft" ? "" : app.description);
     setQueuedFiles([]);
+    // Not tied to a line item, so buildFormRows below never restores these
+    // into any row's existingFileName — they'd otherwise disappear entirely
+    // from the editable form. Rendered in the Receipt/Supporting Documents
+    // section itself; excluded from the "Currently Attached Documents"
+    // summary below to avoid showing the same file twice.
+    setExistingUnlinkedDocs(app.documents.filter(d => d.lineItemId === null));
     setUploadingFields(new Set());
     if (app.entertainmentDetails && app.entertainmentDetails.length > 0) {
       setUploadedFiles({});
@@ -1798,21 +1837,22 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               Previously attached documents are kept automatically — only newly added items need new receipts.
             </div>
           )}
-          {editingApp && editingApp.documents.length > 0 && (
+          {editingApp && editingApp.documents.filter(d => d.lineItemId !== null).length > 0 && (
             <div className="mb-4">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                Currently Attached Documents ({editingApp.documents.length})
+                Currently Attached Documents ({editingApp.documents.filter(d => d.lineItemId !== null).length})
+              </p>
+              <p className="text-xs text-muted-foreground mb-2">
+                Each linked to a specific expense row below — shown there too (and removable from there). Documents not tied to a specific row appear in the Receipt/Supporting Documents section further down.
               </p>
               <div className="flex flex-col gap-1.5">
-                {editingApp.documents.map(doc => {
-                  const linked = doc.lineItemId !== null;
+                {editingApp.documents.filter(d => d.lineItemId !== null).map(doc => {
                   return (
                     <div key={doc.id} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs hover:bg-muted/50 transition-colors group">
                       <FileDownIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0 group-hover:text-primary"/>
                       <a href={`/api/claim/download/${doc.fileKey}`} target="_blank" rel="noopener noreferrer" className="flex-1 truncate text-foreground font-medium hover:underline">
                         {doc.fileName}
                       </a>
-                      {!linked && <span className="text-amber-600 dark:text-amber-400 shrink-0 text-[10px] font-semibold uppercase tracking-wide" title="Not linked to any expense row on this claim">Unlinked</span>}
                       <button
                         type="button"
                         onClick={() => { void handleDeleteDocument(doc.id); }}
@@ -2289,13 +2329,30 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
                   </Button>
                 </div>
                 <input ref={fileInputRef} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" multiple className="hidden" onChange={handleFileSelect}/>
-                {queuedFiles.length === 0 ? (
+                {existingUnlinkedDocs.length === 0 && queuedFiles.length === 0 ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <InfoIcon className="h-4 w-4 shrink-0"/>
                     <span>{selectedType.requiresReceipt ? "Receipt required — JPG, PNG, WebP or PDF (max 5 MB)." : "No receipt required, but you may attach one."}</span>
                   </div>
                 ) : (
                   <div className="flex flex-col gap-1.5">
+                    {existingUnlinkedDocs.map(doc => (
+                      <div key={doc.id} className="flex items-center justify-between rounded-md border border-blue-400/40 bg-blue-50 dark:bg-blue-900/20 px-3 py-2">
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <a href={`/api/claim/download/${doc.fileKey}`} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-700 dark:text-blue-400 truncate hover:underline">
+                            {doc.fileName}
+                          </a>
+                          <p className="text-xs text-muted-foreground">Already attached from before</p>
+                        </div>
+                        <Button
+                          type="button" variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0"
+                          disabled={deletingDocId === doc.id}
+                          onClick={() => void removeExistingUnlinkedDoc(doc.id)}
+                        >
+                          {deletingDocId === doc.id ? <LoaderIcon className="h-3.5 w-3.5 animate-spin"/> : <XIcon className="h-3.5 w-3.5"/>}
+                        </Button>
+                      </div>
+                    ))}
                     {queuedFiles.map(qf => (
                       <div key={qf.id} className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
                         <div className="flex flex-col gap-0.5 min-w-0">

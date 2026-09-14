@@ -625,9 +625,9 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                         <Badge
                           variant="outline"
                           className="text-xs px-1.5 py-0 h-5 text-orange-700 border-orange-200 bg-orange-50 dark:text-orange-400 dark:border-orange-700"
-                          title={`Applications of ≤${lt.emergencyThresholdDays} days are auto-recorded as Emergency Leave, drawn from this same balance`}
+                          title={`Applications giving ≤${lt.emergencyThresholdDays} days' notice are auto-recorded as Emergency Leave, drawn from this same balance`}
                         >
-                          EL ≤{lt.emergencyThresholdDays}d
+                          EL ≤{lt.emergencyThresholdDays}d notice
                         </Badge>
                       )}
                     </div>
@@ -865,7 +865,7 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
 
             {/* Emergency Leave threshold */}
             <div className="rounded-md border border-border p-3 space-y-1.5">
-              <Label htmlFor="ltEmergencyThreshold">Emergency Leave Threshold (days)</Label>
+              <Label htmlFor="ltEmergencyThreshold">Emergency Leave Notice Threshold (days)</Label>
               <input
                 id="ltEmergencyThreshold"
                 type="number"
@@ -876,8 +876,9 @@ export function LeaveTypesClient({ types, permissions: _permissions }: Props) {
                 className="w-full border border-input rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               />
               <p className="text-xs text-muted-foreground">
-                Applications against this leave type of this many days or fewer are automatically
-                recorded as <strong>Emergency Leave</strong> instead of {form.name || "this type"}.
+                Applications giving this many days' notice or fewer before the leave starts (not how
+                long the leave itself runs) are automatically recorded as{" "}
+                <strong>Emergency Leave</strong> instead of {form.name || "this type"}.
                 They still draw from this same balance — Emergency Leave is not a separate pool.
                 Normally set on Annual Leave only.
               </p>

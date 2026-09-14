@@ -74,17 +74,18 @@ function StatusBadge({ status }: { status: string }) {
     PENDING:   "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700",
     CHECKED:   "bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700",
     APPROVED:  "bg-green-100 text-green-800 border-green-200 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700",
+    REJECTION_REVIEW: "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700",
     REJECTED:  "bg-red-100 text-red-800 border-red-200 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700",
     CANCELLED: "bg-muted text-muted-foreground border-border hover:bg-muted",
   };
-  const labels: Record<string, string> = { DRAFT: "Draft", PENDING: "Pending", CHECKED: "Checked", APPROVED: "Approved", REJECTED: "Rejected", CANCELLED: "Cancelled" };
+  const labels: Record<string, string> = { DRAFT: "Draft", PENDING: "Pending", CHECKED: "Checked", APPROVED: "Approved", REJECTION_REVIEW: "Rejection Review", REJECTED: "Rejected", CANCELLED: "Cancelled" };
   return <Badge className={`border text-xs ${map[status] ?? "border-border"}`}>{labels[status] ?? status}</Badge>;
 }
 
-const STATUS_FILTERS = ["APPROVED", "ALL", "PENDING", "CHECKED", "REJECTED", "CANCELLED", "DRAFT"] as const;
+const STATUS_FILTERS = ["APPROVED", "ALL", "PENDING", "CHECKED", "REJECTION_REVIEW", "REJECTED", "CANCELLED", "DRAFT"] as const;
 const STATUS_FILTER_LABELS: Record<string, string> = {
   APPROVED: "Approved", ALL: "All", PENDING: "Pending", CHECKED: "Checked",
-  REJECTED: "Rejected", CANCELLED: "Cancelled", DRAFT: "Draft",
+  REJECTION_REVIEW: "Rejection Review", REJECTED: "Rejected", CANCELLED: "Cancelled", DRAFT: "Draft",
 };
 
 interface Props {

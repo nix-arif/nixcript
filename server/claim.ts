@@ -984,8 +984,16 @@ export async function approveClaim(appId: string, comment?: string): Promise<voi
   });
 }
 
+// Not a final rejection — an approver's reject is now a proposal that goes
+// to the checker for confirmation before the submitter is ever told. Status
+// only reaches REJECTED via confirmClaimRejection below; if the checker
+// disagrees instead, sendClaimRejectionBackToApprover returns it to CHECKED
+// for the approver to reconsider. Falls back to finalizing immediately (the
+// old direct-to-submitter behavior) only if the org has nobody left holding
+// claim:check — otherwise the claim would be stuck with no one able to act
+// on REJECTION_REVIEW.
 export async function rejectClaim(appId: string, reason: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("claim:approve");
+  const { orgId, userId, userName } = await requireAccess("claim:approve");
   if (!reason.trim()) throw new Error("Rejection reason is required");
   const app = await db
     .select()
@@ -998,14 +1006,95 @@ export async function rejectClaim(appId: string, reason: string): Promise<void> 
 
   await db
     .update(claimApplication)
-    .set({ status: "REJECTED", reviewedBy: userId, reviewedAt: new Date(), reviewComment: reason.trim(), updatedAt: new Date() })
+    .set({ status: "REJECTION_REVIEW", reviewedBy: userId, reviewedAt: new Date(), reviewComment: reason.trim(), updatedAt: new Date() })
+    .where(eq(claimApplication.id, appId));
+
+  const checkersNotified = await notifyUsersWithPermission(orgId, "claim:check", {
+    type: "claim:rejection_review",
+    title: `Claim Rejection Needs Confirmation`,
+    body: `${userName} rejected a ${app[0].claimTypeName} claim (RM ${parseFloat(app[0].amount).toFixed(2)}) — reason: ${reason.trim()}`,
+    link: `/dashboard/human-resources/claim/checker`,
+  });
+
+  if (!checkersNotified) {
+    // No one can act on REJECTION_REVIEW — finalize now rather than leave
+    // it stuck, matching the old direct-to-submitter behavior.
+    await db
+      .update(claimApplication)
+      .set({ status: "REJECTED", updatedAt: new Date() })
+      .where(eq(claimApplication.id, appId));
+    await notifyUser(orgId, app[0].userId, {
+      type: "claim:rejected",
+      title: `Claim Rejected: ${app[0].claimTypeName}`,
+      body: `Your ${app[0].claimTypeName} (RM ${parseFloat(app[0].amount).toFixed(2)}) was rejected. Reason: ${reason.trim()}`,
+      link: `/dashboard/human-resources/claim`,
+    });
+  }
+}
+
+// Checker confirms the approver's rejection — this is what actually
+// finalizes it as REJECTED and tells the submitter. The submitter sees the
+// approver's original reason (reviewComment), not the checker's own note
+// here, which is just their confirmation remark.
+export async function confirmClaimRejection(appId: string, comment?: string): Promise<void> {
+  const { orgId, userId } = await requireAccess("claim:check");
+  const app = await db
+    .select()
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app[0]) throw new Error("Application not found");
+  if (app[0].status !== "REJECTION_REVIEW") throw new Error("Only claims pending rejection confirmation can be confirmed");
+  await assertSelfActionAllowed(orgId, "claim:check", app[0].userId, userId, "reject");
+
+  await db
+    .update(claimApplication)
+    .set({ status: "REJECTED", checkedBy: userId, checkedAt: new Date(), checkerComment: comment?.trim() || null, updatedAt: new Date() })
     .where(eq(claimApplication.id, appId));
 
   await notifyUser(orgId, app[0].userId, {
     type: "claim:rejected",
     title: `Claim Rejected: ${app[0].claimTypeName}`,
-    body: `Your ${app[0].claimTypeName} (RM ${parseFloat(app[0].amount).toFixed(2)}) was rejected. Reason: ${reason}`,
+    body: `Your ${app[0].claimTypeName} (RM ${parseFloat(app[0].amount).toFixed(2)}) was rejected. Reason: ${app[0].reviewComment ?? ""}`,
     link: `/dashboard/human-resources/claim`,
+  });
+}
+
+// Checker disagrees with the approver's rejection — sends it back to the
+// approver's queue for reconsideration instead of confirming it. Clears the
+// approver's prior rejection reasoning (it's being reconsidered, not
+// upheld) and records the checker's own reasoning in its place.
+export async function sendClaimRejectionBackToApprover(appId: string, comment: string): Promise<void> {
+  const { orgId, userId, userName } = await requireAccess("claim:check");
+  if (!comment.trim()) throw new Error("Please explain why you're sending this back to the approver");
+  const app = await db
+    .select()
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app[0]) throw new Error("Application not found");
+  if (app[0].status !== "REJECTION_REVIEW") throw new Error("Only claims pending rejection confirmation can be sent back");
+  await assertSelfActionAllowed(orgId, "claim:check", app[0].userId, userId, "check");
+
+  await db
+    .update(claimApplication)
+    .set({
+      status: "CHECKED",
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewComment: null,
+      checkedBy: userId,
+      checkedAt: new Date(),
+      checkerComment: comment.trim(),
+      updatedAt: new Date(),
+    })
+    .where(eq(claimApplication.id, appId));
+
+  await notifyUsersWithPermission(orgId, "claim:approve", {
+    type: "claim:checked",
+    title: `Claim Sent Back for Reconsideration`,
+    body: `${userName} disagreed with the rejection of a ${app[0].claimTypeName} claim (RM ${parseFloat(app[0].amount).toFixed(2)}) — ${comment.trim()}`,
+    link: `/dashboard/human-resources/claim/approvals`,
   });
 }
 
@@ -1344,6 +1433,32 @@ export async function getPendingClaimChecks(): Promise<ClaimApplicationWithDetai
     .leftJoin(user, eq(claimApplication.userId, user.id))
     .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "PENDING")))
     .orderBy(desc(claimApplication.createdAt));
+  if (apps.length === 0) return [];
+  const appIds = apps.map((a) => a.app.id);
+  const { docMap, lineMap, entMap } = await loadExtras(appIds);
+  return apps.map(({ app, applicantName }) => ({
+    ...app,
+    applicantName: applicantName ?? null,
+    documents: docMap[app.id] ?? [],
+    lineItems: lineMap[app.id] ?? [],
+    entertainmentDetails: entMap[app.id] ?? [],
+  }));
+}
+
+// Claims an approver has rejected, awaiting the checker's confirmation (or
+// disagreement) before REJECTED is final — see rejectClaim/
+// confirmClaimRejection/sendClaimRejectionBackToApprover above. Separate
+// queue from getPendingClaimChecks since the review here is a different
+// decision (uphold or overturn the approver's rejection), not the original
+// screening.
+export async function getPendingRejectionReviews(): Promise<ClaimApplicationWithDetails[]> {
+  const { orgId } = await requireAccess("claim:check");
+  const apps = await db
+    .select({ app: claimApplication, applicantName: user.name })
+    .from(claimApplication)
+    .leftJoin(user, eq(claimApplication.userId, user.id))
+    .where(and(eq(claimApplication.organizationId, orgId), eq(claimApplication.status, "REJECTION_REVIEW")))
+    .orderBy(desc(claimApplication.reviewedAt));
   if (apps.length === 0) return [];
   const appIds = apps.map((a) => a.app.id);
   const { docMap, lineMap, entMap } = await loadExtras(appIds);

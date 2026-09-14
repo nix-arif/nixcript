@@ -44,6 +44,19 @@ function calcWorkingDays(start: string, end: string, isHalfDay: boolean): number
   return days;
 }
 
+// Mirrors calculateNoticeDays in server/leave.ts — calendar days between
+// today and the leave's start date (how much advance notice this gives),
+// not the leave's own length. Used only for the live "will be recorded as
+// Emergency Leave" preview below; the server recomputes this itself at
+// submit time as the source of truth.
+function calcNoticeDays(start: string): number {
+  if (!start) return Infinity;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const s = new Date(start + "T00:00:00");
+  return Math.round((s.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
 function formatDays(n: number | string): string {
   const v = typeof n === "string" ? parseFloat(n) : n;
   return v % 1 === 0 ? String(Math.round(v)) : v.toFixed(1);
@@ -92,10 +105,11 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
   const workingDays = calcWorkingDays(effectiveStart, effectiveEnd, isHalfDay);
   const remaining = selectedBalance ? parseFloat(selectedBalance.remainingDays) : 0;
   const insufficientBalance = selectedType !== null && workingDays > 0 && workingDays > remaining;
+  const noticeDays = calcNoticeDays(effectiveStart);
   const willBeEmergency =
     selectedType?.emergencyThresholdDays != null &&
     workingDays > 0 &&
-    workingDays <= selectedType.emergencyThresholdDays;
+    noticeDays <= selectedType.emergencyThresholdDays;
 
   const isFormValid =
     selectedTypeId !== "" &&
@@ -389,7 +403,7 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
                     <InfoIcon className="h-4 w-4 mt-0.5 shrink-0" />
                     <span>
                       This will be automatically recorded as <strong>Emergency Leave</strong>{" "}
-                      (≤{selectedType!.emergencyThresholdDays} days) — it still draws from your{" "}
+                      (≤{selectedType!.emergencyThresholdDays} days' notice) — it still draws from your{" "}
                       {selectedType!.name} balance.
                     </span>
                   </div>
