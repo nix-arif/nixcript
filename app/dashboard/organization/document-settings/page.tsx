@@ -5,7 +5,7 @@ import { DocumentSettingsClient } from "./document-settings-client";
 import { redirect } from "next/navigation";
 
 export default async function DocumentSettingsPage() {
-  await requirePermission("organization-profile:update");
+  await requirePermission("document-settings:update");
 
   let data;
   try {

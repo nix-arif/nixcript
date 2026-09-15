@@ -117,6 +117,9 @@ export const ALL_PERMISSIONS = [
   { key: "organization-profile:update", label: "Update Organization Profile" },
   { key: "organization-profile:delete", label: "Delete Organization Profile" },
 
+  // Document settings (PDF template/branding + document numbering)
+  { key: "document-settings:update", label: "Update Document Settings" },
+
   // Organization roles (custom role management)
   { key: "organization-role:create", label: "Create Organization Role" },
   { key: "organization-role:update", label: "Update Organization Role" },
@@ -242,6 +245,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "profile:read", "profile:update", "profile:read:all",
       "payslip:read:own", "payslip:read:all",
       "organization-profile:read", "organization-profile:create", "organization-profile:update",
+      "document-settings:update",
       "organization-role:create", "organization-role:update", "organization-role:delete",
       "account:read", "account:create", "account:update", "account:delete",
       "claim:read:own", "claim:apply", "claim:approve",

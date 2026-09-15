@@ -30,7 +30,7 @@ import {
 import type { OrgMember, DeletedMember } from "@/server/members";
 import type { Department } from "@/server/departments";
 import { setMemberHireDate, setMemberNoticeDate, getAnnualLeaveBalanceForNoticeCalc } from "@/server/leave";
-import type { NoticePeriodPolicyRow } from "@/server/leave";
+import type { NoticePeriodPolicyRow, LeaveTypeRow } from "@/server/leave";
 import { setMemberEmploymentStatus } from "@/server/profile";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { memberNoticeRoleBucket, computeLastWorkingDay, computeLastWorkingDayAfterLeaveDeduction } from "@/lib/notice-period";
@@ -84,12 +84,14 @@ const EMPLOYMENT_STATUS_STYLE: Record<string, { bg: string; color: string }> = {
 function EmploymentDialog({
   member: m,
   policies,
+  leaveTypes,
   open,
   onClose,
   onSaved,
 }: {
   member: OrgMember;
   policies: NoticePeriodPolicyRow[];
+  leaveTypes: LeaveTypeRow[];
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -106,6 +108,7 @@ function EmploymentDialog({
     getAnnualLeaveBalanceForNoticeCalc(m.userId).then(setNoticeLeaveBalance).catch(() => setNoticeLeaveBalance(null));
   }, [open, m.userId]);
 
+  const restrictedLeaveTypes = leaveTypes.filter((lt) => lt.blockedDuringNotice);
   const bucket = memberNoticeRoleBucket(m);
   const previewStatus = employmentStatusDraft || m.employmentStatus;
   const lastWorkingDayPreview = computeLastWorkingDay(
@@ -197,17 +200,30 @@ function EmploymentDialog({
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
-                  checked={leaveBlockedOnNoticeDraft}
-                  onChange={(e) => setLeaveBlockedOnNoticeDraft(e.target.checked)}
+                  checked={!leaveBlockedOnNoticeDraft}
+                  onChange={(e) => setLeaveBlockedOnNoticeDraft(!e.target.checked)}
                   className="rounded border-input"
                 />
-                Block restricted leave types during notice
+                Unblock restricted leave types during notice
               </label>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Set when this member tenders resignation. Only applies to leave types marked
-              &quot;blocked during notice&quot; (Annual Leave by default).
+              By default, this member can&apos;t apply for leave types marked &quot;blocked during
+              notice&quot; once their notice date is set. Check this to make a one-off exception
+              for this resignation only — the org-wide policy is unchanged for everyone else.
             </p>
+            {!leaveBlockedOnNoticeDraft && (
+              restrictedLeaveTypes.length > 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Affects: {restrictedLeaveTypes.map((lt) => lt.name).join(", ")}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground italic">
+                  No leave types are currently marked &quot;blocked during notice&quot;, so this
+                  has no effect yet.
+                </p>
+              )
+            )}
             {noticeDateDraft && (
               lastWorkingDayPreview ? (
                 <div className="text-xs space-y-1 rounded-md border border-border bg-muted/30 px-2.5 py-2">
@@ -361,6 +377,7 @@ export function MembersClient({
   currentUserId,
   permissions,
   noticePolicies,
+  leaveTypes,
 }: {
   members: OrgMember[];
   deletedMembers: DeletedMember[];
@@ -368,6 +385,7 @@ export function MembersClient({
   currentUserId: string;
   permissions: string[];
   noticePolicies: NoticePeriodPolicyRow[];
+  leaveTypes: LeaveTypeRow[];
 }) {
   const router = useRouter();
   const canManageEmployment                    = hasAccess(permissions, "leave:manage");
@@ -691,6 +709,7 @@ export function MembersClient({
         <EmploymentDialog
           member={employmentTarget}
           policies={noticePolicies}
+          leaveTypes={leaveTypes}
           open={!!employmentTarget}
           onClose={() => setEmploymentTarget(null)}
           onSaved={() => { setEmploymentTarget(null); router.refresh(); }}

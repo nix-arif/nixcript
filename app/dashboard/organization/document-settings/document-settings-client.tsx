@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { upsertOrganizationProfile, FullOrganizationProfile } from "@/server/organization-profile";
+import { upsertDocumentTemplateSettings, FullOrganizationProfile } from "@/server/organization-profile";
 import { upsertDocumentNumberingSettings, type NumberingSetting } from "@/server/document-numbering";
 import { buildDocumentNo, DOC_TYPE_DEFAULTS } from "@/lib/document-numbering";
 import { Button } from "@/components/ui/button";
@@ -197,7 +197,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
             numberFormat:  numbering[dt].numberFormat,
           })),
         ),
-        upsertOrganizationProfile({
+        upsertDocumentTemplateSettings({
           brandColor,
           slateTextColor:    slateTextColor    || null,
           slateHeadingColor: slateHeadingColor || null,

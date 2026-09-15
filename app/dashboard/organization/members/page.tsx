@@ -2,18 +2,19 @@ import { requirePermission } from "@/lib/auth/require-permission";
 import { getOrgMembers, getDeletedMembers } from "@/server/members";
 import { getDepartments } from "@/server/departments";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
-import { getNoticePeriodPolicies } from "@/server/leave";
+import { getNoticePeriodPolicies, getLeaveTypes } from "@/server/leave";
 import { MembersClient } from "./members-client";
 
 export default async function MembersPage() {
   const session = await requirePermission("member:read");
   const orgId = session.session.activeOrganizationId!;
-  const [members, deletedMembers, departments, permissions, noticePolicies] = await Promise.all([
+  const [members, deletedMembers, departments, permissions, noticePolicies, leaveTypes] = await Promise.all([
     getOrgMembers(),
     getDeletedMembers(),
     getDepartments(),
     getUserPermissions(session.user.id, orgId),
     getNoticePeriodPolicies(),
+    getLeaveTypes(),
   ]);
   return (
     <MembersClient
@@ -23,6 +24,7 @@ export default async function MembersPage() {
       currentUserId={session.user.id}
       permissions={permissions}
       noticePolicies={noticePolicies}
+      leaveTypes={leaveTypes}
     />
   );
 }

@@ -140,7 +140,7 @@ export const navConfig: NavGroup[] = [
       { title: "Departments",          url: "/dashboard/organization/departments",          permission: "department:read"           },
       { title: "Roles",                url: "/dashboard/organization/roles",                permission: "organization-role:update"  },
       { title: "Organization Profile", url: "/dashboard/organization/organization-profile", permission: "organization-profile:read" },
-      { title: "Document Settings",    url: "/dashboard/organization/document-settings",    permission: "organization-profile:update" },
+      { title: "Document Settings",    url: "/dashboard/organization/document-settings",    permission: "document-settings:update" },
       { title: "Categories",           url: "/dashboard/organization/categories",           permission: "organization-profile:read" },
       { title: "Admin Invoices",       url: "/dashboard/organization/invoices",             permission: "organization-profile:update" },
     ],

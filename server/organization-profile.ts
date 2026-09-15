@@ -106,16 +106,14 @@ export async function getOrganizationBranding(orgId: string) {
 }
 
 // ── Upsert organization profile ────────────────────────────────────────────
-export async function upsertOrganizationProfile(
-  data: Partial<
-    Omit<
-      typeof organizationProfile.$inferInsert,
-      "id" | "organizationId" | "createdAt" | "updatedAt"
-    >
-  >,
-) {
-  const orgId = await requireAccess("organization-profile:update");
+type OrganizationProfileData = Partial<
+  Omit<
+    typeof organizationProfile.$inferInsert,
+    "id" | "organizationId" | "createdAt" | "updatedAt"
+  >
+>;
 
+async function doUpsertOrganizationProfile(orgId: string, data: OrganizationProfileData) {
   await db
     .insert(organizationProfile)
     .values({
@@ -138,6 +136,22 @@ export async function upsertOrganizationProfile(
       .set({ name: data.companyName })
       .where(eq(organization.id, orgId));
   }
+}
+
+// Company info (name, address, contact, certificates, banking) — the
+// Organization Profile page.
+export async function upsertOrganizationProfile(data: OrganizationProfileData) {
+  const orgId = await requireAccess("organization-profile:update");
+  await doUpsertOrganizationProfile(orgId, data);
+}
+
+// PDF template/branding fields (colors, layout, table style, doc-no format)
+// stored on the same row — the Document Settings page. Kept as a separate
+// action so it can be gated by "document-settings:update" instead of
+// requiring full "organization-profile:update" access.
+export async function upsertDocumentTemplateSettings(data: OrganizationProfileData) {
+  const orgId = await requireAccess("document-settings:update");
+  await doUpsertOrganizationProfile(orgId, data);
 }
 
 // ── Upload organization logo (public bucket) ───────────────────────────────

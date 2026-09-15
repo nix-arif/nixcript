@@ -94,7 +94,7 @@ export async function upsertDocumentNumberingSettings(
 ): Promise<void> {
   const { orgId, userId } = await getSession();
   const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, "organization:update")) throw new Error("Forbidden");
+  if (!hasAccess(perms, "document-settings:update")) throw new Error("Forbidden");
 
   for (const s of settings) {
     const existing = await db
