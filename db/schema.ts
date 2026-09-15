@@ -3952,6 +3952,19 @@ export const documentCategory = pgTable(
     color: text("color").default("#6366f1"),
     isDefault: boolean("is_default").default(false).notNull(),
     position: integer("position").default(0).notNull(),
+    // Optional intercompany billing rule for this category — when set,
+    // maybeCreateIntercompanyPoForCaseInvoice (server/purchase-order.ts)
+    // auto-raises a value-only PO to intercompanyOrgId for
+    // intercompanySharePercent% of a Case DO invoice's total whenever that
+    // invoice is tagged with this category, regardless of which org's stock
+    // ledger the case's own consumption resolved to (see
+    // resolveFieldStockOrg in server/delivery-order.ts — a separate,
+    // physical-inventory-accuracy concern). Both fields are only ever set
+    // together; either null means no rule. intercompanyOrgId must be one of
+    // this org's owner-group siblings (server-verified, see
+    // resolveIntercompanyOrgId in server/document-category.ts).
+    intercompanyOrgId: text("intercompany_org_id").references(() => organization.id, { onDelete: "set null" }),
+    intercompanySharePercent: text("intercompany_share_percent"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

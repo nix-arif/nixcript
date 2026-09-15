@@ -30,7 +30,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, ne, desc, asc, inArray, notInArray, sql, ilike } from "drizzle-orm";
+import { eq, and, ne, desc, asc, inArray, notInArray, sql, ilike, isNotNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -247,33 +247,46 @@ export async function maybeCreateIntercompanyPoForCaseInvoice(invoiceId: string)
       .limit(1);
     if (!do_?.isCaseDo) return;
 
-    // "Laser" is an org-scoped documentCategory row (categories aren't
-    // shared across orgs — see server/document-category.ts), so it has to
-    // be looked up per-org rather than by a shared id.
-    const [laserCategory] = await db
-      .select({ id: documentCategory.id })
+    if (!inv.categoryIds || inv.categoryIds.length === 0) return;
+
+    // Categories are org-scoped rows (not shared across orgs — see
+    // server/document-category.ts), and the intercompany rule is opt-in per
+    // category (set via Document Categories in the org settings nav). Take
+    // the first rule-bearing category in this org's own display order when
+    // an invoice happens to carry more than one — there's no defined
+    // semantics yet for combining multiple rules on one invoice.
+    const ruleCategories = await db
+      .select({ id: documentCategory.id, name: documentCategory.name, intercompanyOrgId: documentCategory.intercompanyOrgId, intercompanySharePercent: documentCategory.intercompanySharePercent })
       .from(documentCategory)
-      .where(and(eq(documentCategory.organizationId, inv.organizationId), sql`lower(${documentCategory.name}) = 'laser'`))
-      .limit(1);
-    if (!laserCategory || !inv.categoryIds?.includes(laserCategory.id)) return;
+      .where(and(
+        eq(documentCategory.organizationId, inv.organizationId),
+        inArray(documentCategory.id, inv.categoryIds),
+        isNotNull(documentCategory.intercompanyOrgId),
+      ))
+      .orderBy(asc(documentCategory.position));
+    const rule = ruleCategories[0];
+    if (!rule?.intercompanyOrgId || !rule.intercompanySharePercent) return;
 
     // Idempotency — a re-saved/reopened invoice must never raise this twice.
     const [already] = await db.select({ id: purchaseOrder.id }).from(purchaseOrder).where(eq(purchaseOrder.sourceInvoiceId, invoiceId)).limit(1);
     if (already) return;
 
-    const supplierRows = await db
+    const [sup] = await db
       .select({ id: supplier.id })
       .from(supplier)
-      .where(and(eq(supplier.organizationId, inv.organizationId), sql`${supplier.linkedOrganizationId} IS NOT NULL`));
-    // No linked-supplier record covers this org yet (or more than one does,
-    // which is ambiguous) — this needs a person to set up/fix the supplier
-    // link (Procurement → Suppliers) before this can fire automatically.
-    if (supplierRows.length !== 1) return;
-    const supplierId = supplierRows[0].id;
+      .where(and(eq(supplier.organizationId, inv.organizationId), eq(supplier.linkedOrganizationId, rule.intercompanyOrgId)))
+      .limit(1);
+    // No supplier record links this org to the category's configured
+    // target yet — needs a person to set one up (Procurement → Suppliers)
+    // before this rule can actually fire.
+    if (!sup) return;
+    const supplierId = sup.id;
 
     const grandTotal = parseFloat(inv.grandTotal) || 0;
     if (grandTotal <= 0) return;
-    const share = Math.round(grandTotal * 0.7 * 100) / 100;
+    const pct = parseFloat(rule.intercompanySharePercent);
+    const share = Math.round(grandTotal * (pct / 100) * 100) / 100;
+    if (share <= 0) return;
 
     const poNo = await generateIntercompanyPoNo(inv.organizationId);
     const poId = nanoid();
@@ -289,7 +302,7 @@ export async function maybeCreateIntercompanyPoForCaseInvoice(invoiceId: string)
       grandTotal: share.toFixed(2),
       currency: "MYR", // invoice carries no currency field of its own — this app is MYR-only throughout
       status: "confirmed",
-      notes: `Auto-raised — 70% share of laser case invoice ${inv.invoiceNo}`,
+      notes: `Auto-raised — ${pct}% share of ${rule.name} invoice ${inv.invoiceNo}`,
       createdBy: inv.createdBy,
       approvedBy: inv.createdBy,
       approvedAt: now,
@@ -299,7 +312,7 @@ export async function maybeCreateIntercompanyPoForCaseInvoice(invoiceId: string)
       id: nanoid(),
       purchaseOrderId: poId,
       rowNo: 1,
-      description: `Laser case usage — Invoice ${inv.invoiceNo} (70% share)`,
+      description: `${rule.name} case usage — Invoice ${inv.invoiceNo} (${pct}% share)`,
       qty: "1",
       unitPrice: share.toFixed(2),
       totalPrice: share.toFixed(2),

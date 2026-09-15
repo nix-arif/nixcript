@@ -59,23 +59,93 @@ function ColorSwatch({
   );
 }
 
+// Shared by NewCategoryForm and EditRowForm — lets an org set up "any Case
+// DO invoice tagged with this category auto-bills N% of its total to this
+// sibling org via an intercompany PO" (see maybeCreateIntercompanyPoForCaseInvoice
+// in server/purchase-order.ts). Left entirely alone (both fields blank), a
+// category behaves exactly as before — this is opt-in per category.
+function IntercompanyPoRuleFields({
+  siblingOrgs,
+  targetOrgId,
+  setTargetOrgId,
+  sharePercent,
+  setSharePercent,
+  idPrefix,
+}: {
+  siblingOrgs: { id: string; name: string }[];
+  targetOrgId: string;
+  setTargetOrgId: (v: string) => void;
+  sharePercent: string;
+  setSharePercent: (v: string) => void;
+  idPrefix: string;
+}) {
+  if (siblingOrgs.length === 0) return null;
+  return (
+    <div className="space-y-1.5 rounded-lg border border-dashed border-border p-3">
+      <label className="text-xs font-medium text-muted-foreground">
+        Intercompany PO rule <span className="text-muted-foreground/70 font-normal">(optional)</span>
+      </label>
+      <p className="text-[11px] text-muted-foreground">
+        Auto-bill a share of any case invoice tagged with this category to a sibling company.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          id={`${idPrefix}-intercompany-org`}
+          value={targetOrgId}
+          onChange={(e) => setTargetOrgId(e.target.value)}
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+        >
+          <option value="">No rule — don&apos;t bill anyone</option>
+          {siblingOrgs.map((o) => (
+            <option key={o.id} value={o.id}>Bill {o.name}</option>
+          ))}
+        </select>
+        {targetOrgId && (
+          <div className="flex items-center gap-1.5">
+            <input
+              id={`${idPrefix}-intercompany-pct`}
+              type="number"
+              min="0.01"
+              max="100"
+              step="0.01"
+              value={sharePercent}
+              onChange={(e) => setSharePercent(e.target.value)}
+              placeholder="70"
+              className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs text-right"
+            />
+            <span className="text-xs text-muted-foreground">% of invoice total</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface NewCategoryFormProps {
+  siblingOrgs: { id: string; name: string }[];
   onSaved: (cat: DocumentCategoryRow) => void;
   onCancel: () => void;
 }
 
-function NewCategoryForm({ onSaved, onCancel }: NewCategoryFormProps) {
+function NewCategoryForm({ siblingOrgs, onSaved, onCancel }: NewCategoryFormProps) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(PRESET_COLORS[0].value);
   const [isDefault, setIsDefault] = useState(false);
+  const [intercompanyOrgId, setIntercompanyOrgId] = useState("");
+  const [intercompanySharePercent, setIntercompanySharePercent] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) { toast.error("Name is required"); return; }
+    if (intercompanyOrgId && !intercompanySharePercent.trim()) { toast.error("Enter a share percent for the intercompany PO rule"); return; }
     setSaving(true);
     try {
-      const cat = await createDocumentCategory({ name, color, isDefault });
+      const cat = await createDocumentCategory({
+        name, color, isDefault,
+        intercompanyOrgId: intercompanyOrgId || null,
+        intercompanySharePercent: intercompanyOrgId ? intercompanySharePercent : null,
+      });
       toast.success(`Category "${name}" created`);
       onSaved(cat);
     } catch (err: any) {
@@ -127,6 +197,14 @@ function NewCategoryForm({ onSaved, onCancel }: NewCategoryFormProps) {
           Set as default category
         </label>
       </div>
+      <IntercompanyPoRuleFields
+        siblingOrgs={siblingOrgs}
+        targetOrgId={intercompanyOrgId}
+        setTargetOrgId={setIntercompanyOrgId}
+        sharePercent={intercompanySharePercent}
+        setSharePercent={setIntercompanySharePercent}
+        idPrefix="new"
+      />
       <div className="flex items-center gap-2 pt-1">
         <Button type="submit" size="sm" disabled={saving} className="h-7 text-xs">
           {saving ? "Saving…" : "Create"}
@@ -141,22 +219,30 @@ function NewCategoryForm({ onSaved, onCancel }: NewCategoryFormProps) {
 
 interface EditRowFormProps {
   category: DocumentCategoryRow;
+  siblingOrgs: { id: string; name: string }[];
   onSaved: (cat: DocumentCategoryRow) => void;
   onCancel: () => void;
 }
 
-function EditRowForm({ category, onSaved, onCancel }: EditRowFormProps) {
+function EditRowForm({ category, siblingOrgs, onSaved, onCancel }: EditRowFormProps) {
   const [name, setName] = useState(category.name);
   const [color, setColor] = useState(category.color ?? PRESET_COLORS[0].value);
   const [isDefault, setIsDefault] = useState(category.isDefault);
+  const [intercompanyOrgId, setIntercompanyOrgId] = useState(category.intercompanyOrgId ?? "");
+  const [intercompanySharePercent, setIntercompanySharePercent] = useState(category.intercompanySharePercent ?? "");
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) { toast.error("Name is required"); return; }
+    if (intercompanyOrgId && !intercompanySharePercent.trim()) { toast.error("Enter a share percent for the intercompany PO rule"); return; }
     setSaving(true);
     try {
-      const cat = await updateDocumentCategory({ id: category.id, name, color, isDefault });
+      const cat = await updateDocumentCategory({
+        id: category.id, name, color, isDefault,
+        intercompanyOrgId: intercompanyOrgId || null,
+        intercompanySharePercent: intercompanyOrgId ? intercompanySharePercent : null,
+      });
       toast.success("Category updated");
       onSaved(cat);
     } catch (err: any) {
@@ -167,58 +253,69 @@ function EditRowForm({ category, onSaved, onCancel }: EditRowFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3 py-1">
-      <div className="space-y-1 min-w-[160px]">
-        <label className="text-xs font-medium text-muted-foreground">Name</label>
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="h-7 text-xs"
-          autoFocus
-        />
-      </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">Color</label>
-        <div className="flex items-center gap-1.5 h-7">
-          {PRESET_COLORS.map((c) => (
-            <ColorSwatch
-              key={c.value}
-              color={c.value}
-              selected={color === c.value}
-              onClick={() => setColor(c.value)}
-            />
-          ))}
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3 py-1">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="space-y-1 min-w-[160px]">
+          <label className="text-xs font-medium text-muted-foreground">Name</label>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="h-7 text-xs"
+            autoFocus
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Color</label>
+          <div className="flex items-center gap-1.5 h-7">
+            {PRESET_COLORS.map((c) => (
+              <ColorSwatch
+                key={c.value}
+                color={c.value}
+                selected={color === c.value}
+                onClick={() => setColor(c.value)}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 pb-0.5">
+          <input
+            id={`edit-default-${category.id}`}
+            type="checkbox"
+            checked={isDefault}
+            onChange={(e) => setIsDefault(e.target.checked)}
+            className="h-3.5 w-3.5 rounded"
+          />
+          <label htmlFor={`edit-default-${category.id}`} className="text-xs text-muted-foreground cursor-pointer">
+            Default
+          </label>
+        </div>
+        <div className="flex items-center gap-1.5 pb-0.5">
+          <Button type="submit" size="sm" disabled={saving} className="h-7 text-xs">
+            {saving ? "…" : <CheckIcon className="w-3.5 h-3.5" />}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={onCancel} className="h-7 text-xs">
+            <XIcon className="w-3.5 h-3.5" />
+          </Button>
         </div>
       </div>
-      <div className="flex items-center gap-1.5 pb-0.5">
-        <input
-          id={`edit-default-${category.id}`}
-          type="checkbox"
-          checked={isDefault}
-          onChange={(e) => setIsDefault(e.target.checked)}
-          className="h-3.5 w-3.5 rounded"
-        />
-        <label htmlFor={`edit-default-${category.id}`} className="text-xs text-muted-foreground cursor-pointer">
-          Default
-        </label>
-      </div>
-      <div className="flex items-center gap-1.5 pb-0.5">
-        <Button type="submit" size="sm" disabled={saving} className="h-7 text-xs">
-          {saving ? "…" : <CheckIcon className="w-3.5 h-3.5" />}
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel} className="h-7 text-xs">
-          <XIcon className="w-3.5 h-3.5" />
-        </Button>
-      </div>
+      <IntercompanyPoRuleFields
+        siblingOrgs={siblingOrgs}
+        targetOrgId={intercompanyOrgId}
+        setTargetOrgId={setIntercompanyOrgId}
+        sharePercent={intercompanySharePercent}
+        setSharePercent={setIntercompanySharePercent}
+        idPrefix={`edit-${category.id}`}
+      />
     </form>
   );
 }
 
 interface Props {
   initialCategories: DocumentCategoryRow[];
+  siblingOrgs: { id: string; name: string }[];
 }
 
-export function CategoriesClient({ initialCategories }: Props) {
+export function CategoriesClient({ initialCategories, siblingOrgs }: Props) {
   const router = useRouter();
   const [categories, setCategories] = useState(initialCategories);
   const [showNewForm, setShowNewForm] = useState(false);
@@ -339,7 +436,7 @@ export function CategoriesClient({ initialCategories }: Props) {
       />
 
       {showNewForm && (
-        <NewCategoryForm onSaved={handleCreated} onCancel={closeForm} />
+        <NewCategoryForm siblingOrgs={siblingOrgs} onSaved={handleCreated} onCancel={closeForm} />
       )}
 
       <section className="bg-background border border-border/50 rounded-2xl overflow-hidden">
@@ -376,6 +473,7 @@ export function CategoriesClient({ initialCategories }: Props) {
                 {editingId === cat.id ? (
                   <EditRowForm
                     category={cat}
+                    siblingOrgs={siblingOrgs}
                     onSaved={handleUpdated}
                     onCancel={() => setEditingId(null)}
                   />
@@ -396,6 +494,15 @@ export function CategoriesClient({ initialCategories }: Props) {
                     {cat.isDefault && (
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400">
                         Default
+                      </span>
+                    )}
+                    {/* Intercompany PO rule badge */}
+                    {cat.intercompanyOrgId && (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400"
+                        title="Case invoices tagged with this category auto-raise an intercompany PO"
+                      >
+                        → {siblingOrgs.find((o) => o.id === cat.intercompanyOrgId)?.name ?? "sibling org"} ({parseFloat(cat.intercompanySharePercent ?? "0")}%)
                       </span>
                     )}
                     {/* Actions */}

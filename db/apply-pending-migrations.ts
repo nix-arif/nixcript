@@ -224,6 +224,12 @@ async function run() {
     console.log("  intercompany_purchase_order_counter created.");
   }
 
+  console.log("Applying migration 0051: document_category intercompany PO rule");
+  await addColIfMissing("document_category", "intercompany_org_id",
+    `ALTER TABLE "document_category" ADD COLUMN "intercompany_org_id" text REFERENCES "organization"("id") ON DELETE SET NULL`);
+  await addColIfMissing("document_category", "intercompany_share_percent",
+    `ALTER TABLE "document_category" ADD COLUMN "intercompany_share_percent" text`);
+
   console.log("All pending migrations applied.");
 }
 

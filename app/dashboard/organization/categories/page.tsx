@@ -1,9 +1,12 @@
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getDocumentCategories } from "@/server/document-category";
+import { getDocumentCategories, getSiblingOrganizations } from "@/server/document-category";
 import { CategoriesClient } from "./categories-client";
 
 export default async function CategoriesPage() {
   await requirePermission("organization-profile:read");
-  const categories = await getDocumentCategories().catch(() => []);
-  return <CategoriesClient initialCategories={categories} />;
+  const [categories, siblingOrgs] = await Promise.all([
+    getDocumentCategories().catch(() => []),
+    getSiblingOrganizations().catch(() => []),
+  ]);
+  return <CategoriesClient initialCategories={categories} siblingOrgs={siblingOrgs} />;
 }
