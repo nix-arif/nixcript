@@ -700,6 +700,10 @@ export const product = pgTable(
 
     // Rental flag
     isRental: boolean("is_rental").default(false).notNull(),
+    // Opt-in per-product: when true, each physical unit is tracked
+    // individually (serial number, status, current location) in the
+    // asset_unit table rather than just contributing to an aggregate qty.
+    requiresSerialTracking: boolean("requires_serial_tracking").default(false).notNull(),
 
     // Sourcing: trading | oem | both (null = inherit org's businessType default).
     // "both" means this product swings either way per order — SO items must
@@ -808,6 +812,7 @@ export const stockMovement = pgTable(
     lotNo: text("lot_no"),
     expiryDate: timestamp("expiry_date"),
     lotId: text("lot_id"),   // FK to stock_lot — populated at approval time
+    unitId: text("unit_id"), // FK to asset_unit — populated for serial-tracked products
     // PENDING | APPROVED | REJECTED
     status: text("status").notNull().default("PENDING"),
     reviewedBy: text("reviewed_by").references(() => user.id),
@@ -866,6 +871,58 @@ export const stockLot = pgTable(
 export const stockLotRelations = relations(stockLot, ({ one }) => ({
   organization: one(organization, { fields: [stockLot.organizationId], references: [organization.id] }),
   product: one(product, { fields: [stockLot.productId], references: [product.id] }),
+}));
+
+// ── Serialized asset units (per-unit tracking, opt-in per product) ────────
+// One row per physical unit, ever. Sits alongside stockLevel/stockLot (which
+// keep tracking aggregate quantity exactly as before) rather than replacing
+// them — mirrors the stockLot/lotId precedent: a chokepoint that owns a
+// piece of state, whose id gets stamped back onto the stockMovement row that
+// caused the change.
+export const assetUnit = pgTable(
+  "asset_unit",
+  {
+    id: text("id").primaryKey(),
+    // Home org — where the unit was first received/registered.
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => product.id, { onDelete: "cascade" }),
+    serialNo: text("serial_no").notNull(),
+
+    // IN_STOCK | WITH_REP | ON_LOAN | SOLD | IN_REPAIR | DISPOSED
+    status: text("status").notNull().default("IN_STOCK"),
+
+    // Current custody — can be a sibling org's ledger (mirrors the same
+    // cross-org awareness resolveFieldStockOrg already needs for Case DO).
+    currentOrgId: text("current_org_id").references(() => organization.id, { onDelete: "set null" }),
+    currentWarehouseLabel: text("current_warehouse_label"),
+    currentHolderUserId: text("current_holder_user_id").references(() => user.id, { onDelete: "set null" }),
+    currentCustomerId: text("current_customer_id").references((): AnyPgColumn => customer.id, { onDelete: "set null" }),
+
+    // Provenance of how this row was born.
+    referenceType: text("reference_type").notNull().default("MANUAL"), // MANUAL | PURCHASE_ORDER
+    referenceId: text("reference_id"),
+    referenceNo: text("reference_no"),
+    notes: text("notes"),
+
+    registeredBy: text("registered_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("asset_unit_org_product_serial_uidx").on(t.organizationId, t.productId, t.serialNo),
+    index("asset_unit_org_idx").on(t.organizationId),
+    index("asset_unit_status_idx").on(t.organizationId, t.status),
+    index("asset_unit_holder_idx").on(t.currentHolderUserId),
+  ],
+);
+
+export const assetUnitRelations = relations(assetUnit, ({ one }) => ({
+  organization: one(organization, { fields: [assetUnit.organizationId], references: [organization.id] }),
+  product: one(product, { fields: [assetUnit.productId], references: [product.id] }),
 }));
 
 // ── Staff stock requests ──────────────────────────────────────────────────
@@ -2719,6 +2776,7 @@ export const deliveryOrderItem = pgTable(
     setGroupId: text("set_group_id"),
     setGroupLabel: text("set_group_label"),
     setQty: text("set_qty"),
+    unitId: text("unit_id"), // which specific asset_unit this line represents (serial-tracked products only)
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

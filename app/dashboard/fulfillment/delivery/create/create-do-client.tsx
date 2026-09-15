@@ -848,6 +848,9 @@ interface CaseLineItem {
   fieldAvailable?: number;
   isRental?: boolean;
   loanOut?: boolean;
+  // Rental-capable field-stock items can be split within one case: part of
+  // the qty sold/consumed (in `qty`) and part loaned out (in `rentalQty`).
+  rentalQty?: string;
 }
 
 const newCaseLine = (): CaseLineItem => ({
@@ -923,6 +926,11 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
   const [salesPersons, setSalesPersons] = useState<PersonTag[]>(sessionTag);
   const [spInput, setSpInput] = useState("");
   const spInputRef = useRef<HTMLInputElement>(null);
+  // Ticked when the sales person is the same person as the application
+  // specialist (the common case) — hides the separate sales person picker
+  // entirely rather than making someone re-pick the same name twice; the
+  // application specialist's own selection is used for both roles at submit.
+  const [salesPersonSameAsSpecialist, setSalesPersonSameAsSpecialist] = useState(false);
 
   // Case fields
   const [caseDate, setCaseDate] = useState(new Date().toISOString().split("T")[0]);
@@ -973,11 +981,11 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
         productCode: s.productCode,
         description: s.description,
         qty: "0",
+        rentalQty: "0",
         uom: s.uom ?? "",
         fromFieldStock: true,
         fieldAvailable: s.qty,
         isRental: s.isRental,
-        loanOut: s.isRental,
       })));
       setFieldItems([]);
     }).catch(() => { setFieldPool([]); setFieldItems([]); }).finally(() => setLoadingStock(false));
@@ -988,7 +996,12 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
     if (already) {
       setFieldItems((prev) => prev.filter((i) => i.productId !== poolItem.productId));
     } else {
-      setFieldItems((prev) => [...prev, { ...poolItem, qty: "1" }]);
+      // Rental-capable items default to fully on loan (matches prior
+      // behavior); the user can move some qty into "Sell" afterwards.
+      setFieldItems((prev) => [
+        ...prev,
+        poolItem.isRental ? { ...poolItem, qty: "0", rentalQty: "1" } : { ...poolItem, qty: "1", rentalQty: "0" },
+      ]);
     }
   }
 
@@ -1014,20 +1027,31 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
 
   async function handleSave() {
     if (appSpecs.length === 0) { toast.error("Select the application specialist"); return; }
-    const usedFieldItems = fieldItems.filter((i) => parseFloat(i.qty) > 0);
+    const usedFieldItems = fieldItems.filter((i) => (parseFloat(i.qty || "0") || 0) + (parseFloat(i.rentalQty || "0") || 0) > 0);
     const validExtras = extraItems.filter((i) => i.description || i.productCode);
     if (usedFieldItems.length === 0 && validExtras.length === 0) {
       toast.error("Add at least one item"); return;
     }
 
+    // A rental-capable item can be split across one case: part sold/consumed
+    // and part loaned out. Each portion becomes its own DO line so the
+    // server records the right movement type (CASE_USE vs LOAN_OUT) for each.
+    const fieldOrderItems: Omit<DeliveryOrderItemInput, "rowNo">[] = [];
+    for (const i of usedFieldItems) {
+      const sellQty = parseFloat(i.qty || "0") || 0;
+      const rentalQty = parseFloat(i.rentalQty || "0") || 0;
+      if (sellQty > 0) {
+        fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: String(sellQty), uom: i.uom, loanOut: false });
+      }
+      if (rentalQty > 0) {
+        fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: String(rentalQty), uom: i.uom, loanOut: true });
+      }
+    }
+
     const allItems: DeliveryOrderItemInput[] = [
-      ...usedFieldItems.map((i, idx) => ({
-        rowNo: idx + 1, productId: i.productId, productCode: i.productCode,
-        description: i.description, qty: i.qty, uom: i.uom,
-        loanOut: i.loanOut,
-      })),
+      ...fieldOrderItems.map((i, idx) => ({ ...i, rowNo: idx + 1 })),
       ...validExtras.map((i, idx) => ({
-        rowNo: usedFieldItems.length + idx + 1, productId: i.productId, productCode: i.productCode,
+        rowNo: fieldOrderItems.length + idx + 1, productId: i.productId, productCode: i.productCode,
         description: i.description, qty: i.qty || "1", uom: i.uom,
         loanOut: i.loanOut,
       })),
@@ -1035,7 +1059,8 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
 
     setSaving(true);
     try {
-      const primarySp = salesPersons.find((s) => !s.isExt) ?? salesPersons[0];
+      const effectiveSalesPersons = salesPersonSameAsSpecialist ? appSpecs : salesPersons;
+      const primarySp = effectiveSalesPersons.find((s) => !s.isExt) ?? effectiveSalesPersons[0];
       const primaryAs = appSpecs.find((s) => !s.isExt) ?? appSpecs[0];
       await createDeliveryOrder({
         customerId: selectedCustomer?.id,
@@ -1208,7 +1233,23 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
 
             {/* Sales person */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-muted-foreground">sales person</label>
+              <div className="flex items-center gap-3">
+                <label className="block text-xs font-medium text-muted-foreground">sales person</label>
+                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={salesPersonSameAsSpecialist}
+                    onChange={(e) => setSalesPersonSameAsSpecialist(e.target.checked)}
+                    className="h-3 w-3 rounded"
+                  />
+                  Same as application specialist
+                </label>
+              </div>
+              {salesPersonSameAsSpecialist ? (
+                <p className="text-xs text-muted-foreground italic px-1">
+                  Using {appSpecs.length > 0 ? appSpecs.map((s) => s.name.toLowerCase()).join(", ") : "the application specialist"} as sales person too.
+                </p>
+              ) : (
               <div
                 className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring transition-colors"
                 onClick={() => spInputRef.current?.focus()}
@@ -1287,6 +1328,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                   className="flex-1 min-w-24 h-6 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
                 />
               </div>
+              )}
             </div>
           </div>
         )}
@@ -1432,8 +1474,9 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
           {fieldItems.length > 0 && (
             <div className="flex flex-col gap-3">
               {fieldItems.map((item) => {
-                const qty = parseFloat(item.qty);
-                const over = !isNaN(qty) && qty > (item.fieldAvailable ?? Infinity);
+                const sellQty = parseFloat(item.qty || "0") || 0;
+                const rentalQty = parseFloat(item.rentalQty || "0") || 0;
+                const over = (sellQty + rentalQty) > (item.fieldAvailable ?? Infinity);
                 return (
                   <div key={item._key} className="rounded-lg border border-border bg-background p-3 flex flex-col gap-2.5">
                     <div className="flex items-start justify-between">
@@ -1445,40 +1488,37 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                         className="text-muted-foreground hover:text-destructive text-xs ml-2 shrink-0">✕</button>
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      {/* Qty */}
-                      <div className="flex flex-col gap-1 flex-1">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-[11px]">Qty <span className="text-destructive">*</span></Label>
-                          <span className="text-[11px] text-muted-foreground">
-                            Available: <span className={cn("font-medium", over ? "text-destructive" : "")}>{item.fieldAvailable?.toFixed(0)} {item.uom}</span>
-                          </span>
-                        </div>
-                        <Input type="number" min="0.0001" step="0.0001" placeholder="0"
-                          value={item.qty} onChange={(e) => updateFieldItem(item._key, { qty: e.target.value })}
-                          className={cn("h-8 text-xs text-right", over ? "border-destructive" : item.loanOut ? "border-amber-400 dark:border-amber-600" : "border-teal-400 dark:border-teal-600")}
-                        />
-                        {over && <p className="text-[11px] text-destructive">Exceeds available quantity</p>}
-                      </div>
-
-                      {/* Rental / Sell / Disposable badge */}
-                      <div className="flex flex-col gap-1 items-center shrink-0">
-                        <Label className="text-[11px]">Type</Label>
-                        {item.isRental ? (
-                          <button type="button"
-                            onClick={() => updateFieldItem(item._key, { loanOut: !item.loanOut })}
-                            className={cn("px-3 py-1.5 rounded-md text-[11px] font-semibold border transition-colors",
-                              item.loanOut
-                                ? "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700"
-                                : "bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700"
-                            )}>
-                            {item.loanOut ? "Rental (loan out)" : "Sell"}
-                          </button>
-                        ) : (
-                          <span className="px-3 py-1.5 rounded-md text-[11px] font-semibold border bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-900/20 dark:text-teal-400 dark:border-teal-700">Disposable</span>
-                        )}
-                      </div>
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[11px]">{item.isRental ? "Sell qty / Rental qty" : <>Qty <span className="text-destructive">*</span></>}</Label>
+                      <span className="text-[11px] text-muted-foreground">
+                        Available: <span className={cn("font-medium", over ? "text-destructive" : "")}>{item.fieldAvailable?.toFixed(0)} {item.uom}</span>
+                      </span>
                     </div>
+
+                    {item.isRental ? (
+                      <div className="flex items-center gap-2">
+                        <div className="flex flex-col gap-1 flex-1">
+                          <span className="text-[10px] text-blue-700 dark:text-blue-400 font-medium">Sell</span>
+                          <Input type="number" min="0" step="0.0001" placeholder="0"
+                            value={item.qty} onChange={(e) => updateFieldItem(item._key, { qty: e.target.value })}
+                            className={cn("h-8 text-xs text-right", over ? "border-destructive" : "border-blue-300 dark:border-blue-700")}
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1 flex-1">
+                          <span className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">Rental (loan out)</span>
+                          <Input type="number" min="0" step="0.0001" placeholder="0"
+                            value={item.rentalQty ?? "0"} onChange={(e) => updateFieldItem(item._key, { rentalQty: e.target.value })}
+                            className={cn("h-8 text-xs text-right", over ? "border-destructive" : "border-amber-300 dark:border-amber-700")}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <Input type="number" min="0.0001" step="0.0001" placeholder="0"
+                        value={item.qty} onChange={(e) => updateFieldItem(item._key, { qty: e.target.value })}
+                        className={cn("h-8 text-xs text-right", over ? "border-destructive" : "border-teal-400 dark:border-teal-600")}
+                      />
+                    )}
+                    {over && <p className="text-[11px] text-destructive">{item.isRental ? "Sell + rental qty exceeds available quantity" : "Exceeds available quantity"}</p>}
                   </div>
                 );
               })}

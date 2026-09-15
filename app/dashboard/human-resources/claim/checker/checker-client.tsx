@@ -799,7 +799,7 @@ export function ClaimCheckerClient({ applications, rejectionReviews }: Props) {
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground -mt-2">
-            An approver rejected these — confirm to notify the submitter, or send back if you disagree.
+            An approver rejected these — open View to amend a line item/entry if needed, then send it back to the approver, or confirm to notify the submitter.
           </p>
           <div className="rounded-lg border border-amber-200 dark:border-amber-800 overflow-hidden">
             <Table>
@@ -961,19 +961,39 @@ export function ClaimCheckerClient({ applications, rejectionReviews }: Props) {
             />
           )}
           <div className="flex gap-2 pt-6">
-            <Button
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
-              onClick={() => { setCheckTarget(viewTarget); setCheckComment(""); setViewTarget(null); }}
-            >
-              <CheckIcon className="h-3.5 w-3.5 mr-1.5"/>Check & Forward
-            </Button>
-            <Button
-              variant="destructive"
-              className="flex-1"
-              onClick={() => { setRejectTarget(viewTarget); setRejectReason(""); setViewTarget(null); }}
-            >
-              <XIcon className="h-3.5 w-3.5 mr-1.5"/>Reject
-            </Button>
+            {viewTarget?.status === "REJECTION_REVIEW" ? (
+              <>
+                <Button
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  onClick={() => { setSendBackTarget(viewTarget); setSendBackComment(""); setViewTarget(null); }}
+                >
+                  <CornerUpLeftIcon className="h-3.5 w-3.5 mr-1.5"/>Send Back to Approver
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  onClick={() => { setConfirmRejectTarget(viewTarget); setConfirmRejectComment(""); setViewTarget(null); }}
+                >
+                  <XIcon className="h-3.5 w-3.5 mr-1.5"/>Confirm Reject
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  onClick={() => { setCheckTarget(viewTarget); setCheckComment(""); setViewTarget(null); }}
+                >
+                  <CheckIcon className="h-3.5 w-3.5 mr-1.5"/>Check & Forward
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  onClick={() => { setRejectTarget(viewTarget); setRejectReason(""); setViewTarget(null); }}
+                >
+                  <XIcon className="h-3.5 w-3.5 mr-1.5"/>Reject
+                </Button>
+              </>
+            )}
             <Button variant="outline" onClick={() => setViewTarget(null)}>Close</Button>
           </div>
         </SheetContent>
@@ -1112,10 +1132,11 @@ export function ClaimCheckerClient({ applications, rejectionReviews }: Props) {
               </div>
               <p className="text-sm text-muted-foreground">
                 This returns the claim to the approver&apos;s queue for reconsideration — the submitter is not notified yet.
+                If you corrected any line items or entries above, they&apos;re already saved and will be included.
               </p>
               <div className="space-y-1.5">
                 <Label htmlFor="sendBackComment">Reason <span className="text-destructive">*</span></Label>
-                <Textarea id="sendBackComment" value={sendBackComment} onChange={e => setSendBackComment(e.target.value)} placeholder="Explain why you disagree with this rejection (required)…" rows={3} required/>
+                <Textarea id="sendBackComment" value={sendBackComment} onChange={e => setSendBackComment(e.target.value)} placeholder="Explain why you disagree with the rejection, or what you corrected…" rows={3} required/>
               </div>
               <div className="flex gap-2 pt-2">
                 <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={handleSendBack} disabled={sendingBack || !sendBackComment.trim()}>

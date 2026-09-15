@@ -127,6 +127,7 @@ export const navConfig: NavGroup[] = [
       { title: "Transfer to Rep",   url: "/dashboard/inventory/field-stock/transfer", permission: "inventory:create"  },
       { title: "Pending Approvals", url: "/dashboard/inventory/approvals",            permission: "inventory:approve" },
       { title: "Movement History",  url: "/dashboard/inventory/movements",            permission: "inventory:read"    },
+      { title: "Serialized Units",  url: "/dashboard/inventory/serialized-units",     permission: "inventory:read"    },
     ],
   },
   {

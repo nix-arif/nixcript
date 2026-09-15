@@ -673,7 +673,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { searchProducts, getDistinctBrands, setProductRental, updateProductSourcing } from "@/server/products";
+import { searchProducts, getDistinctBrands, setProductRental, setProductSerialTracking, updateProductSourcing } from "@/server/products";
 import {
   SearchIcon,
   ShieldCheckIcon,
@@ -823,6 +823,21 @@ function ProductSlideOver({
       // leave state unchanged on error
     } finally {
       setToggling(false);
+    }
+  }
+
+  const [requiresSerial, setRequiresSerial] = useState(p.requiresSerialTracking);
+  const [togglingSerial, setTogglingSerial] = useState(false);
+
+  async function handleToggleSerial() {
+    setTogglingSerial(true);
+    try {
+      await setProductSerialTracking(p.id, !requiresSerial);
+      setRequiresSerial((v) => !v);
+    } catch {
+      // leave state unchanged on error
+    } finally {
+      setTogglingSerial(false);
     }
   }
 
@@ -1056,6 +1071,38 @@ function ProductSlideOver({
                   )}
                 >
                   {toggling ? "saving…" : isRental ? "rental" : "consumable"}
+                </button>
+              </div>
+            </div>
+
+            {/* Serial tracking flag */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-muted/40 border-b border-border">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Serial Tracking
+                </span>
+              </div>
+              <div className="px-3 py-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">{requiresSerial ? "Serial-tracked (each unit tracked individually)" : "Bulk / lot-tracked only"}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {requiresSerial
+                      ? "Every unit gets its own serial number, status, and location (Goods Receipt asks for one serial per unit received)."
+                      : "Only aggregate quantity is tracked — no per-unit identity."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={togglingSerial}
+                  onClick={handleToggleSerial}
+                  className={cn(
+                    "shrink-0 text-xs px-3 py-1.5 rounded-md border font-medium transition-colors disabled:opacity-50",
+                    requiresSerial
+                      ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-400"
+                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {togglingSerial ? "saving…" : requiresSerial ? "serialized" : "bulk"}
                 </button>
               </div>
             </div>

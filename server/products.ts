@@ -570,6 +570,32 @@ export async function setProductRental(productId: string, isRental: boolean) {
     .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds)));
 }
 
+export async function setProductSerialTracking(productId: string, requiresSerialTracking: boolean) {
+  const { orgId } = await requireAccess("product:seed");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  await db
+    .update(product)
+    .set({ requiresSerialTracking, updatedAt: new Date() })
+    .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds)));
+}
+
+// Which of these productIds require per-unit serial tracking — used by
+// Goods Receipt to decide which lines need serial-number capture.
+export async function getSerialTrackedProductIds(productIds: string[]): Promise<string[]> {
+  const { orgId } = await requireAccess("product:read");
+  if (productIds.length === 0) return [];
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const rows = await db
+    .select({ id: product.id })
+    .from(product)
+    .where(and(
+      inArray(product.id, productIds),
+      inArray(product.organizationId, ownerOrgIds),
+      eq(product.requiresSerialTracking, true),
+    ));
+  return rows.map((r) => r.id);
+}
+
 export interface ProductSourcingInput {
   sourcingType: "trading" | "oem" | "both" | null;
   designBrandName?: string | null;

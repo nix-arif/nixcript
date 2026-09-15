@@ -1508,7 +1508,11 @@ export async function editClaimLineItem(
     .where(and(eq(claimApplication.id, item.applicationId), eq(claimApplication.organizationId, orgId)))
     .limit(1);
   if (!app) throw new Error("Application not found");
-  if (app.status !== "PENDING") throw new Error("Only pending applications can be edited");
+  // Also allowed during REJECTION_REVIEW — lets the checker correct the
+  // content an approver rejected, then send it back for another look
+  // (sendClaimRejectionBackToApprover) instead of only being able to
+  // confirm/dispute the rejection with a text comment.
+  if (app.status !== "PENDING" && app.status !== "REJECTION_REVIEW") throw new Error("Only pending or rejection-review applications can be edited");
   await assertSelfActionAllowed(orgId, "claim:check", app.userId, userId, "edit");
 
   const patch: { amountMyr?: string; description?: string | null; originalAmountMyr?: string; originalDescription?: string | null; editedBy: string; editedAt: Date; editReason: string } = {
@@ -1562,7 +1566,7 @@ export async function toggleClaimLineItemSlash(
     .where(and(eq(claimApplication.id, item.applicationId), eq(claimApplication.organizationId, orgId)))
     .limit(1);
   if (!app) throw new Error("Application not found");
-  if (app.status !== "PENDING") throw new Error("Only pending applications can be reviewed");
+  if (app.status !== "PENDING" && app.status !== "REJECTION_REVIEW") throw new Error("Only pending or rejection-review applications can be reviewed");
   await assertSelfActionAllowed(orgId, "claim:check", app.userId, userId, "slash");
 
   const now = slashed ? new Date() : null;
@@ -1601,7 +1605,7 @@ export async function editClaimEntertainmentDetail(
     .where(and(eq(claimApplication.id, item.applicationId), eq(claimApplication.organizationId, orgId)))
     .limit(1);
   if (!app) throw new Error("Application not found");
-  if (app.status !== "PENDING") throw new Error("Only pending applications can be edited");
+  if (app.status !== "PENDING" && app.status !== "REJECTION_REVIEW") throw new Error("Only pending or rejection-review applications can be edited");
   await assertSelfActionAllowed(orgId, "claim:check", app.userId, userId, "edit");
 
   const patch: { amount?: string; purpose?: string; originalAmount?: string; originalPurpose?: string; editedBy: string; editedAt: Date; editReason: string } = {
@@ -1655,7 +1659,7 @@ export async function toggleClaimEntertainmentDetailSlash(
     .where(and(eq(claimApplication.id, item.applicationId), eq(claimApplication.organizationId, orgId)))
     .limit(1);
   if (!app) throw new Error("Application not found");
-  if (app.status !== "PENDING") throw new Error("Only pending applications can be reviewed");
+  if (app.status !== "PENDING" && app.status !== "REJECTION_REVIEW") throw new Error("Only pending or rejection-review applications can be reviewed");
   await assertSelfActionAllowed(orgId, "claim:check", app.userId, userId, "slash");
 
   const now = slashed ? new Date() : null;

@@ -230,6 +230,46 @@ async function run() {
   await addColIfMissing("document_category", "intercompany_share_percent",
     `ALTER TABLE "document_category" ADD COLUMN "intercompany_share_percent" text`);
 
+  console.log("Applying migration 0052: serialized asset tracking");
+  await addColIfMissing("product", "requires_serial_tracking",
+    `ALTER TABLE "product" ADD COLUMN "requires_serial_tracking" boolean NOT NULL DEFAULT false`);
+  await addColIfMissing("stock_movement", "unit_id",
+    `ALTER TABLE "stock_movement" ADD COLUMN "unit_id" text`);
+  await addColIfMissing("delivery_order_item", "unit_id",
+    `ALTER TABLE "delivery_order_item" ADD COLUMN "unit_id" text`);
+  const [assetUnitTable] = await sql`
+    SELECT table_name FROM information_schema.tables WHERE table_name = 'asset_unit'
+  `;
+  if (assetUnitTable) {
+    console.log("  asset_unit already exists, skipping.");
+  } else {
+    await sql`
+      CREATE TABLE "asset_unit" (
+        "id" text PRIMARY KEY NOT NULL,
+        "organization_id" text NOT NULL REFERENCES "organization"("id") ON DELETE CASCADE,
+        "product_id" text NOT NULL REFERENCES "product"("id") ON DELETE CASCADE,
+        "serial_no" text NOT NULL,
+        "status" text NOT NULL DEFAULT 'IN_STOCK',
+        "current_org_id" text REFERENCES "organization"("id") ON DELETE SET NULL,
+        "current_warehouse_label" text,
+        "current_holder_user_id" text REFERENCES "user"("id") ON DELETE SET NULL,
+        "current_customer_id" text REFERENCES "customer"("id") ON DELETE SET NULL,
+        "reference_type" text NOT NULL DEFAULT 'MANUAL',
+        "reference_id" text,
+        "reference_no" text,
+        "notes" text,
+        "registered_by" text NOT NULL REFERENCES "user"("id"),
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "updated_at" timestamp DEFAULT now() NOT NULL
+      )
+    `;
+    await sql`CREATE UNIQUE INDEX "asset_unit_org_product_serial_uidx" ON "asset_unit" ("organization_id", "product_id", "serial_no")`;
+    await sql`CREATE INDEX "asset_unit_org_idx" ON "asset_unit" ("organization_id")`;
+    await sql`CREATE INDEX "asset_unit_status_idx" ON "asset_unit" ("organization_id", "status")`;
+    await sql`CREATE INDEX "asset_unit_holder_idx" ON "asset_unit" ("current_holder_user_id")`;
+    console.log("  asset_unit created.");
+  }
+
   console.log("All pending migrations applied.");
 }
 
