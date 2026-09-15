@@ -895,6 +895,12 @@ export const assetUnit = pgTable(
     // IN_STOCK | WITH_REP | ON_LOAN | SOLD | IN_REPAIR | DISPOSED
     status: text("status").notNull().default("IN_STOCK"),
 
+    // SALE | RENTAL — fixed when the unit enters inventory (registration or,
+    // later, Goods Receipt), not a per-DO choice. Case DO reads this to
+    // decide CASE_USE vs LOAN_OUT for the unit instead of asking the person
+    // creating the DO to classify it themselves.
+    intendedUse: text("intended_use").notNull().default("SALE"),
+
     // Current custody — can be a sibling org's ledger (mirrors the same
     // cross-org awareness resolveFieldStockOrg already needs for Case DO).
     currentOrgId: text("current_org_id").references(() => organization.id, { onDelete: "set null" }),

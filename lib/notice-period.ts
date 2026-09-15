@@ -32,3 +32,32 @@ export function computeLastWorkingDay(
   const d = new Date(Date.UTC(y, mo - 1, da + policy.noticePeriodDays));
   return d.toISOString().slice(0, 10);
 }
+
+// A resigning member's unused notice-affecting leave balance (Annual Leave,
+// normally — see getAnnualLeaveBalanceForNoticeCalc in server/leave.ts) gets
+// consumed against the tail end of their notice period, so they stop
+// physically attending work this many days before the notice-period-only
+// last working day computed above. Their official last day of employment is
+// unaffected — this only ever pulls the *attendance* last day earlier, never
+// later, and never earlier than the notice date itself (can't attend zero
+// days of a notice period you just tendered).
+export function computeLastWorkingDayAfterLeaveDeduction(
+  lastWorkingDayBeforeDeduction: string | null,
+  noticeDate: string | Date | null,
+  unusedLeaveBalanceDays: number,
+): string | null {
+  if (!lastWorkingDayBeforeDeduction) return null;
+  const deductDays = Math.max(0, Math.floor(unusedLeaveBalanceDays));
+  if (deductDays === 0) return lastWorkingDayBeforeDeduction;
+
+  const [y, mo, da] = lastWorkingDayBeforeDeduction.split("-").map(Number);
+  let d = new Date(Date.UTC(y, mo - 1, da - deductDays));
+
+  if (noticeDate) {
+    const noticeDateStr = typeof noticeDate === "string" ? noticeDate : noticeDate.toISOString().slice(0, 10);
+    const [ny, nmo, nda] = noticeDateStr.split("-").map(Number);
+    const noticeD = new Date(Date.UTC(ny, nmo - 1, nda));
+    if (d < noticeD) d = noticeD;
+  }
+  return d.toISOString().slice(0, 10);
+}

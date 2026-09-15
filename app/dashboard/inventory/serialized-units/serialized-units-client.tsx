@@ -18,14 +18,19 @@ import {
 import { PlusIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  listAssetUnits, registerAssetUnit, markAssetUnitReturned, getAssetUnitHistory,
+  listAssetUnits, registerAssetUnit, updateAssetUnitIntendedUse, markAssetUnitReturned, getAssetUnitHistory,
   type AssetUnitListRow, type RegisterAssetUnitInput,
 } from "@/server/asset-units";
 import { searchProducts } from "@/server/products";
 import { getFieldReps, type OrgMember } from "@/server/field-stock";
 import { getCustomers } from "@/server/customer";
-import { ASSET_UNIT_STATUS_LABELS } from "@/lib/inventory/constants";
+import { ASSET_UNIT_STATUS_LABELS, INTENDED_USE_LABELS } from "@/lib/inventory/constants";
 import { MOVEMENT_LABELS } from "@/lib/inventory/constants";
+
+const INTENDED_USE_STYLE: Record<string, string> = {
+  SALE:   "text-blue-700 border-blue-300 bg-blue-50 dark:text-blue-400 dark:border-blue-700 dark:bg-blue-900/20",
+  RENTAL: "text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:bg-amber-900/20",
+};
 
 const STATUS_STYLE: Record<string, string> = {
   IN_STOCK:  "text-teal-700 border-teal-300 bg-teal-50 dark:text-teal-400 dark:border-teal-700 dark:bg-teal-900/20",
@@ -81,6 +86,7 @@ function ProductPicker({ onPick }: { onPick: (p: { id: string; productCode: stri
 function RegisterUnitDialog({ open, onOpenChange, onRegistered }: { open: boolean; onOpenChange: (v: boolean) => void; onRegistered: () => void }) {
   const [product, setProduct] = useState<{ id: string; productCode: string; description: string | null } | null>(null);
   const [serialNo, setSerialNo] = useState("");
+  const [intendedUse, setIntendedUse] = useState<string>("SALE");
   const [status, setStatus] = useState<string>("IN_STOCK");
   const [warehouseLabel, setWarehouseLabel] = useState("Default");
   const [reps, setReps] = useState<OrgMember[]>([]);
@@ -112,7 +118,7 @@ function RegisterUnitDialog({ open, onOpenChange, onRegistered }: { open: boolea
   }
 
   function reset() {
-    setProduct(null); setSerialNo(""); setStatus("IN_STOCK"); setWarehouseLabel("Default");
+    setProduct(null); setSerialNo(""); setIntendedUse("SALE"); setStatus("IN_STOCK"); setWarehouseLabel("Default");
     setRepId(""); setCustSearch(""); setCustResults([]); setCustomerId(""); setCustomerName(""); setNotes("");
   }
 
@@ -125,7 +131,7 @@ function RegisterUnitDialog({ open, onOpenChange, onRegistered }: { open: boolea
     setSaving(true);
     try {
       const input: RegisterAssetUnitInput = {
-        productId: product.id, serialNo: serialNo.trim(), status,
+        productId: product.id, serialNo: serialNo.trim(), status, intendedUse,
         warehouseLabel: status === "IN_STOCK" || status === "IN_REPAIR" ? warehouseLabel : undefined,
         repId: needsRep ? repId : undefined,
         customerId: needsCustomer ? customerId : undefined,
@@ -165,6 +171,22 @@ function RegisterUnitDialog({ open, onOpenChange, onRegistered }: { open: boolea
           <div className="space-y-1.5">
             <Label className="text-xs">Serial No <span className="text-destructive">*</span></Label>
             <Input value={serialNo} onChange={(e) => setSerialNo(e.target.value)} placeholder="e.g. 123456" className="h-9 text-sm" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Sale or rental unit? <span className="text-destructive">*</span></Label>
+            <p className="text-[11px] text-muted-foreground">
+              Fixed here — Case DO will read this off the unit automatically instead of asking again.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(INTENDED_USE_LABELS).map(([k, label]) => (
+                <button key={k} type="button" onClick={() => setIntendedUse(k)}
+                  className={cn("px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors",
+                    intendedUse === k ? INTENDED_USE_STYLE[k] : "border-border bg-muted/40 text-muted-foreground hover:bg-muted")}>
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="space-y-1.5">
@@ -247,7 +269,7 @@ function HistorySheetContent({ unit }: { unit: AssetUnitListRow }) {
             <p className="font-medium">{MOVEMENT_LABELS[m.movementType] ?? m.movementType}</p>
             <p className="text-xs text-muted-foreground">{m.referenceNo ?? m.notes ?? ""}</p>
           </div>
-          <span className="text-xs text-muted-foreground">{new Date(m.createdAt).toLocaleDateString()}</span>
+          <span className="text-xs text-muted-foreground">{new Date(m.createdAt).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" })}</span>
         </div>
       ))}
     </div>
@@ -261,6 +283,7 @@ export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUni
   const [registerOpen, setRegisterOpen] = useState(false);
   const [historyUnit, setHistoryUnit] = useState<AssetUnitListRow | null>(null);
   const [returning, setReturning] = useState<string | null>(null);
+  const [changingUseId, setChangingUseId] = useState<string | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback((s = search, st = statusFilter) => {
@@ -288,6 +311,19 @@ export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUni
       toast.error(e?.message ?? "Failed to mark as returned");
     } finally {
       setReturning(null);
+    }
+  }
+
+  async function handleToggleIntendedUse(unit: AssetUnitListRow) {
+    const next = unit.intendedUse === "SALE" ? "RENTAL" : "SALE";
+    setChangingUseId(unit.id);
+    try {
+      await updateAssetUnitIntendedUse(unit.id, next);
+      setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, intendedUse: next } : u)));
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to update designation");
+    } finally {
+      setChangingUseId(null);
     }
   }
 
@@ -322,6 +358,7 @@ export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUni
             <TableRow>
               <TableHead>Product</TableHead>
               <TableHead>Serial No</TableHead>
+              <TableHead>Sale/Rental</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Location</TableHead>
               <TableHead>Last updated</TableHead>
@@ -330,8 +367,10 @@ export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUni
           </TableHeader>
           <TableBody>
             {units.length === 0 ? (
-              <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">No serialized units found.</TableCell></TableRow>
-            ) : units.map((u) => (
+              <TableRow><TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-8">No serialized units found.</TableCell></TableRow>
+            ) : units.map((u) => {
+              const isTerminal = u.status === "SOLD" || u.status === "DISPOSED";
+              return (
               <TableRow key={u.id}>
                 <TableCell>
                   <span className="font-mono text-xs font-medium">{u.productCode}</span>
@@ -339,12 +378,24 @@ export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUni
                 </TableCell>
                 <TableCell className="font-mono text-xs">{u.serialNo}</TableCell>
                 <TableCell>
+                  <button
+                    type="button"
+                    disabled={isTerminal || changingUseId === u.id}
+                    onClick={() => handleToggleIntendedUse(u)}
+                    title={isTerminal ? "Locked — unit already sold/disposed" : "Click to switch"}
+                    className={cn("px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors",
+                      INTENDED_USE_STYLE[u.intendedUse] ?? "", isTerminal ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:opacity-80")}
+                  >
+                    {changingUseId === u.id ? "…" : (INTENDED_USE_LABELS[u.intendedUse] ?? u.intendedUse)}
+                  </button>
+                </TableCell>
+                <TableCell>
                   <Badge variant="outline" className={cn("text-[11px]", STATUS_STYLE[u.status])}>
                     {ASSET_UNIT_STATUS_LABELS[u.status] ?? u.status}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-sm">{resolveLocation(u)}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{new Date(u.updatedAt).toLocaleDateString()}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{new Date(u.updatedAt).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" })}</TableCell>
                 <TableCell className="text-right space-x-2 whitespace-nowrap">
                   <button className="text-xs text-primary hover:underline" onClick={() => setHistoryUnit(u)}>History</button>
                   {u.status === "ON_LOAN" && (
@@ -355,7 +406,8 @@ export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUni
                   )}
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
       </div>

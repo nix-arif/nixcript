@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -29,11 +29,11 @@ import {
 } from "@/server/members";
 import type { OrgMember, DeletedMember } from "@/server/members";
 import type { Department } from "@/server/departments";
-import { setMemberHireDate, setMemberNoticeDate } from "@/server/leave";
+import { setMemberHireDate, setMemberNoticeDate, getAnnualLeaveBalanceForNoticeCalc } from "@/server/leave";
 import type { NoticePeriodPolicyRow } from "@/server/leave";
 import { setMemberEmploymentStatus } from "@/server/profile";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { memberNoticeRoleBucket, computeLastWorkingDay } from "@/lib/notice-period";
+import { memberNoticeRoleBucket, computeLastWorkingDay, computeLastWorkingDayAfterLeaveDeduction } from "@/lib/notice-period";
 import { BriefcaseIcon } from "lucide-react";
 
 // ── Styles ────────────────────────────────────────────────────────────────
@@ -99,12 +99,27 @@ function EmploymentDialog({
   const [noticeDateDraft, setNoticeDateDraft] = useState(m.noticeDate ?? "");
   const [leaveBlockedOnNoticeDraft, setLeaveBlockedOnNoticeDraft] = useState(m.leaveBlockedOnNotice ?? true);
   const [saving, setSaving] = useState(false);
+  const [noticeLeaveBalance, setNoticeLeaveBalance] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    getAnnualLeaveBalanceForNoticeCalc(m.userId).then(setNoticeLeaveBalance).catch(() => setNoticeLeaveBalance(null));
+  }, [open, m.userId]);
 
   const bucket = memberNoticeRoleBucket(m);
   const previewStatus = employmentStatusDraft || m.employmentStatus;
   const lastWorkingDayPreview = computeLastWorkingDay(
     { ...m, employmentStatus: previewStatus, noticeDate: noticeDateDraft || null },
     policies,
+  );
+  // noticeLeaveBalance reflects the member's currently-SAVED status (fetched
+  // once when the dialog opens); if the draft is about to flip them onto/off
+  // probation, that saved balance doesn't apply yet — force 0 so the
+  // preview date agrees with the "no deduction on probation" text below.
+  const lastWorkingDayAfterLeavePreview = computeLastWorkingDayAfterLeaveDeduction(
+    lastWorkingDayPreview,
+    noticeDateDraft || null,
+    previewStatus === "probation" ? 0 : (noticeLeaveBalance ?? 0),
   );
 
   // One button saves every field at once — sequential so a failure partway
@@ -194,17 +209,30 @@ function EmploymentDialog({
               &quot;blocked during notice&quot; (Annual Leave by default).
             </p>
             {noticeDateDraft && (
-              <p className="text-xs">
-                <span className="text-muted-foreground">Last working day (auto-calculated): </span>
-                {lastWorkingDayPreview ? (
-                  <span className="font-medium">{fmtDate(lastWorkingDayPreview)}</span>
-                ) : (
-                  <span className="text-muted-foreground italic">
-                    No notice-period policy set for {previewStatus || "this status"}/{bucket} —
-                    set one on the Notice Period Policy page.
-                  </span>
-                )}
-              </p>
+              lastWorkingDayPreview ? (
+                <div className="text-xs space-y-1 rounded-md border border-border bg-muted/30 px-2.5 py-2">
+                  <p>
+                    <span className="text-muted-foreground">Last day of employment (before leave deduction): </span>
+                    <span className="font-medium">{fmtDate(lastWorkingDayPreview)}</span>
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Last working day (after leave balance deduction): </span>
+                    <span className="font-medium">{fmtDate(lastWorkingDayAfterLeavePreview)}</span>
+                    {previewStatus === "probation" ? (
+                      <span className="text-muted-foreground"> — no deduction while on probation</span>
+                    ) : noticeLeaveBalance === null ? (
+                      <span className="text-muted-foreground"> (loading leave balance…)</span>
+                    ) : (
+                      <span className="text-muted-foreground"> ({noticeLeaveBalance.toFixed(1)} unused day{noticeLeaveBalance === 1 ? "" : "s"})</span>
+                    )}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">
+                  No notice-period policy set for {previewStatus || "this status"}/{bucket} —
+                  set one on the Notice Period Policy page.
+                </p>
+              )
             )}
           </div>
         </div>

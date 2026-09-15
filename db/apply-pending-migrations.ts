@@ -270,6 +270,10 @@ async function run() {
     console.log("  asset_unit created.");
   }
 
+  console.log("Applying migration 0053: asset_unit intended_use (sale vs rental)");
+  await addColIfMissing("asset_unit", "intended_use",
+    `ALTER TABLE "asset_unit" ADD COLUMN "intended_use" text NOT NULL DEFAULT 'SALE'`);
+
   console.log("All pending migrations applied.");
 }
 

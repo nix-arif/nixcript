@@ -43,6 +43,18 @@ export const REF_TYPE = {
 
 export const fieldWarehouseLabel = (repId: string) => `Field:${repId}`;
 
+// Consignment ownership is encoded in the warehouse label itself, the same
+// trick fieldWarehouseLabel already uses — no schema change, and every
+// existing stockLevel/stockMovement consumer keeps working unmodified for
+// normal (non-consigned) stock since it's just another label string.
+// "Consigned:<sourceOrgId>" = at this org's own main warehouse, still owned
+// by sourceOrgId. "Field:<repId>:Consigned:<sourceOrgId>" = with that rep,
+// still owned by sourceOrgId.
+export const consignedWarehouseLabel = (sourceOrgId: string) => `Consigned:${sourceOrgId}`;
+export const consignedFieldWarehouseLabel = (repId: string, sourceOrgId: string) => `Field:${repId}:Consigned:${sourceOrgId}`;
+// True for both the plain field label and its consigned variant.
+export const isFieldWarehouseLabel = (label: string) => label.startsWith("Field:");
+
 // Status of a single physical unit in the asset_unit ledger (opt-in per
 // product via product.requiresSerialTracking).
 export const ASSET_UNIT_STATUS = {
@@ -53,6 +65,19 @@ export const ASSET_UNIT_STATUS = {
   IN_REPAIR: "IN_REPAIR",
   DISPOSED:  "DISPOSED",   // terminal
 } as const;
+
+// Fixed when a unit enters inventory (registration, or later Goods
+// Receipt) — NOT chosen by whoever creates the Case DO. The DO reads this
+// off the unit to decide CASE_USE (SALE) vs LOAN_OUT (RENTAL).
+export const INTENDED_USE = {
+  SALE:   "SALE",
+  RENTAL: "RENTAL",
+} as const;
+
+export const INTENDED_USE_LABELS: Record<string, string> = {
+  SALE:   "Sale",
+  RENTAL: "Rental",
+};
 
 export const ASSET_UNIT_STATUS_LABELS: Record<string, string> = {
   IN_STOCK:  "In Stock",

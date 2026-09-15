@@ -1,13 +1,13 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, member, user, product, staffStockLimit, organizationProfile, stockLot, organization } from "@/db/schema";
+import { stockLevel, stockMovement, member, user, product, staffStockLimit, organizationProfile, stockLot, organization, assetUnit } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { eq, and, inArray, sql, desc, isNull, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { MOVEMENT_TYPE, REF_TYPE, fieldWarehouseLabel } from "@/lib/inventory/constants";
+import { MOVEMENT_TYPE, REF_TYPE, fieldWarehouseLabel, consignedWarehouseLabel, consignedFieldWarehouseLabel } from "@/lib/inventory/constants";
 import { applyToLot } from "@/lib/inventory/apply-to-lot";
 import { revalidatePath } from "next/cache";
 
@@ -35,6 +35,15 @@ export interface RepStockItem {
   unitCost: string | null;
   isRental: boolean;
   lots: { lotNo: string; expiryDate: Date | null; quantity: string }[];
+  // Present (non-empty) only for serial-tracked products: the specific
+  // physical units this rep currently holds, each with its own fixed
+  // Sale/Rental designation — Case DO reads this instead of asking the
+  // person creating the DO to classify the item themselves.
+  units: { id: string; serialNo: string; intendedUse: string }[];
+  // qty above is the combined total (owned + consigned); this breaks it
+  // down for visibility only — Case DO deduction (server/delivery-order.ts)
+  // depletes these consigned buckets before the plain owned holding.
+  consignedBreakdown?: { sourceOrgId: string; sourceOrgName: string; qty: number }[];
 }
 
 export interface RepSummary {
@@ -64,6 +73,12 @@ export interface FieldTransferItem {
   lotId?: string;
   lotNo?: string;
   expiryDate?: Date | null;
+  // Set when moving stock that's still owned by a sibling org (consigned in
+  // via server/consignment-transfer.ts) rather than this org's own stock —
+  // source/destination become the compound "Consigned:<orgId>" labels
+  // instead of the plain main/field warehouse, preserving the ownership tag
+  // through the hop. See lib/inventory/constants.ts.
+  consignedFromOrgId?: string;
 }
 
 export interface FieldTransferInput {
@@ -171,6 +186,46 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
     lotsByProduct.set(l.productId, arr);
   }
 
+  const heldUnits = await db
+    .select({ id: assetUnit.id, productId: assetUnit.productId, serialNo: assetUnit.serialNo, intendedUse: assetUnit.intendedUse })
+    .from(assetUnit)
+    .where(and(
+      inArray(assetUnit.currentOrgId, ownerOrgIds),
+      eq(assetUnit.currentHolderUserId, repId),
+      eq(assetUnit.status, "WITH_REP"),
+    ));
+  const unitsByProduct = new Map<string, RepStockItem["units"]>();
+  for (const u of heldUnits) {
+    const arr = unitsByProduct.get(u.productId) ?? [];
+    arr.push({ id: u.id, serialNo: u.serialNo, intendedUse: u.intendedUse });
+    unitsByProduct.set(u.productId, arr);
+  }
+
+  // Consigned field-stock — same rep, but the compound "Field:<repId>:Consigned:<sourceOrgId>"
+  // labels (one per possible sender in the owner group) instead of the plain
+  // field label. See lib/inventory/constants.ts.
+  const consignedLabels = ownerOrgIds.map((sourceOrgId) => ({ sourceOrgId, label: consignedFieldWarehouseLabel(repId, sourceOrgId) }));
+  const consignedRows = await db
+    .select({ productId: stockLevel.productId, warehouseLabel: stockLevel.warehouseLabel, qty: stockLevel.quantity })
+    .from(stockLevel)
+    .where(and(inArray(stockLevel.organizationId, ownerOrgIds), inArray(stockLevel.warehouseLabel, consignedLabels.map((c) => c.label))));
+  const sourceOrgIdByLabel = new Map(consignedLabels.map((c) => [c.label, c.sourceOrgId]));
+  const consignedSourceOrgIds = [...new Set(consignedRows.map((r) => sourceOrgIdByLabel.get(r.warehouseLabel)).filter((v): v is string => !!v))];
+  const sourceOrgNames = consignedSourceOrgIds.length
+    ? await db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, consignedSourceOrgIds))
+    : [];
+  const orgNameById = new Map(sourceOrgNames.map((o) => [o.id, o.name]));
+  const consignedByProduct = new Map<string, RepStockItem["consignedBreakdown"]>();
+  for (const r of consignedRows) {
+    const qty = parseFloat(r.qty);
+    if (qty <= 0) continue;
+    const sourceOrgId = sourceOrgIdByLabel.get(r.warehouseLabel);
+    if (!sourceOrgId) continue;
+    const arr = consignedByProduct.get(r.productId) ?? [];
+    arr.push({ sourceOrgId, sourceOrgName: orgNameById.get(sourceOrgId) ?? sourceOrgId, qty });
+    consignedByProduct.set(r.productId, arr);
+  }
+
   // Same rep + product can have separate balances under more than one
   // sibling org (rare, but possible) — merge into one pickable line so the
   // qty shown is the true total this person is actually holding.
@@ -182,6 +237,7 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
     if (existing) {
       existing.qty += qty;
       existing.lots = [...existing.lots, ...(lotsByProduct.get(r.productId) ?? [])];
+      // units aren't per-org — already the full set for this product, added once below.
       continue;
     }
     byProduct.set(r.productId, {
@@ -193,8 +249,35 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
       unitCost: r.unitCost,
       isRental: r.isRental,
       lots: lotsByProduct.get(r.productId) ?? [],
+      units: unitsByProduct.get(r.productId) ?? [],
     });
   }
+
+  // Fold consigned qty into the same rows (total qty includes it; the
+  // breakdown is additive detail) — some products may be held ONLY as
+  // consigned stock (no owned qty at all), so those need a fresh product
+  // lookup since they never went through the `rows` loop above.
+  const missingProductIds = [...consignedByProduct.keys()].filter((id) => !byProduct.has(id));
+  if (missingProductIds.length > 0) {
+    const missingProducts = await db
+      .select({ id: product.id, productCode: product.productCode, description: product.description, uom: product.uom, isRental: product.isRental })
+      .from(product)
+      .where(inArray(product.id, missingProductIds));
+    for (const p of missingProducts) {
+      byProduct.set(p.id, {
+        productId: p.id, productCode: p.productCode, description: p.description ?? "", uom: p.uom ?? null,
+        qty: 0, unitCost: null, isRental: p.isRental,
+        lots: lotsByProduct.get(p.id) ?? [], units: unitsByProduct.get(p.id) ?? [],
+      });
+    }
+  }
+  for (const [productId, breakdown] of consignedByProduct) {
+    const item = byProduct.get(productId);
+    if (!item || !breakdown) continue;
+    item.consignedBreakdown = breakdown;
+    item.qty += breakdown.reduce((sum, b) => sum + b.qty, 0);
+  }
+
   return [...byProduct.values()];
 }
 
@@ -280,6 +363,7 @@ export async function getAllRepFieldStock(): Promise<RepSummary[]> {
       unitCost: row.unitCost,
       isRental: row.isRental,
       lots: lotsByKey.get(`${row.warehouseLabel}:${row.productId}`) ?? [],
+      units: [], // this cross-rep admin summary doesn't need per-unit detail; see getRepFieldStock for that
     });
     rep.totalItems += qty;
   }
@@ -381,14 +465,16 @@ export async function transferToRep(input: FieldTransferInput): Promise<string> 
   const transferId = nanoid();
   const year = new Date().getFullYear();
   const referenceNo = `FT-${year}-${transferId.slice(0, 6).toUpperCase()}`;
-  const fieldLabel = fieldWarehouseLabel(input.repId);
-  const mainLabel = await getMainWarehouseLabelInternal(orgId);
+  const defaultMainLabel = await getMainWarehouseLabelInternal(orgId);
   const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
   const now = new Date();
   let processedCount = 0;
 
   for (const item of input.items) {
     if (item.qty <= 0) continue;
+
+    const mainLabel = item.consignedFromOrgId ? consignedWarehouseLabel(item.consignedFromOrgId) : defaultMainLabel;
+    const fieldLabel = item.consignedFromOrgId ? consignedFieldWarehouseLabel(input.repId, item.consignedFromOrgId) : fieldWarehouseLabel(input.repId);
 
     const [prod] = await db.select({ productCode: product.productCode, unitCost: stockLevel.unitCost })
       .from(product)
@@ -471,14 +557,16 @@ export async function returnFromRep(input: FieldTransferInput): Promise<string> 
   const transferId = nanoid();
   const year = new Date().getFullYear();
   const referenceNo = `FR-${year}-${transferId.slice(0, 6).toUpperCase()}`;
-  const fieldLabel = fieldWarehouseLabel(input.repId);
-  const mainLabel = await getMainWarehouseLabelInternal(orgId);
+  const defaultMainLabel = await getMainWarehouseLabelInternal(orgId);
   const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
   const now = new Date();
   let processedCount = 0;
 
   for (const item of input.items) {
     if (item.qty <= 0) continue;
+
+    const mainLabel = item.consignedFromOrgId ? consignedWarehouseLabel(item.consignedFromOrgId) : defaultMainLabel;
+    const fieldLabel = item.consignedFromOrgId ? consignedFieldWarehouseLabel(input.repId, item.consignedFromOrgId) : fieldWarehouseLabel(input.repId);
 
     const [prod] = await db.select({ productCode: product.productCode })
       .from(product)

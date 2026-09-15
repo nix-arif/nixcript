@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, stockLot, product, user, organizationProfile, member } from "@/db/schema";
+import { stockLevel, stockMovement, stockLot, product, user, organizationProfile, member, organization } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -9,7 +9,7 @@ import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import { isSelfActionAllowed } from "@/server/approval-settings";
 import { notifyUsersWithPermission } from "@/server/notifications";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, or, inArray, notInArray, isNull, isNotNull, lte } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, like, or, inArray, notInArray, isNull, isNotNull, lte } from "drizzle-orm";
 import { applyToLot } from "@/lib/inventory/apply-to-lot";
 import { revalidatePath } from "next/cache";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
@@ -791,6 +791,35 @@ export async function getTransferStockInfo(productId: string, warehouseLabel: st
     lots,
     serialNos: serialRows.map(r => r.serialNo!).filter(Boolean),
   };
+}
+
+// Consignment ownership is encoded in the warehouse label itself (see
+// lib/inventory/constants.ts) — "Consigned:<sourceOrgId>" buckets sit
+// alongside the org's own main-warehouse stock for the same product. This
+// surfaces them so Transfer-to-Rep can offer "Owned" vs "Consigned from X"
+// as separate choices instead of silently only ever moving owned stock.
+export async function getConsignedStockBuckets(productId: string): Promise<{ sourceOrgId: string; sourceOrgName: string; qty: number }[]> {
+  const { orgId } = await requireAccess("inventory:read");
+  const rows = await db
+    .select({ warehouseLabel: stockLevel.warehouseLabel, quantity: stockLevel.quantity })
+    .from(stockLevel)
+    .where(and(
+      eq(stockLevel.productId, productId),
+      eq(stockLevel.organizationId, orgId),
+      like(stockLevel.warehouseLabel, "Consigned:%"),
+    ));
+  const withOrgIds = rows
+    .map((r) => ({ sourceOrgId: r.warehouseLabel.slice("Consigned:".length), qty: parseFloat(r.quantity) }))
+    .filter((r) => r.qty > 0);
+  if (withOrgIds.length === 0) return [];
+
+  const orgs = await db
+    .select({ id: organization.id, name: organization.name })
+    .from(organization)
+    .where(inArray(organization.id, withOrgIds.map((r) => r.sourceOrgId)));
+  const nameById = new Map(orgs.map((o) => [o.id, o.name]));
+
+  return withOrgIds.map((r) => ({ ...r, sourceOrgName: nameById.get(r.sourceOrgId) ?? r.sourceOrgId }));
 }
 
 // Backfill stock_lot rows from approved movements that recorded lotNo

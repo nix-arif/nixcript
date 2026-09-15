@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { OrgMember } from "@/server/field-stock";
 import { transferToRep, returnFromRep, getRepFieldStock } from "@/server/field-stock";
-import { searchProducts, getTransferStockInfo } from "@/server/inventory";
-import { fieldWarehouseLabel } from "@/lib/inventory/constants";
+import { searchProducts, getTransferStockInfo, getConsignedStockBuckets } from "@/server/inventory";
+import { fieldWarehouseLabel, consignedWarehouseLabel } from "@/lib/inventory/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,6 +31,11 @@ interface LineItem {
   selectedLotId: string | null;
   serialNos: string[];
   loadingInfo: boolean;
+  // Owned stock vs. stock consigned in from a sibling org (still owned by
+  // them) — only populated for the "to_rep" direction, since that's the only
+  // side where the org's own warehouse can hold a mix of both.
+  consignedBuckets?: { sourceOrgId: string; sourceOrgName: string; qty: number }[];
+  selectedConsignedFromOrgId?: string | null; // null/undefined = owned bucket
 }
 
 const newLine = (): LineItem => ({
@@ -69,14 +74,19 @@ function ProductCell({ item, onUpdate, warehouseLabel }: ProductCellProps) {
     onUpdate(item._key, {
       productId: p.id, productCode: p.productCode, description: p.description ?? "", uom: p.uom ?? "",
       availableQty: undefined, lots: [], selectedLotId: null, serialNos: [], loadingInfo: true,
+      consignedBuckets: [], selectedConsignedFromOrgId: null,
     });
     setQ(p.productCode);
     setResults([]);
     try {
-      const info = await getTransferStockInfo(p.id, warehouseLabel);
+      const [info, consignedBuckets] = await Promise.all([
+        getTransferStockInfo(p.id, warehouseLabel),
+        getConsignedStockBuckets(p.id).catch(() => []),
+      ]);
       onUpdate(item._key, {
         availableQty: info.onHand, lots: info.lots, serialNos: info.serialNos,
         selectedLotId: info.lots.length === 1 ? info.lots[0].id : null, loadingInfo: false,
+        consignedBuckets,
       });
     } catch {
       onUpdate(item._key, { loadingInfo: false });
@@ -236,6 +246,25 @@ export function TransferClient({ reps, mainWarehouseLabel }: Props) {
     ));
   }
 
+  // Switches which bucket (owned main warehouse, or consigned from a
+  // sibling org) this line pulls from — re-fetches lot/onHand info for
+  // whichever warehouse label that bucket actually lives under.
+  async function handleBucketSelect(key: string, sourceOrgId: string | null) {
+    updateItem(key, { selectedConsignedFromOrgId: sourceOrgId, loadingInfo: true, lots: [], selectedLotId: null });
+    const item = items.find((i) => i._key === key);
+    if (!item) return;
+    const label = sourceOrgId ? consignedWarehouseLabel(sourceOrgId) : mainWarehouseLabel;
+    try {
+      const info = await getTransferStockInfo(item.productId, label);
+      updateItem(key, {
+        availableQty: info.onHand, lots: info.lots, serialNos: info.serialNos,
+        selectedLotId: info.lots.length === 1 ? info.lots[0].id : null, loadingInfo: false,
+      });
+    } catch {
+      updateItem(key, { loadingInfo: false });
+    }
+  }
+
   async function handleSave() {
     if (!repId) { toast.error("Select a rep"); return; }
     const validItems = items.filter((i) => i.productId && parseFloat(i.qty) > 0);
@@ -264,6 +293,7 @@ export function TransferClient({ reps, mainWarehouseLabel }: Props) {
             qty: parseFloat(i.qty),
             lotNo: lot?.lotNo || undefined,
             expiryDate: lot?.expiryDate ?? undefined,
+            consignedFromOrgId: direction === "to_rep" ? (i.selectedConsignedFromOrgId ?? undefined) : undefined,
           };
         }),
         notes: notes || undefined,
@@ -420,6 +450,25 @@ export function TransferClient({ reps, mainWarehouseLabel }: Props) {
                     <TrashIcon className="w-4 h-4" />
                   </button>
                 </div>
+                {item.consignedBuckets && item.consignedBuckets.length > 0 && (
+                  <div className="flex flex-col gap-1.5 pt-1 border-t border-border/60">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Which stock?</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button type="button" onClick={() => handleBucketSelect(item._key, null)}
+                        className={cn("text-[11px] px-2 py-0.5 rounded-full border transition-colors",
+                          !item.selectedConsignedFromOrgId ? "bg-teal-600 text-white border-teal-600" : "border-border bg-background hover:bg-muted")}>
+                        Owned
+                      </button>
+                      {item.consignedBuckets.map((b) => (
+                        <button key={b.sourceOrgId} type="button" onClick={() => handleBucketSelect(item._key, b.sourceOrgId)}
+                          className={cn("text-[11px] px-2 py-0.5 rounded-full border transition-colors",
+                            item.selectedConsignedFromOrgId === b.sourceOrgId ? "bg-amber-600 text-white border-amber-600" : "border-amber-300 dark:border-amber-700 bg-background hover:bg-amber-50 dark:hover:bg-amber-900/20")}>
+                          Consigned from {b.sourceOrgName} ({b.qty})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <LotPicker item={item} onSelect={(lotId) => handleLotSelect(item._key, lotId)} />
               </div>
             ))}

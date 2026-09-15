@@ -19,6 +19,7 @@ import {
   product as productTable,
   organizationProfile,
   member,
+  assetUnit,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getOrganizationProfile } from "@/server/organization-profile";
@@ -350,6 +351,11 @@ export interface DeliveryOrderItemInput {
   setGroupLabel?: string;
   setQty?: string;
   loanOut?: boolean;
+  // Which specific asset_unit this line represents (serial-tracked products
+  // only). When present, its fixed intendedUse (SALE/RENTAL) — set when the
+  // unit entered inventory — determines loanOut server-side; the client's
+  // own loanOut is ignored so the person creating the DO can't override it.
+  unitId?: string;
 }
 
 export interface CreateDeliveryOrderInput {
@@ -835,13 +841,14 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
         setGroupId: i.setGroupId ?? null,
         setGroupLabel: i.setGroupLabel ?? null,
         setQty: i.setQty ?? null,
+        unitId: i.unitId ?? null,
       })),
     );
   }
 
   // Case DO: deduct used items from the rep's field stock
   if (input.isCaseDo && input.applicationSpecialistId) {
-    const { fieldWarehouseLabel, MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
+    const { fieldWarehouseLabel, consignedFieldWarehouseLabel, MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
     const fieldLabel = fieldWarehouseLabel(input.applicationSpecialistId);
     const now = new Date();
 
@@ -856,37 +863,116 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
 
       const stockOrgId = await resolveFieldStockOrg(orgId, item.productId, fieldLabel);
 
-      const [fieldLevel] = await db.select()
-        .from(stockLevel)
-        .where(and(
-          eq(stockLevel.organizationId, stockOrgId),
-          eq(stockLevel.productId, item.productId),
-          eq(stockLevel.warehouseLabel, fieldLabel),
-        )).limit(1);
-
-      const currentQty = parseFloat(fieldLevel?.quantity ?? "0");
-      const newQty = Math.max(0, currentQty - qty);
-
-      if (fieldLevel) {
-        await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
-          .where(eq(stockLevel.id, fieldLevel.id));
+      // Serial-tracked line: the unit's own fixed intendedUse decides
+      // CASE_USE vs LOAN_OUT — the client's loanOut is ignored so the DO
+      // creator can't set it themselves (they only pick which unit was used).
+      let loanOut = !!item.loanOut;
+      let unit: typeof assetUnit.$inferSelect | null = null;
+      if (item.unitId) {
+        const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
+        [unit] = await db.select().from(assetUnit)
+          .where(and(eq(assetUnit.id, item.unitId), inArray(assetUnit.organizationId, ownerOrgIds)))
+          .limit(1);
+        if (!unit) throw new Error(`Unit not found for ${prod.productCode}`);
+        if (unit.status !== "WITH_REP" || unit.currentHolderUserId !== input.applicationSpecialistId) {
+          throw new Error(`Unit ${unit.serialNo} (${prod.productCode}) is no longer held by this application specialist`);
+        }
+        loanOut = unit.intendedUse === "RENTAL";
       }
 
-      const movementType = item.loanOut ? MT.LOAN_OUT : MT.CASE_USE;
+      const movementType = loanOut ? MT.LOAN_OUT : MT.CASE_USE;
       // A note only when the case's own org doesn't match where the stock
       // actually lives — the common single-org case reads exactly as before.
       const crossOrgNote = stockOrgId !== orgId ? ` (stock: sibling org)` : "";
-      const notes = (item.loanOut ? `Loan out — ${doNo}` : `Case usage — ${doNo}`) + crossOrgNote;
+      const baseNotes = (loanOut ? `Loan out — ${doNo}` : `Case usage — ${doNo}`) + crossOrgNote;
 
-      await db.insert(stockMovement).values({
-        id: nanoid(), organizationId: stockOrgId, productId: item.productId,
-        productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: null,
-        movementType,
-        quantity: (-qty).toFixed(4), balanceAfter: newQty.toFixed(4),
-        referenceType: RT.CASE, referenceId: row.id, referenceNo: doNo,
-        notes,
-        status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
-      });
+      if (item.unitId) {
+        // Serial-tracked line — the specific unit already fully identifies
+        // where this qty (always 1) comes from; no bucket depletion needed.
+        const [fieldLevel] = await db.select()
+          .from(stockLevel)
+          .where(and(
+            eq(stockLevel.organizationId, stockOrgId),
+            eq(stockLevel.productId, item.productId),
+            eq(stockLevel.warehouseLabel, fieldLabel),
+          )).limit(1);
+
+        const currentQty = parseFloat(fieldLevel?.quantity ?? "0");
+        const newQty = Math.max(0, currentQty - qty);
+
+        if (fieldLevel) {
+          await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
+            .where(eq(stockLevel.id, fieldLevel.id));
+        }
+
+        await db.insert(stockMovement).values({
+          id: nanoid(), organizationId: stockOrgId, productId: item.productId,
+          productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: null,
+          movementType,
+          quantity: (-qty).toFixed(4), balanceAfter: newQty.toFixed(4),
+          referenceType: RT.CASE, referenceId: row.id, referenceNo: doNo,
+          notes: baseNotes,
+          unitId: item.unitId,
+          status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+        });
+      } else {
+        // Bulk (non-serialized) line — deplete any consigned buckets held at
+        // this rep before touching their own owned field stock, so
+        // borrowed-from-a-sibling-org stock gets used (and settled) first.
+        // See lib/inventory/constants.ts for the label convention.
+        const ownerOrgIds = await getOwnerOrgIdsInternal(stockOrgId);
+        const candidateLabels = [
+          ...ownerOrgIds.map((x) => consignedFieldWarehouseLabel(input.applicationSpecialistId!, x)),
+          fieldLabel,
+        ];
+
+        let remaining = qty;
+        for (const label of candidateLabels) {
+          if (remaining <= 0) break;
+          const isLast = label === fieldLabel;
+
+          const [level] = await db.select()
+            .from(stockLevel)
+            .where(and(
+              eq(stockLevel.organizationId, stockOrgId),
+              eq(stockLevel.productId, item.productId),
+              eq(stockLevel.warehouseLabel, label),
+            )).limit(1);
+
+          const available = parseFloat(level?.quantity ?? "0");
+          if (available <= 0 && !isLast) continue; // nothing in this bucket, try the next
+          // On the final (owned) bucket, take whatever remains even if it
+          // exceeds what's on hand — matches the original behavior of never
+          // blocking a Case DO for insufficient stock, just clamping at 0.
+          const take = isLast ? remaining : Math.min(available, remaining);
+          const newQty = Math.max(0, available - take);
+
+          if (level) {
+            await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
+              .where(eq(stockLevel.id, level.id));
+          }
+
+          await db.insert(stockMovement).values({
+            id: nanoid(), organizationId: stockOrgId, productId: item.productId,
+            productCode: prod.productCode, warehouseLabel: label, warehouseTo: null,
+            movementType,
+            quantity: (-take).toFixed(4), balanceAfter: newQty.toFixed(4),
+            referenceType: RT.CASE, referenceId: row.id, referenceNo: doNo,
+            notes: isLast ? baseNotes : `${baseNotes} (consigned stock)`,
+            unitId: null,
+            status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+          });
+
+          remaining -= take;
+        }
+      }
+
+      if (unit) {
+        await db.update(assetUnit).set({
+          status: loanOut ? "ON_LOAN" : "SOLD",
+          currentCustomerId: input.customerId ?? null,
+        }).where(eq(assetUnit.id, unit.id));
+      }
     }
 
     revalidatePath("/dashboard/inventory/field-stock");
@@ -954,6 +1040,7 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
         setGroupId: i.setGroupId ?? null,
         setGroupLabel: i.setGroupLabel ?? null,
         setQty: i.setQty ?? null,
+        unitId: i.unitId ?? null,
       })),
     );
   }
@@ -1426,8 +1513,19 @@ export async function returnRentalItems(
       quantity: qty.toFixed(4), balanceAfter: newQty.toFixed(4),
       referenceType: RT.CASE, referenceId: doId, referenceNo: do_.doNo,
       notes: `Loan return — ${do_.doNo}`,
+      unitId: loanMovement.unitId ?? null,
       status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
     });
+
+    // Serial-tracked unit: back with the rep, ready to be used again.
+    if (loanMovement.unitId) {
+      await db.update(assetUnit).set({
+        status: "WITH_REP",
+        currentOrgId: movementOrgId,
+        currentWarehouseLabel: loanMovement.warehouseLabel,
+        currentCustomerId: null,
+      }).where(eq(assetUnit.id, loanMovement.unitId));
+    }
   }
 
   revalidatePath("/dashboard/inventory");

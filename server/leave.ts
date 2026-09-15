@@ -825,6 +825,32 @@ export async function getMemberLeaveBalances(userId: string): Promise<MyLeaveBal
   return computeBalances(orgId, userId);
 }
 
+// The unused Annual Leave balance that a resigning member's remaining
+// notice can be offset against: they stop attending work once this balance
+// runs out the tail end of their notice period, even though their official
+// last day of employment (computeLastWorkingDay) is later. Identified by
+// code "AL" or a name containing "annual" — deliberately NOT by
+// blockedDuringNotice, since that flag only governs whether new leave can
+// still be *applied for* during notice (a per-member, often-negotiated
+// override — see member.leaveBlockedOnNotice) and isn't a reliable stand-in
+// for "which type is Annual Leave" (an org may well leave it false while
+// still wanting the standard AL-offsets-notice calculation shown here).
+// Probationary members return 0 — this org's Annual Leave type may allow
+// probationers to apply for it, but the standard "runs out the last few
+// days of notice automatically" treatment only makes sense once confirmed.
+export async function getAnnualLeaveBalanceForNoticeCalc(userId: string): Promise<number> {
+  const { orgId } = await requireAccess("leave:manage");
+  const [profileRow] = await db.select({ employmentStatus: profile.employmentStatus })
+    .from(profile).where(eq(profile.userId, userId)).limit(1);
+  if (profileRow?.employmentStatus === "probation") return 0;
+  const balances = await computeBalances(orgId, userId);
+  const annualLeave = balances.find((b) =>
+    b.leaveTypeCode.toUpperCase() === "AL" || b.leaveTypeName.toLowerCase().includes("annual"),
+  );
+  if (!annualLeave) return 0;
+  return Math.max(0, parseFloat(annualLeave.remainingDays));
+}
+
 export async function setOpeningBalance(
   userId: string,
   leaveTypeId: string,

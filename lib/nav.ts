@@ -128,6 +128,7 @@ export const navConfig: NavGroup[] = [
       { title: "Pending Approvals", url: "/dashboard/inventory/approvals",            permission: "inventory:approve" },
       { title: "Movement History",  url: "/dashboard/inventory/movements",            permission: "inventory:read"    },
       { title: "Serialized Units",  url: "/dashboard/inventory/serialized-units",     permission: "inventory:read"    },
+      { title: "Consign to Sibling Org", url: "/dashboard/inventory/consign-transfer", permission: "inventory:manage" },
     ],
   },
   {

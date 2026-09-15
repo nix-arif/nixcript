@@ -51,6 +51,7 @@ export interface RegisterAssetUnitInput {
   productId: string;
   serialNo: string;
   status: string; // ASSET_UNIT_STATUS.*
+  intendedUse: string; // INTENDED_USE.* — fixed here, not chosen later at Case DO time
   warehouseLabel?: string; // when IN_STOCK / IN_REPAIR
   repId?: string; // when WITH_REP / ON_LOAN
   customerId?: string; // when SOLD / ON_LOAN
@@ -76,6 +77,7 @@ export async function registerAssetUnit(input: RegisterAssetUnitInput): Promise<
   if (existing) throw new Error(`Serial number "${serialNo}" is already registered for this product`);
 
   const isFieldHeld = input.status === ASSET_UNIT_STATUS.WITH_REP || input.status === ASSET_UNIT_STATUS.ON_LOAN;
+  if (!input.intendedUse) throw new Error("Sale or rental designation is required");
 
   const [row] = await db
     .insert(assetUnit)
@@ -85,6 +87,7 @@ export async function registerAssetUnit(input: RegisterAssetUnitInput): Promise<
       productId: input.productId,
       serialNo,
       status: input.status,
+      intendedUse: input.intendedUse,
       currentOrgId: orgId,
       currentWarehouseLabel: isFieldHeld ? null : (input.warehouseLabel ?? "Default"),
       currentHolderUserId: isFieldHeld ? (input.repId ?? null) : null,
@@ -97,6 +100,26 @@ export async function registerAssetUnit(input: RegisterAssetUnitInput): Promise<
 
   revalidatePath("/dashboard/inventory/serialized-units");
   return row;
+}
+
+// Corrects a unit's Sale/Rental designation (e.g. it was registered wrong).
+// Blocked once the unit has left inventory for good (SOLD/DISPOSED) — at
+// that point the designation already played out and shouldn't retroactively
+// change what already happened on a Case DO.
+export async function updateAssetUnitIntendedUse(unitId: string, intendedUse: string): Promise<void> {
+  const { orgId } = await requireAccess("inventory:manage");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+  const [unitRow] = await db
+    .select({ status: assetUnit.status })
+    .from(assetUnit)
+    .where(and(eq(assetUnit.id, unitId), inArray(assetUnit.organizationId, ownerOrgIds)))
+    .limit(1);
+  if (!unitRow) throw new Error("Unit not found");
+  if (unitRow.status === ASSET_UNIT_STATUS.SOLD || unitRow.status === ASSET_UNIT_STATUS.DISPOSED) {
+    throw new Error("Can't change the designation of a unit that's already sold or disposed");
+  }
+  await db.update(assetUnit).set({ intendedUse }).where(eq(assetUnit.id, unitId));
+  revalidatePath("/dashboard/inventory/serialized-units");
 }
 
 export interface AssetUnitFilters {

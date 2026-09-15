@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import type { MyLeaveBalance, LeaveTypeRow, NoticePeriodPolicyRow } from "@/server/leave";
 import { getMemberLeaveBalances, setOpeningBalance, setOpeningUsedDays } from "@/server/leave";
 import type { OrgMember } from "@/server/members";
-import { computeLastWorkingDay } from "@/lib/notice-period";
+import { computeLastWorkingDay, computeLastWorkingDayAfterLeaveDeduction } from "@/lib/notice-period";
 import { WalletIcon, SearchIcon } from "lucide-react";
 
 const EMPLOYMENT_STATUS_LABELS: Record<string, string> = {
@@ -213,17 +213,40 @@ export function LeaveBalancesClient({ members, leaveTypes, noticePolicies }: Pro
                       : "Not set"}
                   </span>
                 </div>
-                {selectedMember.noticeDate && (
-                  <div>
-                    <span className="text-muted-foreground">Last working day: </span>
-                    <span className="font-medium">
-                      {(() => {
-                        const lwd = computeLastWorkingDay(selectedMember, noticePolicies);
-                        return lwd ? fmtDate(lwd) : "policy not set";
-                      })()}
-                    </span>
-                  </div>
-                )}
+                {selectedMember.noticeDate && (() => {
+                  const lwd = computeLastWorkingDay(selectedMember, noticePolicies);
+                  if (!lwd) {
+                    return (
+                      <div>
+                        <span className="text-muted-foreground">Last working day: </span>
+                        <span className="font-medium">policy not set</span>
+                      </div>
+                    );
+                  }
+                  const onProbation = selectedMember.employmentStatus === "probation";
+                  const annualLeaveBalance = (balances ?? []).find((b) =>
+                    b.leaveTypeCode.toUpperCase() === "AL" || b.leaveTypeName.toLowerCase().includes("annual"),
+                  );
+                  const noticeLeaveBalance = onProbation
+                    ? 0
+                    : parseFloat(annualLeaveBalance?.remainingDays ?? "0");
+                  const lwdAfterLeave = computeLastWorkingDayAfterLeaveDeduction(lwd, selectedMember.noticeDate, noticeLeaveBalance);
+                  return (
+                    <>
+                      <div>
+                        <span className="text-muted-foreground">Last day of employment: </span>
+                        <span className="font-medium">{fmtDate(lwd)}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Last working day (after leave deduction): </span>
+                        <span className="font-medium">{fmtDate(lwdAfterLeave)}</span>
+                        <span className="text-muted-foreground">
+                          {" "}{onProbation ? "(no deduction on probation)" : `(${noticeLeaveBalance.toFixed(1)} unused day${noticeLeaveBalance === 1 ? "" : "s"})`}
+                        </span>
+                      </div>
+                    </>
+                  );
+                })()}
                 <p className="w-full text-[11px] text-muted-foreground">
                   Edit these on the{" "}
                   <a href="/dashboard/organization/members" className="underline hover:no-underline">

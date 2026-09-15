@@ -850,7 +850,14 @@ interface CaseLineItem {
   loanOut?: boolean;
   // Rental-capable field-stock items can be split within one case: part of
   // the qty sold/consumed (in `qty`) and part loaned out (in `rentalQty`).
+  // Only used for non-serial-tracked products — see `units` below.
   rentalQty?: string;
+  // Serial-tracked products only: the specific units this rep currently
+  // holds, each with a fixed Sale/Rental designation set in inventory (not
+  // chosen here). When present, the qty/rentalQty split above is replaced
+  // by a per-unit checklist — the user just picks which units were used.
+  units?: { id: string; serialNo: string; intendedUse: string }[];
+  selectedUnitIds?: string[];
 }
 
 const newCaseLine = (): CaseLineItem => ({
@@ -986,6 +993,8 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
         fromFieldStock: true,
         fieldAvailable: s.qty,
         isRental: s.isRental,
+        units: s.units,
+        selectedUnitIds: [],
       })));
       setFieldItems([]);
     }).catch(() => { setFieldPool([]); setFieldItems([]); }).finally(() => setLoadingStock(false));
@@ -996,13 +1005,25 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
     if (already) {
       setFieldItems((prev) => prev.filter((i) => i.productId !== poolItem.productId));
     } else {
-      // Rental-capable items default to fully on loan (matches prior
-      // behavior); the user can move some qty into "Sell" afterwards.
       setFieldItems((prev) => [
         ...prev,
-        poolItem.isRental ? { ...poolItem, qty: "0", rentalQty: "1" } : { ...poolItem, qty: "1", rentalQty: "0" },
+        poolItem.units && poolItem.units.length > 0
+          // Serial-tracked: no default qty/split — the user picks specific units below.
+          ? { ...poolItem, qty: "0", rentalQty: "0", selectedUnitIds: [] }
+          // Rental-capable (bulk): defaults to fully on loan (matches prior
+          // behavior); the user can move some qty into "Sell" afterwards.
+          : poolItem.isRental ? { ...poolItem, qty: "0", rentalQty: "1" } : { ...poolItem, qty: "1", rentalQty: "0" },
       ]);
     }
+  }
+
+  function toggleUnitSelection(itemKey: string, unitId: string) {
+    setFieldItems((prev) => prev.map((i) => {
+      if (i._key !== itemKey) return i;
+      const selected = i.selectedUnitIds ?? [];
+      const nextSelected = selected.includes(unitId) ? selected.filter((id) => id !== unitId) : [...selected, unitId];
+      return { ...i, selectedUnitIds: nextSelected };
+    }));
   }
 
   function updateFieldItem(key: string, patch: Partial<CaseLineItem>) {
@@ -1027,7 +1048,11 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
 
   async function handleSave() {
     if (appSpecs.length === 0) { toast.error("Select the application specialist"); return; }
-    const usedFieldItems = fieldItems.filter((i) => (parseFloat(i.qty || "0") || 0) + (parseFloat(i.rentalQty || "0") || 0) > 0);
+    const usedFieldItems = fieldItems.filter((i) =>
+      i.units && i.units.length > 0
+        ? (i.selectedUnitIds ?? []).length > 0
+        : (parseFloat(i.qty || "0") || 0) + (parseFloat(i.rentalQty || "0") || 0) > 0
+    );
     const validExtras = extraItems.filter((i) => i.description || i.productCode);
     if (usedFieldItems.length === 0 && validExtras.length === 0) {
       toast.error("Add at least one item"); return;
@@ -1036,8 +1061,18 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
     // A rental-capable item can be split across one case: part sold/consumed
     // and part loaned out. Each portion becomes its own DO line so the
     // server records the right movement type (CASE_USE vs LOAN_OUT) for each.
+    // Serial-tracked items fan out one line per selected physical unit
+    // instead — the server derives loanOut from that unit's own fixed
+    // intendedUse (set in inventory), ignoring whatever we send here.
     const fieldOrderItems: Omit<DeliveryOrderItemInput, "rowNo">[] = [];
     for (const i of usedFieldItems) {
+      if (i.units && i.units.length > 0) {
+        for (const unitId of i.selectedUnitIds ?? []) {
+          const unit = i.units.find((u) => u.id === unitId);
+          fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: "1", uom: i.uom, loanOut: unit?.intendedUse === "RENTAL", unitId });
+        }
+        continue;
+      }
       const sellQty = parseFloat(i.qty || "0") || 0;
       const rentalQty = parseFloat(i.rentalQty || "0") || 0;
       if (sellQty > 0) {
@@ -1477,6 +1512,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                 const sellQty = parseFloat(item.qty || "0") || 0;
                 const rentalQty = parseFloat(item.rentalQty || "0") || 0;
                 const over = (sellQty + rentalQty) > (item.fieldAvailable ?? Infinity);
+                const hasUnits = !!item.units && item.units.length > 0;
                 return (
                   <div key={item._key} className="rounded-lg border border-border bg-background p-3 flex flex-col gap-2.5">
                     <div className="flex items-start justify-between">
@@ -1488,6 +1524,39 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                         className="text-muted-foreground hover:text-destructive text-xs ml-2 shrink-0">✕</button>
                     </div>
 
+                    {hasUnits ? (
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-[11px]">Pick unit(s) used <span className="text-destructive">*</span></Label>
+                        <p className="text-[11px] text-muted-foreground -mt-1">Sale/Rental is fixed per unit in inventory — just select which ones were used.</p>
+                        <div className="flex flex-col gap-1">
+                          {item.units!.map((u) => {
+                            const selected = (item.selectedUnitIds ?? []).includes(u.id);
+                            return (
+                              <button key={u.id} type="button"
+                                onClick={() => toggleUnitSelection(item._key, u.id)}
+                                className={cn("flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md border text-xs transition-colors",
+                                  selected ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40")}
+                              >
+                                <span className="flex items-center gap-2">
+                                  <span className={cn("w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 text-[9px] font-bold",
+                                    selected ? "bg-primary border-primary text-primary-foreground" : "border-input")}>
+                                    {selected ? "✓" : ""}
+                                  </span>
+                                  <span className="font-mono">{u.serialNo}</span>
+                                </span>
+                                <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-semibold border",
+                                  u.intendedUse === "RENTAL"
+                                    ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700"
+                                    : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700")}>
+                                  {u.intendedUse === "RENTAL" ? "Rental" : "Sale"}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                    <>
                     <div className="flex items-center justify-between">
                       <Label className="text-[11px]">{item.isRental ? "Sell qty / Rental qty" : <>Qty <span className="text-destructive">*</span></>}</Label>
                       <span className="text-[11px] text-muted-foreground">
@@ -1519,6 +1588,8 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                       />
                     )}
                     {over && <p className="text-[11px] text-destructive">{item.isRental ? "Sell + rental qty exceeds available quantity" : "Exceeds available quantity"}</p>}
+                    </>
+                    )}
                   </div>
                 );
               })}
