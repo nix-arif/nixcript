@@ -164,26 +164,27 @@ function calcServiceYears(joinDate: Date): number {
   return ms / (1000 * 60 * 60 * 24 * 365.25);
 }
 
-function isLeapYear(y: number): boolean {
-  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
-}
-
 function roundToHalfDay(n: number): number {
   return Math.round(n * 2) / 2;
 }
 
 // Full-year tier entitlement is only correct for a member who was already
-// employed on Jan 1. For the calendar year they actually joined, scale it
-// down to the fraction of that year remaining from their hire date onward
-// (rounded to the nearest half day). Every later year gets the full amount.
+// employed on Jan 1. For the calendar year they actually joined — typically
+// still on probation — scale it down. Malaysian Employment Act 1955
+// s.60E(1A): an employee who hasn't completed twelve months of continuous
+// service in that year is entitled to leave "in direct proportion to the
+// number of completed months of service", so proration is by whole
+// completed calendar months, not exact days. A month only counts as
+// completed if they were employed for the whole month (i.e. joined on the
+// 1st) — joining any later means that first partial month doesn't count.
+// Every later year gets the full amount.
 function prorateForJoinYear(fullDays: number, joinDate: Date, year: number): number {
   if (joinDate.getFullYear() < year) return fullDays;
   if (joinDate.getFullYear() > year) return 0; // hasn't joined as of this year
-  const yearEnd = new Date(year, 11, 31);
-  const daysInYear = isLeapYear(year) ? 366 : 365;
-  const msPerDay = 1000 * 60 * 60 * 24;
-  const daysRemaining = Math.floor((yearEnd.getTime() - joinDate.getTime()) / msPerDay) + 1;
-  return roundToHalfDay(fullDays * daysRemaining / daysInYear);
+  const joinMonth = joinDate.getMonth(); // 0-indexed
+  const firstCompleteMonth = joinDate.getDate() === 1 ? joinMonth : joinMonth + 1;
+  const completedMonths = Math.max(0, 11 - firstCompleteMonth + 1);
+  return roundToHalfDay(fullDays * completedMonths / 12);
 }
 
 function getEntitledDays(

@@ -95,7 +95,10 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
       snap?.name?.toLowerCase().includes(s) ||
       p.organizationName.toLowerCase().includes(s) ||
       p.customerPoNos.some((c) => c.toLowerCase().includes(s)) ||
-      p.setGroupLabels.some((set) => set.toLowerCase().includes(s))
+      p.setGroupLabels.some((set) => set.toLowerCase().includes(s)) ||
+      p.itemCustomers.some((c) =>
+        c.name.toLowerCase().includes(s) || c.organization?.toLowerCase().includes(s),
+      )
     );
   }), sort);
 
@@ -129,7 +132,7 @@ export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by PO no., PR no., supplier, organization, set name…"
+            placeholder="Search by PO no., PR no., supplier, organization, customer, set name…"
             className="pl-9 h-9 text-sm"
           />
           {search && (

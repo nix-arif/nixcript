@@ -128,7 +128,10 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
       snap?.name?.toLowerCase().includes(s) ||
       o.status.toLowerCase().includes(s) ||
       o.createdByName?.toLowerCase().includes(s) ||
-      o.customerPoNos.some((c) => c.toLowerCase().includes(s))
+      o.customerPoNos.some((c) => c.toLowerCase().includes(s)) ||
+      o.itemCustomers.some((c) =>
+        c.name.toLowerCase().includes(s) || c.organization?.toLowerCase().includes(s),
+      )
     );
   }), sort);
 
@@ -152,7 +155,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by PO no., supplier, status..."
+            placeholder="Search by PO no., supplier, customer, status..."
             className="pl-9 h-9 text-sm"
           />
           {search && (
