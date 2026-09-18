@@ -319,11 +319,11 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                           <span key={`${c.name}-${c.organization}`} className="inline-flex items-center gap-1">
                             {c.organization && (
                               <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                                {c.organization}
+                                <Highlight text={c.organization} query={search} />
                               </span>
                             )}
                             <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                              {c.name}
+                              <Highlight text={c.name} query={search} />
                             </span>
                           </span>
                         ))}
