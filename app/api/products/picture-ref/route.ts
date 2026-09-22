@@ -158,6 +158,7 @@ export async function POST(req: NextRequest) {
       brandName: findColumn(headerRow, "design brand name to refer"),
       brandCode: findColumn(headerRow, "design brand code to refer"),
       emboss: findColumn(headerRow, "best medical code to emboss"),
+      description: findColumn(headerRow, "description"),
       qty: findColumn(headerRow, "qty"),
     };
     if (inCol.brandCode === -1) {
@@ -166,7 +167,7 @@ export async function POST(req: NextRequest) {
 
     type InRow = {
       hospital: string; setName: string; no: string;
-      brandName: string; brandCode: string; emboss: string; qty: string;
+      brandName: string; brandCode: string; emboss: string; description: string; qty: string;
     };
     const cellStr = (row: ExcelJS.Row, colIdx: number): string => {
       if (colIdx === -1) return "";
@@ -186,6 +187,7 @@ export async function POST(req: NextRequest) {
         brandName: cellStr(row, inCol.brandName),
         brandCode,
         emboss: cellStr(row, inCol.emboss),
+        description: cellStr(row, inCol.description),
         qty: cellStr(row, inCol.qty),
       });
     }
@@ -300,7 +302,7 @@ export async function POST(req: NextRequest) {
       outRow.getCell(COL["Design Brand Name to Refer"]).value = inRow.brandName || null;
       outRow.getCell(COL["Design Brand Code to Refer"]).value = inRow.brandCode;
       outRow.getCell(COL["Best Medical Code to Emboss"]).value = inRow.emboss || null;
-      outRow.getCell(COL["Description"]).value = match?.description ?? null;
+      outRow.getCell(COL["Description"]).value = inRow.description || match?.description || null;
       outRow.getCell(COL["Qty"]).value = inRow.qty ? Number(inRow.qty) || inRow.qty : null;
       outRow.getCell(COL["OUM"]).value = match?.uom || "pc";
       outRow.getCell(COL["Total Price (USD)"]).value = {

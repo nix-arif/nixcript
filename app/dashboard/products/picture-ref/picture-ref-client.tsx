@@ -37,13 +37,13 @@ export function PictureRefClient() {
 
   function handleDownloadTemplate() {
     const ws = XLSX.utils.aoa_to_sheet([
-      ["Hospital", "Set Name", "No", "Design Brand Name to Refer", "Design Brand Code to Refer", "Best Medical Code to Emboss", "Qty"],
-      ["Seberang Jaya", "Loose Items", "1.1", "medicon", "72.05.70", "Q249-21", 10],
-      ["Seberang Jaya", "Loose Items", "1.2", "geister", "10-3620", "F680-18DP", 5],
-      ["Alor Gajah", "Loose Items", "2.1", "medicon", "45.75.03", "Q112-08", 2],
+      ["Hospital", "Set Name", "No", "Design Brand Name to Refer", "Design Brand Code to Refer", "Best Medical Code to Emboss", "Description", "Qty"],
+      ["Seberang Jaya", "Loose Items", "1.1", "medicon", "72.05.70", "Q249-21", "", 10],
+      ["Seberang Jaya", "Loose Items", "1.2", "geister", "10-3620", "F680-18DP", "", 5],
+      ["Alor Gajah", "Loose Items", "2.1", "medicon", "45.75.03", "Q112-08", "", 2],
     ]);
     ws["!cols"] = [
-      { wch: 18 }, { wch: 16 }, { wch: 8 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 8 },
+      { wch: 18 }, { wch: 16 }, { wch: 8 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 32 }, { wch: 8 },
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
@@ -127,7 +127,8 @@ export function PictureRefClient() {
         <div className="text-center">
           <p className="text-sm font-medium">Drop your spreadsheet here or click to browse</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Must contain a column named <span className="font-mono">Design Brand Code to Refer</span>
+            Must contain a column named <span className="font-mono">Design Brand Code to Refer</span>.
+            Fill in <span className="font-mono">Description</span> to override the catalogue text, or leave it blank to use what&apos;s in the database.
           </p>
         </div>
       </div>
