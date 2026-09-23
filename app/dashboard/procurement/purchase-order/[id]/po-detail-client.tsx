@@ -294,9 +294,16 @@ export function PurchaseOrderDetailClient({
   const [pdfWithImages, setPdfWithImages] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
-  // Click-to-highlight on an item row — purely a viewing aid, kept in local
-  // state only (not persisted anywhere), so it resets on every refresh.
-  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
+  // Click-to-highlight on an item row — each row toggles independently, so
+  // any number can be highlighted at once. Purely a viewing aid, kept in
+  // local state only (not persisted anywhere), so it resets on every refresh.
+  const [highlightedItemIds, setHighlightedItemIds] = useState<Set<string>>(new Set());
+  const toggleHighlight = (id: string) =>
+    setHighlightedItemIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
 
   useEffect(() => { setStatus(order.status ?? "confirmed"); }, [order.status]);
   useEffect(() => { setPoNo(order.poNo); }, [order.poNo]);
@@ -566,11 +573,11 @@ export function PurchaseOrderDetailClient({
                       // rest was given up on — a mixed outcome, milder shade.
                       const isFullyWrittenOff = item.shortfallClosedStatus === "written_off" && item.acceptedQty <= 0;
                       const isPartiallyWrittenOff = item.shortfallClosedStatus === "written_off" && item.acceptedQty > 0;
-                      const isHighlighted = highlightedItemId === item.id;
+                      const isHighlighted = highlightedItemIds.has(item.id);
                       return (
                       <tr
                         key={item.id}
-                        onClick={() => setHighlightedItemId((cur) => (cur === item.id ? null : item.id))}
+                        onClick={() => toggleHighlight(item.id)}
                         className={cn(
                           "border-b border-border/40 last:border-0 cursor-pointer transition-colors",
                           isHighlighted

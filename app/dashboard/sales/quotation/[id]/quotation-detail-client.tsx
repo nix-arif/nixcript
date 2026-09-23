@@ -100,9 +100,16 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   const [finalizing, setFinalizing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [revising, setRevising] = useState(false);
-  // Click-to-highlight on an item row — purely a viewing aid, kept in local
-  // state only (not persisted anywhere), so it resets on every refresh.
-  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
+  // Click-to-highlight on an item row — each row toggles independently, so
+  // any number can be highlighted at once. Purely a viewing aid, kept in
+  // local state only (not persisted anywhere), so it resets on every refresh.
+  const [highlightedItemIds, setHighlightedItemIds] = useState<Set<string>>(new Set());
+  const toggleHighlight = (id: string) =>
+    setHighlightedItemIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
 
   // Editable settings (drafts only)
   const [applyTotalDiscount, setApplyTotalDiscount] = useState(
@@ -616,11 +623,11 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
             const renderItemRow = (item: typeof items[number], inSet: boolean) => {
                     const isRent = item.lineType === "rent";
-                    const isHighlighted = highlightedItemId === item.id;
+                    const isHighlighted = highlightedItemIds.has(item.id);
                     return (
                       <tr
                         key={item.id}
-                        onClick={() => setHighlightedItemId((cur) => (cur === item.id ? null : item.id))}
+                        onClick={() => toggleHighlight(item.id)}
                         className={cn(
                           "border-b border-border/60 last:border-0 cursor-pointer transition-colors",
                           isHighlighted
