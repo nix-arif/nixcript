@@ -100,6 +100,9 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   const [finalizing, setFinalizing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [revising, setRevising] = useState(false);
+  // Click-to-highlight on an item row — purely a viewing aid, kept in local
+  // state only (not persisted anywhere), so it resets on every refresh.
+  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
 
   // Editable settings (drafts only)
   const [applyTotalDiscount, setApplyTotalDiscount] = useState(
@@ -613,12 +616,16 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
             const renderItemRow = (item: typeof items[number], inSet: boolean) => {
                     const isRent = item.lineType === "rent";
+                    const isHighlighted = highlightedItemId === item.id;
                     return (
                       <tr
                         key={item.id}
+                        onClick={() => setHighlightedItemId((cur) => (cur === item.id ? null : item.id))}
                         className={cn(
-                          "border-b border-border/60 last:border-0",
-                          inSet && "bg-blue-50/20 dark:bg-blue-900/5",
+                          "border-b border-border/60 last:border-0 cursor-pointer transition-colors",
+                          isHighlighted
+                            ? "bg-blue-100! dark:bg-blue-900/40!"
+                            : inSet && "bg-blue-50/20 dark:bg-blue-900/5",
                         )}
                       >
                         {/* # + type badge */}
