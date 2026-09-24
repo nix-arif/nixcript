@@ -120,8 +120,10 @@ export function NavMain({
                   }}
                 >
                   <DropdownMenuTrigger asChild>
+                    {/* No tooltip here — the flyout itself (opened on hover)
+                        already labels the group via DropdownMenuLabel below,
+                        so a tooltip would just be a redundant second label. */}
                     <SidebarMenuButton
-                      tooltip={item.title}
                       isActive={isGroupActive}
                       className={`h-8 rounded-md gap-2.5 text-[13px] font-medium transition-colors
                         ${isGroupActive
