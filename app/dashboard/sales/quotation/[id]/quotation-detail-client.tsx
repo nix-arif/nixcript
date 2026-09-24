@@ -761,12 +761,16 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
                   const renderItemCard = (item: typeof items[number], inSet: boolean) => {
                     const isRent = item.lineType === "rent";
+                    const isHighlighted = highlightedItemIds.has(item.id);
                     return (
                       <div
                         key={item.id}
+                        onClick={() => toggleHighlight(item.id)}
                         className={cn(
-                          "px-3 py-2.5 border-b border-border/60 last:border-0 space-y-1.5 text-xs",
-                          inSet && "bg-blue-50/20 dark:bg-blue-900/5",
+                          "px-3 py-2.5 border-b border-border/60 last:border-0 space-y-1.5 text-xs cursor-pointer transition-colors",
+                          isHighlighted
+                            ? "bg-blue-100! dark:bg-blue-900/40!"
+                            : inSet && "bg-blue-50/20 dark:bg-blue-900/5",
                         )}
                       >
                         <div className="flex items-start justify-between gap-2">
