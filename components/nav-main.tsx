@@ -187,7 +187,6 @@ export function NavMain({
               <SidebarMenuItem>
                 <CollapsibleTrigger asChild>
                   <SidebarMenuButton
-                    tooltip={item.title}
                     isActive={isGroupActive}
                     className={`h-8 rounded-md gap-2.5 text-[13px] font-medium transition-colors
                       ${isGroupActive
