@@ -6,6 +6,14 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   SidebarGroup,
   SidebarMenu,
   SidebarMenuButton,
@@ -18,7 +26,7 @@ import {
 import { ChevronRightIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // Returns true only if this url is the best match for pathname across ALL nav sub-items.
 // "Best match" means: no other registered url is a longer, more specific match.
@@ -44,12 +52,41 @@ export function NavMain({
   }[];
 }) {
   const pathname = usePathname();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, state, setOpenMobile } = useSidebar();
   const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
+  // Sub-items are hidden by CSS once the sidebar collapses to icons
+  // (SidebarMenuSub has group-data-[collapsible=icon]:hidden), so the usual
+  // inline expand/collapse becomes unreachable — swap to a flyout dropdown
+  // instead so child nav stays usable while collapsed.
+  const isIconCollapsed = state === "collapsed" && !isMobile;
+
+  // Icon-collapsed flyout opens on hover rather than click. A short close
+  // delay (instead of closing the instant the cursor leaves the trigger)
+  // gives the user room to move diagonally into the flyout across the gap
+  // created by sideOffset — without it, the menu would close before the
+  // cursor ever reaches the content.
+  const [hoveredTitle, setHoveredTitle] = useState<string | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  const openFlyout = (title: string) => {
+    clearCloseTimer();
+    setHoveredTitle(title);
+  };
+  const scheduleCloseFlyout = () => {
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => setHoveredTitle(null), 150);
+  };
+  useEffect(() => clearCloseTimer, []);
 
   // Reset manual overrides whenever the route changes
   useEffect(() => {
     setManualOpen({});
+    setHoveredTitle(null);
   }, [pathname]);
 
   const closeMobile = () => {
@@ -67,6 +104,73 @@ export function NavMain({
           ) ?? false;
 
           const isOpen = isGroupActive || (manualOpen[item.title] ?? false);
+
+          if (isIconCollapsed) {
+            return (
+              <SidebarMenuItem
+                key={item.title}
+                onMouseEnter={() => openFlyout(item.title)}
+                onMouseLeave={scheduleCloseFlyout}
+              >
+                <DropdownMenu
+                  open={hoveredTitle === item.title}
+                  onOpenChange={(open) => {
+                    if (open) openFlyout(item.title);
+                    else { clearCloseTimer(); setHoveredTitle(null); }
+                  }}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <SidebarMenuButton
+                      tooltip={item.title}
+                      isActive={isGroupActive}
+                      className={`h-8 rounded-md gap-2.5 text-[13px] font-medium transition-colors
+                        ${isGroupActive
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                          : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+                        }`}
+                    >
+                      <span className="shrink-0 [&_svg]:size-4 [&_svg]:opacity-80">{item.icon}</span>
+                      <span className="truncate">{item.title}</span>
+                    </SidebarMenuButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    side="right"
+                    align="center"
+                    sideOffset={10}
+                    className="w-52 rounded-xl p-1.5"
+                    onMouseEnter={() => openFlyout(item.title)}
+                    onMouseLeave={scheduleCloseFlyout}
+                  >
+                    <DropdownMenuLabel className="flex items-center gap-2 px-1.5 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      <span className="shrink-0 [&_svg]:size-3.5 [&_svg]:opacity-70">{item.icon}</span>
+                      {item.title}
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator className="my-1" />
+                    <div className="flex flex-col gap-0.5">
+                      {item.items?.map((subItem) => {
+                        const isActive = isActiveSub(subItem.url, allSubUrls, pathname);
+                        return (
+                          <DropdownMenuItem
+                            key={subItem.title}
+                            asChild
+                            className={`h-8 rounded-md px-2 text-[13px] transition-colors
+                              ${isActive
+                                ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground focus:bg-sidebar-accent"
+                                : "text-sidebar-foreground/80 focus:bg-sidebar-accent/60 focus:text-sidebar-foreground"
+                              }`}
+                          >
+                            <Link href={subItem.url} onClick={closeMobile}>
+                              {subItem.title}
+                            </Link>
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </div>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </SidebarMenuItem>
+            );
+          }
 
           return (
             <Collapsible
