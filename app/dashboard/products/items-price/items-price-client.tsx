@@ -58,15 +58,16 @@ export function ItemsPriceClient() {
       const buf = await f.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json(ws, { defval: "" }) as Record<string, any>[];
-      const parsed: ParsedRow[] = raw
-        .map((row, i) => ({ no: i + 1, productCode: extractProductCode(row) }))
-        .filter((r) => r.productCode);
+      // blankrows: true keeps empty rows so the result lines up row-for-row
+      // with the uploaded sheet; only trailing blanks are trimmed off.
+      const raw = XLSX.utils.sheet_to_json(ws, { defval: "", blankrows: true }) as Record<string, any>[];
+      const parsed: ParsedRow[] = raw.map((row, i) => ({ no: i + 1, productCode: extractProductCode(row) }));
+      while (parsed.length && !parsed[parsed.length - 1].productCode) parsed.pop();
       if (!parsed.length)
         throw new Error("No valid product codes found — make sure there is a 'product code' column");
       setRows(parsed);
 
-      const codes = [...new Set(parsed.map((r) => r.productCode))];
+      const codes = [...new Set(parsed.map((r) => r.productCode).filter(Boolean))];
       const dbRows = await getProductPriceDetails(codes);
       setDetails(new Map(dbRows.map((r) => [r.productCode, r])));
     } catch (e: any) {
@@ -110,6 +111,7 @@ export function ItemsPriceClient() {
     const sheetData = [
       ["No.", "Product Code", "Description", "Unit Price (RM)", "UOM", "MDA Reg No."],
       ...rows.map((row) => {
+        if (!row.productCode) return [row.no];
         const d = details.get(row.productCode);
         return [
           row.no,
@@ -142,7 +144,8 @@ export function ItemsPriceClient() {
   };
 
   const foundCount = rows.filter((r) => details.has(r.productCode)).length;
-  const notFoundCount = rows.length - foundCount;
+  const codeRowCount = rows.filter((r) => r.productCode).length;
+  const notFoundCount = codeRowCount - foundCount;
 
   return (
     <div className="p-6">
@@ -249,7 +252,7 @@ export function ItemsPriceClient() {
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate">{file.name}</div>
                 <div className="text-xs text-muted-foreground mt-0.5">
-                  {rows.length} rows · {new Set(rows.map(r => r.productCode)).size} unique codes
+                  {rows.length} rows · {new Set(rows.map(r => r.productCode).filter(Boolean)).size} unique codes
                 </div>
               </div>
               <button
@@ -301,6 +304,14 @@ export function ItemsPriceClient() {
               </thead>
               <tbody>
                 {rows.map((row, i) => {
+                  if (!row.productCode) {
+                    return (
+                      <tr key={i} className={i < rows.length - 1 ? "border-b border-border" : ""}>
+                        <td className="px-3 py-2 text-muted-foreground tabular-nums">{row.no}</td>
+                        <td colSpan={5} className="px-3 py-2">&nbsp;</td>
+                      </tr>
+                    );
+                  }
                   const d = details.get(row.productCode);
                   return (
                     <tr
