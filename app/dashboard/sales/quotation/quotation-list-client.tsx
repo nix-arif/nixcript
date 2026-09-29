@@ -472,19 +472,21 @@ export function QuotationListClient({
                   </div>
                 </div>
 
-                {/* Member rows */}
+                {/* Member rows — two lines on mobile (ref no. + total, then org +
+                    date) so a long quotation no. never pushes the org name out;
+                    a single line from sm up. */}
                 {group.members.map((m, mi) => (
                   <div
                     key={m.id}
                     className={cn(
-                      "flex items-center gap-3 px-4 py-2.5",
+                      "flex items-start sm:items-center gap-3 px-4 py-2.5",
                       mi < group.members.length - 1
                         ? "border-b border-border/50"
                         : "",
                     )}
                   >
                     {/* Original vs alternative indicator — see legend above the list */}
-                    <div className="w-8 flex justify-center shrink-0">
+                    <div className="w-8 h-4 sm:h-auto flex items-center justify-center shrink-0">
                       <div
                         title={isSingle ? undefined : m.isDummy === 0 ? "Original" : "Alternative"}
                         aria-label={isSingle ? undefined : m.isDummy === 0 ? "Original" : "Alternative"}
@@ -497,32 +499,35 @@ export function QuotationListClient({
                       />
                     </div>
 
-                    <div className="flex-1 min-w-0 flex items-center gap-2">
-                      <Link
-                        href={`/dashboard/sales/quotation/${m.id}`}
-                        className="font-mono text-xs font-medium shrink-0 hover:underline hover:text-primary underline-offset-2 transition-colors"
-                      >
-                        {m.quotationNo.startsWith("PENDING-")
-                          ? <span className="text-muted-foreground italic">Draft</span>
-                          : <Highlight text={m.quotationNo} query={search} />}
-                      </Link>
-                      {(m.revisionNo ?? 0) > 0 && (
-                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 shrink-0">
-                          R{m.revisionNo}
-                        </span>
-                      )}
-                      <span className="text-xs text-muted-foreground truncate">
+                    <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center gap-x-2 gap-y-0.5">
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Link
+                          href={`/dashboard/sales/quotation/${m.id}`}
+                          className="font-mono text-xs font-medium whitespace-nowrap hover:underline hover:text-primary underline-offset-2 transition-colors"
+                        >
+                          {m.quotationNo.startsWith("PENDING-")
+                            ? <span className="text-muted-foreground italic">Draft</span>
+                            : <Highlight text={m.quotationNo} query={search} />}
+                        </Link>
+                        {(m.revisionNo ?? 0) > 0 && (
+                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 shrink-0">
+                            R{m.revisionNo}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground leading-snug break-words sm:truncate min-w-0">
                         <Highlight text={m.orgName} query={search} />
                       </span>
                     </div>
 
-                    <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
-                      {fmtDate(m.createdAt)}
-                    </span>
-
-                    <span className="text-xs font-semibold tabular-nums shrink-0">
-                      {fmt(m.grandTotal)}
-                    </span>
+                    <div className="flex flex-col sm:flex-row items-end sm:items-center gap-x-3 gap-y-0.5 shrink-0">
+                      <span className="order-2 sm:order-1 text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">
+                        {fmtDate(m.createdAt)}
+                      </span>
+                      <span className="order-1 sm:order-2 text-xs font-semibold tabular-nums whitespace-nowrap">
+                        {fmt(m.grandTotal)}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>

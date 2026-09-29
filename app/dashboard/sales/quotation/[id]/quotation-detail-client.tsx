@@ -510,7 +510,10 @@ export function QuotationDetailClient({ group, initialId }: Props) {
               Comparison group
             </div>
           </div>
-          <div className="flex items-center gap-1 p-2 flex-wrap">
+          {/* Stacked full-width on mobile, wrapping chips on desktop. Two lines
+              per entry so a long quotation no. never squeezes the org name:
+              org name (free to wrap) + status on top, ref no. + role below. */}
+          <div className="grid grid-cols-1 gap-1 p-2 md:flex md:flex-wrap">
             {siblings.map((s) => {
               const isCurrent = s.id === selectedId;
               const sibStatus =
@@ -519,36 +522,43 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                 <button
                   key={s.id}
                   onClick={() => !isCurrent && setSelectedId(s.id)}
+                  aria-current={isCurrent ? "true" : undefined}
                   className={cn(
-                    "flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors",
+                    "flex items-start gap-2.5 w-full md:w-auto md:min-w-56 md:max-w-80 px-3 py-2 rounded-lg text-left transition-colors",
                     isCurrent
                       ? "bg-primary/10 text-primary border border-primary/20"
                       : "hover:bg-muted/50 border border-transparent text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  <BuildingIcon className="w-3 h-3 shrink-0" />
-                  <span className="font-medium">{s.orgName}</span>
-                  <span className="font-mono text-[10px] opacity-70">
-                    {s.quotationNo.startsWith("PENDING-") ? "—" : s.quotationNo}
-                  </span>
-                  <span
-                    className={cn(
-                      "rounded px-1.5 py-0.5 text-[9px] font-medium border",
-                      s.isDummy === 0
-                        ? "bg-primary/10 text-primary border-primary/20"
-                        : "bg-muted text-muted-foreground border-border",
-                    )}
-                  >
-                    {s.isDummy === 0 ? "original" : "dummy"}
-                  </span>
-                  <span
-                    className={cn(
-                      "rounded px-1.5 py-0.5 text-[9px] font-medium border",
-                      sibStatus.className,
-                    )}
-                  >
-                    {sibStatus.label}
-                  </span>
+                  <BuildingIcon className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-medium leading-snug break-words">{s.orgName}</span>
+                      <span
+                        className={cn(
+                          "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium border",
+                          sibStatus.className,
+                        )}
+                      >
+                        {sibStatus.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      <span className="font-mono text-[10px] opacity-70 whitespace-nowrap">
+                        {s.quotationNo.startsWith("PENDING-") ? "—" : s.quotationNo}
+                      </span>
+                      <span
+                        className={cn(
+                          "rounded px-1.5 py-0.5 text-[9px] font-medium border",
+                          s.isDummy === 0
+                            ? "bg-primary/10 text-primary border-primary/20"
+                            : "bg-muted text-muted-foreground border-border",
+                        )}
+                      >
+                        {s.isDummy === 0 ? "original" : "dummy"}
+                      </span>
+                    </div>
+                  </div>
                 </button>
               );
             })}
