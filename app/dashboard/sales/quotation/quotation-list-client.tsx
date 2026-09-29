@@ -40,34 +40,75 @@ type SavedFilters = {
   batchFilter: string | null;
 };
 
-// Timestamp of the last browser back/forward. Registered at module load so
-// it's recorded before the list remounts for the traversal.
+// Last browser back/forward *to the list*. Registered at module load so it's
+// recorded before the list remounts for the traversal.
 //
 // The Navigation API's "navigate" event (navigationType "traverse") is the
-// primary signal: Next 16 begins restoring the cached page from that event,
-// so the list can mount *before* popstate fires — a popstate-only flag would
-// be set too late. popstate stays as the fallback for browsers without the
-// Navigation API. router.back() triggers both, same as the browser button.
-let lastTraversalAt = 0;
+// Chromium signal: Next 16 begins restoring the cached page from that event,
+// so the list can mount *before* popstate fires. popstate is the fallback.
+// Only traversals whose destination is the list count, and the list clears
+// the flag once it has mounted, so a later fresh visit isn't mistaken for one.
+let pendingListTraversalAt = 0;
 if (typeof window !== "undefined") {
-  const markTraversal = () => { lastTraversalAt = Date.now(); };
+  const noteTraversal = (url: string) => {
+    try {
+      if (new URL(url, window.location.href).pathname === "/dashboard/sales/quotation") {
+        pendingListTraversalAt = Date.now();
+      }
+    } catch {}
+  };
   const nav = (window as unknown as {
-    navigation?: { addEventListener: (t: "navigate", cb: (e: { navigationType: string }) => void) => void };
+    navigation?: {
+      addEventListener: (
+        t: "navigate",
+        cb: (e: { navigationType: string; destination: { url: string } }) => void,
+      ) => void;
+    };
   }).navigation;
   nav?.addEventListener("navigate", (e) => {
-    if (e.navigationType === "traverse") markTraversal();
+    if (e.navigationType === "traverse") noteTraversal(e.destination.url);
   });
-  window.addEventListener("popstate", markTraversal);
+  window.addEventListener("popstate", () => noteTraversal(window.location.href));
 }
 
-function arrivedViaTraversal() {
-  // Only a recent traversal counts — on a cache miss the page may take a few
-  // seconds to refetch before this component mounts.
-  return typeof window !== "undefined" && Date.now() - lastTraversalAt < 15_000;
+const LIST_PATH = "/dashboard/sales/quotation";
+// Flag written into this list's own history entry (alongside Next's state).
+// Coming back to that entry — by any means, in any browser — finds it there.
+const HISTORY_MARK = "__quotationList";
+// Whether the list has already been shown in this document. False on a hard
+// load/refresh, so hydration always renders the same (empty) filters as SSR.
+let listHasMounted = false;
+
+/** True when this mount is a back/forward return to an earlier list visit. */
+function detectReturn() {
+  if (typeof window === "undefined" || !listHasMounted) return false;
+  if (window.location.pathname === LIST_PATH) {
+    // The current history entry is the list's, so its mark is authoritative:
+    // present = returning to an entry we rendered before (works everywhere,
+    // including Safari/iOS without the Navigation API); absent = a brand-new
+    // entry (sidebar/link visit), whatever stale traversal flags say.
+    const st = window.history.state as Record<string, unknown> | null;
+    return st?.[HISTORY_MARK] === true;
+  }
+  // URL not switched yet: Chromium mounting the restored page early from the
+  // Navigation API's traverse event. Only then is the traversal flag used.
+  return Date.now() - pendingListTraversalAt < 15_000;
 }
 
-function readSavedFilters(batchFilter: string | undefined): SavedFilters | null {
-  if (!arrivedViaTraversal()) return null;
+function markListHistoryEntry() {
+  try {
+    if (window.location.pathname !== LIST_PATH) return;
+    const st = (window.history.state ?? {}) as Record<string, unknown>;
+    if (st[HISTORY_MARK] === true) return;
+    // Spreading keeps Next's __NA / internal tree; no URL arg, so the URL and
+    // Next's stored tree stay in sync (a URL change here would force a full
+    // reload on back — see the note on sessionStorage below).
+    window.history.replaceState({ ...st, [HISTORY_MARK]: true }, "");
+  } catch {}
+}
+
+function readSavedFilters(isReturn: boolean, batchFilter: string | undefined): SavedFilters | null {
+  if (!isReturn) return null;
   try {
     const raw = sessionStorage.getItem(FILTERS_STORAGE_KEY);
     if (!raw) return null;
@@ -136,7 +177,9 @@ export function QuotationListClient({
   // router.back() from a quotation) — a fresh visit from the sidebar starts
   // clean. Read once per mount; SSR/hard loads never restore, so hydration
   // always matches the server render.
-  const [restored] = useState(() => readSavedFilters(batchFilter));
+  // Decided once per mount; everything below keys off the same answer.
+  const [isReturn] = useState(detectReturn);
+  const [restored] = useState(() => readSavedFilters(isReturn, batchFilter));
   const [groups, setGroups] = useState(initialGroups);
   const [search, setSearch] = useState(restored?.search ?? "");
   const [dateFrom, setDateFrom] = useState(restored?.dateFrom ?? "");
@@ -155,7 +198,10 @@ export function QuotationListClient({
   // user's real position here (a passive-effect cleanup or a scroll listener
   // would record the reset 0 instead).
   useLayoutEffect(() => {
-    if (arrivedViaTraversal()) {
+    listHasMounted = true;
+    pendingListTraversalAt = 0; // consumed by this mount
+    markListHistoryEntry();
+    if (isReturn) {
       let y = 0;
       try { y = Number(sessionStorage.getItem(SCROLL_STORAGE_KEY)) || 0; } catch {}
       if (y > 0) {
@@ -168,8 +214,10 @@ export function QuotationListClient({
     }
     return () => {
       try { sessionStorage.setItem(SCROLL_STORAGE_KEY, String(Math.round(window.scrollY))); } catch {}
+      // Re-mark in case a router update since mount rewrote the entry's state.
+      markListHistoryEntry();
     };
-  }, []);
+  }, [isReturn]);
 
   // Back/forward restores this page from Next's client cache instantly — no
   // server round-trip — so its data is as old as when it was first rendered.
@@ -178,7 +226,7 @@ export function QuotationListClient({
   // when it differs. Runs in the background; the cached list stays visible.
   const versionRef = useRef(listVersion);
   useEffect(() => {
-    if (!arrivedViaTraversal()) return;
+    if (!isReturn) return;
     let cancelled = false;
     (async () => {
       try {
@@ -196,7 +244,7 @@ export function QuotationListClient({
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [isReturn]);
 
   const hasDateFilter = dateFrom || dateTo;
 
