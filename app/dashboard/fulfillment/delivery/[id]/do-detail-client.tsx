@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useOpenedFromList } from "@/lib/use-list-return";
 import { toast } from "sonner";
 import {
   deleteDeliveryOrder,
@@ -126,6 +127,14 @@ export function DeliveryOrderDetailClient({
   currentUserId: string;
 }) {
   const router = useRouter();
+  // Back: straight from the DO list → router.back() restores that list from
+  // cache (filters, page, scroll). Otherwise (opened directly, or again after
+  // an edit) go to the list URL last used, filters included.
+  const listReturn = useOpenedFromList("do-list", `/dashboard/fulfillment/delivery/${order.id}`, "/dashboard/fulfillment/delivery");
+  const goBack = () => {
+    if (listReturn.fromList) router.back();
+    else router.push(listReturn.listUrl);
+  };
   const [status, setStatus] = useState(order.status ?? "draft");
   const [doNo, setDoNo] = useState(order.doNo);
   const [actioning, setActioning] = useState<"deliver" | "return" | null>(null);
@@ -269,7 +278,7 @@ export function DeliveryOrderDetailClient({
         description={fmtDate(order.createdAt)}
         action={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/delivery")} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={goBack} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             {isDelivered && order.invoiceId && can("invoice:read") && (

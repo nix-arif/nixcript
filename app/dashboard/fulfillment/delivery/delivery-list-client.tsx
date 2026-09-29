@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
+import { useListReturn, noteOpenedFromList } from "@/lib/use-list-return";
 import { toast } from "sonner";
 import { deleteDeliveryOrder, type DeliveryOrderListRow, type PendingSoForDoRow } from "@/server/delivery-order";
 import { useAppStore } from "@/lib/store/use-app-store";
@@ -107,20 +109,42 @@ export function DeliveryOrderListClient({ initialOrders, total, page, pageSize, 
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
+  // Back from a DO restores this list where the user left it (scroll; the
+  // filters/page live in the URL and come back with the cached page).
+  const { beforeLeave } = useListReturn(
+    "do-list",
+    "/dashboard/fulfillment/delivery",
+    `${initialSearch}|${initialStatus}|${page}`,
+  );
+  const openDo = (id: string) => {
+    beforeLeave();
+    noteOpenedFromList("do-list", `/dashboard/fulfillment/delivery/${id}`);
+    router.push(`/dashboard/fulfillment/delivery/${id}`);
+  };
+
   useEffect(() => { setOrgSwitching(false); }, [initialOrders]);
   useEffect(() => { setSearchInput(initialSearch); },  [initialSearch]);
   useEffect(() => { setStatusFilter(initialStatus); }, [initialStatus]);
 
   // ── URL navigation ────────────────────────────────────────────────────
 
+  // Search/status changes REPLACE the history entry (typing shouldn't leave a
+  // trail of half-typed searches for Back to step through); paging PUSHES, so
+  // Back steps back through pages. No-op when nothing actually changed — the
+  // search debounce also fires on mount, which used to trigger a needless
+  // server round-trip every time the list appeared (including on Back).
   const pushParams = useCallback(
-    (updates: Record<string, string>) => {
+    (updates: Record<string, string>, mode: "push" | "replace" = "replace") => {
       const params = new URLSearchParams(window.location.search);
       Object.entries(updates).forEach(([k, v]) => {
         if (v) params.set(k, v);
         else params.delete(k);
       });
-      router.push(`${pathname}?${params.toString()}`);
+      const next = params.toString();
+      if (next === window.location.search.replace(/^\?/, "")) return;
+      const url = next ? `${pathname}?${next}` : pathname;
+      if (mode === "push") router.push(url);
+      else router.replace(url);
     },
     [pathname, router],
   );
@@ -138,7 +162,7 @@ export function DeliveryOrderListClient({ initialOrders, total, page, pageSize, 
   };
 
   const handlePage = (p: number) => {
-    pushParams({ page: p === 1 ? "" : String(p) });
+    pushParams({ page: p === 1 ? "" : String(p) }, "push");
   };
 
   async function handleDelete(id: string, doNo: string, status: string) {
@@ -321,16 +345,26 @@ export function DeliveryOrderListClient({ initialOrders, total, page, pageSize, 
                 <div
                   key={o.id}
                   className="flex overflow-hidden rounded-xl border border-border bg-background hover:bg-muted/20 transition-colors cursor-pointer"
-                  onClick={() => router.push(`/dashboard/fulfillment/delivery/${o.id}`)}
+                  onClick={() => openDo(o.id)}
                 >
                   <div className={`w-1 shrink-0 ${accentColor}`} />
 
                   <div className="flex-1 min-w-0 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-mono text-sm font-semibold tracking-tight">
+                        {/* Real link: Cmd/Ctrl-click or long-press opens it in a new tab */}
+                        <Link
+                          href={`/dashboard/fulfillment/delivery/${o.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation(); // the row's own onClick would navigate twice
+                            if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                            beforeLeave();
+                            noteOpenedFromList("do-list", `/dashboard/fulfillment/delivery/${o.id}`);
+                          }}
+                          className="font-mono text-sm font-semibold tracking-tight hover:underline underline-offset-2"
+                        >
                           <Highlight text={o.doNo} query={searchInput} />
-                        </span>
+                        </Link>
                         <StatusBadge status={o.status} />
                         {o.status === "delivered" && !o.invoiceId && can("invoice:read") && (
                           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700">
