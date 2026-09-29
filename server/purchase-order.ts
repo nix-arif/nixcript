@@ -37,6 +37,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } fro
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { nextFreeDocNo, isDocNoTakenInGroup } from "@/lib/document-number-group";
 import { revalidatePath } from "next/cache";
 import { createApprovedMovement } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
@@ -163,6 +164,8 @@ async function generatePrNo(orgId: string): Promise<string> {
   return buildDocumentNo(cfg, year, nextNo);
 }
 
+const PO_NUMBERED = { table: purchaseOrder, id: purchaseOrder.id, organizationId: purchaseOrder.organizationId, number: purchaseOrder.poNo };
+
 async function generatePoNo(orgId: string): Promise<string> {
   const cfg = await getNumberingConfig(orgId, "po");
   const year = new Date().getFullYear();
@@ -181,13 +184,16 @@ async function generatePoNo(orgId: string): Promise<string> {
   } else {
     const counter = existing[0];
     nextNo = counter.year === year ? counter.lastNumber + 1 : 1;
-    await db
-      .update(purchaseOrderCounter)
-      .set({ year, lastNumber: nextNo })
-      .where(eq(purchaseOrderCounter.organizationId, orgId));
   }
 
-  return buildDocumentNo(cfg, year, nextNo);
+  // Unique across the owner's companies — skip numbers a sibling already used
+  const { seq, docNo } = await nextFreeDocNo(PO_NUMBERED, orgId, nextNo, (n) => buildDocumentNo(cfg, year, n));
+  await db
+    .update(purchaseOrderCounter)
+    .set({ year, lastNumber: seq })
+    .where(eq(purchaseOrderCounter.organizationId, orgId));
+
+  return docNo;
 }
 
 // Own counter — see intercompanyPurchaseOrderCounter in db/schema.ts for why
@@ -1707,11 +1713,10 @@ export async function updatePurchaseOrderNumber(id: string, poNo: string): Promi
     .where(and(eq(purchaseOrder.id, id), inArray(purchaseOrder.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Purchase order not found");
 
-  const [clash] = await db
-    .select({ id: purchaseOrder.id })
-    .from(purchaseOrder)
-    .where(and(eq(purchaseOrder.organizationId, existing.organizationId), eq(purchaseOrder.poNo, trimmed), ne(purchaseOrder.id, id)));
-  if (clash) throw new Error(`PO number "${trimmed}" is already in use`);
+  // Checked across every company with the same owner, not just this one
+  if (await isDocNoTakenInGroup(PO_NUMBERED, existing.organizationId, trimmed, id)) {
+    throw new Error(`PO number "${trimmed}" is already in use`);
+  }
 
   await db.update(purchaseOrder).set({ poNo: trimmed }).where(eq(purchaseOrder.id, id));
 

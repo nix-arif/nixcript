@@ -31,6 +31,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { nextFreeDocNo, isDocNoTakenInGroup } from "@/lib/document-number-group";
 import { createApprovedMovement, adjustReservation } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 
@@ -147,10 +148,15 @@ async function generateDoNo(orgId: string): Promise<string> {
   } else {
     const counter = existing[0];
     nextNo = counter.year === year ? counter.lastNumber + 1 : 1;
-    await db.update(deliveryOrderCounter).set({ year, lastNumber: nextNo }).where(eq(deliveryOrderCounter.organizationId, orgId));
   }
-  return buildDocumentNo(cfg, year, nextNo);
+  // Unique across the owner's companies, not just this one — skip any number
+  // a sibling company already used, and move the counter past it.
+  const { seq, docNo } = await nextFreeDocNo(DO_NUMBERED, orgId, nextNo, (n) => buildDocumentNo(cfg, year, n));
+  await db.update(deliveryOrderCounter).set({ year, lastNumber: seq }).where(eq(deliveryOrderCounter.organizationId, orgId));
+  return docNo;
 }
+
+const DO_NUMBERED = { table: deliveryOrder, id: deliveryOrder.id, organizationId: deliveryOrder.organizationId, number: deliveryOrder.doNo };
 
 export type DeliveryOrderRow = typeof deliveryOrder.$inferSelect;
 export type DeliveryOrderItem = typeof deliveryOrderItem.$inferSelect;
@@ -1106,11 +1112,10 @@ export async function updateDeliveryOrderNumber(id: string, doNoInput: string): 
     .where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Delivery order not found");
 
-  const [clash] = await db
-    .select({ id: deliveryOrder.id })
-    .from(deliveryOrder)
-    .where(and(eq(deliveryOrder.organizationId, existing.organizationId), eq(deliveryOrder.doNo, trimmed), ne(deliveryOrder.id, id)));
-  if (clash) throw new Error(`DO number "${trimmed}" is already in use`);
+  // Checked across every company with the same owner, not just this one
+  if (await isDocNoTakenInGroup(DO_NUMBERED, existing.organizationId, trimmed, id)) {
+    throw new Error(`DO number "${trimmed}" is already in use`);
+  }
 
   await db.update(deliveryOrder).set({ doNo: trimmed }).where(eq(deliveryOrder.id, id));
 

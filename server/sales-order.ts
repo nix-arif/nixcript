@@ -29,6 +29,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } fro
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { nextFreeDocNo } from "@/lib/document-number-group";
 import { revalidatePath } from "next/cache";
 import { adjustReservation } from "@/lib/inventory/create-movement";
 import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
@@ -137,11 +138,17 @@ async function generateSoNo(orgId: string): Promise<string> {
   } else {
     const counter = existing[0];
     nextNo = counter.year === year ? counter.lastNumber + 1 : 1;
-    await db
-      .update(salesOrderCounter)
-      .set({ year, lastNumber: nextNo })
-      .where(eq(salesOrderCounter.organizationId, orgId));
   }
+  // Unique across the owner's companies — skip numbers a sibling already used
+  const free = await nextFreeDocNo(
+    { table: salesOrder, id: salesOrder.id, organizationId: salesOrder.organizationId, number: salesOrder.soNo },
+    orgId, nextNo, (n) => buildDocumentNo(cfg, year, n),
+  );
+  nextNo = free.seq;
+  await db
+    .update(salesOrderCounter)
+    .set({ year, lastNumber: nextNo })
+    .where(eq(salesOrderCounter.organizationId, orgId));
 
   return buildDocumentNo(cfg, year, nextNo);
 }

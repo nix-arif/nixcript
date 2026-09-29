@@ -32,6 +32,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
+import { nextFreeDocNo, getOrgGroupIds } from "@/lib/document-number-group";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -64,10 +65,15 @@ async function generateInvoiceNo(orgId: string): Promise<string> {
   } else {
     const counter = existing[0];
     nextNo = counter.year === year ? counter.lastNumber + 1 : 1;
-    await db.update(invoiceCounter).set({ year, lastNumber: nextNo }).where(eq(invoiceCounter.organizationId, orgId));
   }
-  return buildDocumentNo(cfg, year, nextNo);
+  // Unique across the owner's companies — skip numbers already used anywhere
+  // in the group (or imported under this company) and move the counter past.
+  const { seq, docNo } = await nextFreeDocNo(INV_NUMBERED, orgId, nextNo, (n) => buildDocumentNo(cfg, year, n));
+  await db.update(invoiceCounter).set({ year, lastNumber: seq }).where(eq(invoiceCounter.organizationId, orgId));
+  return docNo;
 }
+
+const INV_NUMBERED = { table: invoice, id: invoice.id, organizationId: invoice.organizationId, number: invoice.invoiceNo };
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -730,7 +736,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
   let invoiceNo: string;
   if (input.invoiceNo?.trim()) {
     const dup = await db.select({ id: invoice.id }).from(invoice)
-      .where(and(eq(invoice.organizationId, orgId), eq(invoice.invoiceNo, input.invoiceNo.trim())))
+      .where(and(inArray(invoice.organizationId, await getOrgGroupIds(orgId)), eq(invoice.invoiceNo, input.invoiceNo.trim())))
       .limit(1);
     if (dup.length > 0) throw new Error(`Invoice number "${input.invoiceNo.trim()}" already exists`);
     invoiceNo = input.invoiceNo.trim();
