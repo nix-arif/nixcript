@@ -391,11 +391,20 @@ export async function getFieldMovements(repId?: string): Promise<FieldMovementRo
     .from(stockMovement)
     .where(and(
       eq(stockMovement.organizationId, orgId),
-      sql`${stockMovement.movementType} IN ('FIELD_OUT','FIELD_RETURN','CASE_USE')`,
-      repId ? sql`(${stockMovement.warehouseLabel} = ${fieldWarehouseLabel(repId)} OR ${stockMovement.warehouseTo} = ${fieldWarehouseLabel(repId)})` : sql`1=1`,
+      // Every movement that touches a field bucket — the same set of rows
+      // Current Holdings' balances are made of. Filtering by type used to
+      // hide RETURN (DO deleted/returned → stock back to the rep), LOAN_OUT /
+      // LOAN_RETURN and OPENING, so the history didn't add up to the holding.
+      // LIKE 'Field:%' also covers a rep's consigned buckets
+      // ("Field:<rep>:Consigned:<org>").
+      sql`(${stockMovement.warehouseLabel} LIKE 'Field:%' OR ${stockMovement.warehouseTo} LIKE 'Field:%')`,
+      repId
+        ? sql`(${stockMovement.warehouseLabel} = ${fieldWarehouseLabel(repId)} OR ${stockMovement.warehouseLabel} LIKE ${fieldWarehouseLabel(repId) + ":%"}
+              OR ${stockMovement.warehouseTo} = ${fieldWarehouseLabel(repId)} OR ${stockMovement.warehouseTo} LIKE ${fieldWarehouseLabel(repId) + ":%"})`
+        : sql`1=1`,
     ))
     .orderBy(desc(stockMovement.createdAt))
-    .limit(200);
+    .limit(500);
   return rows as FieldMovementRow[];
 }
 

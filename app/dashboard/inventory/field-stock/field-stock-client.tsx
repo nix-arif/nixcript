@@ -9,8 +9,13 @@ import { PackageIcon, ArrowRightIcon, ArrowLeftIcon, TruckIcon, ActivityIcon, Us
 
 const MOVEMENT_LABELS: Record<string, { label: string; color: string }> = {
   FIELD_OUT:    { label: "Transfer Out", color: "text-amber-600 dark:text-amber-400" },
-  FIELD_RETURN: { label: "Return",       color: "text-blue-600 dark:text-blue-400"  },
+  FIELD_RETURN: { label: "Field Return", color: "text-blue-600 dark:text-blue-400"  },
   CASE_USE:     { label: "Case Usage",   color: "text-green-600 dark:text-green-400" },
+  RETURN:       { label: "Return",       color: "text-blue-600 dark:text-blue-400"  },
+  LOAN_OUT:     { label: "Loan Out",     color: "text-amber-600 dark:text-amber-400" },
+  LOAN_RETURN:  { label: "Loan Return",  color: "text-blue-600 dark:text-blue-400"  },
+  OPENING:      { label: "Opening Balance", color: "text-muted-foreground" },
+  ADJUSTMENT:   { label: "Adjustment",   color: "text-muted-foreground" },
 };
 
 const fmtDate = (d: Date | string) =>
@@ -28,10 +33,13 @@ export function FieldStockClient({ reps, movements }: Props) {
 
   const selectedRep = reps.find((r) => r.repId === activeRep);
 
+  // A rep's own bucket ("Field:<rep>") and their consigned buckets
+  // ("Field:<rep>:Consigned:<org>") — same set Current Holdings sums up.
   const repMovements = movements.filter((m) => {
     if (!activeRep) return true;
     const label = `Field:${activeRep}`;
-    return m.warehouseLabel === label || m.warehouseTo === label;
+    const isRep = (l: string | null) => !!l && (l === label || l.startsWith(`${label}:`));
+    return isRep(m.warehouseLabel) || isRep(m.warehouseTo);
   });
 
   return (

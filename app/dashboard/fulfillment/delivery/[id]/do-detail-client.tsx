@@ -244,7 +244,11 @@ export function DeliveryOrderDetailClient({
       toast.success(successMsg);
       router.refresh();
     } catch (e: any) {
-      toast.error(e.message);
+      // details: one line per problem (e.g. each short item), shown under the title
+      const details: string[] | undefined = e?.details;
+      toast.error(e.message, details?.length
+        ? { description: <ul className="mt-1 space-y-0.5">{details.map((d) => <li key={d}>• {d}</li>)}</ul>, duration: 10000 }
+        : undefined);
     } finally {
       setActioning(null);
     }
@@ -450,7 +454,10 @@ export function DeliveryOrderDetailClient({
                   size="sm"
                   className="w-full gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
                   disabled={!!actioning}
-                  onClick={() => act("deliver", () => deliverDeliveryOrder(order.id), "delivered", "Marked as delivered")}
+                  onClick={() => act("deliver", async () => {
+                    const res = await deliverDeliveryOrder(order.id);
+                    if (!res.ok) throw Object.assign(new Error(res.title), { details: res.details });
+                  }, "delivered", "Marked as delivered")}
                 >
                   <TruckIcon className="w-3.5 h-3.5" />
                   {actioning === "deliver" ? "Updating…" : "Mark as Delivered"}

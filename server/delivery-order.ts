@@ -1118,6 +1118,67 @@ export async function updateDeliveryOrderNumber(id: string, doNoInput: string): 
   revalidatePath(`/dashboard/fulfillment/delivery/${id}`);
 }
 
+// Put back whatever stock a DO still has out, exactly where it came from.
+// Nets every movement recorded against this DO (outs AND any earlier
+// returns) per org + product + warehouse, and credits back only what's still
+// outstanding — so it never double-counts and is safe to call again.
+//
+// Looks across the whole owner-org group, not just the active org: a Case DO
+// can take its items from a sibling company's field stock (see
+// resolveFieldStockOrg), and those movements live under THAT company. The
+// return is written back into each movement's own org and warehouse bucket
+// (e.g. the rep's field stock), never the active org's main warehouse.
+async function restoreDoStock(opts: {
+  doId: string;
+  doNo: string;
+  activeOrgId: string;
+  userId: string;
+  notes: (productCode: string) => string;
+}): Promise<void> {
+  const groupOrgIds = await getOwnerOrgIdsInternal(opts.activeOrgId);
+  const movements = await db
+    .select({
+      organizationId: stockMovement.organizationId,
+      productId: stockMovement.productId,
+      productCode: stockMovement.productCode,
+      warehouseLabel: stockMovement.warehouseLabel,
+      quantity: stockMovement.quantity,
+    })
+    .from(stockMovement)
+    .where(and(
+      inArray(stockMovement.organizationId, groupOrgIds),
+      eq(stockMovement.referenceId, opts.doId),
+      inArray(stockMovement.movementType, [
+        MOVEMENT_TYPE.STOCK_OUT, MOVEMENT_TYPE.CASE_USE, MOVEMENT_TYPE.LOAN_OUT,
+        MOVEMENT_TYPE.RETURN, MOVEMENT_TYPE.LOAN_RETURN,
+      ]),
+    ));
+
+  const net = new Map<string, { orgId: string; productId: string; productCode: string; warehouseLabel: string; qty: number }>();
+  for (const mv of movements) {
+    const key = `${mv.organizationId}::${mv.productId}::${mv.warehouseLabel}`;
+    const e = net.get(key) ?? { orgId: mv.organizationId, productId: mv.productId, productCode: mv.productCode, warehouseLabel: mv.warehouseLabel, qty: 0 };
+    e.qty += parseFloat(mv.quantity);
+    net.set(key, e);
+  }
+
+  for (const e of net.values()) {
+    if (e.qty >= 0) continue;
+    await createApprovedMovement({
+      orgId: e.orgId,
+      userId: opts.userId,
+      productId: e.productId,
+      warehouseLabel: e.warehouseLabel,
+      movementType: MOVEMENT_TYPE.RETURN,
+      quantity: Math.abs(e.qty),
+      referenceType: REF_TYPE.DELIVERY_ORDER,
+      referenceId: opts.doId,
+      referenceNo: opts.doNo,
+      notes: opts.notes(e.productCode ?? "").trim(),
+    });
+  }
+}
+
 export async function deleteDeliveryOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("delivery-order:delete");
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
@@ -1150,60 +1211,41 @@ export async function deleteDeliveryOrder(id: string): Promise<void> {
   // prior partial return) per product+warehouse and crediting back only
   // what's still net-outstanding also makes this safe to call on a DO
   // that's already been partially or fully returned — nothing double-counts.
-  const allMovements = await db
-    .select({
-      productId: stockMovement.productId,
-      productCode: stockMovement.productCode,
-      warehouseLabel: stockMovement.warehouseLabel,
-      quantity: stockMovement.quantity,
-    })
-    .from(stockMovement)
-    .where(and(
-      eq(stockMovement.organizationId, orgId),
-      eq(stockMovement.referenceId, id),
-      inArray(stockMovement.movementType, [
-        MOVEMENT_TYPE.STOCK_OUT, MOVEMENT_TYPE.CASE_USE, MOVEMENT_TYPE.LOAN_OUT,
-        MOVEMENT_TYPE.RETURN, MOVEMENT_TYPE.LOAN_RETURN,
-      ]),
-    ));
-
-  const netByKey = new Map<string, { productId: string; productCode: string; warehouseLabel: string; net: number }>();
-  for (const mv of allMovements) {
-    const key = `${mv.productId}::${mv.warehouseLabel}`;
-    const entry = netByKey.get(key) ?? { productId: mv.productId, productCode: mv.productCode, warehouseLabel: mv.warehouseLabel, net: 0 };
-    entry.net += parseFloat(mv.quantity);
-    netByKey.set(key, entry);
-  }
-
-  await Promise.all(
-    [...netByKey.values()]
-      .filter((e) => e.net < 0)
-      .map((e) =>
-        createApprovedMovement({
-          orgId,
-          userId,
-          productId: e.productId,
-          warehouseLabel: e.warehouseLabel,
-          movementType: MOVEMENT_TYPE.RETURN,
-          quantity: Math.abs(e.net),
-          referenceType: REF_TYPE.DELIVERY_ORDER,
-          referenceId: id,
-          referenceNo: existing.doNo,
-          notes: `DO deleted — stock returned: ${e.productCode ?? ""}`.trim(),
-        }),
-      ),
-  );
+  await restoreDoStock({
+    doId: id,
+    doNo: existing.doNo,
+    activeOrgId: orgId,
+    userId,
+    notes: (code) => `DO deleted — stock returned: ${code}`,
+  });
 
   await db.delete(deliveryOrder).where(eq(deliveryOrder.id, id));
   revalidatePath("/dashboard/fulfillment/delivery");
   revalidatePath("/dashboard");
 }
 
-export async function deliverDeliveryOrder(id: string): Promise<void> {
+// Returned as data, not thrown: Next.js replaces a thrown server-action
+// error's message with a generic one in production builds, so the user would
+// never see *why* delivery was refused.
+export type DeliverResult =
+  | { ok: true }
+  | { ok: false; title: string; details?: string[] };
+
+export async function deliverDeliveryOrder(id: string): Promise<DeliverResult> {
+  try {
+    return await deliverDeliveryOrderInner(id);
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Could not mark as delivered" };
+  }
+}
+
+async function deliverDeliveryOrderInner(id: string): Promise<DeliverResult> {
   const { orgId, userId } = await requireAccess("delivery-order:update");
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
-  if (!existing) throw new Error("Delivery order not found");
-  if (existing.status !== "draft") throw new Error("Only draft delivery orders can be marked as delivered");
+  if (!existing) return { ok: false, title: "Delivery order not found" };
+  if (existing.status !== "draft") {
+    return { ok: false, title: `${existing.doNo} is already ${existing.status} — only draft delivery orders can be marked as delivered` };
+  }
 
   const warehouseLabel = await resolveMainWarehouseLabel(orgId);
 
@@ -1217,9 +1259,50 @@ export async function deliverDeliveryOrder(id: string): Promise<void> {
 
   const itemsWithProduct = items.filter((i) => i.productId);
 
+  // Case DOs already took their stock at creation (CASE_USE / LOAN_OUT from
+  // the application specialist's field stock — see createDeliveryOrder).
+  // Delivering one is a status change only: a STOCK_OUT here would deduct
+  // the same items a second time, and from the active org's main warehouse,
+  // which typically doesn't hold field/consignment items at all (→ a
+  // spurious "Insufficient stock" that blocked delivery).
+  const stockOutItems = existing.isCaseDo ? [] : itemsWithProduct;
+
+  // Check every line BEFORE moving any stock. The stock-outs below run per
+  // line, so failing on the first short line used to leave the lines before
+  // it already deducted while the DO stayed "draft" — and the user only ever
+  // heard about one shortage at a time.
+  if (stockOutItems.length > 0) {
+    const needByProduct = new Map<string, { code: string; need: number }>();
+    for (const i of stockOutItems) {
+      const e = needByProduct.get(i.productId!) ?? { code: i.productCode ?? i.productId!, need: 0 };
+      e.need += parseFloat(i.qty ?? "1");
+      needByProduct.set(i.productId!, e);
+    }
+    const levels = await db
+      .select({ productId: stockLevel.productId, quantity: stockLevel.quantity })
+      .from(stockLevel)
+      .where(and(
+        eq(stockLevel.organizationId, orgId),
+        eq(stockLevel.warehouseLabel, warehouseLabel),
+        inArray(stockLevel.productId, [...needByProduct.keys()]),
+      ));
+    const have = new Map(levels.map((l) => [l.productId, parseFloat(l.quantity)]));
+    const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+    const short = [...needByProduct.entries()]
+      .map(([pid, e]) => ({ ...e, have: have.get(pid) ?? 0 }))
+      .filter((e) => e.have < e.need);
+    if (short.length > 0) {
+      return {
+        ok: false,
+        title: `Not enough stock in ${warehouseLabel} to deliver ${existing.doNo}`,
+        details: short.map((e) => `${e.code}: need ${fmtQty(e.need)}, only ${fmtQty(e.have)} available`),
+      };
+    }
+  }
+
   // STOCK_OUT for each item that has a productId
   await Promise.all(
-    itemsWithProduct.map((i) =>
+    stockOutItems.map((i) =>
       createApprovedMovement({
         orgId,
         userId,
@@ -1259,6 +1342,7 @@ export async function deliverDeliveryOrder(id: string): Promise<void> {
   revalidatePath("/dashboard/fulfillment/delivery");
   revalidatePath("/dashboard/fulfillment/invoice");
   revalidatePath("/dashboard");
+  return { ok: true };
 }
 
 export async function returnDeliveryOrder(id: string): Promise<void> {
@@ -1266,6 +1350,23 @@ export async function returnDeliveryOrder(id: string): Promise<void> {
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (existing.status !== "delivered") throw new Error("Only delivered orders can be marked as returned");
+
+  // A Case DO's items came from the rep's field stock (possibly a sibling
+  // company's), not the main warehouse — send them back there.
+  if (existing.isCaseDo) {
+    await restoreDoStock({
+      doId: id,
+      doNo: existing.doNo,
+      activeOrgId: orgId,
+      userId,
+      notes: (code) => `DO returned — stock back to field: ${code}`,
+    });
+    await db.update(deliveryOrder).set({ status: "returned" }).where(eq(deliveryOrder.id, id));
+    revalidatePath("/dashboard/fulfillment/delivery");
+    revalidatePath("/dashboard/inventory/field-stock");
+    revalidatePath("/dashboard");
+    return;
+  }
 
   const warehouseLabel = await resolveMainWarehouseLabel(orgId);
 
