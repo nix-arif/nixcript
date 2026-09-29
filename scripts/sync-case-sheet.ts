@@ -237,14 +237,23 @@ async function main() {
     .from(customerOrganization)
     .where(inArray(customerOrganization.organizationId, [...ALL_ORG_IDS]));
   const custOrgIdByKey = new Map(existingCustomerOrgs.map((o) => [`${o.organizationId}|${o.name.toLowerCase()}`, o.id]));
+  // Hospital records are shared across the companies we manage (same owner —
+  // the app resolves memberships across all of them), so a hospital that
+  // already exists under the OTHER company must be reused, not duplicated.
+  // (That's how a 2nd "Prince Court Medical Centre" appeared under Innosys.)
+  const custOrgIdByName = new Map<string, string>();
+  for (const o of existingCustomerOrgs) {
+    if (!custOrgIdByName.has(o.name.toLowerCase())) custOrgIdByName.set(o.name.toLowerCase(), o.id);
+  }
 
   async function findOrCreateCustomerOrg(orgId: string, hospitalName: string): Promise<string> {
     const key = `${orgId}|${hospitalName.toLowerCase()}`;
-    const found = custOrgIdByKey.get(key);
+    const found = custOrgIdByKey.get(key) ?? custOrgIdByName.get(hospitalName.toLowerCase());
     if (found) return found;
     const id = nanoid();
     await db.insert(customerOrganization).values({ id, organizationId: orgId, name: hospitalName });
     custOrgIdByKey.set(key, id);
+    custOrgIdByName.set(hospitalName.toLowerCase(), id);
     return id;
   }
 

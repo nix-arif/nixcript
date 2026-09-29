@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,6 +14,7 @@ import {
   getCustomerOrganizations,
   getCustomerOrganizationWithMembers,
   searchCustomerOrganizations,
+  findSimilarCustomerOrganizations,
   createCustomerOrganization,
   updateCustomerOrganization,
   deleteCustomerOrganization,
@@ -314,8 +315,29 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
     register: regOrg,
     handleSubmit: handleOrgSubmit,
     reset: resetOrg,
+    watch: watchOrg,
     formState: { errors: orgErrors },
   } = useForm<OrgForm>({ resolver: zodResolver(orgSchema) });
+
+  // "Did you mean…?" — look for existing organisations whose name is the same
+  // place written differently (see findSimilarCustomerOrganizations), so a
+  // near-duplicate like "Gleneagles Medini" isn't created next to
+  // "Gleneagles Hospital Medini Johor".
+  const orgNameInput = watchOrg("name") ?? "";
+  const activeOrgIdForSimilar = useRef<string | undefined>(undefined); // exclude self when editing
+  const [similarOrgs, setSimilarOrgs] = useState<Awaited<ReturnType<typeof findSimilarCustomerOrganizations>>>([]);
+  const [orgSheetOpenForSimilar, setOrgSheetOpenForSimilar] = useState(false);
+  useEffect(() => {
+    if (!orgSheetOpenForSimilar || orgNameInput.trim().length < 3) { setSimilarOrgs([]); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const rows = await findSimilarCustomerOrganizations(orgNameInput, activeOrgIdForSimilar.current);
+        if (!cancelled) setSimilarOrgs(rows);
+      } catch { if (!cancelled) setSimilarOrgs([]); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [orgNameInput, orgSheetOpenForSimilar]);
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -542,18 +564,24 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
   const openCreateOrg = () => {
     resetOrg({ name: "", address: "", phone: "", email: "" });
     setActiveOrg(null);
+    activeOrgIdForSimilar.current = undefined;
+    setOrgSheetOpenForSimilar(true);
     setOrgSheet("create");
   };
 
   const openEditOrg = (org: OrgRow) => {
     resetOrg({ name: org.name, address: org.address ?? "", phone: org.phone ?? "", email: org.email ?? "" });
     setActiveOrg(org);
+    activeOrgIdForSimilar.current = org.id;
+    setOrgSheetOpenForSimilar(true);
     setOrgSheet("edit");
   };
 
   const closeOrgSheet = () => {
     setOrgSheet(null);
     setActiveOrg(null);
+    setOrgSheetOpenForSimilar(false);
+    setSimilarOrgs([]);
   };
 
   const onSubmitOrg = async (data: OrgForm) => {
@@ -1578,6 +1606,43 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
             <Field label="Organisation name" error={orgErrors.name?.message}>
               <Input {...regOrg("name")} placeholder="e.g. Hospital Kuala Lumpur" className="h-9 text-sm" />
             </Field>
+            {similarOrgs.length > 0 && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 text-xs">
+                <div className="font-medium text-amber-800 dark:text-amber-300">
+                  Looks like this organisation already exists
+                </div>
+                <p className="mt-0.5 text-amber-700/90 dark:text-amber-400/90">
+                  Use the existing one instead of creating a duplicate — customers and documents
+                  split across two records are hard to merge later. Only continue if it&apos;s a
+                  genuinely different place.
+                </p>
+                <div className="mt-2 space-y-1.5">
+                  {similarOrgs.map((o) => {
+                    const row = organizations.find((x) => x.id === o.id);
+                    return (
+                      <div key={o.id} className="flex items-start gap-2 rounded-md bg-background/70 border border-amber-200 dark:border-amber-900 px-2.5 py-2">
+                        <BuildingIcon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-700 dark:text-amber-400" />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-foreground break-words">{o.name}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {o.memberCount} customer{o.memberCount !== 1 ? "s" : ""}
+                            {o.address ? ` · ${o.address.replace(/\s*\n\s*/g, ", ")}` : ""}
+                          </div>
+                        </div>
+                        {row && (
+                          <Button
+                            type="button" variant="outline" size="sm" className="h-7 text-[11px] shrink-0"
+                            onClick={() => { closeOrgSheet(); openOrgMembers(row); }}
+                          >
+                            Open
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <Field label="Address">
               <Textarea {...regOrg("address")} placeholder="Full address" rows={3} className="text-sm resize-none" />
             </Field>

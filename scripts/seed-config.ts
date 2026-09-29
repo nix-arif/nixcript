@@ -103,11 +103,22 @@ export function normalizeSurgeon(raw: string): ParsedSurgeon {
 /** Explicit alias → canonical hospital name */
 const HOSPITAL_ALIASES: Record<string, string> = {
   // example: "Columbia Asia Cheras" : "Columbia Asia Hospital Cheras",
+  // Sheet shorthand; the canonical customer_organization row (with address)
+  // predates it. Without this, sync-case-sheet.ts created a duplicate org.
+  "Gleneagles Medini": "Gleneagles Hospital Medini Johor",
+  "Pantai KL": "Pantai Hospital Kuala Lumpur",
+  "Thomson Hospital": "Thomson Hospital Kota Damansara",
 };
+
+// Case/whitespace-insensitive lookup so "gleneagles  medini" still maps.
+const aliasKey = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+const HOSPITAL_ALIAS_LOOKUP = new Map(
+  Object.entries(HOSPITAL_ALIASES).map(([from, to]) => [aliasKey(from), to]),
+);
 
 export function normalizeHospital(raw: string): string {
   const trimmed = raw.trim();
-  return HOSPITAL_ALIASES[trimmed] ?? trimmed;
+  return HOSPITAL_ALIAS_LOOKUP.get(aliasKey(trimmed)) ?? trimmed;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

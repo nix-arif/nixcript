@@ -460,17 +460,101 @@ export async function searchCustomerOrganizations(
       .orderBy(desc(customerOrganization.createdAt))
       .limit(20);
   }
+  // Every word must appear somewhere in the name (any order), so
+  // "gleneagles medini" finds "Gleneagles Hospital Medini Johor".
+  const words = query.trim().split(/\s+/).filter(Boolean).slice(0, 6);
   return db
     .select({ id: customerOrganization.id, name: customerOrganization.name, address: customerOrganization.address })
     .from(customerOrganization)
     .where(
       and(
         inArray(customerOrganization.organizationId, ownerOrgIds),
-        ilike(customerOrganization.name, `%${query.trim()}%`),
+        ...words.map((w) => ilike(customerOrganization.name, `%${w}%`)),
       ),
     )
     .orderBy(asc(customerOrganization.name))
     .limit(20);
+}
+
+// ── Near-duplicate detection ─────────────────────────────────────────────────
+// Organisation names drift ("Gleneagles Medini" vs "Gleneagles Hospital
+// Medini Johor"), and the DB only blocks exact (org, name) duplicates. Two
+// names are flagged as the same place when, after lowercasing and dropping
+// punctuation:
+//   1. their distinctive words (generic words like "hospital", "medical
+//      centre", "sdn bhd" removed) are identical — "IIUM Medical Specialist
+//      Center" ≈ "IIUM Medical Specialist Centre Sdn Bhd"; or
+//   2. they're identical once state names are also removed AND only one side
+//      names a state — "Gleneagles Medini" ≈ "Gleneagles … Medini Johor".
+//      Both naming (different) states means different branches of a chain
+//      (KPJ Johor vs KPJ Pahang), so that is never flagged.
+// Deliberately strict: it's a "did you mean…?" hint, so false alarms between
+// genuinely different branches (Sunway Ipoh vs Sunway Velocity) are avoided.
+const ORG_GENERIC_WORDS = new Set([
+  "hospital", "hosp", "medical", "centre", "center", "specialist", "specialists",
+  "clinic", "klinik", "pusat", "perubatan", "sdn", "bhd", "berhad", "plc",
+  "the", "of", "and",
+]);
+const ORG_STATE_WORDS = new Set([
+  "johor", "darul", "takzim", "tazim", "selangor", "ehsan", "perak", "kedah",
+  "penang", "pulau", "pinang", "sabah", "sarawak", "melaka", "malacca", "pahang",
+  "terengganu", "kelantan", "negeri", "sembilan", "perlis", "labuan", "putrajaya",
+  "malaysia", "wilayah", "persekutuan",
+]);
+
+// Common place-name shorthand, expanded before comparing ("Pantai KL" ≈
+// "Pantai Hospital Kuala Lumpur").
+const ORG_ABBREVIATIONS: Record<string, string[]> = {
+  kl: ["kuala", "lumpur"],
+  pj: ["petaling", "jaya"],
+  jb: ["johor", "bahru"],
+  kk: ["kota", "kinabalu"],
+  kt: ["kuala", "terengganu"],
+};
+
+function orgNameWords(name: string): string[] {
+  return name.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean)
+    .flatMap((w) => ORG_ABBREVIATIONS[w] ?? [w]);
+}
+
+const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((w) => b.has(w));
+
+function orgNamesLookAlike(a: string, b: string): boolean {
+  const wa = orgNameWords(a).filter((w) => !ORG_GENERIC_WORDS.has(w));
+  const wb = orgNameWords(b).filter((w) => !ORG_GENERIC_WORDS.has(w));
+  if (!wa.length || !wb.length) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  if (sameSet(new Set(wa), new Set(wb))) return true;
+  const stateA = wa.some((w) => ORG_STATE_WORDS.has(w));
+  const stateB = wb.some((w) => ORG_STATE_WORDS.has(w));
+  if (stateA === stateB) return false;
+  const pa = new Set(wa.filter((w) => !ORG_STATE_WORDS.has(w)));
+  const pb = new Set(wb.filter((w) => !ORG_STATE_WORDS.has(w)));
+  return pa.size > 0 && sameSet(pa, pb);
+}
+
+export async function findSimilarCustomerOrganizations(
+  name: string,
+  excludeId?: string,
+): Promise<{ id: string; name: string; address: string | null; memberCount: number }[]> {
+  const { orgId } = await requireAccess("customer:read");
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+  if (name.trim().length < 3) return [];
+
+  const rows = await db
+    .select({
+      id: customerOrganization.id,
+      name: customerOrganization.name,
+      address: customerOrganization.address,
+      // Table-qualified on purpose: an unqualified "id" inside the subquery
+      // would bind to customer_company.id and always count 0.
+      memberCount: sql<number>`(SELECT count(*)::int FROM customer_company cc WHERE cc.customer_organization_id = "customer_organization"."id")`,
+    })
+    .from(customerOrganization)
+    .where(inArray(customerOrganization.organizationId, ownerOrgIds));
+
+  return rows
+    .filter((r) => r.id !== excludeId && orgNamesLookAlike(name, r.name))
+    .slice(0, 5);
 }
 
 export async function createCustomerOrganization(data: {

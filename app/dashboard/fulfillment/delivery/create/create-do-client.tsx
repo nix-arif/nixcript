@@ -20,7 +20,7 @@ import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon,
   BuildingIcon, LinkIcon, CheckCircle2Icon, Loader2Icon,
-  StethoscopeIcon, ShoppingCartIcon,
+  StethoscopeIcon, ShoppingCartIcon, PhoneIcon, MailIcon,
 } from "lucide-react";
 
 type Customer = Awaited<ReturnType<typeof getCustomer>>;
@@ -835,6 +835,215 @@ function DoForm({ prefill, categories = [] }: { prefill: PrefillData; categories
   );
 }
 
+// ── Case DO customer picker ─────────────────────────────────────────────────
+// One option per customer × organisation membership, so picking
+// "Dr A — Hospital X" sets the customer AND the hospital in one step (Case DOs
+// are delivered per hospital). Keyboard navigable, with loading / empty states,
+// and stale responses from slower earlier searches are ignored.
+
+type CustomerSearchRow = Awaited<ReturnType<typeof getCustomers>>[number];
+type CustomerOrg = CustomerSearchRow["companies"][number];
+
+interface CustomerOption {
+  key: string;
+  customer: CustomerSearchRow;
+  /** Orgs whose name matched the search — shown as a hint, and pre-selected
+   *  after picking when exactly one matched (the user searched by hospital). */
+  matchedOrgs: CustomerOrg[];
+}
+
+function customerDisplayName(c: { title?: string | null; name: string }) {
+  return [c.title, c.name].filter(Boolean).join(" ");
+}
+
+function customerInitials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+}
+
+// One option per customer — a customer with several organisations appears
+// once; which organisation this DO is for is chosen after picking.
+function buildCustomerOptions(rows: CustomerSearchRow[], query: string): CustomerOption[] {
+  const q = query.trim().toLowerCase();
+  return rows.slice(0, 12).map((c) => ({
+    key: c.id,
+    customer: c,
+    matchedOrgs: c.companies.filter((o) => q && (o.organizationName ?? "").toLowerCase().includes(q)),
+  }));
+}
+
+function CaseCustomerPicker({
+  onPick,
+}: {
+  onPick: (customer: CustomerSearchRow, preselectOrg: CustomerOrg | null) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [options, setOptions] = useState<CustomerOption[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seq = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const search = (val: string) => {
+    setQuery(val);
+    setOpen(true);
+    if (timer.current) clearTimeout(timer.current);
+    if (val.trim().length < 2) { setOptions([]); setLoading(false); return; }
+    setLoading(true);
+    const mySeq = ++seq.current;
+    timer.current = setTimeout(async () => {
+      try {
+        const rows = await getCustomers(val.trim());
+        if (mySeq !== seq.current) return; // a newer search superseded this one
+        setOptions(buildCustomerOptions(rows, val));
+        setActive(0);
+      } catch {
+        if (mySeq === seq.current) setOptions([]);
+      } finally {
+        if (mySeq === seq.current) setLoading(false);
+      }
+    }, 250);
+  };
+
+  const choose = (o: CustomerOption) => {
+    const orgs = o.customer.companies;
+    // Single org → it's the only choice. Several → pre-select only when the
+    // search itself pinned one hospital down; otherwise the user picks next.
+    const preselect = orgs.length === 1 ? orgs[0] : o.matchedOrgs.length === 1 ? o.matchedOrgs[0] : null;
+    onPick(o.customer, preselect);
+    setQuery(""); setOptions([]); setOpen(false);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!open || options.length === 0) {
+      if (e.key === "Escape") setOpen(false);
+      return;
+    }
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((i) => Math.min(i + 1, options.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); choose(options[active]); }
+    else if (e.key === "Escape") { setOpen(false); }
+  };
+
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
+  const showPanel = open && query.trim().length >= 2;
+
+  return (
+    <div className="relative">
+      {/* Icons are centred against this wrapper, which holds ONLY the input —
+          the hint line below must stay outside it or it shifts them down. */}
+      <div className="relative">
+      <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+      <Input
+        value={query}
+        onChange={(e) => search(e.target.value)}
+        onFocus={() => setOpen(true)}
+        // Delay so a click on an option registers before the panel closes
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={onKeyDown}
+        placeholder="Search by customer, hospital, phone or email…"
+        className="pl-9 pr-9 h-10 text-sm"
+        role="combobox"
+        aria-expanded={showPanel}
+        aria-autocomplete="list"
+        autoComplete="off"
+      />
+      {loading ? (
+        <Loader2Icon className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground animate-spin" />
+      ) : query ? (
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { setQuery(""); setOptions([]); }}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          aria-label="Clear search"
+        >
+          <XIcon className="w-3.5 h-3.5" />
+        </button>
+      ) : null}
+      </div>
+
+      {!showPanel && query.length === 0 && (
+        <p className="mt-1.5 text-[11px] text-muted-foreground">Type at least 2 characters to search by name, hospital, phone or email.</p>
+      )}
+
+      {showPanel && (
+        <div
+          ref={listRef}
+          role="listbox"
+          className="absolute z-20 top-full left-0 right-0 mt-1 max-h-80 overflow-y-auto bg-background border border-border rounded-lg shadow-lg"
+        >
+          {loading && options.length === 0 ? (
+            <div className="px-3 py-3 text-xs text-muted-foreground flex items-center gap-2">
+              <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> Searching…
+            </div>
+          ) : options.length === 0 ? (
+            <div className="px-3 py-3 text-xs text-muted-foreground">
+              No customers match “{query.trim()}”.
+            </div>
+          ) : (
+            options.map((o, i) => {
+              const name = customerDisplayName(o.customer);
+              const orgs = [...o.customer.companies].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+              // Show the org that matched the search if any, else the primary
+              const shownOrg = o.matchedOrgs[0] ?? orgs[0] ?? null;
+              const moreOrgs = orgs.length - 1;
+              const role = orgs.length === 1 ? [orgs[0].position, orgs[0].department].filter(Boolean).join(" · ") : "";
+              return (
+                <button
+                  key={o.key}
+                  type="button"
+                  data-idx={i}
+                  role="option"
+                  aria-selected={i === active}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => choose(o)}
+                  className={cn(
+                    "w-full text-left flex items-start gap-2.5 px-3 py-2.5 border-b border-border/40 last:border-0 transition-colors",
+                    i === active ? "bg-muted/70" : "hover:bg-muted/40",
+                  )}
+                >
+                  <div className="w-7 h-7 rounded-md bg-primary/10 text-primary text-[10px] font-semibold flex items-center justify-center shrink-0">
+                    {customerInitials(o.customer.name)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium leading-snug">
+                      <Highlight text={name} query={query} />
+                    </div>
+                    {shownOrg ? (
+                      <div className="flex items-center gap-1 text-[11px] text-foreground/80 mt-0.5 min-w-0">
+                        <BuildingIcon className="w-3 h-3 shrink-0 text-muted-foreground" />
+                        <span className="break-words"><Highlight text={shownOrg.organizationName ?? ""} query={query} /></span>
+                        {moreOrgs > 0 && (
+                          <span className="shrink-0 text-[9px] font-medium rounded bg-muted text-muted-foreground px-1 py-px">
+                            +{moreOrgs} more
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-muted-foreground italic mt-0.5">No organisation on record</div>
+                    )}
+                    {(role || o.customer.contactNo) && (
+                      <div className="text-[10px] text-muted-foreground mt-0.5 break-words">
+                        {[role, o.customer.contactNo].filter(Boolean).join(" · ")}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Case DO form ────────────────────────────────────────────────────────────
 
 interface CaseLineItem {
@@ -937,18 +1146,16 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
   // specialist (the common case) — hides the separate sales person picker
   // entirely rather than making someone re-pick the same name twice; the
   // application specialist's own selection is used for both roles at submit.
-  const [salesPersonSameAsSpecialist, setSalesPersonSameAsSpecialist] = useState(false);
+  // On by default for a new Case DO — untick to pick a different sales person.
+  const [salesPersonSameAsSpecialist, setSalesPersonSameAsSpecialist] = useState(true);
 
   // Case fields
   const [caseDate, setCaseDate] = useState(new Date().toISOString().split("T")[0]);
   const [mrnNo, setMrnNo] = useState("");
 
   // Customer
-  const [custSearch, setCustSearch] = useState("");
-  const [custResults, setCustResults] = useState<Awaited<ReturnType<typeof getCustomers>>>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [custCompanyId, setCustCompanyId] = useState<string | undefined>();
-  const custTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function custAddress(cust: Customer | null, companyId: string | undefined): string {
     if (!cust) return "";
@@ -1034,20 +1241,14 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
     setExtraItems((prev) => prev.map((i) => i._key === key ? { ...i, ...patch } : i));
   }
 
-  const handleCustSearch = useCallback((val: string) => {
-    setCustSearch(val);
-    if (val.length < 2) { setCustResults([]); return; }
-    if (custTimer.current) clearTimeout(custTimer.current);
-    custTimer.current = setTimeout(async () => {
-      const res = await getCustomers(val);
-      setCustResults(res.slice(0, 8));
-    }, 300);
-  }, []);
 
   const selectedRep = reps.find((r) => r.id === repId);
 
   async function handleSave() {
     if (appSpecs.length === 0) { toast.error("Select the application specialist"); return; }
+    if (selectedCustomer && ((selectedCustomer as unknown as CustomerSearchRow).companies?.length ?? 0) > 1 && !custCompanyId) {
+      toast.error("Select which organisation this DO is for"); return;
+    }
     const usedFieldItems = fieldItems.filter((i) =>
       i.units && i.units.length > 0
         ? (i.selectedUnitIds ?? []).length > 0
@@ -1372,69 +1573,89 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
       {/* Customer */}
       <section className="border border-border rounded-xl p-4">
         <h2 className="text-sm font-semibold mb-3">Customer</h2>
-        {selectedCustomer ? (
-          <div className="flex items-start gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-sm">
-                  {[(selectedCustomer as any).title, (selectedCustomer as any).name].filter(Boolean).join(" ")}
-                </span>
-                <button onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); setDeliveryAddress(""); }}
-                  className="text-muted-foreground hover:text-foreground">
-                  <XIcon className="w-3.5 h-3.5" />
-                </button>
+        {selectedCustomer ? (() => {
+          const cust = selectedCustomer as unknown as CustomerSearchRow;
+          const companies = [...(cust.companies ?? [])].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+          // Several orgs → nothing is assumed; the user must pick one below.
+          const effectiveOrgId = custCompanyId ?? (companies.length === 1 ? companies[0].id : undefined);
+          const org = companies.find((c) => c.id === effectiveOrgId) ?? null;
+          const needsOrg = companies.length > 1 && !org;
+          const role = [org?.position, org?.department].filter(Boolean).join(" · ");
+          return (
+            <div className={cn("rounded-lg border p-3", needsOrg ? "border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20" : "border-primary/20 bg-primary/5")}>
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                  {customerInitials(cust.name)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold leading-snug break-words">{customerDisplayName(cust)}</div>
+                  {org && (
+                    <div className="flex items-center gap-1 text-xs text-foreground/80 mt-0.5">
+                      <BuildingIcon className="w-3 h-3 shrink-0 text-muted-foreground" />
+                      <span className="break-words">{org.organizationName}</span>
+                    </div>
+                  )}
+                  {role && <div className="text-[11px] text-muted-foreground mt-0.5">{role}</div>}
+                  {(cust.contactNo || cust.email) && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-[11px] text-muted-foreground">
+                      {cust.contactNo && <span className="inline-flex items-center gap-1"><PhoneIcon className="w-3 h-3" />{cust.contactNo}</span>}
+                      {cust.email && <span className="inline-flex items-center gap-1 min-w-0"><MailIcon className="w-3 h-3 shrink-0" /><span className="truncate">{cust.email}</span></span>}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0"
+                  onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); setDeliveryAddress(""); }}
+                >
+                  Change
+                </Button>
               </div>
-              {(() => {
-                const companies = (selectedCustomer as any)?.companies ?? [];
-                if (companies.length > 1) return (
-                  <div className="mt-2 space-y-1">
-                    <Label className="text-[11px] text-muted-foreground">Organization</Label>
-                    <select
-                      className="w-full h-8 rounded-md border border-border bg-background px-2.5 text-sm"
-                      value={custCompanyId ?? ""}
-                      onChange={(e) => {
-                        const newId = e.target.value || undefined;
-                        setCustCompanyId(newId);
-                        setDeliveryAddress(custAddress(selectedCustomer, newId));
-                      }}
-                    >
-                      <option value="">Primary / default</option>
-                      {companies.map((c: any) => (
-                        <option key={c.id} value={c.id}>
-                          {c.organizationName}{c.isPrimary ? " (primary)" : ""}
-                        </option>
-                      ))}
-                    </select>
+
+              {/* Hospital switcher — only when the customer belongs to several */}
+              {companies.length > 1 && (
+                <div className="mt-3 pt-3 border-t border-primary/15">
+                  <div className={cn("text-[11px] mb-1.5", needsOrg ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+                    {needsOrg
+                      ? `Select the organisation for this DO — ${customerDisplayName(cust)} belongs to ${companies.length}:`
+                      : "Delivering to which organisation?"}
                   </div>
-                );
-                if (companies.length === 1) return (
-                  <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                    <BuildingIcon className="w-3 h-3" /> {companies[0].organizationName}
-                  </p>
-                );
-                return null;
-              })()}
+                  <div className="grid gap-1.5 sm:grid-cols-2">
+                    {companies.map((c) => {
+                      const isSel = c.id === effectiveOrgId;
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => { setCustCompanyId(c.id); setDeliveryAddress(custAddress(selectedCustomer, c.id)); }}
+                          className={cn(
+                            "text-left rounded-md border px-2.5 py-2 text-xs transition-colors",
+                            isSel ? "border-primary bg-background ring-1 ring-primary/30" : "border-border bg-background/60 hover:bg-background",
+                          )}
+                        >
+                          <div className="flex items-start gap-1.5">
+                            <span className={cn("mt-0.5 w-3 h-3 rounded-full border shrink-0", isSel ? "border-primary bg-primary ring-2 ring-primary/20 ring-offset-1 ring-offset-background" : "border-muted-foreground/40")} />
+                            <div className="min-w-0">
+                              <div className={cn("leading-snug break-words", isSel && "font-medium")}>{c.organizationName}</div>
+                              {c.isPrimary && <div className="text-[10px] text-muted-foreground">primary</div>}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ) : (
-          <div className="relative">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input value={custSearch} onChange={(e) => handleCustSearch(e.target.value)}
-              placeholder="Search customer…" className="pl-9 h-9 text-sm" />
-            {custResults.length > 0 && (
-              <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
-                {custResults.map((c) => (
-                  <button key={c.id} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0"
-                    onClick={() => { setSelectedCustomer(c as any); setCustSearch(""); setCustResults([]); setCustCompanyId(undefined); setDeliveryAddress(custAddress(c as any, undefined)); }}>
-                    <div className="text-sm font-medium"><Highlight text={[c.title, c.name].filter(Boolean).join(" ")} query={custSearch} /></div>
-                    {c.companies[0]?.organizationName && (
-                      <div className="text-[11px] text-muted-foreground"><Highlight text={c.companies[0].organizationName} query={custSearch} /></div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          );
+        })() : (
+          <CaseCustomerPicker
+            onPick={(c, org) => {
+              setSelectedCustomer(c as unknown as Customer);
+              setCustCompanyId(org?.id);
+              // Fill the address only once the organisation is known
+              setDeliveryAddress(org ? custAddress(c as unknown as Customer, org.id) : "");
+            }}
+          />
         )}
         <div className="mt-3 space-y-1.5">
           <Label className="text-xs">Customer PO no. (optional — can fill later)</Label>
@@ -1454,7 +1675,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
               </button>
             )}
           </div>
-          <Input value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Hospital name and address" className="h-9 text-sm" />
+          <Textarea value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Hospital name and address" rows={3} className="text-sm resize-none" />
         </div>
         <div className="mt-3 space-y-1.5">
           <Label className="text-xs">Notes</Label>
