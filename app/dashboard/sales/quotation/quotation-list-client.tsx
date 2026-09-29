@@ -201,19 +201,44 @@ export function QuotationListClient({
     listHasMounted = true;
     pendingListTraversalAt = 0; // consumed by this mount
     markListHistoryEntry();
+    let stopHolding = () => {};
     if (isReturn) {
       let y = 0;
       try { y = Number(sessionStorage.getItem(SCROLL_STORAGE_KEY)) || 0; } catch {}
       if (y > 0) {
         window.scrollTo(0, y);
-        // Re-apply after paint in case anything (router, late layout) moved it.
-        requestAnimationFrame(() => {
+        // Hold the position for ~1s: real iOS Safari applies its own saved
+        // offset *after* render, and late layout (address bar collapsing,
+        // images, the background refresh) can shift the page. Re-apply on
+        // every frame until it settles — but stop the moment the user
+        // touches/scrolls/types so we never fight their input.
+        let raf = 0;
+        const until = performance.now() + 1000;
+        const hold = () => {
           if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y);
-        });
+          raf = performance.now() < until ? requestAnimationFrame(hold) : 0;
+        };
+        raf = requestAnimationFrame(hold);
+        const userEvents = ["touchstart", "wheel", "keydown", "mousedown"] as const;
+        stopHolding = () => {
+          cancelAnimationFrame(raf);
+          userEvents.forEach((ev) => window.removeEventListener(ev, stopHolding));
+        };
+        userEvents.forEach((ev) => window.addEventListener(ev, stopHolding, { passive: true }));
       }
     }
+    // Hand scroll restoration back to the browser for other pages; it's
+    // switched to "manual" only while returning to this list (see cleanup).
+    try { window.history.scrollRestoration = "auto"; } catch {}
+
     return () => {
+      stopHolding();
       try { sessionStorage.setItem(SCROLL_STORAGE_KEY, String(Math.round(window.scrollY))); } catch {}
+      // Stop Safari's automatic restoration from overwriting ours when the
+      // user comes back: with "auto" it re-applies the offset it recorded
+      // for this entry after render — often 0, since the loading skeleton
+      // shrinks the page before the new entry is pushed.
+      try { window.history.scrollRestoration = "manual"; } catch {}
       // Re-mark in case a router update since mount rewrote the entry's state.
       markListHistoryEntry();
     };
