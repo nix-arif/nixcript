@@ -321,7 +321,7 @@ export function QuotationListClient({
             <XIcon className="w-3 h-3" /> Clear
           </button>
         )}
-        <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground whitespace-nowrap tabular-nums">
+        <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground whitespace-nowrap tabular-nums">
           {updating && (
             <span className="flex items-center gap-1 text-[11px]">
               <span className="w-2.5 h-2.5 border-[1.5px] border-current border-t-transparent rounded-full animate-spin" />
@@ -329,7 +329,7 @@ export function QuotationListClient({
             </span>
           )}
           {/* Legend for the dot on each comparison row */}
-          <span className="hidden sm:flex items-center gap-3 pr-3 mr-1 border-r border-border">
+          <span className="flex items-center gap-3 sm:pr-3 sm:mr-1 sm:border-r sm:border-border">
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-primary" /> Original
             </span>
