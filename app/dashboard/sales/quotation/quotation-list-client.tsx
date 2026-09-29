@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -30,6 +30,7 @@ import { Highlight } from "@/components/highlight";
 const PAGE_SIZE = 10;
 
 const FILTERS_STORAGE_KEY = "quotation-list-filters";
+const SCROLL_STORAGE_KEY = "quotation-list-scroll";
 
 type SavedFilters = {
   search: string;
@@ -143,6 +144,32 @@ export function QuotationListClient({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [page, setPage] = useState(restored?.page ?? 1);
   const [updating, setUpdating] = useState(false);
+
+  // Scroll position — saved when the list unmounts, restored on back/forward.
+  // The browser's own restoration can't do it: it fires while the (shorter)
+  // detail page is still rendered, so the target offset gets clamped to ~0.
+  //
+  // Saved from a *layout* effect cleanup on purpose: React runs it before the
+  // list's DOM is removed and before the next page's layout effects, where
+  // Next scrolls the new page to the top — so window.scrollY is still the
+  // user's real position here (a passive-effect cleanup or a scroll listener
+  // would record the reset 0 instead).
+  useLayoutEffect(() => {
+    if (arrivedViaTraversal()) {
+      let y = 0;
+      try { y = Number(sessionStorage.getItem(SCROLL_STORAGE_KEY)) || 0; } catch {}
+      if (y > 0) {
+        window.scrollTo(0, y);
+        // Re-apply after paint in case anything (router, late layout) moved it.
+        requestAnimationFrame(() => {
+          if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y);
+        });
+      }
+    }
+    return () => {
+      try { sessionStorage.setItem(SCROLL_STORAGE_KEY, String(Math.round(window.scrollY))); } catch {}
+    };
+  }, []);
 
   // Back/forward restores this page from Next's client cache instantly — no
   // server round-trip — so its data is as old as when it was first rendered.
