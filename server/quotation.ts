@@ -543,9 +543,13 @@ export async function createQuotation(input: CreateQuotationInput) {
     .where(eq(user.id, userId))
     .limit(1);
 
-  // Get customer snapshot using the shared helper
+  // Get customer snapshot using the shared helper. Scoped to every org this
+  // owner controls — the customer may belong to a sibling org, and scoping to
+  // the active org alone silently produced a null snapshot in that case.
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
   const customerSnapshot = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
+    ? await buildCustomerSnapshot(input.customerId, ownerOrgIds, input.customerOrgMemberId)
     : null;
 
   // Calculate shared pricing — set items use setQty multiplier; global sets multiplies the rest
@@ -629,7 +633,7 @@ export async function createQuotation(input: CreateQuotationInput) {
   }
 
   // ── Comparison mode ────────────────────────────────────────────────────────
-  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  // (ownerOrgs already loaded above for the customer snapshot lookup)
 
   // Fall back to single if only one org
   const targetOrgs =
@@ -733,6 +737,7 @@ export async function getQuotationsList() {
       mode: quotation.mode,
       groupId: quotation.groupId,
       isDummy: quotation.isDummy,
+      customerId: quotation.customerId,
       customerSnapshot: quotation.customerSnapshot,
       salesPersonName: quotation.salesPersonName,
       preparedByName: quotation.preparedByName,
@@ -753,6 +758,51 @@ export async function getQuotationsList() {
 
   type Row = (typeof rows)[number];
 
+  // Some snapshots were saved without the customer's organisation, or null
+  // altogether (createQuotation used to scope the customer lookup to the active
+  // org only). Fill org from the customer's primary (else first) membership,
+  // then the legacy customer.organizationName column — the same fallback the
+  // detail/print views use — and name/title from the live customer row.
+  const missingOrgCustomerIds = [
+    ...new Set(
+      rows
+        .filter((r) => r.customerId && !(r.customerSnapshot as { organizationName?: string } | null)?.organizationName)
+        .map((r) => r.customerId as string),
+    ),
+  ];
+  const fallbackOrgName = new Map<string, string>();
+  const fallbackCustomer = new Map<string, { title: string | null; name: string }>();
+  if (missingOrgCustomerIds.length) {
+    const memberships = await db
+      .select({ customerId: customerCompany.customerId, orgName: customerOrganization.name })
+      .from(customerCompany)
+      .innerJoin(customerOrganization, eq(customerOrganization.id, customerCompany.customerOrganizationId))
+      .where(inArray(customerCompany.customerId, missingOrgCustomerIds))
+      .orderBy(desc(customerCompany.isPrimary), asc(customerCompany.createdAt));
+    for (const m of memberships) {
+      if (m.orgName && !fallbackOrgName.has(m.customerId)) fallbackOrgName.set(m.customerId, m.orgName);
+    }
+    const legacy = await db
+      .select({ id: customer.id, title: customer.title, name: customer.name, orgName: customer.organizationName })
+      .from(customer)
+      .where(inArray(customer.id, missingOrgCustomerIds));
+    for (const c of legacy) {
+      fallbackCustomer.set(c.id, { title: c.title, name: c.name });
+      if (c.orgName && !fallbackOrgName.has(c.id)) fallbackOrgName.set(c.id, c.orgName);
+    }
+  }
+  const withOrgName = (r: Row) => {
+    const snap = r.customerSnapshot as Record<string, unknown> | null;
+    if (!r.customerId || snap?.organizationName) return snap;
+    const org = fallbackOrgName.get(r.customerId);
+    const cust = fallbackCustomer.get(r.customerId);
+    return {
+      ...(snap ?? {}),
+      ...(!snap?.name && cust ? { title: cust.title ?? undefined, name: cust.name } : {}),
+      ...(org ? { organizationName: org } : {}),
+    };
+  };
+
   const groupMap = new Map<string, { header: Row; members: Row[] }>();
   for (const row of rows) {
     const key = row.groupId ?? row.id;
@@ -769,7 +819,7 @@ export async function getQuotationsList() {
       govBatchId: header.govBatchId ?? null,
       mode: header.mode,
       primaryId: header.id,
-      customerSnapshot: header.customerSnapshot,
+      customerSnapshot: withOrgName(header),
       salesPersonName: header.salesPersonName,
       preparedByName: header.preparedByName ?? "",
       createdAt: header.createdAt,

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -74,19 +74,52 @@ interface Props {
   batchFilter?: string;
 }
 
-export function QuotationListClient({ initialGroups, batchFilter }: Props) {
+export function QuotationListClient({
+  initialGroups,
+  batchFilter,
+}: Props) {
   const router = useRouter();
+  // Filters are restored from the live URL rather than server props: on
+  // router.back() Next re-renders this page from its cached payload, whose
+  // props reflect the URL as first loaded (before any filters were typed),
+  // while useSearchParams reflects the URL as we last replaceState'd it.
+  const searchParams = useSearchParams();
   const [groups, setGroups] = useState(initialGroups);
-  const [search, setSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
+  const [dateFrom, setDateFrom] = useState(() => searchParams.get("from") ?? "");
+  const [dateTo, setDateTo] = useState(() => searchParams.get("to") ?? "");
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => Number(searchParams.get("page")) || 1);
 
   const hasDateFilter = dateFrom || dateTo;
 
-  // Reset to page 1 when filters change
-  useEffect(() => { setPage(1); }, [search, dateFrom, dateTo, batchFilter]);
+  // Reset to page 1 when filters change. Compared against the previous
+  // filter values (not "skip first render") so the page restored from the
+  // URL survives mount, including StrictMode's double-run of effects.
+  const filterKey = JSON.stringify([search, dateFrom, dateTo, batchFilter]);
+  const prevFilterKey = useRef(filterKey);
+  useEffect(() => {
+    if (prevFilterKey.current === filterKey) return;
+    prevFilterKey.current = filterKey;
+    setPage(1);
+  }, [filterKey]);
+
+  // Mirror filters into the URL (replaceState, so typing doesn't pile up
+  // history entries) — router.back() from a quotation then lands on this
+  // URL and the list comes back with the same search, dates and page.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const set = (k: string, v: string) => (v ? params.set(k, v) : params.delete(k));
+    set("q", search);
+    set("from", dateFrom);
+    set("to", dateTo);
+    set("page", page > 1 ? String(page) : "");
+    const qs = params.toString();
+    const next = qs ? `?${qs}` : window.location.pathname;
+    if (next !== window.location.search && (qs || window.location.search)) {
+      window.history.replaceState(null, "", next);
+    }
+  }, [search, dateFrom, dateTo, page]);
 
   const filtered = groups.filter((g) => {
     if (batchFilter && g.govBatchId !== batchFilter) return false;
@@ -240,6 +273,7 @@ export function QuotationListClient({ initialGroups, batchFilter }: Props) {
             const custName = cust
               ? [cust.title, cust.name].filter(Boolean).join(" ")
               : null;
+            const custOrg: string | null = cust?.organizationName || null;
             const isDraft = group.status === "draft";
             const isDeleting = deleting === group.primaryId;
 
@@ -281,11 +315,15 @@ export function QuotationListClient({ initialGroups, batchFilter }: Props) {
                           </Link>
                         )}
                       </div>
-                      {(custName || m.orgName) && (
+                      {(custName || custOrg || m.orgName) && (
                         <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
-                          {custName && <span><Highlight text={custName} query={search} /></span>}
-                          {custName && m.orgName && <span>·</span>}
-                          {m.orgName && <span><Highlight text={m.orgName} query={search} /></span>}
+                          {[
+                            custName && <span key="cust"><Highlight text={custName} query={search} /></span>,
+                            custOrg && <span key="custOrg" className="font-medium text-foreground/80"><Highlight text={custOrg} query={search} /></span>,
+                            m.orgName && <span key="org"><Highlight text={m.orgName} query={search} /></span>,
+                          ]
+                            .filter(Boolean)
+                            .flatMap((el, i) => (i ? [<span key={`sep${i}`}>·</span>, el] : [el]))}
                         </div>
                       )}
                       {(group.title || group.salesPersonName || group.preparedByName) && (
@@ -374,6 +412,11 @@ export function QuotationListClient({ initialGroups, batchFilter }: Props) {
                       {custName && (
                         <span className="text-sm font-medium">
                           <Highlight text={custName} query={search} />
+                        </span>
+                      )}
+                      {custOrg && (
+                        <span className="text-xs text-muted-foreground">
+                          <Highlight text={custOrg} query={search} />
                         </span>
                       )}
                       <span className="text-[10px] font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded px-1.5 py-0.5 tabular-nums">
