@@ -71,6 +71,23 @@ if (typeof window !== "undefined") {
   window.addEventListener("popstate", () => noteTraversal(window.location.href));
 }
 
+// ── TEMP scroll-restore debug (dev only) — remove once iOS issue is solved ──
+const DBG_KEY = "quotation-list-debug";
+function dbg(msg: string) {
+  if (process.env.NODE_ENV !== "development" || typeof window === "undefined") return;
+  try {
+    const t = new Date().toISOString().slice(14, 23);
+    const lines = JSON.parse(sessionStorage.getItem(DBG_KEY) ?? "[]") as string[];
+    lines.push(`${t} ${msg}`);
+    sessionStorage.setItem(DBG_KEY, JSON.stringify(lines.slice(-40)));
+  } catch {}
+}
+if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+  window.addEventListener("popstate", () => dbg(`popstate → ${location.pathname} y=${Math.round(scrollY)} sr=${history.scrollRestoration}`));
+  (window as unknown as { navigation?: { addEventListener: (t: string, cb: (e: { navigationType: string; destination: { url: string } }) => void) => void } })
+    .navigation?.addEventListener("navigate", (e) => dbg(`navigate ${e.navigationType} → ${new URL(e.destination.url).pathname}`));
+}
+
 const LIST_PATH = "/dashboard/sales/quotation";
 // Flag written into this list's own history entry (alongside Next's state).
 // Coming back to that entry — by any means, in any browser — finds it there.
@@ -178,7 +195,13 @@ export function QuotationListClient({
   // clean. Read once per mount; SSR/hard loads never restore, so hydration
   // always matches the server render.
   // Decided once per mount; everything below keys off the same answer.
-  const [isReturn] = useState(detectReturn);
+  const [isReturn] = useState(() => {
+    const r = detectReturn();
+    if (typeof window !== "undefined") {
+      dbg(`mount-init isReturn=${r} path=${location.pathname} mark=${String((history.state as Record<string, unknown> | null)?.[HISTORY_MARK])} mounted-before=${listHasMounted} navAPI=${!!(window as unknown as { navigation?: unknown }).navigation}`);
+    }
+    return r;
+  });
   const [restored] = useState(() => readSavedFilters(isReturn, batchFilter));
   const [groups, setGroups] = useState(initialGroups);
   const [search, setSearch] = useState(restored?.search ?? "");
@@ -187,6 +210,14 @@ export function QuotationListClient({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [page, setPage] = useState(restored?.page ?? 1);
   const [updating, setUpdating] = useState(false);
+  const [dbgLines, setDbgLines] = useState<string[]>([]);
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const read = () => { try { setDbgLines(JSON.parse(sessionStorage.getItem(DBG_KEY) ?? "[]")); } catch {} };
+    read();
+    const id = setInterval(read, 500);
+    return () => clearInterval(id);
+  }, []);
 
   // Scroll position — saved when the list unmounts, restored on back/forward.
   // The browser's own restoration can't do it: it fires while the (shorter)
@@ -205,8 +236,11 @@ export function QuotationListClient({
     if (isReturn) {
       let y = 0;
       try { y = Number(sessionStorage.getItem(SCROLL_STORAGE_KEY)) || 0; } catch {}
+      dbg(`restore: saved y=${y}, current y=${Math.round(window.scrollY)}, docH=${document.documentElement.scrollHeight}, innerH=${innerHeight}`);
       if (y > 0) {
         window.scrollTo(0, y);
+        dbg(`after scrollTo: y=${Math.round(window.scrollY)}`);
+        [50, 150, 300, 600, 1000, 1500].forEach((ms) => setTimeout(() => dbg(`+${ms}ms y=${Math.round(window.scrollY)} docH=${document.documentElement.scrollHeight}`), ms));
         // Hold the position for ~1s: real iOS Safari applies its own saved
         // offset *after* render, and late layout (address bar collapsing,
         // images, the background refresh) can shift the page. Re-apply on
@@ -227,12 +261,18 @@ export function QuotationListClient({
         userEvents.forEach((ev) => window.addEventListener(ev, stopHolding, { passive: true }));
       }
     }
-    // Hand scroll restoration back to the browser for other pages; it's
-    // switched to "manual" only while returning to this list (see cleanup).
-    try { window.history.scrollRestoration = "auto"; } catch {}
+    // Hand scroll restoration back to the browser for other pages — but only
+    // after the return has fully settled: popstate (and Safari's own restore
+    // pass) can arrive *after* this effect, and flipping to "auto" here would
+    // let Safari overwrite our position with the offset it recorded (~0).
+    const autoTimer = setTimeout(() => {
+      try { window.history.scrollRestoration = "auto"; } catch {}
+    }, 1500);
 
     return () => {
+      clearTimeout(autoTimer);
       stopHolding();
+      dbg(`LEAVE list: saving y=${Math.round(window.scrollY)} path=${location.pathname}`);
       try { sessionStorage.setItem(SCROLL_STORAGE_KEY, String(Math.round(window.scrollY))); } catch {}
       // Stop Safari's automatic restoration from overwriting ours when the
       // user comes back: with "auto" it re-applies the offset it recorded
@@ -348,6 +388,15 @@ export function QuotationListClient({
 
   return (
     <div className="p-6">
+      {process.env.NODE_ENV === "development" && dbgLines.length > 0 && (
+        <div className="fixed bottom-2 left-2 right-2 z-[100] max-h-[45vh] overflow-auto rounded-lg bg-black/85 text-[10px] leading-tight text-green-300 font-mono p-2 shadow-lg">
+          <div className="flex justify-between mb-1 text-white">
+            <span>scroll debug (TEMP)</span>
+            <button onClick={() => { sessionStorage.removeItem(DBG_KEY); setDbgLines([]); }} className="underline">clear</button>
+          </div>
+          {dbgLines.map((l, i) => <div key={i} className="break-all">{l}</div>)}
+        </div>
+      )}
       <PageHeader
         title="Quotations"
         description="Manage and generate customer quotations"
