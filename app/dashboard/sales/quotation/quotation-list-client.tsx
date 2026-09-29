@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -28,6 +28,42 @@ import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 
 const PAGE_SIZE = 10;
+
+const FILTERS_STORAGE_KEY = "quotation-list-filters";
+
+type SavedFilters = {
+  search: string;
+  dateFrom: string;
+  dateTo: string;
+  page: number;
+  batchFilter: string | null;
+};
+
+// Timestamp of the last browser back/forward (popstate). router.back() fires
+// popstate too. Registered at module load so it's recorded before the list
+// remounts for the traversal.
+let lastTraversalAt = 0;
+if (typeof window !== "undefined") {
+  window.addEventListener("popstate", () => {
+    lastTraversalAt = Date.now();
+  });
+}
+
+function readSavedFilters(batchFilter: string | undefined): SavedFilters | null {
+  if (typeof window === "undefined") return null;
+  // Only a recent traversal counts — the dynamic page may take a few seconds
+  // to refetch before this component mounts.
+  if (Date.now() - lastTraversalAt > 15_000) return null;
+  try {
+    const raw = sessionStorage.getItem(FILTERS_STORAGE_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as SavedFilters;
+    if ((saved.batchFilter ?? null) !== (batchFilter ?? null)) return null;
+    return saved;
+  } catch {
+    return null;
+  }
+}
 
 const fmt = (v: string | number) =>
   `RM ${Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -79,23 +115,23 @@ export function QuotationListClient({
   batchFilter,
 }: Props) {
   const router = useRouter();
-  // Filters are restored from the live URL rather than server props: on
-  // router.back() Next re-renders this page from its cached payload, whose
-  // props reflect the URL as first loaded (before any filters were typed),
-  // while useSearchParams reflects the URL as we last replaceState'd it.
-  const searchParams = useSearchParams();
+  // Restore the previous filters only when arriving via back/forward (e.g.
+  // router.back() from a quotation) — a fresh visit from the sidebar starts
+  // clean. Read once per mount; SSR/hard loads never restore, so hydration
+  // always matches the server render.
+  const [restored] = useState(() => readSavedFilters(batchFilter));
   const [groups, setGroups] = useState(initialGroups);
-  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
-  const [dateFrom, setDateFrom] = useState(() => searchParams.get("from") ?? "");
-  const [dateTo, setDateTo] = useState(() => searchParams.get("to") ?? "");
+  const [search, setSearch] = useState(restored?.search ?? "");
+  const [dateFrom, setDateFrom] = useState(restored?.dateFrom ?? "");
+  const [dateTo, setDateTo] = useState(restored?.dateTo ?? "");
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [page, setPage] = useState(() => Number(searchParams.get("page")) || 1);
+  const [page, setPage] = useState(restored?.page ?? 1);
 
   const hasDateFilter = dateFrom || dateTo;
 
   // Reset to page 1 when filters change. Compared against the previous
-  // filter values (not "skip first render") so the page restored from the
-  // URL survives mount, including StrictMode's double-run of effects.
+  // filter values (not "skip first render") so a restored page survives
+  // mount, including StrictMode's double-run of effects.
   const filterKey = JSON.stringify([search, dateFrom, dateTo, batchFilter]);
   const prevFilterKey = useRef(filterKey);
   useEffect(() => {
@@ -104,22 +140,18 @@ export function QuotationListClient({
     setPage(1);
   }, [filterKey]);
 
-  // Mirror filters into the URL (replaceState, so typing doesn't pile up
-  // history entries) — router.back() from a quotation then lands on this
-  // URL and the list comes back with the same search, dates and page.
+  // Filters live in sessionStorage, not the URL: rewriting the URL with
+  // history.replaceState leaves Next's stored router tree pointing at the old
+  // search string, and on back-navigation Next treats that mismatch as
+  // unrecoverable and does a full page reload.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const set = (k: string, v: string) => (v ? params.set(k, v) : params.delete(k));
-    set("q", search);
-    set("from", dateFrom);
-    set("to", dateTo);
-    set("page", page > 1 ? String(page) : "");
-    const qs = params.toString();
-    const next = qs ? `?${qs}` : window.location.pathname;
-    if (next !== window.location.search && (qs || window.location.search)) {
-      window.history.replaceState(null, "", next);
+    try {
+      const saved: SavedFilters = { search, dateFrom, dateTo, page, batchFilter: batchFilter ?? null };
+      sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(saved));
+    } catch {
+      // storage unavailable (private mode etc.) — filters just won't persist
     }
-  }, [search, dateFrom, dateTo, page]);
+  }, [search, dateFrom, dateTo, page, batchFilter]);
 
   const filtered = groups.filter((g) => {
     if (batchFilter && g.govBatchId !== batchFilter) return false;
@@ -277,122 +309,9 @@ export function QuotationListClient({
             const isDraft = group.status === "draft";
             const isDeleting = deleting === group.primaryId;
 
-            /* ── Single quotation ──────────────────────────────────────── */
-            if (group.mode === "single") {
-              const m = group.members[0];
-              return (
-                <div
-                  key={group.primaryId}
-                  className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors"
-                >
-                  <div className="flex items-center gap-3 px-4 py-3">
-                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0">
-                      <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-sm font-medium">
-                          {m.quotationNo.startsWith("PENDING-")
-                            ? <span className="text-muted-foreground italic">Draft</span>
-                            : <Highlight text={m.quotationNo} query={search} />}
-                        </span>
-                        {(m.revisionNo ?? 0) > 0 && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                            R{m.revisionNo}
-                          </span>
-                        )}
-                        <span className="text-[10px] font-medium bg-muted/60 rounded px-1.5 py-0.5 text-muted-foreground tabular-nums">
-                          {fmtDate(group.createdAt)}
-                        </span>
-                        {group.govBatchId && (
-                          <Link
-                            href={`/dashboard/sales/quotation?batch=${group.govBatchId}`}
-                            className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 hover:bg-violet-200 dark:hover:bg-violet-900/50 transition-colors"
-                            title={`Filter by batch: ${group.govBatchId}`}
-                          >
-                            Gov batch
-                          </Link>
-                        )}
-                      </div>
-                      {(custName || custOrg || m.orgName) && (
-                        <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
-                          {[
-                            custName && <span key="cust"><Highlight text={custName} query={search} /></span>,
-                            custOrg && <span key="custOrg" className="font-medium text-foreground/80"><Highlight text={custOrg} query={search} /></span>,
-                            m.orgName && <span key="org"><Highlight text={m.orgName} query={search} /></span>,
-                          ]
-                            .filter(Boolean)
-                            .flatMap((el, i) => (i ? [<span key={`sep${i}`}>·</span>, el] : [el]))}
-                        </div>
-                      )}
-                      {(group.title || group.salesPersonName || group.preparedByName) && (
-                        <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
-                          {group.title && group.title !== "Loose Items" && (
-                            <span>
-                              <span className="text-muted-foreground/50">Title:</span>{" "}
-                              <Highlight text={group.title} query={search} />
-                            </span>
-                          )}
-                          {group.salesPersonName && (
-                            <span>
-                              <span className="text-muted-foreground/50">Sales:</span>{" "}
-                              <Highlight text={group.salesPersonName} query={search} />
-                            </span>
-                          )}
-                          {group.preparedByName && (
-                            <span>
-                              <span className="text-muted-foreground/50">By:</span>{" "}
-                              <Highlight text={group.preparedByName} query={search} />
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-sm font-semibold tabular-nums">
-                        {fmt(m.grandTotal)}
-                      </span>
-                      <StatusBadge status={group.status} />
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-muted-foreground"
-                          onClick={() =>
-                            router.push(
-                              `/dashboard/sales/quotation/${m.id}`,
-                            )
-                          }
-                        >
-                          <EyeIcon className="w-3.5 h-3.5" />
-                        </Button>
-                        {isDraft && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                            disabled={isDeleting}
-                            onClick={() =>
-                              handleDelete(group.primaryId, group.mode)
-                            }
-                          >
-                            {isDeleting ? (
-                              <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              <TrashIcon className="w-3.5 h-3.5" />
-                            )}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            }
-
-            /* ── Comparison group ──────────────────────────────────────── */
+            /* ── Group card (comparison group, or a single quotation shown
+                  with the same header + one member row for a consistent list) ── */
+            const isSingle = group.mode === "single";
             return (
               <div
                 key={group.groupId ?? group.primaryId}
@@ -400,15 +319,27 @@ export function QuotationListClient({
               >
                 {/* Group header */}
                 <div className="flex items-center gap-3 px-4 py-3 bg-muted/30 border-b border-border">
-                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 shrink-0">
-                    <LayersIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                  </div>
+                  {isSingle ? (
+                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted shrink-0">
+                      <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 shrink-0">
+                      <LayersIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    </div>
+                  )}
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 tabular-nums">
-                        Compare · {group.members.length}
-                      </span>
+                      {isSingle ? (
+                        <span className="text-[11px] font-semibold text-muted-foreground">
+                          Single
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 tabular-nums">
+                          Compare · {group.members.length}
+                        </span>
+                      )}
                       {custName && (
                         <span className="text-sm font-medium">
                           <Highlight text={custName} query={search} />
@@ -502,15 +433,20 @@ export function QuotationListClient({
                     </div>
 
                     <div className="flex-1 min-w-0 flex items-center gap-2">
-                      <span className="font-mono text-xs font-medium shrink-0">
-                        {m.quotationNo.startsWith("PENDING-") ? <span className="text-muted-foreground italic">Draft</span> : m.quotationNo}
-                      </span>
+                      <Link
+                        href={`/dashboard/sales/quotation/${m.id}`}
+                        className="font-mono text-xs font-medium shrink-0 hover:underline hover:text-primary underline-offset-2 transition-colors"
+                      >
+                        {m.quotationNo.startsWith("PENDING-")
+                          ? <span className="text-muted-foreground italic">Draft</span>
+                          : <Highlight text={m.quotationNo} query={search} />}
+                      </Link>
                       {(m.revisionNo ?? 0) > 0 && (
                         <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 shrink-0">
                           R{m.revisionNo}
                         </span>
                       )}
-                      {m.isDummy === 0 ? (
+                      {isSingle ? null : m.isDummy === 0 ? (
                         <span className="text-[9px] font-medium border border-primary/30 text-primary rounded px-1.5 py-0.5 shrink-0">
                           Original
                         </span>
@@ -520,7 +456,7 @@ export function QuotationListClient({
                         </span>
                       )}
                       <span className="text-xs text-muted-foreground truncate">
-                        {m.orgName}
+                        <Highlight text={m.orgName} query={search} />
                       </span>
                     </div>
 
