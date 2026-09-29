@@ -199,9 +199,15 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   };
 
   // Keep URL in sync without triggering a page reload
+  // Keep the URL in sync when the user switches to a sibling quotation in a
+  // comparison group. Skipped for the initially-loaded quotation: this effect
+  // runs before Next's own history update on mount, so replacing here would
+  // overwrite the *previous* page's history entry (the list), destroying it —
+  // back would then do a full reload instead of restoring the cached list.
   useEffect(() => {
+    if (selectedId === initialId) return;
     window.history.replaceState(null, "", `/dashboard/sales/quotation/${selectedId}`);
-  }, [selectedId]);
+  }, [selectedId, initialId]);
 
   const isDraft = q.status === "draft";
   const isComparison = q.mode === "comparison";

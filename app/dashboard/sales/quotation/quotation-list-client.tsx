@@ -6,6 +6,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import {
   getQuotationsList,
+  getQuotationsListVersion,
   deleteQuotation,
   type QuotationListGroup,
 } from "@/server/quotation";
@@ -14,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import {
   PlusIcon,
   SearchIcon,
-  EyeIcon,
   TrashIcon,
   XIcon,
   LayersIcon,
@@ -39,21 +39,34 @@ type SavedFilters = {
   batchFilter: string | null;
 };
 
-// Timestamp of the last browser back/forward (popstate). router.back() fires
-// popstate too. Registered at module load so it's recorded before the list
-// remounts for the traversal.
+// Timestamp of the last browser back/forward. Registered at module load so
+// it's recorded before the list remounts for the traversal.
+//
+// The Navigation API's "navigate" event (navigationType "traverse") is the
+// primary signal: Next 16 begins restoring the cached page from that event,
+// so the list can mount *before* popstate fires — a popstate-only flag would
+// be set too late. popstate stays as the fallback for browsers without the
+// Navigation API. router.back() triggers both, same as the browser button.
 let lastTraversalAt = 0;
 if (typeof window !== "undefined") {
-  window.addEventListener("popstate", () => {
-    lastTraversalAt = Date.now();
+  const markTraversal = () => { lastTraversalAt = Date.now(); };
+  const nav = (window as unknown as {
+    navigation?: { addEventListener: (t: "navigate", cb: (e: { navigationType: string }) => void) => void };
+  }).navigation;
+  nav?.addEventListener("navigate", (e) => {
+    if (e.navigationType === "traverse") markTraversal();
   });
+  window.addEventListener("popstate", markTraversal);
+}
+
+function arrivedViaTraversal() {
+  // Only a recent traversal counts — on a cache miss the page may take a few
+  // seconds to refetch before this component mounts.
+  return typeof window !== "undefined" && Date.now() - lastTraversalAt < 15_000;
 }
 
 function readSavedFilters(batchFilter: string | undefined): SavedFilters | null {
-  if (typeof window === "undefined") return null;
-  // Only a recent traversal counts — the dynamic page may take a few seconds
-  // to refetch before this component mounts.
-  if (Date.now() - lastTraversalAt > 15_000) return null;
+  if (!arrivedViaTraversal()) return null;
   try {
     const raw = sessionStorage.getItem(FILTERS_STORAGE_KEY);
     if (!raw) return null;
@@ -107,11 +120,14 @@ function StatusBadge({ status }: { status: string }) {
 
 interface Props {
   initialGroups: QuotationListGroup[];
+  /** getQuotationsListVersion() at render time — see the freshness check below */
+  listVersion: string;
   batchFilter?: string;
 }
 
 export function QuotationListClient({
   initialGroups,
+  listVersion,
   batchFilter,
 }: Props) {
   const router = useRouter();
@@ -126,6 +142,34 @@ export function QuotationListClient({
   const [dateTo, setDateTo] = useState(restored?.dateTo ?? "");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [page, setPage] = useState(restored?.page ?? 1);
+  const [updating, setUpdating] = useState(false);
+
+  // Back/forward restores this page from Next's client cache instantly — no
+  // server round-trip — so its data is as old as when it was first rendered.
+  // Instead of refetching the whole list on every return, ask the server for
+  // a tiny fingerprint (count + latest updatedAt) and only pull the full list
+  // when it differs. Runs in the background; the cached list stays visible.
+  const versionRef = useRef(listVersion);
+  useEffect(() => {
+    if (!arrivedViaTraversal()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const latest = await getQuotationsListVersion();
+        if (cancelled || latest === versionRef.current) return;
+        setUpdating(true);
+        const fresh = await getQuotationsList();
+        if (cancelled) return;
+        versionRef.current = latest;
+        setGroups(fresh);
+      } catch {
+        // keep showing the cached list
+      } finally {
+        if (!cancelled) setUpdating(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const hasDateFilter = dateFrom || dateTo;
 
@@ -186,7 +230,9 @@ export function QuotationListClient({
     setDeleting(primaryId);
     try {
       await deleteQuotation(primaryId);
-      setGroups(await getQuotationsList());
+      const [fresh, latest] = await Promise.all([getQuotationsList(), getQuotationsListVersion()]);
+      versionRef.current = latest;
+      setGroups(fresh);
       toast.success("Quotation deleted");
     } catch (e: any) {
       toast.error(e.message);
@@ -275,10 +321,27 @@ export function QuotationListClient({
             <XIcon className="w-3 h-3" /> Clear
           </button>
         )}
-        <div className="ml-auto text-xs text-muted-foreground whitespace-nowrap tabular-nums">
+        <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground whitespace-nowrap tabular-nums">
+          {updating && (
+            <span className="flex items-center gap-1 text-[11px]">
+              <span className="w-2.5 h-2.5 border-[1.5px] border-current border-t-transparent rounded-full animate-spin" />
+              Updating…
+            </span>
+          )}
+          {/* Legend for the dot on each comparison row */}
+          <span className="hidden sm:flex items-center gap-3 pr-3 mr-1 border-r border-border">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-primary" /> Original
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full border border-muted-foreground/40" /> Alternative
+            </span>
+          </span>
+          <span>
           {filtered.length} group{filtered.length !== 1 ? "s" : ""} ·{" "}
           {totalMembers} quotation{totalMembers !== 1 ? "s" : ""}
           {totalPages > 1 && ` · page ${safePage}/${totalPages}`}
+          </span>
         </div>
       </div>
 
@@ -420,9 +483,11 @@ export function QuotationListClient({
                         : "",
                     )}
                   >
-                    {/* Original vs alternative indicator */}
+                    {/* Original vs alternative indicator — see legend above the list */}
                     <div className="w-8 flex justify-center shrink-0">
                       <div
+                        title={isSingle ? undefined : m.isDummy === 0 ? "Original" : "Alternative"}
+                        aria-label={isSingle ? undefined : m.isDummy === 0 ? "Original" : "Alternative"}
                         className={cn(
                           "w-2 h-2 rounded-full",
                           m.isDummy === 0
@@ -446,15 +511,6 @@ export function QuotationListClient({
                           R{m.revisionNo}
                         </span>
                       )}
-                      {isSingle ? null : m.isDummy === 0 ? (
-                        <span className="text-[9px] font-medium border border-primary/30 text-primary rounded px-1.5 py-0.5 shrink-0">
-                          Original
-                        </span>
-                      ) : (
-                        <span className="text-[9px] font-medium border border-border text-muted-foreground rounded px-1.5 py-0.5 shrink-0">
-                          Alternative
-                        </span>
-                      )}
                       <span className="text-xs text-muted-foreground truncate">
                         <Highlight text={m.orgName} query={search} />
                       </span>
@@ -467,17 +523,6 @@ export function QuotationListClient({
                     <span className="text-xs font-semibold tabular-nums shrink-0">
                       {fmt(m.grandTotal)}
                     </span>
-
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0 text-muted-foreground shrink-0"
-                      onClick={() =>
-                        router.push(`/dashboard/sales/quotation/${m.id}`)
-                      }
-                    >
-                      <EyeIcon className="w-3.5 h-3.5" />
-                    </Button>
                   </div>
                 ))}
               </div>

@@ -87,11 +87,22 @@ export function NavigationLoader({
       const destPathname = href.split("?")[0].split("#")[0];
       if (!destPathname || destPathname === prevPathname.current) return;
 
-      setIsLoading(true);
+      // Defer by one task. This listener runs in the capture phase, *before*
+      // React's own click handling — setting state here gets flushed in the
+      // microtask right after, swapping {children} for the skeleton and
+      // unmounting the clicked <Link> before its onClick runs. Next's Link
+      // then never calls preventDefault/router.push and the browser does a
+      // full document navigation (slow, and back/forward reloads everything).
+      // After the event finishes, defaultPrevented tells us Link handled it
+      // as a client-side navigation — only then show the skeleton.
+      setTimeout(() => {
+        if (!e.defaultPrevented) return;
+        setIsLoading(true);
 
-      // Safety reset — if navigation never commits (error, network)
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setIsLoading(false), 10_000);
+        // Safety reset — if navigation never commits (error, network)
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => setIsLoading(false), 10_000);
+      }, 0);
     };
 
     document.addEventListener("click", handleClick, true);

@@ -847,6 +847,26 @@ export async function getQuotationsList() {
   return groups;
 }
 
+// Cheap fingerprint of the quotation list (row count + latest updatedAt,
+// scoped like getQuotationsList). The list page compares it against the
+// fingerprint it was rendered with, so a back-navigation can show the cached
+// list instantly and only refetch the full list when something changed.
+// Creates/deletes move the count; edits bump updatedAt ($onUpdate).
+export async function getQuotationsListVersion(): Promise<string> {
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds =
+    ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
+  const [row] = await db
+    .select({
+      n: count(),
+      latest: sql<string | null>`max(${quotation.updatedAt})::text`,
+    })
+    .from(quotation)
+    .where(inArray(quotation.organizationId, ownerOrgIds));
+  return `${row?.n ?? 0}:${row?.latest ?? ""}`;
+}
+
 export type QuotationListGroup = Awaited<
   ReturnType<typeof getQuotationsList>
 >[number];
