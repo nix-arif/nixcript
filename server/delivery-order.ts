@@ -21,13 +21,15 @@ import {
   organizationProfile,
   member,
   assetUnit,
+  consignEvent,
+  deliveryOrderReturn,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getOrganizationProfile } from "@/server/organization-profile";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, isNotNull, isNull, notExists, ne, sql, or, count } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, isNotNull, isNull, notExists, ne, sql, or, count, like } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -40,6 +42,7 @@ import { pricedWithoutMda, pricedWithoutMdaMessage } from "@/lib/mda/priced-with
 import { bumpLevel, consignedLineForUnit, consumeConsigned, consignedHeldByRep, getConsumeOrder, recordMachineUse, reverseConsumption, reverseMachineUse } from "@/lib/consignment/engine";
 import { isConsignmentLocation } from "@/lib/consignment/labels";
 import { autoSettlePerUse } from "@/lib/consignment/settle";
+import { draftDoNo, isDraftDoNo } from "@/lib/delivery/draft-no";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -172,6 +175,9 @@ export type DeliveryOrderWithItems = DeliveryOrderRow & {
   // Case DO (two-step): what the customer copy shows and the invoice bills
   customerItems: DeliveryOrderCustomerItem[];
   createdByName: string | null; invoiceId: string | null; invoiceNo: string | null;
+  invoiceStatus?: string | null;
+  // Normal DO: goods the customer sent back (all or part), with who / when / why
+  returns?: (typeof deliveryOrderReturn.$inferSelect)[];
 };
 export type DeliveryOrderListRow = DeliveryOrderRow & { createdByName: string | null; invoiceId: string | null; invoiceNo: string | null };
 
@@ -493,7 +499,7 @@ export async function getDeliveryOrders(opts: {
     deliveredIds.length > 0
       ? db.select({ deliveryOrderId: invoice.deliveryOrderId, id: invoice.id, invoiceNo: invoice.invoiceNo })
           .from(invoice)
-          .where(and(inArray(invoice.deliveryOrderId as any, deliveredIds), eq(invoice.organizationId, orgId)))
+          .where(and(inArray(invoice.deliveryOrderId as any, deliveredIds), eq(invoice.organizationId, orgId), ne(invoice.status, "cancelled")))
       : Promise.resolve([]),
   ]);
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? null;
@@ -519,17 +525,17 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!do_) return null;
-  const [items, customerItems, users, invoiceRows] = await Promise.all([
+  const [items, customerItems, users, invoiceRows, returns] = await Promise.all([
     db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderItem.rowNo)),
     db.select().from(deliveryOrderCustomerItem).where(eq(deliveryOrderCustomerItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderCustomerItem.rowNo)),
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [do_.createdBy])),
-    // a Case DO stays "draft" but can be invoiced
-    do_.status === "delivered" || do_.isCaseDo
-      ? db.select({ id: invoice.id, invoiceNo: invoice.invoiceNo })
-          .from(invoice)
-          .where(and(eq(invoice.deliveryOrderId, id), eq(invoice.organizationId, orgId)))
-          .limit(1)
-      : Promise.resolve([]),
+    db.select({ id: invoice.id, invoiceNo: invoice.invoiceNo, status: invoice.status })
+      .from(invoice)
+      .where(and(eq(invoice.deliveryOrderId, id), eq(invoice.organizationId, orgId)))
+      // the live invoice first; a cancelled one only if there is nothing else
+      .orderBy(sql`${invoice.status} = 'cancelled'`, desc(invoice.createdAt))
+      .limit(1),
+    db.select().from(deliveryOrderReturn).where(eq(deliveryOrderReturn.deliveryOrderId, id)).orderBy(asc(deliveryOrderReturn.createdAt)),
   ]);
   const nameOf = (uid: string | null) => users.find((u) => u.id === uid)?.name ?? null;
   return {
@@ -539,6 +545,8 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
     createdByName: nameOf(do_.createdBy),
     invoiceId: invoiceRows[0]?.id ?? null,
     invoiceNo: invoiceRows[0]?.invoiceNo ?? null,
+    invoiceStatus: invoiceRows[0]?.status ?? null,
+    returns,
   };
 }
 
@@ -749,10 +757,9 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     .select()
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
-  // A Case DO is complete once recorded (its stock moved at creation and it is
-  // never "delivered"), so it can be invoiced straight away
-  // (a cancelled Case DO is never invoiced: its status is "cancelled", not "draft")
-  if (!do_ || !(do_.status === "delivered" || (do_.isCaseDo && do_.status === "draft"))) return null;
+  // Invoiced only once delivered — a draft has no DO number yet for the
+  // invoice to refer to (a cancelled Case DO is never invoiced)
+  if (!do_ || do_.status !== "delivered") return null;
 
   const items = await db
     .select()
@@ -955,12 +962,15 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
         (i.soItemId ? soItemPriceMap.get(i.soItemId) : undefined) ??
         (i.productCode ? soItemPriceMap.get(`pc:${i.productCode}`) : undefined) ??
         soItemPriceMap.get(`row:${i.rowNo}`);
+      // Partly returned: bill only what the customer kept
+      const kept = i.returnedQty ? parseFloat(i.qty ?? "1") - parseFloat(i.returnedQty) : null;
+      if (kept !== null && kept <= 1e-9) return [];
       const line = {
         rowNo: i.rowNo,
         productId: i.productId ?? null,
         productCode: i.productCode ?? null,
         description: i.description ?? null,
-        qty: i.qty ?? null,
+        qty: kept !== null ? String(kept) : (i.qty ?? null),
         uom: i.uom ?? null,
         // A Case DO machine's per-case usage fee is what the hospital pays for it
         ...(i.usageFee ? { description: `${i.description ?? i.productCode ?? "Machine"} — usage fee (per case)` } : {}),
@@ -1220,6 +1230,8 @@ async function deductCaseItems(p: {
   // Consignment: settle this DO's consumption right away where the owner
   // chose automatic, per-use settlement. Never fails the DO — anything not
   // settled here stays unsettled and is picked up by a manual settlement.
+  // A draft has no DO number yet: it is settled when marked as delivered.
+  if (isDraftDoNo(p.doNo)) return;
   try {
     await autoSettlePerUse({ agentOrgId: orgId, sourceId: p.doId, sourceNo: p.doNo, userId });
   } catch (e) {
@@ -1260,11 +1272,13 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
     const bad = await pricedWithoutMda(input.customerItems);
     if (bad.length) throw new Error(pricedWithoutMdaMessage(bad));
   }
-  const doNo = await generateDoNo(orgId);
+  // No number yet: a draft carries a temporary reference until it is delivered
+  const newId = nanoid();
+  const doNo = draftDoNo(newId);
   const [row] = await db
     .insert(deliveryOrder)
     .values({
-      id: nanoid(),
+      id: newId,
       organizationId: orgId,
       doNo,
       salesOrderId: input.salesOrderId ?? null,
@@ -1450,6 +1464,13 @@ async function loadCaseDo(doId: string, orgId: string): Promise<{ error: string 
   return { do_: d };
 }
 
+/** The DO's invoice unless it was cancelled — a live invoice must be cancelled before the DO is undone. */
+async function activeInvoiceOf(doId: string, orgId: string) {
+  const [inv] = await db.select({ invoiceNo: invoice.invoiceNo }).from(invoice)
+    .where(and(eq(invoice.deliveryOrderId, doId), eq(invoice.organizationId, orgId), ne(invoice.status, "cancelled"))).limit(1);
+  return inv ?? null;
+}
+
 async function invoiceOf(doId: string, orgId: string) {
   const [inv] = await db.select({ invoiceNo: invoice.invoiceNo }).from(invoice)
     .where(and(eq(invoice.deliveryOrderId, doId), eq(invoice.organizationId, orgId))).limit(1);
@@ -1549,20 +1570,29 @@ export async function undoCaseActuals(doId: string): Promise<{ ok: true } | { ok
  * an invoice is linked (cancel / credit that first) or when consigned use on
  * it is already settled. Needs the "Cancel Case DO" permission.
  */
-export async function cancelCaseDo(doId: string, reason: string): Promise<{ ok: true } | { ok: false; title: string }> {
+/**
+ * Cancel a DO that should not have happened. It stays on record (its number
+ * is kept) marked Cancelled with who, when and why, and all stock it still
+ * holds goes back where it came from. A Case DO can be cancelled at any stage;
+ * a normal DO once delivered (a draft has no number — delete it instead), and
+ * its sales order goes back to awaiting delivery.
+ */
+export async function cancelDeliveryOrder(doId: string, reason: string): Promise<{ ok: true } | { ok: false; title: string }> {
   try {
     const { orgId, userId } = await requireAccess("delivery-order:cancel");
     const why = reason.trim();
     if (why.length < 3) return { ok: false, title: "Give the reason for cancelling" };
     const [d] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId))).limit(1);
     if (!d) return { ok: false, title: "Delivery order not found" };
-    if (!d.isCaseDo) return { ok: false, title: "Only Case DOs can be cancelled here" };
     if (d.status === "cancelled") return { ok: false, title: `${d.doNo} is already cancelled` };
-    const inv = await invoiceOf(doId, orgId);
-    if (inv) return { ok: false, title: `Invoice ${inv.invoiceNo} is linked to ${d.doNo} — cancel or credit the invoice first` };
+    if (!d.isCaseDo && d.status === "draft") return { ok: false, title: `${d.doNo} is still a draft — delete it instead` };
+    const inv = await activeInvoiceOf(doId, orgId);
+    if (inv) return { ok: false, title: `Invoice ${inv.invoiceNo} is linked to ${d.doNo} — cancel the invoice first` };
     // Put back whatever stock the DO still holds (refused — nothing changed —
     // if consigned use on it is already settled)
     await restoreDoStock({ doId, doNo: d.doNo, activeOrgId: orgId, userId, notes: (code) => `DO cancelled — stock returned: ${code}` });
+    // A delivered normal DO closed its sales order and released its reservation: undo both
+    if (!d.isCaseDo && d.salesOrderId && d.status !== "draft") await reopenSalesOrder(d.salesOrderId, doId, orgId);
     const [me] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
     await db.update(deliveryOrder).set({
       status: "cancelled", cancelledAt: new Date(), cancelledBy: userId, cancelledByName: me?.name ?? null, cancelReason: why, updatedAt: new Date(),
@@ -1643,10 +1673,11 @@ export async function updateDeliveryOrderNumber(id: string, doNoInput: string): 
   if (!trimmed) throw new Error("DO number can't be empty");
 
   const [existing] = await db
-    .select({ id: deliveryOrder.id, organizationId: deliveryOrder.organizationId })
+    .select({ id: deliveryOrder.id, organizationId: deliveryOrder.organizationId, doNo: deliveryOrder.doNo })
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, id), inArray(deliveryOrder.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Delivery order not found");
+  if (isDraftDoNo(existing.doNo)) throw new Error("A draft has no DO number yet — it is given when the DO is marked as delivered");
 
   // Checked across every company with the same owner, not just this one
   if (await isDocNoTakenInGroup(DO_NUMBERED, existing.organizationId, trimmed, id)) {
@@ -1758,17 +1789,17 @@ export async function deleteDeliveryOrder(id: string): Promise<void> {
   const { orgId, userId } = await requireAccess("delivery-order:delete");
   const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
-  // draft never touched stock; delivered took stock out (reversed below);
-  // returned already put it back via returnDeliveryOrder — nothing left to
-  // reverse in either of those two once we get here.
-  if (!["draft", "delivered", "returned"].includes(existing.status)) {
-    throw new Error("This delivery order can't be deleted");
+  // Only a draft is deleted. Once delivered a DO has its number and has moved
+  // stock: it is cancelled instead (kept on record with the reason), so the
+  // DO numbering never has an unexplained gap.
+  if (existing.status !== "draft") {
+    throw new Error(`${existing.doNo} is ${existing.status} — cancel it instead (needs the "Cancel Delivery Order" permission); a cancelled DO stays on record with the reason`);
   }
   // A Case DO is deleted only while nothing has happened (made by mistake):
   // once its actual items took stock, it is cancelled instead — it stays on
   // record with the reason, and the DO number sequence has no unexplained gap
   if (existing.isCaseDo && existing.actualStatus !== "pending") {
-    throw new Error(`${existing.doNo} has already taken stock — cancel it instead (needs the "Cancel Case DO" permission); a cancelled DO stays on record with the reason`);
+    throw new Error(`${existing.doNo} has already taken stock — cancel it instead (needs the "Cancel Delivery Order" permission); a cancelled DO stays on record with the reason`);
   }
 
   // Deleting a DO an invoice already references would orphan that invoice's
@@ -1827,6 +1858,10 @@ async function deliverDeliveryOrderInner(id: string): Promise<DeliverResult> {
   if (existing.status !== "draft") {
     return { ok: false, title: `${existing.doNo} is already ${existing.status} — only draft delivery orders can be marked as delivered` };
   }
+  // Two-step Case DO: delivered means the case is done — what was actually used must be known
+  if (existing.isCaseDo && existing.actualStatus === "pending") {
+    return { ok: false, title: "Record the actual items used first — the DO is marked as delivered once the case is done" };
+  }
 
   const warehouseLabel = await resolveMainWarehouseLabel(orgId);
 
@@ -1881,6 +1916,9 @@ async function deliverDeliveryOrderInner(id: string): Promise<DeliverResult> {
     }
   }
 
+  // The DO gets its real number now (a draft only carried a temporary reference)
+  const doNo = isDraftDoNo(existing.doNo) ? await assignDoNumber(existing) : existing.doNo;
+
   // STOCK_OUT for each item that has a productId
   await Promise.all(
     stockOutItems.map((i) =>
@@ -1893,7 +1931,7 @@ async function deliverDeliveryOrderInner(id: string): Promise<DeliverResult> {
         quantity: parseFloat(i.qty ?? "1"),
         referenceType: REF_TYPE.DELIVERY_ORDER,
         referenceId: id,
-        referenceNo: existing.doNo,
+        referenceNo: doNo,
         notes: `DO delivery: ${i.productCode ?? ""}`.trim(),
       }),
     ),
@@ -1920,66 +1958,121 @@ async function deliverDeliveryOrderInner(id: string): Promise<DeliverResult> {
     revalidatePath(`/dashboard/sales/order/${existing.salesOrderId}`);
     revalidatePath("/dashboard/sales/order");
   }
+  // Consigned stock used on a Case DO: per-use settlement waited for the DO number
+  if (existing.isCaseDo) {
+    try { await autoSettlePerUse({ agentOrgId: orgId, sourceId: id, sourceNo: doNo, userId }); } catch (e) { console.error("Consignment auto-settlement failed:", e); }
+  }
   revalidatePath("/dashboard/fulfillment/delivery");
+  revalidatePath(`/dashboard/fulfillment/delivery/${id}`);
   revalidatePath("/dashboard/fulfillment/invoice");
   revalidatePath("/dashboard");
   return { ok: true };
 }
 
-export async function returnDeliveryOrder(id: string): Promise<void> {
-  const { orgId, userId } = await requireAccess("delivery-order:update");
-  const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
-  if (!existing) throw new Error("Delivery order not found");
-  if (existing.status !== "delivered") throw new Error("Only delivered orders can be marked as returned");
+/**
+ * Give a draft its real DO number (on delivery) and carry it onto everything
+ * recorded under the temporary reference: the DO's own stock movements (case
+ * usage, loans), consignment uses (event source and movement notes) and any
+ * invoice snapshot.
+ */
+async function assignDoNumber(d: { id: string; organizationId: string; doNo: string }): Promise<string> {
+  const doNo = await generateDoNo(d.organizationId);
+  const old = d.doNo;
+  await db.update(deliveryOrder).set({ doNo, updatedAt: new Date() }).where(eq(deliveryOrder.id, d.id));
+  await db.update(stockMovement).set({ referenceNo: doNo }).where(and(eq(stockMovement.referenceId, d.id), eq(stockMovement.referenceNo, old)));
+  await db.update(stockMovement).set({ notes: sql`replace(${stockMovement.notes}, ${old}, ${doNo})` })
+    .where(like(stockMovement.notes, `%${old}%`));
+  await db.update(consignEvent).set({ sourceNo: doNo }).where(eq(consignEvent.sourceId, d.id));
+  await db.update(invoice).set({ deliveryOrderNo: doNo }).where(eq(invoice.deliveryOrderId, d.id));
+  return doNo;
+}
 
-  // A Case DO's items came from the rep's field stock (possibly a sibling
-  // company's), not the main warehouse — send them back there.
-  if (existing.isCaseDo) {
-    await restoreDoStock({
-      doId: id,
-      doNo: existing.doNo,
-      activeOrgId: orgId,
-      userId,
-      notes: (code) => `DO returned — stock back to field: ${code}`,
+export type ReturnResult = { ok: true; full: boolean } | { ok: false; title: string };
+
+/**
+ * Goods the customer sent back after a normal DO was delivered — all of it or
+ * only some lines / quantities, possibly in several returns. Each quantity goes
+ * back into the warehouse it left (a RETURN movement) and the return is kept
+ * with who, when and why. Refused while a live invoice is linked (cancel the
+ * invoice first, then invoice what the customer kept). Once everything is
+ * back the DO is "Returned". A Case DO isn't returned — cancel it instead.
+ */
+export async function returnDeliveryOrder(id: string, input: { reason: string; items: { itemId: string; qty: number }[] }): Promise<ReturnResult> {
+  try {
+    const { orgId, userId } = await requireAccess("delivery-order:update");
+    const why = input.reason.trim();
+    if (why.length < 3) return { ok: false, title: "Give the reason for the return" };
+    const [existing] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
+    if (!existing) return { ok: false, title: "Delivery order not found" };
+    if (existing.isCaseDo) return { ok: false, title: "A Case DO isn't returned — cancel it instead (machines go back through the Machines box)" };
+    if (existing.status !== "delivered") return { ok: false, title: `Only a delivered DO can take a return — ${existing.doNo} is ${existing.status}` };
+    const inv = await activeInvoiceOf(id, orgId);
+    if (inv) return { ok: false, title: `Invoice ${inv.invoiceNo} is linked to ${existing.doNo} — cancel the invoice first, then invoice what the customer kept` };
+
+    const items = await db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, id));
+    const byId = new Map(items.map((i) => [i.id, i]));
+    const wanted = input.items.filter((r) => r.qty > 0);
+    if (!wanted.length) return { ok: false, title: "Enter the quantity returned for at least one item" };
+    for (const r of wanted) {
+      const it = byId.get(r.itemId);
+      if (!it) return { ok: false, title: "An item isn't on this DO" };
+      const left = parseFloat(it.qty ?? "1") - parseFloat(it.returnedQty ?? "0");
+      if (r.qty > left + 1e-9) return { ok: false, title: `${it.productCode ?? it.description ?? "Item"}: only ${left} left to return` };
+    }
+
+    // Each product goes back to the warehouse its delivery took it from
+    const outs = await db.select({ productId: stockMovement.productId, label: stockMovement.warehouseLabel }).from(stockMovement)
+      .where(and(eq(stockMovement.referenceId, id), eq(stockMovement.organizationId, orgId), eq(stockMovement.movementType, MOVEMENT_TYPE.STOCK_OUT)));
+    const labelOf = new Map(outs.map((o) => [o.productId, o.label]));
+    const fallback = await resolveMainWarehouseLabel(orgId);
+
+    for (const r of wanted) {
+      const it = byId.get(r.itemId)!;
+      if (it.productId) {
+        await createApprovedMovement({
+          orgId, userId, productId: it.productId,
+          warehouseLabel: labelOf.get(it.productId) ?? fallback,
+          movementType: MOVEMENT_TYPE.RETURN, quantity: r.qty,
+          referenceType: REF_TYPE.DELIVERY_ORDER, referenceId: id, referenceNo: existing.doNo,
+          notes: `DO return: ${it.productCode ?? ""} — ${why}`,
+        });
+      }
+      await db.update(deliveryOrderItem).set({ returnedQty: (parseFloat(it.returnedQty ?? "0") + r.qty).toFixed(4) }).where(eq(deliveryOrderItem.id, it.id));
+      it.returnedQty = (parseFloat(it.returnedQty ?? "0") + r.qty).toFixed(4);
+    }
+    const [me] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
+    await db.insert(deliveryOrderReturn).values({
+      id: nanoid(), deliveryOrderId: id, organizationId: orgId, reason: why, createdBy: userId, createdByName: me?.name ?? null,
+      items: wanted.map((r) => { const it = byId.get(r.itemId)!; return { itemId: it.id, productCode: it.productCode, description: it.description, qty: r.qty, uom: it.uom }; }),
     });
-    await db.update(deliveryOrder).set({ status: "returned" }).where(eq(deliveryOrder.id, id));
+    const full = items.every((i) => parseFloat(i.qty ?? "1") - parseFloat(i.returnedQty ?? "0") <= 1e-9);
+    await db.update(deliveryOrder).set({ ...(full ? { status: "returned" } : {}), updatedAt: new Date() }).where(eq(deliveryOrder.id, id));
+
     revalidatePath("/dashboard/fulfillment/delivery");
-    revalidatePath("/dashboard/inventory/field-stock");
+    revalidatePath(`/dashboard/fulfillment/delivery/${id}`);
+    revalidatePath("/dashboard/inventory");
     revalidatePath("/dashboard");
-    return;
+    return { ok: true, full };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't record the return" };
   }
+}
 
-  const warehouseLabel = await resolveMainWarehouseLabel(orgId);
-
-  // RETURN movement — stock comes back in
-  const items = await db
-    .select()
-    .from(deliveryOrderItem)
-    .where(eq(deliveryOrderItem.deliveryOrderId, id));
-
-  await Promise.all(
-    items
-      .filter((i) => i.productId)
-      .map((i) =>
-        createApprovedMovement({
-          orgId,
-          userId,
-          productId: i.productId!,
-          warehouseLabel,
-          movementType: MOVEMENT_TYPE.RETURN,
-          quantity: parseFloat(i.qty ?? "1"),
-          referenceType: REF_TYPE.DELIVERY_ORDER,
-          referenceId: id,
-          referenceNo: existing.doNo,
-          notes: `DO return: ${i.productCode ?? ""}`.trim(),
-        }),
-      ),
-  );
-
-  await db.update(deliveryOrder).set({ status: "returned" }).where(eq(deliveryOrder.id, id));
-
-  revalidatePath("/dashboard/fulfillment/delivery");
-  revalidatePath("/dashboard");
+/** A cancelled delivery: its sales order is awaiting delivery again, with its stock reserved as before delivery. */
+async function reopenSalesOrder(soId: string, doId: string, orgId: string) {
+  const [so] = await db.select({ status: salesOrder.status, reserved: salesOrder.stockReservationStatus }).from(salesOrder)
+    .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId))).limit(1);
+  if (!so || so.status !== "fulfilled") return;
+  await db.update(salesOrder).set({ status: "confirmed" }).where(eq(salesOrder.id, soId));
+  if (so.reserved === "reserved") {
+    const warehouseLabel = await resolveMainWarehouseLabel(orgId);
+    const items = await db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, doId));
+    for (const i of items.filter((x) => x.productId)) {
+      await adjustReservation({ orgId, productId: i.productId!, warehouseLabel, delta: parseFloat(i.qty ?? "1") });
+    }
+  }
+  revalidatePath(`/dashboard/sales/order/${soId}`);
+  revalidatePath("/dashboard/sales/order");
 }
 
 export type PendingSoForDoRow = {
@@ -2095,12 +2188,13 @@ export async function getPendingDosForInvoice(): Promise<PendingDoForInvoiceRow[
     .from(deliveryOrder)
     .where(and(
       eq(deliveryOrder.organizationId, orgId),
-      or(eq(deliveryOrder.status, "delivered"), and(eq(deliveryOrder.isCaseDo, true), eq(deliveryOrder.status, "draft"))),
+      eq(deliveryOrder.status, "delivered"),
       notExists(
         db.select({ _: invoice.id }).from(invoice)
           .where(and(
             eq(invoice.organizationId, orgId),
             eq(invoice.deliveryOrderId, deliveryOrder.id),
+            ne(invoice.status, "cancelled"),
           )),
       ),
     ))
@@ -2351,7 +2445,9 @@ export async function sellCaseMachine(doId: string, movementId: string, price: s
     )).limit(1);
     if (item) await db.update(deliveryOrderItem).set({ loanReturnMode: "sold", salePrice: amount.toFixed(2) }).where(eq(deliveryOrderItem.id, item.id));
 
-    try { await autoSettlePerUse({ agentOrgId: orgId, sourceId: doId, sourceNo: do_.doNo, userId }); } catch (e) { console.error("Consignment auto-settlement failed:", e); }
+    if (!isDraftDoNo(do_.doNo)) {
+      try { await autoSettlePerUse({ agentOrgId: orgId, sourceId: doId, sourceNo: do_.doNo, userId }); } catch (e) { console.error("Consignment auto-settlement failed:", e); }
+    }
     const [inv] = await db.select({ invoiceNo: invoice.invoiceNo }).from(invoice).where(eq(invoice.deliveryOrderId, doId)).limit(1);
     revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
     revalidatePath("/dashboard/inventory");

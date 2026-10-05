@@ -5,7 +5,7 @@ import {
   invoice,
   invoiceItem,
   invoiceExpense,
-  invoiceCounter,
+  deliveryOrder,
   invoiceStats,
   customer,
   customerOrganization,
@@ -27,12 +27,11 @@ import { maybeCreateIntercompanyPoForCaseInvoice } from "@/server/purchase-order
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, or, sql, count, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, or, sql, count, isNull, ne } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { getNumberingConfig } from "@/server/document-numbering";
-import { buildDocumentNo } from "@/lib/document-numbering";
-import { nextFreeDocNo, getOrgGroupIds } from "@/lib/document-number-group";
+import { getOrgGroupIds } from "@/lib/document-number-group";
+import { invoiceNoForDo, standaloneInvoiceNo } from "@/lib/invoice-number";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -50,30 +49,6 @@ async function requireAccess(permission: string) {
 }
 
 
-async function generateInvoiceNo(orgId: string): Promise<string> {
-  const cfg = await getNumberingConfig(orgId, "inv");
-  const year = new Date().getFullYear();
-  const existing = await db
-    .select()
-    .from(invoiceCounter)
-    .where(eq(invoiceCounter.organizationId, orgId))
-    .limit(1);
-  let nextNo: number;
-  if (existing.length === 0) {
-    await db.insert(invoiceCounter).values({ id: nanoid(), organizationId: orgId, year, lastNumber: 1 });
-    nextNo = 1;
-  } else {
-    const counter = existing[0];
-    nextNo = counter.year === year ? counter.lastNumber + 1 : 1;
-  }
-  // Unique across the owner's companies — skip numbers already used anywhere
-  // in the group (or imported under this company) and move the counter past.
-  const { seq, docNo } = await nextFreeDocNo(INV_NUMBERED, orgId, nextNo, (n) => buildDocumentNo(cfg, year, n));
-  await db.update(invoiceCounter).set({ year, lastNumber: seq }).where(eq(invoiceCounter.organizationId, orgId));
-  return docNo;
-}
-
-const INV_NUMBERED = { table: invoice, id: invoice.id, organizationId: invoice.organizationId, number: invoice.invoiceNo };
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -733,6 +708,12 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
   const costTotal = input.costTotal ?? "0";
   const expensesTotal = input.expensesTotal ?? "0";
 
+  // One live invoice per DO — a re-issue comes after the first one is cancelled
+  if (input.deliveryOrderId) {
+    const [live] = await db.select({ invoiceNo: invoice.invoiceNo }).from(invoice)
+      .where(and(eq(invoice.deliveryOrderId, input.deliveryOrderId), ne(invoice.status, "cancelled"))).limit(1);
+    if (live) throw new Error(`This DO is already invoiced as ${live.invoiceNo} — cancel that invoice first to issue a new one`);
+  }
   let invoiceNo: string;
   if (input.invoiceNo?.trim()) {
     const dup = await db.select({ id: invoice.id }).from(invoice)
@@ -740,8 +721,13 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
       .limit(1);
     if (dup.length > 0) throw new Error(`Invoice number "${input.invoiceNo.trim()}" already exists`);
     invoiceNo = input.invoiceNo.trim();
+  } else if (input.deliveryOrderId) {
+    // Billing a DO: the invoice takes the DO's number (DOSI/26-0478 → INVSI/26-0478)
+    const [d] = await db.select({ doNo: deliveryOrder.doNo, orgId: deliveryOrder.organizationId }).from(deliveryOrder)
+      .where(and(eq(deliveryOrder.id, input.deliveryOrderId), inArray(deliveryOrder.organizationId, await getOrgGroupIds(orgId)))).limit(1);
+    invoiceNo = d ? await invoiceNoForDo(orgId, d.orgId, d.doNo) : await standaloneInvoiceNo(orgId);
   } else {
-    invoiceNo = await generateInvoiceNo(orgId);
+    invoiceNo = await standaloneInvoiceNo(orgId);
   }
   const [row] = await db
     .insert(invoice)
@@ -1055,7 +1041,7 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
     if (dup) throw new Error(`Invoice number "${manualNo}" already exists`);
     invoiceNo = manualNo;
   } else {
-    invoiceNo = await generateInvoiceNo(orgId);
+    invoiceNo = await standaloneInvoiceNo(orgId);
   }
 
   const [row] = await db

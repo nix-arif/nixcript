@@ -1,4 +1,5 @@
 import { PDFDocument, rgb, StandardFonts, degrees } from "pdf-lib";
+import { isDraftDoNo } from "@/lib/delivery/draft-no";
 import {
   drawCompanyHeader, estimateHeaderH,
   sanitizeText, wrap, trunc, fmtD, fmtM, hLine,
@@ -547,6 +548,16 @@ export async function generateDeliveryOrderPdf(data: DoForPdfResult, options: Do
       pg.drawText("CANCELLED", { x: width / 2 - (tw / 2) * Math.cos(Math.PI / 4) + 20, y: height / 2 - (tw / 2) * Math.sin(Math.PI / 4), size, font: fontB, color: C_RED, opacity: 0.18, rotate: degrees(45) });
       const lines = wrap(note, fontB, 9, width - ML - MR);
       lines.forEach((ln, k) => pg.drawText(ln, { x: ML, y: height - 18 - k * 11, size: 9, font: fontB, color: C_RED }));
+    }
+  }
+
+  // A draft has no DO number yet (given when delivered): stamped DRAFT
+  if (isDraftDoNo(do_.doNo) && do_.status === "draft") {
+    for (const pg of pdfDoc.getPages()) {
+      const { width, height } = pg.getSize();
+      const size = 110;
+      const tw = fontB.widthOfTextAtSize("DRAFT", size);
+      pg.drawText("DRAFT", { x: width / 2 - (tw / 2) * Math.cos(Math.PI / 4) + 20, y: height / 2 - (tw / 2) * Math.sin(Math.PI / 4), size, font: fontB, color: C_LITE, opacity: 0.15, rotate: degrees(45) });
     }
   }
 

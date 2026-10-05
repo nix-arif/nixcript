@@ -35,7 +35,7 @@ export const ALL_PERMISSIONS = [
   { key: "delivery-order:internal-copy", label: "Download Case DO Internal Copy" },
   // Cancel (void) a Case DO: it stays on record as Cancelled with the reason,
   // and its stock comes back through reversing movements
-  { key: "delivery-order:cancel", label: "Cancel Case DO" },
+  { key: "delivery-order:cancel", label: "Cancel Delivery Order" },
 
   // Invoice
   { key: "invoice:read",   label: "View Invoices" },

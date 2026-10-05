@@ -14,7 +14,7 @@ import { db } from "@/db";
 import {
   consignEvent, consignHeader, consignLine, consignPairSetting, consignPriceItem, consignSettlement,
   consignPartner, consignPartnerPriceItem, purchaseOrderCounter,
-  customer, customerOrganization, invoice, invoiceCounter, invoiceItem, intercompanyPurchaseOrderCounter,
+  customer, customerOrganization, invoice, invoiceItem, intercompanyPurchaseOrderCounter,
   organization, product, purchaseOrder, purchaseOrderItem, salesOrderItem, supplier, documentNumberingSetting, member,
   assetUnit,
 } from "@/db/schema";
@@ -22,6 +22,7 @@ import { and, eq, gte, inArray, isNull, lt } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { LENDABLE_USES } from "@/lib/inventory/constants";
 import { nextFreeDocNo } from "@/lib/document-number-group";
+import { standaloneInvoiceNo } from "@/lib/invoice-number";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import type { DocType } from "@/lib/document-numbering";
 
@@ -44,18 +45,10 @@ async function getNumberingConfig(orgId: string, docType: DocType) {
   return { documentType: docType, prefix: (org?.slug ?? "ORG").toUpperCase(), docCode: DEFAULT_DOC_CODE[docType] ?? docType.toUpperCase(), separator: "-", includeYear: 1, paddingLength: 4, numberFormat: "standard" };
 }
 
+// Settlement invoices have no DO: the invoice "C" series (INVSI/26-C0001), so
+// they never take a number an aligned DO invoice will need
 async function nextInvoiceNo(orgId: string): Promise<string> {
-  const cfg = await getNumberingConfig(orgId, "inv");
-  const year = new Date().getFullYear();
-  const [c] = await db.select().from(invoiceCounter).where(eq(invoiceCounter.organizationId, orgId)).limit(1);
-  const start = c && c.year === year ? c.lastNumber + 1 : 1;
-  const { seq, docNo } = await nextFreeDocNo(
-    { table: invoice, id: invoice.id, organizationId: invoice.organizationId, number: invoice.invoiceNo },
-    orgId, start, (n) => buildDocumentNo(cfg, year, n),
-  );
-  if (c) await db.update(invoiceCounter).set({ year, lastNumber: seq }).where(eq(invoiceCounter.organizationId, orgId));
-  else await db.insert(invoiceCounter).values({ id: nanoid(), organizationId: orgId, year, lastNumber: seq });
-  return docNo;
+  return standaloneInvoiceNo(orgId);
 }
 
 async function nextIntercompanyPoNo(orgId: string): Promise<string> {

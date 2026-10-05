@@ -12,7 +12,7 @@ import {
   sellCaseMachine,
   setDoItemCustomerView,
   saveCaseCustomerItems,
-  cancelCaseDo,
+  cancelDeliveryOrder,
   undoCaseActuals,
   updateDeliveryOrderCaseInfo,
   updateDeliveryOrderNumber,
@@ -34,6 +34,7 @@ import {
   PrinterIcon, DollarSignIcon, Loader2Icon, ChevronDownIcon, StethoscopeIcon, BanIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isDraftDoNo } from "@/lib/delivery/draft-no";
 import { LOAN_PURPOSE_LABELS } from "@/lib/inventory/constants";
 import { CustomerViewEditor, customerViewSummary } from "@/components/customer-view-editor";
 import { CaseExtraProductCell, type CaseLineItem } from "../create/create-do-client";
@@ -246,12 +247,13 @@ export function DeliveryOrderDetailClient({
   // Case DO in two steps (customer items now, actual items after the case)
   const twoStep = !!order.isCaseDo && order.actualStatus !== null;
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
   async function doCancel() {
     setCancelling(true);
     try {
-      const res = await cancelCaseDo(order.id, cancelReason);
+      const res = await cancelDeliveryOrder(order.id, cancelReason);
       if (!res.ok) { toast.error(res.title, { duration: 10000 }); return; }
       toast.success(`${order.doNo} cancelled — stock returned`);
       setCancelOpen(false);
@@ -299,14 +301,11 @@ export function DeliveryOrderDetailClient({
   }
 
   async function handleDelete() {
-    const confirmMsg = status === "delivered"
-      ? `Delete ${order.doNo}? The stock this order took out will be returned to its warehouse. This cannot be undone.`
-      : `Delete ${order.doNo}? This cannot be undone.`;
-    if (!confirm(confirmMsg)) return;
+    if (!confirm(`Delete draft ${order.doNo}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       await deleteDeliveryOrder(order.id);
-      toast.success(status === "delivered" ? "Delivery order deleted — stock returned" : "Delivery order deleted");
+      toast.success("Delivery order deleted");
       router.push("/dashboard/fulfillment/delivery");
     } catch (e: any) {
       toast.error(e.message);
@@ -317,14 +316,20 @@ export function DeliveryOrderDetailClient({
   const isDraft = status === "draft";
   const isDelivered = status === "delivered";
   const isCancelled = status === "cancelled";
-  // A Case DO is invoiceable as soon as it is recorded (it never goes through delivery)
-  const canInvoice = (isDelivered || (order.isCaseDo && isDraft)) && !order.invoiceId;
+  // A cancelled invoice no longer holds the DO (it can be returned, cancelled or invoiced again)
+  const liveInvoice = !!order.invoiceId && order.invoiceStatus !== "cancelled";
+  // Invoiced once delivered — a draft has no DO number yet
+  const canInvoice = isDelivered && !liveInvoice;
+  // Two-step Case DO: delivered once the case is done and the actual items are recorded
+  const deliverBlocked = twoStep && order.actualStatus === "pending";
   const isReturned = status === "returned";
-  // A Case DO is deleted only while nothing has happened (no stock taken);
-  // after that it is cancelled instead, and stays on record
-  const canDelete = (isDraft || isDelivered || isReturned) && isOwner && !order.invoiceId && can("delivery-order:delete")
+  // Only a draft is deleted (and a Case DO only before it took stock); once a
+  // DO has its number or moved stock it is cancelled instead, and stays on record
+  const canDelete = isDraft && isOwner && !liveInvoice && can("delivery-order:delete")
     && (!order.isCaseDo || order.actualStatus === "pending");
-  const canCancel = !!order.isCaseDo && !isCancelled && !order.invoiceId && can("delivery-order:cancel");
+  const canCancel = (!!order.isCaseDo || isDelivered || isReturned) && !isCancelled && !liveInvoice && can("delivery-order:cancel");
+  // Goods sent back after delivery — normal DOs only (a Case DO is cancelled)
+  const canReturn = !order.isCaseDo && isDelivered && can("delivery-order:update");
 
   return (
     <div className="p-6 space-y-6">
@@ -558,6 +563,8 @@ export function DeliveryOrderDetailClient({
 
           )}
 
+          {!!order.returns?.length && <ReturnsSection order={order} />}
+
           {machines.length > 0 && !isCancelled && (
             <CaseMachinesSection doId={order.id} machines={machines} canReturn={can("delivery-order:update")} onDone={() => router.refresh()} />
           )}
@@ -582,7 +589,8 @@ export function DeliveryOrderDetailClient({
                 <Button
                   size="sm"
                   className="w-full gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                  disabled={!!actioning}
+                  disabled={!!actioning || deliverBlocked}
+                  title={deliverBlocked ? "Record the actual items used first (after the case)" : isDraftDoNo(doNo) ? "Gives this DO its number" : undefined}
                   onClick={() => act("deliver", async () => {
                     const res = await deliverDeliveryOrder(order.id);
                     if (!res.ok) throw Object.assign(new Error(res.title), { details: res.details });
@@ -592,16 +600,17 @@ export function DeliveryOrderDetailClient({
                   {actioning === "deliver" ? "Updating…" : "Mark as Delivered"}
                 </Button>
               )}
-              {isDelivered && can("delivery-order:update") && (
+              {canReturn && (
                 <Button
                   size="sm"
                   variant="outline"
                   className="w-full gap-1.5 h-8 text-xs text-destructive hover:text-destructive border-destructive/30"
-                  disabled={!!actioning}
-                  onClick={() => act("return", () => returnDeliveryOrder(order.id), "returned", "Marked as returned")}
+                  disabled={!!actioning || liveInvoice}
+                  title={liveInvoice ? `Invoice ${order.invoiceNo} is linked — cancel it first, then invoice what the customer kept` : "Record goods the customer sent back — all or part"}
+                  onClick={() => setReturnOpen(true)}
                 >
                   <RotateCcwIcon className="w-3.5 h-3.5" />
-                  {actioning === "return" ? "Updating…" : "Mark as Returned"}
+                  Record Return
                 </Button>
               )}
               {canInvoice && can("invoice:create") && (
@@ -637,7 +646,8 @@ export function DeliveryOrderDetailClient({
               <TruckIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
               <div>
                 <p className="text-[10px] text-muted-foreground">DO Number</p>
-                <DoNumberField doId={order.id} doNo={doNo} isOwner={isOrgOwner} onUpdated={(next) => { setDoNo(next); router.refresh(); }} />
+                <DoNumberField doId={order.id} doNo={doNo} isOwner={isOrgOwner && !isDraftDoNo(doNo)} onUpdated={(next) => { setDoNo(next); router.refresh(); }} />
+                {isDraftDoNo(doNo) && <p className="text-[10px] text-muted-foreground mt-0.5">Temporary reference — the DO number is given when it is marked as delivered</p>}
               </div>
             </div>
 
@@ -781,6 +791,8 @@ export function DeliveryOrderDetailClient({
         </div>
       </div>
 
+      {returnOpen && <ReturnDialog order={order} onClose={() => setReturnOpen(false)} onDone={(full) => { setReturnOpen(false); if (full) setStatus("returned"); router.refresh(); }} />}
+
       <Dialog open={cancelOpen} onOpenChange={(o) => { if (!cancelling) setCancelOpen(o); }}>
         <DialogContent>
           <DialogHeader>
@@ -788,12 +800,15 @@ export function DeliveryOrderDetailClient({
           </DialogHeader>
           <div className="space-y-3 text-sm">
             <p className="text-muted-foreground">
-              The DO stays on record marked <b>Cancelled</b> with your name, the date and the reason. All stock it took
-              {order.actualStatus === "pending" ? " (none yet)" : " — items, consigned stock and machines —"} goes back to {order.applicationSpecialistName ?? "the specialist"} through reversing entries in Movement History. It can&apos;t be undone.
+              The DO stays on record marked <b>Cancelled</b> (its number is kept) with your name, the date and the reason.{" "}
+              {order.isCaseDo
+                ? <>All stock it took{order.actualStatus === "pending" ? " (none yet)" : " — items, consigned stock and machines —"} goes back to {order.applicationSpecialistName ?? "the specialist"} through reversing entries in Movement History.</>
+                : <>Everything still out goes back into the warehouse it left through reversing entries in Movement History{order.salesOrderNo ? <>, and {order.salesOrderNo} is awaiting delivery again</> : null}. Use <b>Record Return</b> instead if the customer simply sent goods back.</>}
+              {" "}It can&apos;t be undone.
             </p>
             <div className="space-y-1.5">
               <Label className="text-xs">Reason *</Label>
-              <Input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="e.g. Case postponed by the doctor" autoFocus />
+              <Input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder={order.isCaseDo ? "e.g. Case postponed by the doctor" : "e.g. Delivered to the wrong customer"} autoFocus />
             </div>
           </div>
           <DialogFooter>
@@ -1112,5 +1127,91 @@ function CustomerItemsSection({ order, canEdit, onSaved }: { order: DeliveryOrde
         </table>
       )}
     </section>
+  );
+}
+
+// Normal DO: goods the customer sent back — each return with who, when and why
+function ReturnsSection({ order }: { order: DeliveryOrderWithItems }) {
+  return (
+    <section className="border border-border rounded-xl p-4">
+      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Returns ({order.returns!.length})</h2>
+      <ul className="space-y-2.5">
+        {order.returns!.map((r) => (
+          <li key={r.id} className="text-xs">
+            <p><b>{new Date(r.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</b>{r.createdByName ? ` · ${r.createdByName}` : ""} — {r.reason}</p>
+            <p className="text-muted-foreground">{r.items.map((i) => `${i.productCode ?? i.description ?? "Item"} × ${i.qty}${i.uom ? ` ${i.uom}` : ""}`).join(" · ")}</p>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] text-muted-foreground mt-2">Returned stock went back into the warehouse it left. The invoice made from this DO bills only what the customer kept.</p>
+    </section>
+  );
+}
+
+function ReturnDialog({ order, onClose, onDone }: { order: DeliveryOrderWithItems; onClose: () => void; onDone: (full: boolean) => void }) {
+  const rows = order.items.map((i) => ({ item: i, left: Number(i.qty ?? 1) - Number(i.returnedQty ?? 0) })).filter((r) => r.left > 1e-9);
+  const [qty, setQty] = useState<Record<string, string>>({});
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const picked = rows.map((r) => ({ itemId: r.item.id, qty: Number(qty[r.item.id] || 0) })).filter((r) => r.qty > 0);
+  const over = rows.some((r) => Number(qty[r.item.id] || 0) > r.left);
+  async function save() {
+    setSaving(true);
+    try {
+      const res = await returnDeliveryOrder(order.id, { reason, items: picked });
+      if (!res.ok) { toast.error(res.title, { duration: 10000 }); return; }
+      toast.success(res.full ? `${order.doNo} fully returned — stock back in the warehouse` : "Return recorded — stock back in the warehouse");
+      onDone(res.full);
+    } finally { setSaving(false); }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !saving) onClose(); }}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader><DialogTitle>Record return — {order.doNo}</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p className="text-muted-foreground text-xs">Enter what the customer sent back. It goes back into the warehouse it left; the rest stays delivered. Once everything is back the DO is <b>Returned</b>.</p>
+          <div className="flex justify-end">
+            <button type="button" className="text-xs text-primary hover:underline" onClick={() => setQty(Object.fromEntries(rows.map((r) => [r.item.id, String(r.left)])))}>Everything came back</button>
+          </div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground">
+                <th className="text-left pb-1.5 pr-2">Item</th>
+                <th className="text-right pb-1.5 pr-2 w-20">Delivered</th>
+                <th className="text-right pb-1.5 pr-2 w-24">Returned before</th>
+                <th className="text-right pb-1.5 w-24">Returning now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(({ item, left }) => {
+                const v = qty[item.id] ?? "";
+                const bad = Number(v || 0) > left;
+                return (
+                  <tr key={item.id} className="border-b border-border/40">
+                    <td className="py-1.5 pr-2"><span className="font-mono">{item.productCode}</span> <span className="text-muted-foreground">{item.description}</span></td>
+                    <td className="py-1.5 pr-2 text-right">{Number(item.qty ?? 1)}</td>
+                    <td className="py-1.5 pr-2 text-right">{Number(item.returnedQty ?? 0) || "—"}</td>
+                    <td className="py-1.5 text-right">
+                      <Input type="number" min={0} max={left} step="any" value={v} placeholder="0"
+                        onChange={(e) => setQty((q) => ({ ...q, [item.id]: e.target.value }))}
+                        className={cn("h-7 w-20 ml-auto text-right text-xs", bad && "border-destructive")} />
+                      {bad && <p className="text-[10px] text-destructive">max {left}</p>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Reason *</Label>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Wrong size — customer sent back 2 boxes" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Close</Button>
+          <Button onClick={save} disabled={saving || !picked.length || over || reason.trim().length < 3}>{saving ? "Saving…" : "Record return"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

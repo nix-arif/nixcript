@@ -213,10 +213,12 @@ ul.plain strong{color:var(--text)}
     <section class="sec" id="flow">
       <div class="sec-hd"><span class="sec-n">02</span><h2>The Two Steps</h2></div>
       <div class="steps">
-        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Before or at the case — create the Case DO</h3><p>Pick the specialist and the doctor. The doctor's template fills the <strong>customer copy items</strong> and the selling price. <strong>No stock moves.</strong> Print the <strong>customer copy</strong> for the hospital.</p></div></div>
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Before or at the case — create the Case DO</h3><p>Pick the specialist and the doctor. The doctor's template fills the <strong>customer copy items</strong> and the selling price. <strong>No stock moves.</strong> The draft has a temporary reference (e.g. <em>DRAFT-FPQXLSAQ</em>), not a DO number; its PDF is stamped DRAFT.</p></div></div>
         <div class="step"><div class="step-n">2</div><div class="step-b"><h3>After the case — record the actual items</h3><p>On the DO page click <strong>Record actual items</strong>, tick what was really used (and the machine's serial no.). <strong>Stock is deducted now</strong>, the <strong>internal copy</strong> becomes available, and the customer copy shows the machine's serial no.</p></div></div>
-        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Invoice</h3><p><strong>Create Invoice</strong> from the DO — it starts with the customer items and their prices (plus machine usage fees).</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Mark as delivered — the DO number</h3><p>Click <strong>Mark as Delivered</strong>. The DO now gets its <strong>DO number</strong> (e.g. DOAF/26-0311), and every stock and consignment record made under the temporary reference is updated to it. Print the customer copy for the hospital now.</p></div></div>
+        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Invoice</h3><p><strong>Create Invoice</strong> from the delivered DO — it starts with the customer items and their prices (plus machine usage fees).</p></div></div>
       </div>
+      <div class="info"><strong>Why a draft has no number:</strong> numbers are given only on delivery, so deleting or cancelling a draft never leaves a gap in the DO numbering.</div>
       <div class="info">If the DO is created after the case is already done, tick <strong>The case is done — record the items actually used now</strong> on the create form to do both steps at once.</div>
       <p>Until step 2 is done, the Delivery Orders list shows the DO with the tag <strong>actual items to record</strong>.</p>
     </section>
@@ -231,7 +233,7 @@ ul.plain strong{color:var(--text)}
             <tr><td>Create Delivery Order</td><td class="td-m">Create Case DOs; create and edit doctor templates</td></tr>
             <tr><td>Update Delivery Order</td><td class="td-m">Record / undo actual items; edit customer items (until invoiced); return or sell machines</td></tr>
             <tr><td><strong>Download Case DO Internal Copy</strong></td><td class="td-m">See and download the <strong>internal copy</strong> — without it the button is hidden and the download is refused. Owners always have it; grant it to other roles in Organization → Roles.</td></tr>
-            <tr><td><strong>Cancel Case DO</strong></td><td class="td-m">Cancel (void) a Case DO with a reason — see section 10. Managers have it by default in new companies; grant it in Organization → Roles.</td></tr>
+            <tr><td><strong>Cancel Delivery Order</strong></td><td class="td-m">Cancel (void) a Case DO with a reason — see section 10. Managers have it by default in new companies; grant it in Organization → Roles.</td></tr>
             <tr><td>Delete Delivery Order</td><td class="td-m">Delete a Case DO <em>you created</em>, only while nothing has happened (no actual items recorded, no invoice)</td></tr>
             <tr><td>Create Invoice</td><td class="td-m">Create the invoice from the Case DO</td></tr>
           </tbody>
@@ -332,14 +334,16 @@ ul.plain strong{color:var(--text)}
         <li><strong>Machine lent</strong> — its usage fee on the machine's line (once the actual items are recorded)</li>
         <li><strong>Machine sold to the hospital</strong> — its sale as its own line</li>
       </ul>
-      <p>A Case DO can be invoiced without being marked delivered. Once invoiced, its customer copy items can no longer be edited.</p>
+      <p>A Case DO is invoiced once it is <strong>marked delivered</strong> (which needs its actual items recorded) — a draft has no DO number for the invoice to refer to. Once invoiced, its customer copy items can no longer be edited.</p>
+      <div class="info"><strong>The invoice number follows the DO:</strong> DOAF/26-0311 is invoiced as <em>INVAF/26-0311</em>. A DO has one live invoice; to re-issue, cancel the invoice and create it again — it becomes <em>INVAF/26-0311.2</em>. Invoices without a DO (e.g. consignment settlements) use their own series, <em>INVAF/26-C0001</em>, so they never take a DO's number.</div>
     </section>
 
     <section class="sec" id="cancel">
       <div class="sec-hd"><span class="sec-n">10</span><h2>Cancelling a Case DO</h2></div>
       <p>A Case DO that has been issued is <strong>cancelled, not deleted</strong>: it stays in the list marked <strong>Cancelled</strong>, with who, when and why — so the DO numbers and the movement history still explain themselves.</p>
+      <div class="info"><strong>Cancel, not “Mark as Returned”.</strong> A Case DO has no <em>Mark as Returned</em>: items used on a patient can't come back, and a machine comes back through <strong>Return to specialist</strong> in the Machines box. If the DO itself was wrong, cancel it.</div>
       <div class="steps">
-        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Open the DO → Cancel DO</h3><p>Needs the <em>Cancel Case DO</em> permission.</p></div></div>
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Open the DO → Cancel DO</h3><p>Needs the <em>Cancel Delivery Order</em> permission.</p></div></div>
         <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Give the reason → Cancel DO</h3><p>e.g. “Case postponed by the doctor”.</p></div></div>
       </div>
       <div class="lt-wrap">
@@ -373,7 +377,8 @@ ul.plain strong{color:var(--text)}
         <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Create</h3><p>Customer copy: SFCS000345 (MDA) RM 500 · MILH procedure kit RM 300 · SWING 15 (MDA). Stock unchanged; DO tagged <em>actual items to record</em>.</p></div></div>
         <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Record after the case</h3><p>Prefilled: SFCS000345 × 1 and SWING 15 unit LD15421JW (Loan, stays, RM 250). Record → 1 SFCS000345 leaves Zilarahim's stock (consigned first), LD15421JW goes on loan.</p></div></div>
         <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Copies</h3><p>Customer copy now shows SWING 15 “Serial No: LD15421JW · on loan — left at the hospital” and RM 250 — total RM 1,050. Internal copy: SFCS000345 × 1, SWING 15 LD15421JW.</p></div></div>
-        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Invoice</h3><p>SFCS000345 RM 500 · MILH procedure kit RM 300 · SWING 15 usage fee RM 250 = RM 1,050.</p></div></div>
+        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Deliver</h3><p>Mark as Delivered → DRAFT-… becomes DOAF/26-0311 on the DO, its stock movements and the consignment uses.</p></div></div>
+        <div class="step"><div class="step-n">5</div><div class="step-b"><h3>Invoice</h3><p>SFCS000345 RM 500 · MILH procedure kit RM 300 · SWING 15 usage fee RM 250 = RM 1,050.</p></div></div>
       </div>
     </section>
 
@@ -384,8 +389,10 @@ ul.plain strong{color:var(--text)}
         <div class="ac"><h3>An item is missing from the customer copy</h3><p>It has no valid MDA registration on the case date. Update the product's MDA details, or use a free-text line if that is acceptable.</p></div>
         <div class="ac"><h3>The hospital wants a different item name</h3><p>Edit the customer copy item's description (or the template). The actual item recorded is unaffected.</p></div>
         <div class="ac"><h3>I can't edit the customer items</h3><p>The DO is already invoiced — change the invoice instead.</p></div>
+        <div class="ac"><h3>My DO shows DRAFT-… instead of a number</h3><p>A draft has a temporary reference. The DO number is given when you click <strong>Mark as Delivered</strong> (after the actual items are recorded).</p></div>
+        <div class="ac"><h3>Mark as Delivered is greyed out</h3><p>Record the actual items used first — a Case DO is delivered once the case is done.</p></div>
         <div class="ac"><h3>Stock didn't go down after creating the DO</h3><p>That's expected: stock moves when the actual items are recorded (step 2).</p></div>
-        <div class="ac"><h3>Why is there no Delete button?</h3><p>The DO has already taken stock (or is invoiced). Cancel it instead — it needs the <em>Cancel Case DO</em> permission.</p></div>
+        <div class="ac"><h3>Why is there no Delete button?</h3><p>The DO has already taken stock (or is invoiced). Cancel it instead — it needs the <em>Cancel Delivery Order</em> permission.</p></div>
         <div class="ac"><h3>How do I change the notes or bank on the DO?</h3><p>Organization → Document Settings → Table → <em>Delivery order — below the table</em>. The bank is your primary account in Organization Profile → Banking.</p></div>
         <div class="ac"><h3>What about Case DOs made before this change?</h3><p>They keep working as before: their items were deducted when created, and their customer copy is made from those items.</p></div>
       </div>

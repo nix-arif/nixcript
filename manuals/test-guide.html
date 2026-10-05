@@ -210,6 +210,7 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
       <a href="#uc-15" class="sub">UC-15 Readable locations everywhere</a>
       <a href="#uc-16" class="sub">UC-16 Supplier POs remember the sort</a>
       <a href="#uc-17" class="sub">UC-17 Deleting a draft DO</a>
+      <a href="#uc-17b" class="sub">UC-17b Return and cancel a delivered DO</a>
       <a href="#uc-18" class="sub">UC-18 Agent moves consigned stock</a>
       <a href="#uc-19" class="sub">UC-19 Case DO in two steps</a>
       <a href="#uc-20" class="sub">UC-20 Your own item groups</a>
@@ -459,6 +460,26 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
         </ol>
         <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
           <label class="chk"><input type="checkbox" data-k="UC-17-51"><span>You land on the Delivery Orders list with “Delivery order deleted” — no 404 page</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-17-52"><span>A new draft shows a temporary reference (DRAFT-…), not a DO number; deleting it leaves no gap — the next delivered DO takes the next number</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-17-53"><span>Mark as Delivered gives the DO its number (e.g. DOAF/26-0311); its movement history and consignment uses show that number, and only then can it be invoiced</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-17b">
+        <div class="uc-hd"><span class="uc-id">UC-17b</span><h3>Return and cancel a delivered DO</h3><span class="who">Logistic · manager</span></div>
+        <ol class="st">
+          <li>Open a delivered DO (from a Sales Order) with no invoice, or whose invoice is cancelled → <strong>Record Return</strong> → enter 2 of a 5-unit line, reason “Two not needed” → Record return.</li>
+          <li>Create Invoice from the DO (don't save) and look at that line's quantity.</li>
+          <li>Record Return again → <strong>Everything came back</strong> → reason → Record return.</li>
+          <li>Cancel DO → reason “Raised by mistake” → Cancel DO.</li>
+          <li>Open a delivered <em>Case</em> DO.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-17b-1"><span>Step 1: the DO stays Delivered; a Returns box shows date, your name, reason and “× 2”; Movement History has a Return of 2 into the warehouse it left</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-17b-2"><span>Step 2: the invoice line is 3, not 5 (only what the customer kept)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-17b-3"><span>Step 3: the DO turns Returned; stock is back to where it was before delivery; there is no Delete button</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-17b-4"><span>Step 4: the DO is Cancelled with your name and reason, keeps its number, and its Sales Order is awaiting delivery again; no stock moves twice</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-17b-5"><span>Record Return and Cancel are greyed out / refused while a live (not cancelled) invoice is linked</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-17b-6"><span>Step 5: a Case DO shows Cancel DO but no Record Return</span></label>
         </div>
       </div>
       <div class="uc" id="uc-18">

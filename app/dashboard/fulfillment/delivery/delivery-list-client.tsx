@@ -34,7 +34,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const EDITABLE_STATUSES  = new Set(["draft"]);
-const DELETABLE_STATUSES = new Set(["draft", "delivered", "returned"]);
+// Only a draft is deleted — a delivered DO has its number and is cancelled instead
+const DELETABLE_STATUSES = new Set(["draft"]);
 
 const fmtAmt = (v: string | null | undefined) =>
   v ? parseFloat(v).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";

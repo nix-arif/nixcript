@@ -3075,6 +3075,8 @@ export const deliveryOrderItem = pgTable(
     custQty: text("cust_qty"),
     custUom: text("cust_uom"),
     custReason: text("cust_reason"),
+    // Normal DO: quantity the customer sent back so far (partial returns) — see delivery_order_return
+    returnedQty: text("returned_qty"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
@@ -4856,6 +4858,25 @@ export const deliveryOrderCustomerItem = pgTable(
     unitPrice: text("unit_price"), // itemized selling price per unit
   },
   (t) => [index("do_customer_item_do_idx").on(t.deliveryOrderId)],
+);
+
+// ── DO returns ───────────────────────────────────────────────────────────────
+// Goods a customer sent back after a (normal) DO was delivered — all or part
+// of it, possibly several times. Each return puts its quantities back into the
+// warehouse they left (RETURN movements) and is kept with who, when and why.
+export const deliveryOrderReturn = pgTable(
+  "delivery_order_return",
+  {
+    id: text("id").primaryKey(),
+    deliveryOrderId: text("delivery_order_id").notNull().references(() => deliveryOrder.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    items: json("items").$type<{ itemId: string; productCode: string | null; description: string | null; qty: number; uom: string | null }[]>().notNull(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdByName: text("created_by_name"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("do_return_do_idx").on(t.deliveryOrderId)],
 );
 
 // ── Item groups ──────────────────────────────────────────────────────────────

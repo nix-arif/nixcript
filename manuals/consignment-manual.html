@@ -387,7 +387,7 @@ ul.plain strong{color:var(--text)}
         <li>When the actual items are recorded, consigned and own stock are used in the order set in the agent company's settings (consigned first by default); any remainder comes from own stock</li>
         <li>The oldest consignment is used first, earliest expiry first</li>
         <li>Each use becomes a billable consume event, linked to the DO number</li>
-        <li>With <strong>per use</strong> automatic settlement, the intercompany invoice and PO are created as soon as the Case DO's actual items are recorded</li>
+        <li>With <strong>per use</strong> automatic settlement, the intercompany invoice and PO are created when the Case DO is marked delivered (it then has its DO number)</li>
       </ul>
       <div class="warn">Deleting a Case DO, or <strong>undoing its recorded actual items</strong>, reverses its consigned use and puts the stock back at the specialist. If that use was <strong>already settled</strong>, it is refused — cancel or credit the settlement documents first.</div>
 
@@ -451,7 +451,7 @@ ul.plain strong{color:var(--text)}
         <div class="ac"><h3>Returned same day / Stays at hospital</h3><p><strong>Returned same day</strong> (default): the machine goes out and comes straight back with the specialist; the case still shows in its history. <strong>Stays at hospital</strong>: it shows <em>At the hospital</em> on the DO until someone clicks <strong>Return to specialist</strong> in the DO's <strong>Machines</strong> box.</p></div>
         <div class="ac"><h3>Charge usage fee</h3><p>Tick it and enter the fee per case if the hospital pays for using the machine this time. Leave it unticked when the machine is free (e.g. included with consumables). The fee fills in automatically when you <strong>Create Invoice</strong> from the Case DO.</p></div>
       </div>
-      <p>A Case DO can be invoiced as soon as it is saved — it doesn't need to be marked delivered. The usage fee is added once the actual items are recorded.</p>
+      <p>A Case DO is invoiced once it is marked delivered (after its actual items are recorded) — that is when it gets its DO number. The usage fee is added from the recorded actual items.</p>
 
       <h3>Selling a company asset</h3>
       <div class="lt-wrap">
@@ -511,7 +511,7 @@ ul.plain strong{color:var(--text)}
         <table class="cmp">
           <thead><tr><th>Tab</th><th>How to settle</th><th>Documents created</th></tr></thead>
           <tbody>
-            <tr><td>Our companies</td><td class="td-m">Pick the agent company and a month (or tick <em>all unsettled</em>) → <strong>Preview</strong> → <strong>Generate invoice + PO</strong></td><td>Draft invoice from the owner to the agent + confirmed PO in the agent company, linked to each other</td></tr>
+            <tr><td>Our companies</td><td class="td-m">Pick the agent company and a month (or tick <em>all unsettled</em>) → <strong>Preview</strong> → <strong>Generate invoice + PO</strong></td><td>Draft invoice from the owner to the agent (numbered in the invoice “C” series, e.g. INVSI/26-C0001 — it has no DO) + confirmed PO in the agent company, linked to each other</td></tr>
             <tr><td>External agents — dealer</td><td class="td-m">Pick the dealer and month → Preview → <strong>Generate invoice</strong></td><td>Draft invoice to the dealer at the dealer price</td></tr>
             <tr><td>External agents — sales agent</td><td class="td-m">Pick the agent and month → Preview (shows hospital and commission per line) → <strong>Generate invoices + commission PO</strong></td><td>One draft invoice per hospital + a confirmed commission PO to the agent (service, no goods receipt)</td></tr>
             <tr><td>Customers</td><td class="td-m">Each hospital consignment with unbilled usage is listed → <strong>Create invoice</strong></td><td>Draft invoice to the hospital</td></tr>

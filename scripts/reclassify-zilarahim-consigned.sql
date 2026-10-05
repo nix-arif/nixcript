@@ -7,7 +7,7 @@
 -- Innosys's own warehouse is not touched — the stock is already with her.
 --
 -- Recorded as movements on both sides (Affirma: adjustment out; Smart
--- Innosys: opening balance at the consignment location) plus a consignment
+-- Innosys: consignment sent, at the consignment location) plus a consignment
 -- line and "send" event per product/lot, so Field Stock, Movement History and
 -- Consignment Balance all add up. One transaction; does nothing if run again.
 --
@@ -115,14 +115,14 @@ begin
           values (replace(gen_random_uuid()::text, '-', ''), owner_org, lvl.product_id, cs_lbl, part.lot_no, part.expiry_date, part.qty::numeric(14,4)::text, '0', lvl.unit_cost);
         end if;
       end if;
-      -- Smart Innosys movement: opening balance at the consignment location
+      -- Smart Innosys movement: "Consigned in" at the consignment location (stock is already with her, so no warehouse leg)
       mv_id := replace(gen_random_uuid()::text, '-', '');
       insert into stock_movement (id, organization_id, product_id, product_code, warehouse_label, warehouse_to, movement_type,
                                   quantity, balance_after, reference_type, reference_id, reference_no, notes, lot_no, expiry_date,
                                   status, reviewed_by, reviewed_at, created_by, created_at)
-      values (mv_id, owner_org, lvl.product_id, lvl.product_code, cs_lbl, null, 'OPENING',
+      values (mv_id, owner_org, lvl.product_id, lvl.product_code, cs_lbl, null, 'CONSIGN_SEND',
               part.qty::numeric(14,4)::text, cs_bal::numeric(14,4)::text, 'CONSIGNMENT', hdr_id, cs_no,
-              'Opening consigned stock with Zilarahim (' || cs_no || ') — was recorded as Affirma''s before the consignment module',
+              'Consigned to Zilarahim (' || cs_no || ') — stock already with her before the consignment module',
               part.lot_no, part.expiry_date, 'APPROVED', by_user, now(), by_user, now());
       -- consignment line + send event
       line_id := replace(gen_random_uuid()::text, '-', '');
