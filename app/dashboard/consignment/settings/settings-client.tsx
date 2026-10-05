@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Loader2Icon, SearchIcon, TrashIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
 import { MachineSetting } from "@/components/consignment/machine-setting";
 import { getPriceList, saveConsignmentPairSetting, saveConsignmentSetting, searchProductsForPriceList, setPriceListItem } from "@/server/consign";
@@ -66,20 +67,74 @@ export function ConsignmentSettingsClient({ settings }: { settings: Settings }) 
         )}
       </section>
 
+      {settings.pairs.length > 0 && (
+        <div className="pt-2">
+          <h2 className="text-sm font-semibold">Consignment terms with your other companies</h2>
+          <p className="text-xs text-muted-foreground">Consignment with a company runs only on terms set up here. Until then nothing can be sent to it, its specialists can&apos;t use {settings.orgName}&apos;s stock on Case DOs, and nothing is settled — stock already there can still be returned.</p>
+        </div>
+      )}
       {settings.pairs.map((p) => <PairCard key={p.agentOrgId} owner={settings.orgName} pair={p} disabled={dis} />)}
     </div>
   );
 }
 
+const PRICE_SUMMARY: Record<Pair["priceMethod"], (p: Pair) => string> = {
+  cost_plus: (p) => `cost + ${Number(p.markupPct)}%`,
+  price_list: (p) => `fixed price list (others cost + ${Number(p.markupPct)}%)`,
+  pct_of_sale: (p) => `${Number(p.sharePct)}% of the selling price`,
+};
+const MACHINE_SUMMARY: Record<string, (p: Pair) => string> = {
+  free: () => "free",
+  per_case: (p) => `RM ${Number(p.machineFee).toFixed(2)} per case`,
+  share_of_fee: (p) => `${Number(p.machineSharePct)}% of the usage fee`,
+  monthly_rental: (p) => `RM ${Number(p.machineFee).toFixed(2)} per machine per month`,
+  hospital_fee: () => "hospital invoiced per case",
+};
+
 function PairCard({ owner, pair, disabled }: { owner: string; pair: Pair; disabled: boolean }) {
   const [p, setP] = useState(pair);
+  const [saved, setSaved] = useState(pair); // what Cancel goes back to
+  const [configured, setConfigured] = useState(pair.configured);
+  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  return (
-    <section className="border border-border rounded-xl p-4 space-y-4">
-      <div>
+  const head = (
+    <div className="flex items-start gap-3">
+      <div className="flex-1">
         <h2 className="text-sm font-semibold">{owner} → {p.agentName}</h2>
         <p className="text-xs text-muted-foreground">How {owner}&apos;s stock placed with {p.agentName} is handled and billed.</p>
       </div>
+      {configured
+        ? <span className="text-[11px] font-medium rounded px-2 py-0.5 bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400">Active</span>
+        : <span className="text-[11px] font-medium rounded px-2 py-0.5 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">Not set up</span>}
+    </div>
+  );
+
+  if (!editing) {
+    return (
+      <section className={cn("border rounded-xl p-4 space-y-3", configured ? "border-border" : "border-dashed border-amber-300 dark:border-amber-700")}>
+        {head}
+        {configured ? (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+            <dt className="text-muted-foreground">Settlement</dt><dd>{p.settlementMode === "auto" ? "Automatic" : "Manual"}, {p.settlementFrequency === "per_use" ? "per use (each Case DO)" : "monthly"}</dd>
+            <dt className="text-muted-foreground">Consumables</dt><dd>{PRICE_SUMMARY[p.priceMethod](p)}</dd>
+            <dt className="text-muted-foreground">Machines</dt><dd>{(MACHINE_SUMMARY[p.machineMethod] ?? (() => p.machineMethod))(p)}</dd>
+            <dt className="text-muted-foreground">At its customers</dt><dd>{p.allowPassOn ? `${p.agentName} may place this stock at hospitals` : "Not allowed"}</dd>
+          </dl>
+        ) : (
+          <p className="text-xs text-muted-foreground">No consignment with {p.agentName} until terms are set: {owner} can&apos;t send stock to it, its specialists can&apos;t use {owner}&apos;s stock on Case DOs, and nothing is settled.</p>
+        )}
+        {!disabled && (
+          <Button size="sm" variant={configured ? "outline" : "default"} onClick={() => setEditing(true)}>
+            {configured ? "Edit terms" : "Set up terms"}
+          </Button>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="border border-primary/40 rounded-xl p-4 space-y-4">
+      {head}
 
       <label className="flex items-start gap-2 text-sm">
         <input type="checkbox" checked={p.allowPassOn} onChange={(e) => setP({ ...p, allowPassOn: e.target.checked })} disabled={disabled} className="mt-1" />
@@ -138,13 +193,19 @@ function PairCard({ owner, pair, disabled }: { owner: string; pair: Pair; disabl
       </div>
 
       {!disabled && (
-        <Button size="sm" disabled={saving} className="gap-1.5" onClick={async () => {
-          setSaving(true);
-          await run(() => saveConsignmentPairSetting({ agentOrgId: p.agentOrgId, allowPassOn: p.allowPassOn, settlementMode: p.settlementMode, settlementFrequency: p.settlementFrequency, priceMethod: p.priceMethod, markupPct: p.markupPct, sharePct: p.sharePct, machineMethod: p.machineMethod, machineFee: p.machineFee, machineSharePct: p.machineSharePct }), `Saved ${owner} → ${p.agentName}`);
-          setSaving(false);
-        }}>
-          {saving && <Loader2Icon className="w-3.5 h-3.5 animate-spin" />} Save
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" disabled={saving} className="gap-1.5" onClick={async () => {
+            setSaving(true);
+            const res = await saveConsignmentPairSetting({ agentOrgId: p.agentOrgId, allowPassOn: p.allowPassOn, settlementMode: p.settlementMode, settlementFrequency: p.settlementFrequency, priceMethod: p.priceMethod, markupPct: p.markupPct, sharePct: p.sharePct, machineMethod: p.machineMethod, machineFee: p.machineFee, machineSharePct: p.machineSharePct });
+            setSaving(false);
+            if (!res.ok) { toast.error(res.title, res.details?.length ? { description: res.details.join(" · ") } : undefined); return; }
+            toast.success(configured ? `Saved ${owner} → ${p.agentName}` : `Consignment with ${p.agentName} is now active`);
+            setSaved(p); setConfigured(true); setEditing(false);
+          }}>
+            {saving && <Loader2Icon className="w-3.5 h-3.5 animate-spin" />} {configured ? "Save" : "Save and activate"}
+          </Button>
+          <Button size="sm" variant="outline" disabled={saving} onClick={() => { setP(saved); setEditing(false); }}>Cancel</Button>
+        </div>
       )}
     </section>
   );

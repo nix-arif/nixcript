@@ -1081,7 +1081,7 @@ export interface CaseLineItem {
   loan?: MachineLoan;
   // Part of fieldAvailable that is another company's stock on consignment
   // (used first or last per this company's consignment setting)
-  consigned?: { sourceOrgName: string; qty: number }[];
+  consigned?: { sourceOrgName: string; qty: number; noTerms?: boolean }[];
   // How the customer copy prints this item (stock deducted stays this item)
   cust?: CustomerView;
   // User-defined item groups (picker headings; a product can be in several)
@@ -1464,6 +1464,12 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
     // matching the case type first, then the users' order
     .sort((a, b) => Number(b.match) - Number(a.match));
   const anyMatch = poolSections.some((x) => x.match);
+  // The items picked as used, under the same group headings and order as the list above
+  const poolOrder = new Map(poolSections.flatMap((x) => x.items).map((it, k) => [it.productId, k]));
+  const pickedSections = groupSections(
+    [...fieldItems].sort((a, b) => (poolOrder.get(a.productId) ?? 1e9) - (poolOrder.get(b.productId) ?? 1e9)),
+    (i) => i.itemGroupIds, itemGroups, { prefer: matchIds },
+  ).map((x) => ({ ...x, match: matchIds.includes(x.key) })).sort((a, b) => Number(b.match) - Number(a.match));
   const isGroupOpen = (sec: { key: string; match: boolean }) => groupOpen[`${caseKey}|${sec.key}`] ?? (!anyMatch || sec.match);
   const toggleGroup = (sec: { key: string; match: boolean }) => setGroupOpen((o) => ({ ...o, [`${caseKey}|${sec.key}`]: !isGroupOpen(sec) }));
 
@@ -1486,7 +1492,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
         isRental: s.isRental,
         units: s.units,
         selectedUnitIds: [],
-        consigned: s.consignedBreakdown?.map((c) => ({ sourceOrgName: c.sourceOrgName, qty: c.qty })),
+        consigned: s.consignedBreakdown?.map((c) => ({ sourceOrgName: c.sourceOrgName, qty: c.qty, noTerms: c.noTerms })),
         itemGroupIds: s.itemGroupIds ?? [],
         sellingPrice: s.sellingPrice ?? null,
       }));
@@ -2211,7 +2217,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
                     </span>
                     {item.consigned?.length ? (
                       <span className={cn("w-full pl-6 text-[10px]", selected ? "text-white/80" : "text-violet-700 dark:text-violet-400")}>
-                        incl. {item.consigned.map((c) => `${c.qty} from ${c.sourceOrgName}`).join(", ")} (consigned)
+                        incl. {item.consigned.map((c) => `${c.qty} from ${c.sourceOrgName}${c.noTerms ? " — no consignment terms, can't be used" : ""}`).join(", ")} (consigned)
                       </span>
                     ) : null}
                   </button>
@@ -2226,7 +2232,16 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
           {/* Selected item cards */}
           {fieldItems.length > 0 && (
             <div className="flex flex-col gap-3">
-              {fieldItems.map((item) => {
+              {pickedSections.map((sec) => (
+              <Fragment key={sec.key}>
+              {sec.name && (
+                <div className="flex items-center gap-2 text-xs font-semibold -mb-1 mt-1 first:mt-0">
+                  <span className="w-2 h-2 rounded-full" style={{ background: sec.color ?? "var(--muted-foreground)" }} />
+                  {sec.name}
+                  <span className="font-normal text-muted-foreground">{sec.items.length} item{sec.items.length !== 1 ? "s" : ""}</span>
+                </div>
+              )}
+              {sec.items.map((item) => {
                 const sellQty = parseFloat(item.qty || "0") || 0;
                 const rentalQty = parseFloat(item.rentalQty || "0") || 0;
                 const over = (sellQty + rentalQty) > (item.fieldAvailable ?? Infinity);
@@ -2320,6 +2335,8 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
                   </div>
                 );
               })}
+              </Fragment>
+              ))}
             </div>
           )}
         </section>

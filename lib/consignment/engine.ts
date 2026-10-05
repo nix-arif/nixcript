@@ -6,7 +6,7 @@
 // them from server code that has already checked access and scope.
 
 import { db } from "@/db";
-import { assetUnit, consignEvent, consignHeader, consignLine, consignPairSetting, consignPartner, consignSetting, stockLevel, stockMovement } from "@/db/schema";
+import { assetUnit, consignEvent, consignHeader, consignLine, consignPairSetting, consignPartner, consignSetting, organization, stockLevel, stockMovement } from "@/db/schema";
 import { and, asc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { applyToLot } from "@/lib/inventory/apply-to-lot";
@@ -16,6 +16,22 @@ import { agentRepLocation } from "@/lib/consignment/labels";
 const num = (s: string | null | undefined) => parseFloat(s ?? "0") || 0;
 
 /** Apply a signed delta to one (org, product, label) balance; returns the new balance. */
+/**
+ * Consignment between two of the owner's companies runs only on terms the
+ * owner has set up (Consignment → Settings): no terms, no consignment — no
+ * sending, moving, using on a Case DO or settling. Returning stock to the
+ * owner and count adjustments stay possible, so nothing is ever stuck.
+ * Returns null when terms exist, else the message to show.
+ */
+export async function missingPairTerms(ownerOrgId: string, agentOrgId: string): Promise<string | null> {
+  const [pair] = await db.select({ id: consignPairSetting.id }).from(consignPairSetting)
+    .where(and(eq(consignPairSetting.ownerOrgId, ownerOrgId), eq(consignPairSetting.agentOrgId, agentOrgId))).limit(1);
+  if (pair) return null;
+  const orgs = await db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, [ownerOrgId, agentOrgId]));
+  const name = (id: string) => orgs.find((o) => o.id === id)?.name ?? "the company";
+  return `${name(ownerOrgId)} hasn't set consignment terms for ${name(agentOrgId)} yet — set them up in ${name(ownerOrgId)} → Consignment → Settings first`;
+}
+
 export async function bumpLevel(orgId: string, productId: string, label: string, delta: number, unitCost: string | null): Promise<number> {
   const [l] = await db.select().from(stockLevel)
     .where(and(eq(stockLevel.organizationId, orgId), eq(stockLevel.productId, productId), eq(stockLevel.warehouseLabel, label))).limit(1);

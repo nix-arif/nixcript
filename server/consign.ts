@@ -29,7 +29,7 @@ import { revalidatePath } from "next/cache";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { moveStock, consumeConsigned, recordMachineUse } from "@/lib/consignment/engine";
+import { moveStock, consumeConsigned, recordMachineUse, missingPairTerms } from "@/lib/consignment/engine";
 import { LENDABLE_USES } from "@/lib/inventory/constants";
 import { autoSettlePartnerPerUse, priceUnsettled, settleAgent, settleCustomer, settlePartner, type PricedLine } from "@/lib/consignment/settle";
 import { MOVEMENT_TYPE, ASSET_UNIT_STATUS } from "@/lib/inventory/constants";
@@ -317,7 +317,8 @@ export async function getConsignmentFormOptions() {
     ownerOrgId: orgId,
     ownerName: orgs.find((o) => o.id === orgId)?.name ?? "",
     warehouses,
-    agents: orgs.filter((o) => o.id !== orgId).map((o) => ({ ...o, reps: reps.filter((r) => r.orgId === o.id).map((r) => ({ id: r.id, name: r.name ?? r.id })) })),
+    // An agent company can only receive consignments once terms are set up for it
+    agents: orgs.filter((o) => o.id !== orgId).map((o) => ({ ...o, configured: pairs.some((x) => x.agentOrgId === o.id), reps: reps.filter((r) => r.orgId === o.id).map((r) => ({ id: r.id, name: r.name ?? r.id })) })),
     pairSettings: pairs,
     partners: await db.select({ id: consignPartner.id, name: consignPartner.name, model: consignPartner.model }).from(consignPartner)
       .where(and(eq(consignPartner.organizationId, orgId), eq(consignPartner.active, true))).orderBy(asc(consignPartner.name)),
@@ -368,6 +369,10 @@ export async function createConsignment(input: CreateConsignmentInput): Promise<
     const warehouses = await getWarehouseLabels(orgId);
     if (!warehouses.includes(input.sourceWarehouseLabel)) return fail(`Unknown source warehouse "${input.sourceWarehouseLabel}"`);
 
+    if (input.consigneeType === "agent" && input.agentOrgId) {
+      const noTerms = await missingPairTerms(orgId, input.agentOrgId);
+      if (noTerms) return fail(noTerms);
+    }
     const loc = await resolveLocation(orgId, input);
     if ("error" in loc) return fail(loc.error);
 
@@ -408,6 +413,10 @@ export async function sendMoreToConsignment(consignmentId: string, items: Consig
     const [header] = await db.select().from(consignHeader).where(and(eq(consignHeader.id, consignmentId), eq(consignHeader.organizationId, orgId))).limit(1);
     if (!header) return fail("Consignment not found — only the owner company can send more");
     if (header.status !== "open") return fail(`${header.consignmentNo} is closed`);
+    if (header.consigneeType === "agent" && header.agentOrgId) {
+      const noTerms = await missingPairTerms(orgId, header.agentOrgId);
+      if (noTerms) return fail(noTerms);
+    }
     const prepared = await prepareItems(orgId, header.sourceWarehouseLabel, items);
     if ("title" in prepared) return fail(prepared.title, prepared.details);
     await sendItems(header, prepared.items, userId, new Date());
@@ -838,6 +847,8 @@ export async function moveConsignedStock(input: MoveConsignedInput): Promise<Act
 
     const groupIds = await getOrgGroupIds(orgId);
     if (input.ownerOrgId === orgId || !groupIds.includes(input.ownerOrgId)) return fail("This stock isn't consigned to your company");
+    const noTerms = await missingPairTerms(input.ownerOrgId, orgId);
+    if (noTerms) return fail(noTerms);
     const from = parseLocation(input.fromLabel), to = parseLocation(input.toLabel);
     const ours = (l: ReturnType<typeof parseLocation>) => (l?.kind === "agent" || l?.kind === "agent-rep") && l.agentOrgId === orgId;
     if (!ours(from) || !ours(to)) return fail("Consigned stock can only be moved between your own warehouse and specialists");
@@ -993,6 +1004,8 @@ export async function getConsignmentSettings() {
       const p = pairs.find((x) => x.agentOrgId === o.id);
       return {
         agentOrgId: o.id, agentName: o.name,
+        // No row = no terms: nothing can be consigned to this company until they are saved
+        configured: !!p,
         allowPassOn: p?.allowPassOn ?? false,
         settlementMode: (p?.settlementMode ?? "manual") as "manual" | "auto",
         settlementFrequency: (p?.settlementFrequency ?? "monthly") as "monthly" | "per_use",
@@ -1185,6 +1198,8 @@ export async function previewAgentSettlement(agentOrgId: string, month: string):
     const { orgId } = await ctx("consignment:settle");
     const groupIds = await getOrgGroupIds(orgId);
     if (!groupIds.includes(agentOrgId) || agentOrgId === orgId) return fail("Choose one of your other companies");
+    const noTerms = await missingPairTerms(orgId, agentOrgId);
+    if (noTerms) return fail(noTerms);
     const range = month ? monthRange(month) : null;
     if (month && !range) return fail("Invalid month");
     const lines = await priceUnsettled({ kind: "agent", ownerOrgId: orgId, agentOrgId, from: range?.from, to: range?.to });
@@ -1197,6 +1212,8 @@ export async function generateAgentSettlement(agentOrgId: string, month: string)
     const { orgId, userId } = await ctx("consignment:settle");
     const groupIds = await getOrgGroupIds(orgId);
     if (!groupIds.includes(agentOrgId) || agentOrgId === orgId) return fail("Choose one of your other companies");
+    const noTerms = await missingPairTerms(orgId, agentOrgId);
+    if (noTerms) return fail(noTerms);
     const range = month ? monthRange(month) : null;
     if (month && !range) return fail("Invalid month");
     const label = range ? range.from.toLocaleDateString("en-MY", { month: "long", year: "numeric" }) : "all unsettled";

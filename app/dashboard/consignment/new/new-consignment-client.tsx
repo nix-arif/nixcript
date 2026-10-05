@@ -27,7 +27,8 @@ export function NewConsignmentClient({ options, soId, soNo }: { options: Options
   const [type, setType] = useState<"agent" | "customer" | "partner">(soId ? "customer" : "agent");
   const [partnerId, setPartnerId] = useState(options.partners[0]?.id ?? "");
   const [warehouse, setWarehouse] = useState(options.warehouses[0] ?? "Default");
-  const [agentOrgId, setAgentOrgId] = useState(options.agents[0]?.id ?? "");
+  // Only a company with consignment terms set up can receive a consignment
+  const [agentOrgId, setAgentOrgId] = useState((options.agents.find((a) => a.configured) ?? options.agents[0])?.id ?? "");
   const [repId, setRepId] = useState("");
   const [hospital, setHospital] = useState<{ id: string; name: string } | null>(null);
   const [sentDate, setSentDate] = useState(today());
@@ -107,13 +108,18 @@ export function NewConsignmentClient({ options, soId, soNo }: { options: Options
           ) : type === "agent" ? (
             options.agents.length === 0 ? (
               <p className="text-xs text-muted-foreground">You have no other companies to consign to.</p>
+            ) : !options.agents.some((a) => a.configured) ? (
+              <p className="text-xs rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 px-3 py-2">
+                No consignment terms are set up with {options.agents.map((a) => a.name).join(", ")} yet — nothing can be consigned to them until you{" "}
+                <Link href="/dashboard/consignment/settings" className="underline font-medium">set up the terms</Link>.
+              </p>
             ) : (
               <div className="grid sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Agent company</Label>
                   <select value={agentOrgId} onChange={(e) => { setAgentOrgId(e.target.value); setRepId(""); }}
                     className="w-full h-9 rounded-md border border-input bg-background px-2.5 text-sm">
-                    {options.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    {options.agents.map((a) => <option key={a.id} value={a.id} disabled={!a.configured}>{a.name}{a.configured ? "" : " — no consignment terms"}</option>)}
                   </select>
                 </div>
                 <div className="space-y-1.5">
@@ -229,7 +235,7 @@ export function NewConsignmentClient({ options, soId, soNo }: { options: Options
         </section>
 
         <div className="flex justify-end">
-          <Button onClick={submit} disabled={saving} className="gap-2 min-w-40">
+          <Button onClick={submit} disabled={saving || (type === "agent" && !agent?.configured)} className="gap-2 min-w-40">
             {saving && <Loader2Icon className="w-4 h-4 animate-spin" />} Send consignment
           </Button>
         </div>

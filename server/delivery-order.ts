@@ -39,7 +39,7 @@ import { createApprovedMovement, adjustReservation } from "@/lib/inventory/creat
 import { LOAN_PURPOSE, MOVEMENT_TYPE, REF_TYPE, isLendable } from "@/lib/inventory/constants";
 import { cleanCustomerView, type CustomerView } from "@/lib/delivery/customer-view";
 import { pricedWithoutMda, pricedWithoutMdaMessage } from "@/lib/mda/priced-without-mda";
-import { bumpLevel, consignedLineForUnit, consumeConsigned, consignedHeldByRep, getConsumeOrder, recordMachineUse, reverseConsumption, reverseMachineUse } from "@/lib/consignment/engine";
+import { bumpLevel, consignedLineForUnit, consumeConsigned, consignedHeldByRep, getConsumeOrder, missingPairTerms, recordMachineUse, reverseConsumption, reverseMachineUse } from "@/lib/consignment/engine";
 import { isConsignmentLocation } from "@/lib/consignment/labels";
 import { autoSettlePerUse } from "@/lib/consignment/settle";
 import { draftDoNo, isDraftDoNo } from "@/lib/delivery/draft-no";
@@ -1060,6 +1060,11 @@ async function deductCaseItems(p: {
     // billable consumption for settlement with the owner.
     const sameDay = loanOut && item.loanReturnMode === "same_day";
     const fee = parseFloat(item.usageFee ?? "") > 0 ? parseFloat(item.usageFee!) : null;
+    // A consigned unit is used only under consignment terms between its owner and this company
+    if (unit && isConsignmentLocation(unit.currentWarehouseLabel ?? "")) {
+      const noTerms = await missingPairTerms(unit.currentOrgId ?? unit.organizationId, orgId);
+      if (noTerms) throw new Error(`${prod.productCode} SN ${unit.serialNo}: ${noTerms}`);
+    }
     if (unit && isConsignmentLocation(unit.currentWarehouseLabel ?? "") && loanOut) {
       // A consigned machine is used on the case, never consumed: it stays
       // the owner's, the use is recorded on its consignment (charged per
@@ -1096,6 +1101,14 @@ async function deductCaseItems(p: {
     let ownQty = qty;
     if (!item.unitId && !loanOut) {
       const held = await consignedHeldByRep(orgId, p.specialistId, item.productId);
+      // Only owners that set consignment terms for this company can have their stock used
+      const blocked: { qty: number; why: string }[] = [];
+      const usable: typeof held.owners = [];
+      for (const o of held.owners) {
+        const why = await missingPairTerms(o.ownerOrgId, orgId);
+        if (why) blocked.push({ qty: o.qty, why }); else usable.push(o);
+      }
+      held.owners = usable;
       const consignedTotal = held.owners.reduce((s, o) => s + o.qty, 0);
       if (consignedTotal > 0) {
         let want: number;
@@ -1115,6 +1128,16 @@ async function deductCaseItems(p: {
           });
         }
         ownQty = qty - consumed;
+      }
+      // What's left must come from the specialist's own stock — never silently
+      // from consigned stock the company has no terms for
+      if (blocked.length && ownQty > 1e-9) {
+        const [own] = await db.select({ q: stockLevel.quantity }).from(stockLevel)
+          .where(and(eq(stockLevel.organizationId, stockOrgId), eq(stockLevel.productId, item.productId), eq(stockLevel.warehouseLabel, fieldLabel))).limit(1);
+        const ownHave = parseFloat(own?.q ?? "0") || 0;
+        if (ownHave + 1e-9 < ownQty) {
+          throw new Error(`${prod.productCode}: ${ownQty} needed but only ${ownHave} is the specialist's own stock; the other ${blocked.reduce((a, b) => a + b.qty, 0)} held is consigned — ${blocked[0].why}`);
+        }
       }
     }
     if (ownQty <= 1e-9) continue;
@@ -1342,7 +1365,17 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
 
   // Case DO with its actual items: take them out of the specialist's field stock
   if (input.isCaseDo && input.applicationSpecialistId && input.items.length > 0) {
-    await deductCaseItems({ orgId, userId, doId: row.id, doNo, specialistId: input.applicationSpecialistId, customerId: input.customerId, items: input.items });
+    try {
+      await deductCaseItems({ orgId, userId, doId: row.id, doNo, specialistId: input.applicationSpecialistId, customerId: input.customerId, items: input.items });
+    } catch (e) {
+      // Nothing half-done: put back what was taken and drop the DO
+      await restoreDoStock({ doId: row.id, doNo, activeOrgId: orgId, userId, notes: (code) => `Case DO not created — stock put back: ${code}` }).catch(() => {});
+      // The DO never existed: its out-and-back entries (all netting to zero) go with it
+      await db.delete(consignEvent).where(eq(consignEvent.sourceId, row.id));
+      await db.delete(stockMovement).where(or(eq(stockMovement.referenceId, row.id), like(stockMovement.notes, `%${doNo}%`)));
+      await db.delete(deliveryOrder).where(eq(deliveryOrder.id, row.id));
+      throw e;
+    }
   }
 
   if (input.salesOrderId) {

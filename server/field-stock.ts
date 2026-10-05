@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { stockLevel, stockMovement, member, user, product, staffStockLimit, organizationProfile, stockLot, organization, assetUnit } from "@/db/schema";
+import { stockLevel, stockMovement, member, user, product, staffStockLimit, organizationProfile, stockLot, organization, assetUnit, consignPairSetting } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -46,7 +46,8 @@ export interface RepStockItem {
   // qty above is the combined total (owned + consigned); this breaks it
   // down for visibility only — Case DO deduction (server/delivery-order.ts)
   // depletes these consigned buckets before the plain owned holding.
-  consignedBreakdown?: { sourceOrgId: string; sourceOrgName: string; qty: number }[];
+  // noTerms: the owner hasn't set consignment terms for this company — not usable on a Case DO
+  consignedBreakdown?: { sourceOrgId: string; sourceOrgName: string; qty: number; noTerms?: boolean }[];
 }
 
 export interface RepSummary {
@@ -258,12 +259,17 @@ export async function getRepFieldStock(repId: string): Promise<RepStockItem[]> {
     ? await db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, consignedSourceOrgIds))
     : [];
   const orgNameById = new Map(sourceOrgNames.map((o) => [o.id, o.name]));
+  // Owners with consignment terms for this company — without them their stock can't be used
+  const termed = consignedSourceOrgIds.length
+    ? new Set((await db.select({ owner: consignPairSetting.ownerOrgId }).from(consignPairSetting)
+        .where(and(inArray(consignPairSetting.ownerOrgId, consignedSourceOrgIds), eq(consignPairSetting.agentOrgId, orgId)))).map((r) => r.owner))
+    : new Set<string>();
   const consignedByProduct = new Map<string, RepStockItem["consignedBreakdown"]>();
   for (const r of consignedRows) {
     const qty = parseFloat(r.qty);
     if (qty <= 0) continue;
     const arr = consignedByProduct.get(r.productId) ?? [];
-    arr.push({ sourceOrgId: r.ownerOrgId, sourceOrgName: orgNameById.get(r.ownerOrgId) ?? r.ownerOrgId, qty });
+    arr.push({ sourceOrgId: r.ownerOrgId, sourceOrgName: orgNameById.get(r.ownerOrgId) ?? r.ownerOrgId, qty, noTerms: !termed.has(r.ownerOrgId) });
     consignedByProduct.set(r.productId, arr);
   }
 
