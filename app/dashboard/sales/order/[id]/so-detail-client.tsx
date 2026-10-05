@@ -368,7 +368,7 @@ export function SalesOrderDetailClient({
               </Button>
             )}
             {status === "confirmed" && can("sales-order:update") && (
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/sales/consignment/create?soId=${order.id}&soNo=${encodeURIComponent(order.soNo)}`)}>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/consignment/new?soId=${order.id}&soNo=${encodeURIComponent(order.soNo)}`)}>
                 <PackageIcon className="w-3.5 h-3.5" /> Create Consignment
               </Button>
             )}

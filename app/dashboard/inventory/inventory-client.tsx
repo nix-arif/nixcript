@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { INTENDED_USE_LABELS, isLendable, unitUseLabel } from "@/lib/inventory/constants";
 import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -15,10 +17,15 @@ import {
   PackageIcon, AlertTriangleIcon, ArrowRightIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, XIcon, Trash2Icon,
 } from "lucide-react";
 import type { StockWithProduct, Warehouse, StockLotRow, ExpiringLot } from "@/server/inventory";
-import { searchProducts, getProductLots, editStockLot, assignLotToStock, deleteStockLevel, editStockLevel } from "@/server/inventory";
+import { searchProducts, getProductLots, editStockLot, assignLotToStock, deleteStockLevel, editStockLevel, saveStockUnits, getProductSerialInfo } from "@/server/inventory";
 import type { ConsignmentItemRow } from "@/server/consignment";
+import type { ConsignedInRow } from "@/server/consign";
+import { ConsignedInStock } from "@/components/consigned-in-stock";
+import type { ItemGroupRow } from "@/server/item-group";
+import { groupSections, otherGroupNames } from "@/lib/inventory/group-sections";
 
 const EXPIRY_WARN_DAYS = 90;
+const CONSIGNED_IN = "__consigned_in__"; // warehouse filter value
 
 function expiryStatus(date: Date | null): "ok" | "warn" | "expired" {
   if (!date) return "ok";
@@ -44,12 +51,16 @@ type ActiveConsignment = {
 };
 
 interface Props {
+  locationNames?: Record<string, string>;
   inventory: StockWithProduct[];
   warehouses: Warehouse[];
   permissions: string[];
   isOwner: boolean;
   activeConsignments?: ActiveConsignment[];
   expiringLots?: ExpiringLot[];
+  consignedIn?: ConsignedInRow[];
+  consignMove?: { canMove: boolean; targets: { label: string; name: string }[] };
+  itemGroups?: ItemGroupRow[];
 }
 
 function ProductSearch({ value, initialLabel, onChange }: { value: string; initialLabel?: string; onChange: (id: string, code: string) => void }) {
@@ -420,11 +431,12 @@ function fmt(v: string | number) {
   return parseFloat(String(v)).toLocaleString("en-MY", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 }
 
-export function InventoryClient({ inventory, warehouses, permissions, isOwner, activeConsignments = [], expiringLots = [] }: Props) {
+export function InventoryClient({ inventory, warehouses, permissions, isOwner, activeConsignments = [], expiringLots = [], locationNames = {}, consignedIn = [], consignMove, itemGroups = [] }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
   function formatWarehouse(label: string) {
+    if (locationNames[label]) return locationNames[label];
     if (!label.startsWith("Field:")) return label;
     const name = warehouses.find((w) => w.label === label)?.address;
     return name ? `Field: ${name.toLowerCase()}` : label;
@@ -440,6 +452,10 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
   const [editUnitCost, setEditUnitCost] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // Machines at this location: fix serial no. / use, remove a wrong entry, add missing ones
+  const [editUnits, setEditUnits] = useState<{ id: string; serialNo: string; intendedUse: string; status: string; remove: boolean }[]>([]);
+  const [addUnits, setAddUnits] = useState<{ serialNo: string; intendedUse: string }[]>([]);
+  const [editIsMachine, setEditIsMachine] = useState(false);
 
   function openEdit(item: StockWithProduct) {
     setEditTarget(item);
@@ -448,6 +464,10 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
     setEditMaxStock(item.maxStock ? parseFloat(item.maxStock).toString() : "");
     setEditUnitCost(item.unitCost ?? "");
     setEditNotes("");
+    setEditUnits(item.units.map((u) => ({ ...u, remove: false })));
+    setAddUnits([]);
+    setEditIsMachine(item.units.length > 0);
+    if (!item.units.length) getProductSerialInfo(item.productId).then((r) => setEditIsMachine(r.serial)).catch(() => {});
   }
 
   async function handleEdit(e: React.FormEvent) {
@@ -455,8 +475,25 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
     if (!editTarget) return;
     const targetQty = parseFloat(editQty);
     if (isNaN(targetQty) || targetQty < 0) { toast.error("Enter a valid quantity"); return; }
+    const keptUnits = editUnits.filter((u) => !u.remove).length + addUnits.length;
+    if (keptUnits > targetQty) { toast.error(`${keptUnits} serial numbers but quantity ${targetQty} — remove serial numbers or raise the quantity`); return; }
+    const unitEdits = editUnits.filter((u) => !u.remove).filter((u) => {
+      const o = editTarget.units.find((x) => x.id === u.id);
+      return o && (o.serialNo !== u.serialNo.trim() || o.intendedUse !== u.intendedUse);
+    });
+    const removeIds = editUnits.filter((u) => u.remove).map((u) => u.id);
+    const adds = addUnits;
     setSaving(true);
     try {
+      if (unitEdits.length || removeIds.length || adds.length) {
+        if (removeIds.length && !confirm(`Remove ${removeIds.length} serial number(s) from this stock? The quantity stays; only the serial record is taken off.`)) return;
+        const res = await saveStockUnits({
+          stockLevelId: editTarget.id,
+          edits: unitEdits.map((u) => ({ unitId: u.id, serialNo: u.serialNo, intendedUse: u.intendedUse })),
+          removeUnitIds: removeIds, add: adds,
+        });
+        if (!res.ok) { toast.error(res.title); return; }
+      }
       await editStockLevel({
         stockLevelId: editTarget.id,
         targetQty,
@@ -522,13 +559,33 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
     setExpandedLots(prev => new Set(prev).add(key));
   }
 
+  // Item groups (user-defined): rows listed under each group's heading, in the
+  // groups' order; products in no group under "Other". Headings collapse.
+  const [groupFilter, setGroupFilter] = useState("ALL");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // A product can be in several groups, but is listed ONCE — under its first
+  // group (or the filtered group), with its other groups named on the row
+  const inAnyGroup = (ids: string[]) => ids.some((id) => itemGroups.some((g) => g.id === id));
+  const sectionsOf = (rows: StockWithProduct[]) =>
+    groupSections(rows, (r) => r.itemGroupIds, itemGroups, { only: groupFilter === "ALL" ? null : groupFilter })
+      .map((x) => ({ ...x, rows: x.items }));
+  const toggleSection = (k: string) => setCollapsed((c) => { const n = new Set(c); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const colCount = 8 + (isOwner ? 1 : 0);
+
   const filtered = inventory.filter(i => {
+    if (groupFilter !== "ALL" && (groupFilter === "other" ? inAnyGroup(i.itemGroupIds) : !i.itemGroupIds.includes(groupFilter))) return false;
     const matchSearch =
       i.productCode.toLowerCase().includes(search.toLowerCase()) ||
       (i.description ?? "").toLowerCase().includes(search.toLowerCase());
     const matchWh = warehouseFilter === "ALL" || i.warehouseLabel === warehouseFilter;
     return matchSearch && matchWh;
   });
+
+  const q = search.toLowerCase();
+  const consignedInShown = warehouseFilter === "ALL" || warehouseFilter === CONSIGNED_IN
+    ? consignedIn.filter((r) => (groupFilter === "ALL" || (groupFilter === "other" ? !inAnyGroup(r.itemGroupIds) : r.itemGroupIds.includes(groupFilter))))
+        .filter((r) => r.productCode.toLowerCase().includes(q) || (r.description ?? "").toLowerCase().includes(q) || r.serials.some((sn) => sn.toLowerCase().includes(q)))
+    : [];
 
   // Group by warehouse for display
   const grouped = allWarehouses
@@ -565,16 +622,26 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <Input placeholder="Search product…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs"/>
+        {itemGroups.length > 0 && (
+          <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} className="h-9 rounded-md border border-input bg-background px-2 text-sm" title="Item group">
+            <option value="ALL">All groups</option>
+            {itemGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            <option value="other">Other (no group)</option>
+          </select>
+        )}
         <div className="flex items-center gap-1.5 flex-wrap">
           <Button size="sm" variant={warehouseFilter === "ALL" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setWarehouseFilter("ALL")}>All Warehouses</Button>
           {allWarehouses.map(wh => (
             <Button key={wh} size="sm" variant={warehouseFilter === wh ? "default" : "outline"} className="h-7 text-xs" onClick={() => setWarehouseFilter(wh)}>{formatWarehouse(wh)}</Button>
           ))}
+          {consignedIn.length > 0 && (
+            <Button size="sm" variant={warehouseFilter === CONSIGNED_IN ? "default" : "outline"} className="h-7 text-xs border-dashed" onClick={() => setWarehouseFilter(CONSIGNED_IN)}>Consigned in</Button>
+          )}
         </div>
       </div>
 
       {/* Grouped by warehouse */}
-      {grouped.length === 0 ? (
+      {grouped.length === 0 ? (warehouseFilter === CONSIGNED_IN || consignedInShown.length > 0 ? null :
         <div className="rounded-lg border border-border py-16 text-center text-sm text-muted-foreground">
           No inventory records yet. Add a stock movement to get started.
         </div>
@@ -600,7 +667,24 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
               </TableRow>
             </TableHeader>
             <TableBody>
-              {group.rows.map(item => {
+              {sectionsOf(group.rows).map(sec => {
+                const secKey = `${group.label}|${sec.key}`;
+                const isCollapsed = collapsed.has(secKey);
+                return (
+                <React.Fragment key={sec.key}>
+                {sec.name && (
+                  <TableRow className="bg-muted/30 hover:bg-muted/40 cursor-pointer" onClick={() => toggleSection(secKey)}>
+                    <TableCell colSpan={colCount} className="py-1.5">
+                      <span className="inline-flex items-center gap-2 text-xs font-semibold">
+                        {isCollapsed ? <ChevronRightIcon className="h-3.5 w-3.5"/> : <ChevronDownIcon className="h-3.5 w-3.5"/>}
+                        <span className="w-2 h-2 rounded-full" style={{ background: sec.color ?? "var(--muted-foreground)" }}/>
+                        {sec.name}
+                        <span className="font-normal text-muted-foreground">{sec.rows.length} product{sec.rows.length !== 1 ? "s" : ""}</span>
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!isCollapsed && sec.rows.map(item => {
                 const isExpanded = expandedLots.has(item.id);
                 const isLoading = loadingLots.has(item.id);
                 const lots = lotData[item.id] ?? [];
@@ -615,7 +699,31 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
                         </button>
                       </TableCell>
                       <TableCell className="font-mono text-xs font-medium">{item.productCode}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{item.description ?? "—"}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {item.description ?? "—"}
+                        {otherGroupNames(item.itemGroupIds, itemGroups, sec.key).length > 0 && (
+                          <span className="ml-1.5 text-[10px] text-muted-foreground/80" title="This product is in these groups too">
+                            also in {otherGroupNames(item.itemGroupIds, itemGroups, sec.key).join(", ")}
+                          </span>
+                        )}
+                        {item.units.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {item.units.map((u) => (
+                              <span key={u.id} title={unitUseLabel(u.intendedUse)}
+                                className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded border",
+                                  isLendable(u.intendedUse) ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300" : "border-border bg-background text-foreground")}>
+                                SN {u.serialNo} · {unitUseLabel(u.intendedUse).toLowerCase()}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {item.units.length > parseFloat(item.quantity) && (
+                          <div className="text-[10px] text-red-600 dark:text-red-400 mt-0.5">{item.units.length} serial numbers but only {fmt(item.quantity)} in stock — check and correct in Edit</div>
+                        )}
+                        {item.units.length > 0 && item.units.length < parseFloat(item.quantity) && (
+                          <div className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5">{fmt(String(parseFloat(item.quantity) - item.units.length))} without a registered serial no.</div>
+                        )}
+                      </TableCell>
                       <TableCell className="text-center text-xs text-muted-foreground">{item.uom ?? "—"}</TableCell>
                       <TableCell className="text-right font-medium tabular-nums">{fmt(item.quantity)}</TableCell>
                       <TableCell className="text-right font-semibold tabular-nums text-green-700 dark:text-green-400">{fmt(item.availableQty)}</TableCell>
@@ -683,10 +791,19 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
                   </React.Fragment>
                 );
               })}
+                </React.Fragment>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
       ))}
+
+      {/* ── Consigned in (sister company's stock held here — not ours) ── */}
+      <ConsignedInStock rows={consignedInShown} moveTargets={consignMove?.targets} canMove={consignMove?.canMove} />
+      {warehouseFilter === CONSIGNED_IN && consignedInShown.length === 0 && (
+        <div className="rounded-lg border border-border py-10 text-center text-sm text-muted-foreground">No consigned-in stock matches.</div>
+      )}
 
       {/* ── Consignment Section ──────────────────────────────────────────── */}
       {activeConsignments.length > 0 && (
@@ -739,7 +856,7 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
 
       {/* ── Edit Sheet ─────────────────────────────────────────────────────── */}
       <Sheet open={!!editTarget} onOpenChange={o => { if (!saving) setEditTarget(o ? editTarget : null); }}>
-        <SheetContent className="w-full data-[side=right]:sm:max-w-md overflow-y-auto px-6">
+        <SheetContent className="w-full data-[side=right]:sm:max-w-lg overflow-y-auto px-6">
           <SheetHeader className="mb-5">
             <SheetTitle>Edit Stock Record</SheetTitle>
             {editTarget && (
@@ -797,6 +914,47 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
                 placeholder="0.00"
               />
             </div>
+            {editTarget && editIsMachine && (
+              <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
+                <div>
+                  <Label>Machines (serial numbers)</Label>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Fix a mistyped serial number or use, remove a serial entered by mistake, or add serial numbers for units that have none. Quantity is not changed here.</p>
+                </div>
+                {editUnits.map((u, i) => (
+                  <div key={u.id} className={cn("flex items-center gap-2", u.remove && "opacity-50")}>
+                    <Input value={u.serialNo} disabled={u.remove} onChange={(e) => setEditUnits((prev) => prev.map((x, j) => (j === i ? { ...x, serialNo: e.target.value } : x)))} className="h-8 font-mono text-sm flex-1" />
+                    <select value={u.intendedUse} disabled={u.remove} onChange={(e) => setEditUnits((prev) => prev.map((x, j) => (j === i ? { ...x, intendedUse: e.target.value } : x)))}
+                      className={cn("h-8 rounded-md border px-2 text-xs w-24", isLendable(u.intendedUse) ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20" : "border-input bg-background")}>
+                      {Object.entries(INTENDED_USE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                    <button type="button" title={u.remove ? "Keep" : "Remove this serial number (entered by mistake)"}
+                      onClick={() => setEditUnits((prev) => prev.map((x, j) => (j === i ? { ...x, remove: !x.remove } : x)))}
+                      className={cn("text-xs px-1.5", u.remove ? "text-primary underline" : "text-muted-foreground hover:text-destructive")}>
+                      {u.remove ? "undo" : <Trash2Icon className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                ))}
+                {addUnits.map((a, i) => (
+                  <div key={`add-${i}`} className="flex items-center gap-2">
+                    <Input value={a.serialNo} placeholder="New serial no." autoFocus={i === addUnits.length - 1} onChange={(e) => setAddUnits((prev) => prev.map((x, j) => (j === i ? { ...x, serialNo: e.target.value } : x)))} className="h-8 font-mono text-sm flex-1 border-primary/40" />
+                    <select value={a.intendedUse} onChange={(e) => setAddUnits((prev) => prev.map((x, j) => (j === i ? { ...x, intendedUse: e.target.value } : x)))}
+                      className="h-8 rounded-md border border-input bg-background px-2 text-xs w-24">
+                      {Object.entries(INTENDED_USE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setAddUnits((prev) => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive px-1.5"><Trash2Icon className="h-3.5 w-3.5" /></button>
+                  </div>
+                ))}
+                {(() => {
+                  const without = Math.max(0, Math.floor(parseFloat(editQty) || 0) - editUnits.filter((u) => !u.remove).length - addUnits.length);
+                  return without > 0 && !editTarget.warehouseLabel.startsWith("CS:") ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-amber-700 dark:text-amber-400">{without} unit{without > 1 ? "s" : ""} without a serial number</span>
+                      <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAddUnits((prev) => [...prev, { serialNo: "", intendedUse: prev.at(-1)?.intendedUse ?? "SALE" }])}>+ Add serial no.</Button>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            )}
             <div className="flex flex-col gap-1.5">
               <Label>Correction Notes <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
               <Input

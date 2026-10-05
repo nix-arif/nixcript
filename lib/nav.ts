@@ -16,6 +16,8 @@ import {
   BuildingIcon as ProcurementIcon,
   BookOpenIcon,
   LayersIcon,
+  ArrowLeftRightIcon,
+  LifeBuoyIcon,
 } from "lucide-react";
 import React from "react";
 
@@ -52,7 +54,6 @@ export const navConfig: NavGroup[] = [
       { title: "Quotations",   url: "/dashboard/sales/quotation",     permission: "quotation:read"   },
       { title: "Customer POs", url: "/dashboard/sales/customer-po",   permission: "customer-po:read" },
       { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
-      { title: "Consignment",  url: "/dashboard/sales/consignment",   permission: "sales-order:read" },
       { title: "Activity Log", url: "/dashboard/sales/activity",      permission: "customer:read"    },
     ],
   },
@@ -86,6 +87,7 @@ export const navConfig: NavGroup[] = [
     icon: React.createElement(TruckIcon),
     items: [
       { title: "Delivery Orders",     url: "/dashboard/fulfillment/delivery", permission: "delivery-order:read" },
+      { title: "Case Templates",      url: "/dashboard/fulfillment/delivery/case-templates", permission: "delivery-order:read" },
       { title: "Invoices",            url: "/dashboard/fulfillment/invoice",  permission: "invoice:read"         },
       { title: "Statement of Account", url: "/dashboard/fulfillment/soa",     permission: "invoice:read"         },
     ],
@@ -128,7 +130,21 @@ export const navConfig: NavGroup[] = [
       { title: "Pending Approvals", url: "/dashboard/inventory/approvals",            permission: "inventory:approve" },
       { title: "Movement History",  url: "/dashboard/inventory/movements",            permission: "inventory:read"    },
       { title: "Serialized Units",  url: "/dashboard/inventory/serialized-units",     permission: "inventory:read"    },
-      { title: "Consign to Sibling Org", url: "/dashboard/inventory/consign-transfer", permission: "inventory:manage" },
+      { title: "Item Groups",       url: "/dashboard/inventory/item-groups",          permission: "inventory:read"    },
+    ],
+  },
+  {
+    // One module for agent (sibling company) and customer consignment
+    title: "Consignment",
+    url: "#",
+    icon: React.createElement(ArrowLeftRightIcon),
+    items: [
+      { title: "Consignments", url: "/dashboard/consignment",          permission: "consignment:read"   },
+      { title: "New",          url: "/dashboard/consignment/new",      permission: "consignment:manage" },
+      { title: "External agents", url: "/dashboard/consignment/partners", permission: "consignment:read" },
+      { title: "Balance",      url: "/dashboard/consignment/balance",  permission: "consignment:read"   },
+      { title: "Settlement",   url: "/dashboard/consignment/settlement", permission: "consignment:settle" },
+      { title: "Settings",     url: "/dashboard/consignment/settings", permission: "consignment:read"   },
     ],
   },
   {
@@ -198,6 +214,14 @@ export const navConfig: NavGroup[] = [
     icon: React.createElement(UserIcon),
     items: [
       { title: "My Profile", url: "/dashboard/profile/my-profile" },
+    ],
+  },
+  {
+    title: "Help",
+    url: "#",
+    icon: React.createElement(LifeBuoyIcon),
+    items: [
+      { title: "Documentation", url: "/dashboard/documentation" },
     ],
   },
   {

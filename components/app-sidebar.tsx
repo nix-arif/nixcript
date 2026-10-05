@@ -23,7 +23,7 @@ import { useAppStore } from "@/lib/store/use-app-store";
 //   { name: "Travel", url: "#", icon: <MapIcon /> },
 // ];
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({ navSections = {}, ...props }: React.ComponentProps<typeof Sidebar> & { navSections?: Record<string, boolean> }) {
   const { permissions, permissionsLoading } = useAppStore();
   const filteredNav = filterNav(navConfig, permissions);
 
@@ -37,7 +37,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent className="overflow-y-auto">
         <div className={`transition-opacity duration-150 ${permissionsLoading ? "pointer-events-none opacity-30" : "opacity-100"}`}>
-          <NavMain items={filteredNav} />
+          <NavMain items={filteredNav} initialSections={navSections} />
         </div>
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border/60 pt-2">

@@ -1,5 +1,7 @@
 "use client";
 
+import { saveNavSections } from "@/lib/nav-sections";
+
 import {
   Collapsible,
   CollapsibleContent,
@@ -39,7 +41,10 @@ function isActiveSub(url: string, allUrls: string[], pathname: string): boolean 
 
 export function NavMain({
   items,
+  initialSections = {},
 }: {
+  // menu sections the user opened / closed last time (cookie, read on the server)
+  initialSections?: Record<string, boolean>;
   items: {
     title: string;
     url: string;
@@ -53,7 +58,9 @@ export function NavMain({
 }) {
   const pathname = usePathname();
   const { isMobile, state, setOpenMobile } = useSidebar();
-  const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
+  // The user's own open / closed choice per section, remembered across pages
+  // and visits; a section they never touched opens when it holds the current page
+  const [manualOpen, setManualOpen] = useState<Record<string, boolean>>(initialSections);
   // Sub-items are hidden by CSS once the sidebar collapses to icons
   // (SidebarMenuSub has group-data-[collapsible=icon]:hidden), so the usual
   // inline expand/collapse becomes unreachable — swap to a flyout dropdown
@@ -83,11 +90,12 @@ export function NavMain({
   };
   useEffect(() => clearCloseTimer, []);
 
-  // Reset manual overrides whenever the route changes
-  useEffect(() => {
-    setManualOpen({});
+  // A flyout left open closes when the page changes (the sections' open state is kept)
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (pathname !== seenPath) {
+    setSeenPath(pathname);
     setHoveredTitle(null);
-  }, [pathname]);
+  }
 
   const closeMobile = () => {
     if (isMobile) setOpenMobile(false);
@@ -103,7 +111,7 @@ export function NavMain({
             isActiveSub(sub.url, allSubUrls, pathname),
           ) ?? false;
 
-          const isOpen = isGroupActive || (manualOpen[item.title] ?? false);
+          const isOpen = manualOpen[item.title] ?? isGroupActive;
 
           if (isIconCollapsed) {
             return (
@@ -179,9 +187,11 @@ export function NavMain({
               key={item.title}
               asChild
               open={isOpen}
-              onOpenChange={(open) =>
-                setManualOpen((prev) => ({ ...prev, [item.title]: open }))
-              }
+              onOpenChange={(open) => {
+                const next = { ...manualOpen, [item.title]: open };
+                setManualOpen(next);
+                saveNavSections(next);
+              }}
               className="group/collapsible"
             >
               <SidebarMenuItem>

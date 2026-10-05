@@ -22,6 +22,7 @@ import { authClient } from "@/lib/auth-client";
 import { Spinner } from "./ui/spinner";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store/use-app-store";
+import { setTabOrg } from "@/lib/tab-org";
 
 const ORG_COLORS = [
   "bg-blue-500",
@@ -136,6 +137,7 @@ export function OrganizationSwitcher() {
     if (autoSettingRef.current) return;
 
     autoSettingRef.current = true;
+    setTabOrg(organizationList[0].id);
     authClient.organization
       .setActive({ organizationId: organizationList[0].id })
       .then(() => refetchActive())
@@ -160,6 +162,7 @@ export function OrganizationSwitcher() {
     setPendingOrgId(organizationId);
     fetchPermissions(organizationId);
     setOrgSwitching(true);
+    setTabOrg(organizationId); // this tab now works in the new company; other tabs keep theirs
 
     authClient.organization.setActive({ organizationId }).then(() => {
       // After setActive, the proxy's atomListeners automatically toggle $activeOrgSignal
@@ -173,6 +176,7 @@ export function OrganizationSwitcher() {
       router.replace(url);
     }).catch((err) => {
       console.error("Failed to switch organization", err);
+      setTabOrg(activeOrganization.id);
       clearPermissions();
       setPendingOrgId(null);
       setOrgSwitching(false);

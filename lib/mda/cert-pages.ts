@@ -1,0 +1,326 @@
+// MDA certificate pages for a document's items: each product's registration
+// certificate (from R2), pages 1-2 plus the page listing that product with its
+// row highlighted and badged with the item numbers — or the full certificate
+// for MDAPC registrations. Shared by the quotation "MDA certs" download and
+// the Case DO customer copy.
+
+import { db } from "@/db";
+import { product } from "@/db/schema";
+import { and, inArray } from "drizzle-orm";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { PDFDocument, rgb, StandardFonts, degrees, pushGraphicsState, popGraphicsState, concatTransformationMatrix, PDFArray, PDFDict, PDFName, PDFNumber } from "pdf-lib";
+
+type MdaItem = {
+  no: string;
+  mdaPdfFile: string;
+  mdaPdfUrl: string;
+  mdaRegNo: string | null;
+  mdaPageNo: string | null;
+  mdaMatchX: string | null;
+  mdaMatchY: string | null;
+  mdaRowHeight: string | null;
+  mdaPageWidth: string | null;
+  mdaPageHeight: string | null;
+};
+
+const R2_BUCKET = process.env.R2_MDA_CERTIFICATES_BUCKET;
+const R2_ENDPOINT = process.env.R2_ENDPOINT;
+const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY_ID;
+const R2_SECRET_KEY = process.env.R2_SECRET_ACCESS_KEY;
+
+const s3 = new S3Client({
+  region: "auto",
+  endpoint: R2_ENDPOINT,
+  credentials: {
+    accessKeyId: R2_ACCESS_KEY ?? "",
+    secretAccessKey: R2_SECRET_KEY ?? "",
+  },
+});
+
+async function presignMdaKey(key: string): Promise<string> {
+  if (!R2_BUCKET) throw new Error("R2_MDA_CERTIFICATES_BUCKET env var is not set");
+  if (!R2_ENDPOINT) throw new Error("R2_ENDPOINT env var is not set");
+  if (!R2_ACCESS_KEY || !R2_SECRET_KEY) throw new Error("R2 credentials env vars are not set");
+  const cmd = new GetObjectCommand({ Bucket: R2_BUCKET, Key: key });
+  return getSignedUrl(s3, cmd, { expiresIn: 3600 });
+}
+
+// Any /Annots on the page (highlights, stamps, comments, form fields) are
+// positioned via /Rect (and /QuadPoints for text-markup annotations) in the
+// page's own coordinate space — normalizePage() below only transforms the
+// content stream, so without this, a rotated page's annotations end up
+// pointing at the wrong location once the content itself is un-rotated and
+// the page's dimensions are swapped. Applies the identical matrix.
+function transformAnnotRects(page: ReturnType<PDFDocument["getPage"]>, a: number, b: number, c: number, d: number, e: number, f: number): void {
+  const annots = page.node.Annots();
+  if (!annots) return;
+  const tx = (x: number, y: number): [number, number] => [a * x + c * y + e, b * x + d * y + f];
+  for (let i = 0; i < annots.size(); i++) {
+    // A single malformed annotation shouldn't take down the whole merge —
+    // worst case that annotation keeps its old (wrong) position, same as
+    // before this fix existed.
+    try {
+      const dict = annots.lookup(i, PDFDict);
+      const rect = dict.lookupMaybe(PDFName.of("Rect"), PDFArray);
+      if (rect && rect.size() === 4) {
+        const [llx, lly, urx, ury] = [0, 1, 2, 3].map((idx) => rect.lookup(idx, PDFNumber).asNumber());
+        const corners = [tx(llx, lly), tx(urx, lly), tx(llx, ury), tx(urx, ury)];
+        const xs = corners.map((p) => p[0]);
+        const ys = corners.map((p) => p[1]);
+        dict.set(PDFName.of("Rect"), page.doc.context.obj([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]));
+      }
+      const quad = dict.lookupMaybe(PDFName.of("QuadPoints"), PDFArray);
+      if (quad && quad.size() % 8 === 0) {
+        const nums: number[] = [];
+        for (let j = 0; j < quad.size(); j++) nums.push(quad.lookup(j, PDFNumber).asNumber());
+        const out: number[] = [];
+        for (let j = 0; j < nums.length; j += 2) {
+          const [nx, ny] = tx(nums[j], nums[j + 1]);
+          out.push(nx, ny);
+        }
+        dict.set(PDFName.of("QuadPoints"), page.doc.context.obj(out));
+      }
+    } catch {
+      continue;
+    }
+  }
+}
+
+function normalizePage(page: ReturnType<PDFDocument["getPage"]>): void {
+  const rot = page.getRotation().angle;
+  if (rot === 0) return;
+  const pw = page.getWidth();
+  const ph = page.getHeight();
+  let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+  let newW = pw, newH = ph;
+  if (rot === 90) {
+    // 90° CW: [0, -1, 1, 0, 0, W]
+    a = 0; b = -1; c = 1; d = 0; e = 0; f = pw;
+    newW = ph; newH = pw;
+  } else if (rot === 180) {
+    a = -1; b = 0; c = 0; d = -1; e = pw; f = ph;
+  } else if (rot === 270) {
+    // 270° CW (90° CCW): [0, 1, -1, 0, H, 0]
+    a = 0; b = 1; c = -1; d = 0; e = ph; f = 0;
+    newW = ph; newH = pw;
+  } else {
+    return;
+  }
+  transformAnnotRects(page, a, b, c, d, e, f);
+  // Do NOT call getContentStream() here — that caches a stream inside the CTM block,
+  // causing badge drawing calls to be double-transformed and land off-page.
+  page.node.normalize();
+  const start = (page as any).createContentStream(
+    pushGraphicsState(),
+    concatTransformationMatrix(a, b, c, d, e, f),
+  );
+  const startRef = page.doc.context.register(start);
+  const end = (page as any).createContentStream(popGraphicsState());
+  const endRef = page.doc.context.register(end);
+  page.node.wrapContentStreams(startRef, endRef);
+  page.setSize(newW, newH);
+  page.setRotation(degrees(0));
+}
+
+function isMdapc(items: MdaItem[]): boolean {
+  return (
+    items.some((i) => i.mdaRegNo?.toUpperCase().startsWith("MDAPC")) ||
+    items.every((i) => !i.mdaPageNo)
+  );
+}
+
+function drawBadge(
+  page: ReturnType<PDFDocument["getPage"]>,
+  font: Awaited<ReturnType<PDFDocument["embedFont"]>>,
+  label: string,
+  x: number,
+  y: number,
+  h: number,
+) {
+  const fontSize = Math.max(7, Math.min(10, h * 0.75));
+  const w = font.widthOfTextAtSize(label, fontSize) + 6;
+  page.drawRectangle({ x, y, width: w, height: h, color: rgb(0.09, 0.29, 0.65), opacity: 0.9 });
+  page.drawText(label, { x: x + 3, y: y + (h - fontSize) / 2 + 1, size: fontSize, font, color: rgb(1, 1, 1) });
+  return w;
+}
+
+
+/**
+ * Append the MDA certificate pages for these document items to `target`.
+ * `no` is the item number printed on the document (shown as a badge).
+ * Returns how many pages were added (0 = none available) and a diagnostic.
+ */
+export async function appendMdaCertPages(
+  target: PDFDocument,
+  items: { rowNo: string; productCode: string | null; mdaRegNo: string | null }[],
+  ownerOrgIds: string[],
+): Promise<{ pages: number; detail?: string }> {
+  const codes = [...new Set(items.map((i) => i.productCode).filter(Boolean) as string[])];
+  if (codes.length === 0) return { pages: 0, detail: "No product codes" };
+  const before = target.getPageCount();
+
+  const productRows = await db
+    .select({
+      productCode: product.productCode,
+      mdaPdfFile: product.mdaPdfFile,
+      mdaPageNo: product.mdaPageNo,
+      mdaMatchX: product.mdaMatchX,
+      mdaMatchY: product.mdaMatchY,
+      mdaRowHeight: product.mdaRowHeight,
+      mdaPageWidth: product.mdaPageWidth,
+      mdaPageHeight: product.mdaPageHeight,
+    })
+    .from(product)
+    .where(and(inArray(product.organizationId, ownerOrgIds), inArray(product.productCode, codes)));
+
+  // Deduplicate by productCode (same product in multiple owner orgs)
+  const pMap = new Map<string, typeof productRows[number]>();
+  for (const row of productRows) {
+    if (!pMap.has(row.productCode)) pMap.set(row.productCode, row);
+  }
+
+  // Presign unique MDA PDF keys
+  const uniqueKeys = [...new Set(
+    [...pMap.values()].map((r) => r.mdaPdfFile).filter(Boolean) as string[],
+  )];
+  const presignMap = new Map<string, string>();
+  let presignError: string | null = null;
+  await Promise.all(
+    uniqueKeys.map(async (key) => {
+      try {
+        presignMap.set(key, await presignMdaKey(key));
+      } catch (e: any) {
+        presignError = e?.message ?? String(e);
+        console.error("[mda-certs] presign failed for key:", key, e);
+      }
+    }),
+  );
+
+  // Build enriched MDA items
+  const mdaItems: MdaItem[] = [];
+  for (const item of items) {
+    if (!item.productCode) continue;
+    const p = pMap.get(item.productCode);
+    if (!p?.mdaPdfFile) continue;
+    const url = presignMap.get(p.mdaPdfFile);
+    if (!url) continue;
+    mdaItems.push({
+      no: item.rowNo,
+      mdaPdfFile: p.mdaPdfFile,
+      mdaPdfUrl: url,
+      mdaRegNo: item.mdaRegNo ?? null,
+      mdaPageNo: p.mdaPageNo ?? null,
+      mdaMatchX: p.mdaMatchX ?? null,
+      mdaMatchY: p.mdaMatchY ?? null,
+      mdaRowHeight: p.mdaRowHeight ?? null,
+      mdaPageWidth: p.mdaPageWidth ?? null,
+      mdaPageHeight: p.mdaPageHeight ?? null,
+    });
+  }
+
+  if (mdaItems.length === 0) {
+    const withPdf = items.filter((i) => i.productCode && pMap.get(i.productCode!)?.mdaPdfFile).length;
+    return { pages: 0, detail: `Items: ${items.length}, with PDF file: ${withPdf}, presigned: ${presignMap.size}${presignError ? `. Presign error: ${presignError}` : ""}` };
+  }
+
+  // Group by PDF file key
+  const mdaGroups = new Map<string, { url: string; items: MdaItem[] }>();
+  for (const item of mdaItems) {
+    const g = mdaGroups.get(item.mdaPdfFile) ?? { url: item.mdaPdfUrl, items: [] };
+    g.items.push(item);
+    mdaGroups.set(item.mdaPdfFile, g);
+  }
+
+  const mergedPdf = target;
+  const font = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
+
+  for (const [, g] of mdaGroups) {
+    try {
+      const res = await fetch(g.url);
+      if (!res.ok) continue;
+      const buf    = await res.arrayBuffer();
+      const srcPdf = await PDFDocument.load(buf);
+      const total  = srcPdf.getPageCount();
+
+      const allNos = [...new Set(
+        g.items.map((i) => i.no).filter((n): n is string => !!n),
+      )].sort();
+      const nosLabel = allNos.join(", ");
+
+      if (isMdapc(g.items)) {
+        // MDAPC: full certificate, no highlights, nos badge on first page only
+        const allIdx = Array.from({ length: total }, (_, i) => i);
+        const copied = await mergedPdf.copyPages(srcPdf, allIdx);
+        copied.forEach((page, i) => {
+          normalizePage(page);
+          if (i === 0 && nosLabel) {
+            const badgeH = 16;
+            const badgeX = page.getWidth() - font.widthOfTextAtSize(nosLabel, 10) - 6 - 10;
+            const badgeY = page.getHeight() - badgeH - 10;
+            drawBadge(page, font, nosLabel, badgeX, badgeY, badgeH);
+          }
+          mergedPdf.addPage(page);
+        });
+      } else {
+        // Standard: pages 1 & 2 + item-specific pages with row highlights
+        const pageSet = new Set<number>([0, 1].filter((i) => i < total));
+        // Key: "pageIdx:y" — merges same-product duplicate rows into one highlight
+        const hlMap = new Map<string, { x: number; y: number; w: number; h: number; nos: string[] }>();
+
+        for (const item of g.items) {
+          if (!item.mdaPageNo) continue;
+          const idx = parseInt(item.mdaPageNo) - 1;
+          if (isNaN(idx) || idx < 0 || idx >= total) continue;
+          pageSet.add(idx);
+          if (item.mdaMatchX && item.mdaMatchY && item.mdaRowHeight && item.mdaPageWidth && item.mdaPageHeight) {
+            const srcPage = srcPdf.getPage(idx);
+            const scaleY  = srcPage.getHeight() / parseFloat(item.mdaPageHeight);
+            const y = parseFloat(item.mdaMatchY) * scaleY - 2;
+            const key = `${idx}:${y.toFixed(1)}`;
+            const existing = hlMap.get(key);
+            if (existing) {
+              if (item.no != null) existing.nos.push(item.no);
+            } else {
+              hlMap.set(key, {
+                x: 0,
+                y,
+                w: srcPage.getWidth(),
+                h: parseFloat(item.mdaRowHeight) * scaleY + 4,
+                nos: item.no != null ? [item.no] : [],
+              });
+            }
+          }
+        }
+
+        // Re-bucket by page index for rendering
+        const highlights = new Map<number, Array<{ x: number; y: number; w: number; h: number; nos: string[] }>>();
+        for (const [key, hl] of hlMap) {
+          const idx = parseInt(key.split(":")[0]);
+          const arr = highlights.get(idx) ?? [];
+          arr.push(hl);
+          highlights.set(idx, arr);
+        }
+
+        const sortedIdx = [...pageSet].sort((a, b) => a - b);
+        const copied = await mergedPdf.copyPages(srcPdf, sortedIdx);
+        sortedIdx.forEach((srcIdx, i) => {
+          const page = copied[i];
+          normalizePage(page);
+          for (const hl of (highlights.get(srcIdx) ?? [])) {
+            page.drawRectangle({ x: hl.x, y: hl.y, width: hl.w, height: hl.h, color: rgb(1, 1, 0), opacity: 0.3 });
+            if (hl.nos.length > 0) {
+              const label = hl.nos.slice().sort().join(", ");
+              const badgeH = hl.h;
+              const badgeX = hl.w - font.widthOfTextAtSize(label, Math.max(7, Math.min(10, badgeH * 0.75))) - 6 - 2;
+              drawBadge(page, font, label, badgeX, hl.y, badgeH);
+            }
+          }
+          mergedPdf.addPage(page);
+        });
+      }
+    } catch { /* skip unavailable cert */ }
+  }
+
+  return { pages: target.getPageCount() - before };
+}

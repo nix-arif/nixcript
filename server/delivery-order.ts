@@ -4,6 +4,7 @@ import { db } from "@/db";
 import {
   deliveryOrder,
   deliveryOrderItem,
+  deliveryOrderCustomerItem,
   deliveryOrderCounter,
   customer,
   user,
@@ -33,7 +34,12 @@ import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { nextFreeDocNo, isDocNoTakenInGroup } from "@/lib/document-number-group";
 import { createApprovedMovement, adjustReservation } from "@/lib/inventory/create-movement";
-import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
+import { LOAN_PURPOSE, MOVEMENT_TYPE, REF_TYPE, isLendable } from "@/lib/inventory/constants";
+import { cleanCustomerView, type CustomerView } from "@/lib/delivery/customer-view";
+import { pricedWithoutMda, pricedWithoutMdaMessage } from "@/lib/mda/priced-without-mda";
+import { bumpLevel, consignedLineForUnit, consumeConsigned, consignedHeldByRep, getConsumeOrder, recordMachineUse, reverseConsumption, reverseMachineUse } from "@/lib/consignment/engine";
+import { isConsignmentLocation } from "@/lib/consignment/labels";
+import { autoSettlePerUse } from "@/lib/consignment/settle";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -160,7 +166,13 @@ const DO_NUMBERED = { table: deliveryOrder, id: deliveryOrder.id, organizationId
 
 export type DeliveryOrderRow = typeof deliveryOrder.$inferSelect;
 export type DeliveryOrderItem = typeof deliveryOrderItem.$inferSelect;
-export type DeliveryOrderWithItems = DeliveryOrderRow & { items: DeliveryOrderItem[]; createdByName: string | null; invoiceId: string | null; invoiceNo: string | null };
+export type DeliveryOrderCustomerItem = typeof deliveryOrderCustomerItem.$inferSelect;
+export type DeliveryOrderWithItems = DeliveryOrderRow & {
+  items: DeliveryOrderItem[];
+  // Case DO (two-step): what the customer copy shows and the invoice bills
+  customerItems: DeliveryOrderCustomerItem[];
+  createdByName: string | null; invoiceId: string | null; invoiceNo: string | null;
+};
 export type DeliveryOrderListRow = DeliveryOrderRow & { createdByName: string | null; invoiceId: string | null; invoiceNo: string | null };
 
 export type DoForInvoice = {
@@ -345,7 +357,7 @@ export async function getSoItemDeliveredQtys(soId: string): Promise<Record<strin
   return Object.fromEntries(rows.map((r) => [r.soItemId as string, parseFloat(r.total)]));
 }
 
-export interface DeliveryOrderItemInput {
+export interface DeliveryOrderItemInput extends CustomerView {
   rowNo: number;
   soItemId?: string;
   productId?: string;
@@ -362,9 +374,27 @@ export interface DeliveryOrderItemInput {
   // unit entered inventory — determines loanOut server-side; the client's
   // own loanOut is ignored so the person creating the DO can't override it.
   unitId?: string;
+  // Loan-out (machine) lines: back with the specialist after the case, or
+  // left at the hospital until returned from the DO page (default "stays");
+  // and the per-case usage fee charged to the hospital, if any.
+  loanReturnMode?: "same_day" | "stays";
+  usageFee?: string;
+  loanPurpose?: "RENTAL" | "LOAN" | "DEMO";
+  unitPrice?: string; // Case DO itemized selling price per unit
+}
+
+export interface CaseCustomerItemInput {
+  productId?: string | null; productCode?: string | null; description?: string | null;
+  qty: string; uom?: string | null; unitPrice?: string | null;
 }
 
 export interface CreateDeliveryOrderInput {
+  // Case DO (two-step): the customer items (customer copy + invoice). The
+  // actual items (`items`) may be empty — recorded after the case.
+  customerItems?: CaseCustomerItemInput[];
+  // Case DO selling price: a price per line, or one total for the case
+  priceMode?: "itemized" | "total";
+  casePrice?: string;
   customerId?: string;
   customerOrgMemberId?: string;
   salesOrderId?: string;
@@ -385,6 +415,8 @@ export interface CreateDeliveryOrderInput {
   caseDate?: Date;
   mrnNo?: string;
   categoryIds?: string[];
+  caseDescription?: string;
+  caseTemplateId?: string;
 }
 
 export interface UpdateDeliveryOrderInput extends Omit<CreateDeliveryOrderInput, "items"> {
@@ -487,10 +519,12 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!do_) return null;
-  const [items, users, invoiceRows] = await Promise.all([
+  const [items, customerItems, users, invoiceRows] = await Promise.all([
     db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderItem.rowNo)),
+    db.select().from(deliveryOrderCustomerItem).where(eq(deliveryOrderCustomerItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderCustomerItem.rowNo)),
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [do_.createdBy])),
-    do_.status === "delivered"
+    // a Case DO stays "draft" but can be invoiced
+    do_.status === "delivered" || do_.isCaseDo
       ? db.select({ id: invoice.id, invoiceNo: invoice.invoiceNo })
           .from(invoice)
           .where(and(eq(invoice.deliveryOrderId, id), eq(invoice.organizationId, orgId)))
@@ -501,6 +535,7 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
   return {
     ...do_,
     items,
+    customerItems,
     createdByName: nameOf(do_.createdBy),
     invoiceId: invoiceRows[0]?.id ?? null,
     invoiceNo: invoiceRows[0]?.invoiceNo ?? null,
@@ -510,11 +545,24 @@ export async function getDeliveryOrderDetail(id: string): Promise<DeliveryOrderW
 export type DoForPdfItem = DeliveryOrderItem & {
   unitPrice: string | null;
   totalPrice: string | null;
+  // Case DO copies: the product's MDA registration (customer copy lists only
+  // items with a valid one), and the machine's serial number
+  mdaRegNo: string | null;
+  mdaExpiredOn: string | null;
+  mdaValid: boolean;
+  serialNo: string | null;
+  // custShow "product": the MDA of the product printed instead
+  custMda: { mdaRegNo: string | null; mdaExpiredOn: string | null; mdaValid: boolean } | null;
 };
 
 export type DoForPdfResult = {
   order: DeliveryOrderRow;
   items: DoForPdfItem[];
+  // Two-step Case DO: the customer copy prints these (null = an older Case DO,
+  // whose customer copy is made from its actual items)
+  customerItems: DoForPdfItem[] | null;
+  ownerOrgIds: string[];
+  caseInfo: { categories: string[]; specialist: string | null } | null;
   org: {
     companyName: string;
     companyAddress: string | null;
@@ -531,6 +579,11 @@ export type DoForPdfResult = {
     orgNameSize: string | null;
     orgNameBold: number | null;
     orgNameUppercase: number | null;
+    // boxes after the item table (customer-facing copies)
+    doFooterNotes: string | null;
+    doShowBank: boolean;
+    doShowReceivedBy: boolean;
+    bank: { bankName: string; accountHolder: string; accountNo: string; branchName: string; swiftCode: string } | null;
   };
 };
 
@@ -546,14 +599,15 @@ export async function getDoForPdf(id: string): Promise<DoForPdfResult | null> {
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
   if (!do_) return null;
 
-  const [items, orgProfile] = await Promise.all([
+  const [items, custRows, orgProfile] = await Promise.all([
     db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderItem.rowNo)),
+    db.select().from(deliveryOrderCustomerItem).where(eq(deliveryOrderCustomerItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderCustomerItem.rowNo)),
     getOrganizationProfile(),
   ]);
 
   const soItemIds = items.map((i) => i.soItemId).filter((v): v is string => !!v);
   const soItems = soItemIds.length
-    ? await db.select({ id: salesOrderItem.id, unitPrice: salesOrderItem.unitPrice, totalPrice: salesOrderItem.totalPrice })
+    ? await db.select({ id: salesOrderItem.id, unitPrice: salesOrderItem.unitPrice, totalPrice: salesOrderItem.totalPrice, discountPct: salesOrderItem.discountPct })
         .from(salesOrderItem)
         .where(inArray(salesOrderItem.id, soItemIds))
     : [];
@@ -573,12 +627,92 @@ export async function getDoForPdf(id: string): Promise<DoForPdfResult | null> {
     fallbackPrice = linkedInvoice?.grandTotal ?? null;
   }
 
+  // MDA registration per product (by id, else by code in the owner group) + serial numbers
+  const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
+  const prodIds = [...new Set([...items.flatMap((i) => [i.productId, i.custShow === "product" ? i.custProductId : null]), ...custRows.map((c) => c.productId)].filter(Boolean) as string[])];
+  const codes = [...new Set([...items.flatMap((i) => [i.productCode, i.custShow === "product" ? i.custCode : null]), ...custRows.map((c) => c.productCode)].filter(Boolean) as string[])];
+  const mdaRows = prodIds.length || codes.length ? await db.select({ id: productTable.id, code: productTable.productCode, reg: productTable.mdaRegistrationNo, exp: productTable.mdaExpiredOn })
+    .from(productTable).where(and(inArray(productTable.organizationId, ownerOrgIds), or(
+      prodIds.length ? inArray(productTable.id, prodIds) : sql`false`, codes.length ? inArray(productTable.productCode, codes) : sql`false`,
+    ))) : [];
+  const unitIds = items.map((i) => i.unitId).filter(Boolean) as string[];
+  const serials = new Map((unitIds.length ? await db.select({ id: assetUnit.id, sn: assetUnit.serialNo }).from(assetUnit).where(inArray(assetUnit.id, unitIds)) : []).map((u) => [u.id, u.sn]));
+  const onDate = do_.caseDate ?? do_.createdAt;
+  const mdaFor = (i: { productId: string | null; productCode: string | null }) => {
+    const own = mdaRows.find((m) => m.id === i.productId && m.reg);
+    const any = own ?? mdaRows.find((m) => m.code === i.productCode && m.reg);
+    const reg = any?.reg?.trim() || null;
+    const exp = any?.exp ?? null;
+    return { mdaRegNo: reg, mdaExpiredOn: exp, mdaValid: !!reg && (!exp || new Date(exp) >= new Date(new Date(onDate).toDateString())) };
+  };
+  // Price per DO line ("with price" PDF):
+  //  • from a sales order: this DO's qty × the SO unit price, less its discount
+  //    (not the SO line total — a DO may deliver only part of it)
+  //  • Case DO: the line's own selling price, or a lent machine's usage fee
+  //    (+ its sale price if the hospital kept it); a total-priced case prices
+  //    the case as a whole (package line added in the PDF), items "included"
+  //  • otherwise a one-line DO takes its invoice total
+  const money = (v: string | null | undefined) => (v !== null && v !== undefined && v !== "" && !isNaN(Number(v)) ? Number(v) : null);
+  const linePrice = (item: typeof items[number]): { unitPrice: string | null; totalPrice: string | null } => {
+    const qty = money(item.qty) ?? 0;
+    if (do_.isCaseDo) {
+      const fee = money(item.usageFee), sale = money(item.salePrice);
+      if (fee !== null || sale !== null) return { unitPrice: (fee ?? sale)!.toFixed(2), totalPrice: ((fee ?? 0) + (sale ?? 0)).toFixed(2) };
+      if (do_.priceMode === "total") return { unitPrice: null, totalPrice: null };
+      const up = money(item.unitPrice);
+      return up === null ? { unitPrice: null, totalPrice: null } : { unitPrice: up.toFixed(2), totalPrice: (up * qty).toFixed(2) };
+    }
+    const so = item.soItemId ? priceBySoItemId.get(item.soItemId) : undefined;
+    if (so) {
+      const up = money(so.unitPrice) ?? 0;
+      const disc = money(so.discountPct) ?? 0;
+      return { unitPrice: up.toFixed(2), totalPrice: (up * qty * (1 - disc / 100)).toFixed(2) };
+    }
+    return { unitPrice: fallbackPrice, totalPrice: fallbackPrice };
+  };
+
+  let caseInfo: DoForPdfResult["caseInfo"] = null;
+  if (do_.isCaseDo) {
+    const { documentCategory } = await import("@/db/schema");
+    const cats = do_.categoryIds?.length ? await db.select({ name: documentCategory.name }).from(documentCategory).where(inArray(documentCategory.id, do_.categoryIds)) : [];
+    caseInfo = { categories: cats.map((c) => c.name), specialist: do_.applicationSpecialistName ?? null };
+  }
+
+  // Customer items as printable lines. A machine line takes the serial no. and
+  // loan of the unit recorded as actually used (same product), and — when it
+  // has no price of its own — that unit's usage fee
+  const customerItems: DoForPdfItem[] | null = custRows.length ? custRows.map((c) => {
+    const used = items.filter((i) => i.productId && i.productId === c.productId);
+    const machine = used.find((i) => i.unitId);
+    const fee = used.reduce((a, i) => a + (money(i.usageFee) ?? 0), 0);
+    const qty = money(c.qty) ?? 0;
+    const up = do_.priceMode === "total" ? null : money(c.unitPrice) ?? (fee > 0 ? fee / Math.max(qty, 1) : null);
+    const base = items[0] ?? ({} as typeof items[number]);
+    return {
+      ...base, id: c.id, deliveryOrderId: id, rowNo: c.rowNo, soItemId: null, productId: c.productId, productCode: c.productCode,
+      description: c.description, qty: c.qty, uom: c.uom, setGroupId: null, setGroupLabel: null, setQty: null,
+      unitId: machine?.unitId ?? null, loanReturnMode: machine?.loanReturnMode ?? null, usageFee: null, loanPurpose: machine?.loanPurpose ?? null,
+      salePrice: null, custShow: null, custProductId: null, custCode: null, custDescription: null, custQty: null, custUom: null, custReason: null,
+      unitPrice: up === null ? null : up.toFixed(2), totalPrice: up === null ? null : (up * qty).toFixed(2),
+      // a free-text line (no catalogue product, e.g. a package name) prints as written
+      ...(c.productId || c.productCode ? mdaFor({ productId: c.productId, productCode: c.productCode }) : { mdaRegNo: null, mdaExpiredOn: null, mdaValid: true }),
+      serialNo: used.map((i) => (i.unitId ? serials.get(i.unitId) : null)).filter(Boolean).join(", ") || null,
+      custMda: null,
+    } as DoForPdfItem;
+  }) : null;
+
   return {
     order: do_,
+    ownerOrgIds,
+    caseInfo,
+    customerItems,
     items: items.map((item) => ({
       ...item,
-      unitPrice: item.soItemId ? (priceBySoItemId.get(item.soItemId)?.unitPrice ?? null) : fallbackPrice,
-      totalPrice: item.soItemId ? (priceBySoItemId.get(item.soItemId)?.totalPrice ?? null) : fallbackPrice,
+      ...linePrice(item),
+      ...mdaFor(item),
+      serialNo: item.unitId ? serials.get(item.unitId) ?? null : null,
+      // the product shown instead on the customer copy, with its own MDA
+      custMda: item.custShow === "product" ? mdaFor({ productId: item.custProductId, productCode: item.custCode }) : null,
     })),
     org: {
       companyName:        orgProfile.companyName ?? "Company",
@@ -596,6 +730,15 @@ export async function getDoForPdf(id: string): Promise<DoForPdfResult | null> {
       orgNameSize:        orgProfile.orgNameSize ?? null,
       orgNameBold:        orgProfile.orgNameBold ?? null,
       orgNameUppercase:   orgProfile.orgNameUppercase ?? null,
+      doFooterNotes:      orgProfile.doFooterNotes ?? null,
+      doShowBank:         (orgProfile.doShowBank ?? 1) === 1,
+      doShowReceivedBy:   (orgProfile.doShowReceivedBy ?? 1) === 1,
+      // the primary bank account (else the first) for "payment details"
+      bank: (() => {
+        const list = (orgProfile.bankingInfo ?? []) as { bankName: string; accountHolder: string; accountNo: string; branchName: string; swiftCode: string; isPrimary: boolean }[];
+        const b = list.find((x) => x.isPrimary) ?? list[0];
+        return b && b.accountNo ? { bankName: b.bankName ?? "", accountHolder: b.accountHolder ?? "", accountNo: b.accountNo, branchName: b.branchName ?? "", swiftCode: b.swiftCode ?? "" } : null;
+      })(),
     },
   };
 }
@@ -606,13 +749,20 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     .select()
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, id), eq(deliveryOrder.organizationId, orgId)));
-  if (!do_ || do_.status !== "delivered") return null;
+  // A Case DO is complete once recorded (its stock moved at creation and it is
+  // never "delivered"), so it can be invoiced straight away
+  // (a cancelled Case DO is never invoiced: its status is "cancelled", not "draft")
+  if (!do_ || !(do_.status === "delivered" || (do_.isCaseDo && do_.status === "draft"))) return null;
 
   const items = await db
     .select()
     .from(deliveryOrderItem)
     .where(eq(deliveryOrderItem.deliveryOrderId, id))
     .orderBy(asc(deliveryOrderItem.rowNo));
+  // Two-step Case DO: the hospital is billed for its customer items
+  const custRows = do_.isCaseDo
+    ? await db.select().from(deliveryOrderCustomerItem).where(eq(deliveryOrderCustomerItem.deliveryOrderId, id)).orderBy(asc(deliveryOrderCustomerItem.rowNo))
+    : [];
 
   // Walk the chain: DO → SO → CPO → Quotation to inherit all document links
   let salesPersonId: string | null = null;
@@ -748,6 +898,16 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     }
   }
 
+  const feeBilled = new Set<string>(); // products whose usage fee is on a customer line
+  // Total-priced Case DO: the package line is named after the case
+  let packageName = do_.caseDescription?.trim() || "";
+  if (!packageName && do_.isCaseDo && do_.caseTemplateId) {
+    const { caseTemplate } = await import("@/db/schema");
+    const [t] = await db.select({ name: caseTemplate.name }).from(caseTemplate).where(eq(caseTemplate.id, do_.caseTemplateId)).limit(1);
+    packageName = t?.name ?? "";
+  }
+  if (!packageName) packageName = do_.applicationSpecialistName ? `case by ${do_.applicationSpecialistName}` : "case";
+
   return {
     id: do_.id,
     doNo: do_.doNo,
@@ -768,20 +928,46 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     supplierId,
     deliveryDate: do_.deliveryDate,
     deliveryAddress: do_.deliveryAddress,
-    items: items.map((i) => {
+    items: [
+      // customer items (two-step Case DO) — priced per item, or "included" in a total
+      ...custRows.map((c) => {
+        // a machine line without its own price is charged the usage fee of the
+        // unit actually lent for it (that fee line is then not repeated below)
+        const fee = !c.unitPrice && c.productId ? items.filter((i) => i.productId === c.productId && i.usageFee).reduce((a, i) => a + Number(i.usageFee), 0) : 0;
+        // a machine on the customer copy is billed there (its price, or its fee) — never again below
+        if (c.productId) feeBilled.add(c.productId);
+        return {
+          rowNo: c.rowNo, productId: c.productId, productCode: c.productCode,
+          description: fee > 0 ? `${c.description ?? c.productCode ?? "Machine"} — usage fee (per case)`
+            : do_.priceMode === "total" ? `${c.description ?? c.productCode ?? ""} (included)` : c.description,
+          qty: c.qty, uom: c.uom,
+          unitPrice: fee > 0 ? (fee / Math.max(Number(c.qty) || 1, 1)).toFixed(2) : do_.priceMode === "total" ? "0" : c.unitPrice,
+          discountPct: "0", costUnitPrice: null,
+          lineType: null, rentalDuration: null, rentalUnit: null, setGroupId: null, setGroupLabel: null, setQty: null,
+        };
+      }),
+      ...items.flatMap((i) => {
+      // with customer items, actual items only add machine usage fees / sales
+      // not already billed on a customer line
+      if (custRows.length && !i.salePrice && (!i.usageFee || (i.productId && feeBilled.has(i.productId)))) return [];
       // Look up SO item data: by soItemId first, then productCode, then rowNo
       const soData =
         (i.soItemId ? soItemPriceMap.get(i.soItemId) : undefined) ??
         (i.productCode ? soItemPriceMap.get(`pc:${i.productCode}`) : undefined) ??
         soItemPriceMap.get(`row:${i.rowNo}`);
-      return {
+      const line = {
         rowNo: i.rowNo,
         productId: i.productId ?? null,
         productCode: i.productCode ?? null,
         description: i.description ?? null,
         qty: i.qty ?? null,
         uom: i.uom ?? null,
-        unitPrice: soData?.unitPrice ?? null,
+        // A Case DO machine's per-case usage fee is what the hospital pays for it
+        ...(i.usageFee ? { description: `${i.description ?? i.productCode ?? "Machine"} — usage fee (per case)` } : {}),
+        ...(!i.usageFee && do_.isCaseDo && do_.priceMode === "total" && do_.casePrice ? { description: `${i.description ?? i.productCode ?? ""} (included)` } : {}),
+        // Case DO: its usage fee, else the itemized price; a total-priced case
+        // charges the package line below, so its items are "included" at 0
+        unitPrice: i.usageFee ?? (do_.isCaseDo ? (do_.priceMode === "total" ? "0" : i.unitPrice ?? null) : null) ?? soData?.unitPrice ?? null,
         discountPct: soData?.discountPct ?? null,
         costUnitPrice: i.productCode ? (poItemCostMap.get(i.productCode) ?? null) : null,
         lineType: soData?.lineType ?? null,
@@ -791,17 +977,289 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
         setGroupLabel: soData?.setGroupLabel ?? null,
         setQty: soData?.setQty ?? null,
       };
-    }),
+
+      // A lent machine the hospital kept: the sale is its own line, beside any usage fee
+      if (i.salePrice) {
+        const sale = { ...line, description: `${i.description ?? i.productCode ?? "Machine"} — sold`, unitPrice: i.salePrice, discountPct: "0" };
+        return i.usageFee && !(i.productId && feeBilled.has(i.productId)) ? [line, sale] : [sale];
+      }
+      return [line];
+    })].flatMap((l, idx) => (
+      // Total-priced Case DO: one priced package line first, items after it at 0
+      idx === 0 && do_.isCaseDo && do_.priceMode === "total" && do_.casePrice
+        ? [{ ...l, productId: null, productCode: null, description: `Case package — ${packageName}${do_.caseDate ? ` (${new Date(do_.caseDate).toLocaleDateString("en-GB")})` : ""}`,
+            qty: "1", uom: "case", unitPrice: do_.casePrice, discountPct: "0", costUnitPrice: null, lineType: null, setGroupId: null, setGroupLabel: null, setQty: null }, l]
+        : [l]
+    )).map((l, idx) => ({ ...l, rowNo: idx + 1 })),
   };
+}
+
+/**
+ * Take a Case DO's actual items out of the specialist's field stock: own and
+ * consigned stock (per the consume order), machines lent or sold (with loan
+ * purpose, return mode, usage fee), same-day returns, and per-use consignment
+ * settlement. Used when the DO is created with its actual items, and when they
+ * are recorded after the case (recordCaseActuals). restoreDoStock undoes it.
+ */
+async function deductCaseItems(p: {
+  orgId: string; userId: string; doId: string; doNo: string;
+  specialistId: string; customerId: string | null | undefined;
+  items: DeliveryOrderItemInput[];
+}) {
+  const { orgId, userId } = p;
+  const { fieldWarehouseLabel, consignedFieldWarehouseLabel, MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
+  const fieldLabel = fieldWarehouseLabel(p.specialistId);
+  const now = new Date();
+  // Consignment module: which stock this (agent) company uses first
+  const consumeOrder = await getConsumeOrder(orgId);
+  const consumeSource = { type: "CASE_DO" as const, id: p.doId, no: p.doNo };
+  // Machines that came back with the specialist the same day
+  const sameDayReturns: string[] = [];
+
+  for (const item of p.items) {
+    if (!item.productId) continue;
+    const qty = parseFloat(item.qty ?? "1");
+    if (qty <= 0) continue;
+
+    const [prod] = await db.select({ productCode: productTable.productCode, isRental: productTable.isRental })
+      .from(productTable).where(eq(productTable.id, item.productId)).limit(1);
+    if (!prod) continue;
+
+    const stockOrgId = await resolveFieldStockOrg(orgId, item.productId, fieldLabel);
+
+    // Serial-tracked line: the unit's own fixed intendedUse decides
+    // CASE_USE vs LOAN_OUT — the client's loanOut is ignored so the DO
+    // creator can't set it themselves (they only pick which unit was used).
+    let loanOut = !!item.loanOut;
+    let unit: typeof assetUnit.$inferSelect | null = null;
+    if (item.unitId) {
+      const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
+      [unit] = await db.select().from(assetUnit)
+        .where(and(eq(assetUnit.id, item.unitId), inArray(assetUnit.organizationId, ownerOrgIds)))
+        .limit(1);
+      if (!unit) throw new Error(`Unit not found for ${prod.productCode}`);
+      if (unit.status !== "WITH_REP" || unit.currentHolderUserId !== p.specialistId) {
+        throw new Error(`Unit ${unit.serialNo} (${prod.productCode}) is no longer held by this application specialist`);
+      }
+      loanOut = isLendable(unit.intendedUse); // rental / loan / demo machines are lent, not sold
+    }
+
+    // ── Consigned stock (another company's, held by this specialist) ──
+    // Consumed through the Consignment module: stock leaves the owner's
+    // books at the specialist's consignment location and becomes a
+    // billable consumption for settlement with the owner.
+    const sameDay = loanOut && item.loanReturnMode === "same_day";
+    const fee = parseFloat(item.usageFee ?? "") > 0 ? parseFloat(item.usageFee!) : null;
+    if (unit && isConsignmentLocation(unit.currentWarehouseLabel ?? "") && loanOut) {
+      // A consigned machine is used on the case, never consumed: it stays
+      // the owner's, the use is recorded on its consignment (charged per
+      // the owner's machine setting) and it is loaned out from there.
+      const cl = await consignedLineForUnit(unit.id);
+      if (!cl) throw new Error(`Unit ${unit.serialNo} (${prod.productCode}) is not on an open consignment`);
+      await recordMachineUse({ header: cl.header, line: cl.line, qty: 1, source: consumeSource, userId, hospitalFee: fee, endCustomerId: p.customerId ?? null, purpose: item.loanPurpose ?? null });
+      const label = unit.currentWarehouseLabel!;
+      const bal = await bumpLevel(cl.header.organizationId, item.productId, label, -1, cl.line.unitCost);
+      const mvId = nanoid();
+      await db.insert(stockMovement).values({
+        id: mvId, organizationId: cl.header.organizationId, productId: item.productId,
+        productCode: prod.productCode, warehouseLabel: label, warehouseTo: null,
+        movementType: MT.LOAN_OUT, quantity: "-1.0000", balanceAfter: bal.toFixed(4),
+        referenceType: RT.CASE, referenceId: p.doId, referenceNo: p.doNo,
+        notes: `Loan out — ${p.doNo} (consigned machine, ${cl.header.consignmentNo})`,
+        unitId: unit.id, serialNo: unit.serialNo,
+        status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+      });
+      await db.update(assetUnit).set({ status: "ON_LOAN", currentCustomerId: p.customerId ?? null }).where(eq(assetUnit.id, unit.id));
+      if (sameDay) sameDayReturns.push(mvId);
+      continue;
+    }
+    if (unit && isConsignmentLocation(unit.currentWarehouseLabel ?? "")) {
+      const used = await consumeConsigned({
+        ownerOrgId: unit.currentOrgId ?? unit.organizationId, locationLabel: unit.currentWarehouseLabel!,
+        productId: item.productId, qty: 1, unitId: unit.id, source: consumeSource, userId,
+      });
+      if (used < 1) throw new Error(`Unit ${unit.serialNo} (${prod.productCode}) is not on an open consignment`);
+      await db.update(assetUnit).set({ status: "SOLD", currentHolderUserId: null, currentCustomerId: p.customerId ?? null })
+        .where(eq(assetUnit.id, unit.id));
+      continue;
+    }
+    let ownQty = qty;
+    if (!item.unitId && !loanOut) {
+      const held = await consignedHeldByRep(orgId, p.specialistId, item.productId);
+      const consignedTotal = held.owners.reduce((s, o) => s + o.qty, 0);
+      if (consignedTotal > 0) {
+        let want: number;
+        if (consumeOrder === "consigned_first") {
+          want = Math.min(consignedTotal, qty);
+        } else {
+          const [own] = await db.select({ q: stockLevel.quantity }).from(stockLevel)
+            .where(and(eq(stockLevel.organizationId, stockOrgId), eq(stockLevel.productId, item.productId), eq(stockLevel.warehouseLabel, fieldLabel))).limit(1);
+          want = Math.min(consignedTotal, Math.max(0, qty - (parseFloat(own?.q ?? "0") || 0)));
+        }
+        let consumed = 0;
+        for (const o of held.owners) {
+          if (consumed >= want - 1e-9) break;
+          consumed += await consumeConsigned({
+            ownerOrgId: o.ownerOrgId, locationLabel: held.label, productId: item.productId,
+            qty: Math.min(o.qty, want - consumed), source: consumeSource, userId,
+          });
+        }
+        ownQty = qty - consumed;
+      }
+    }
+    if (ownQty <= 1e-9) continue;
+
+    const movementType = loanOut ? MT.LOAN_OUT : MT.CASE_USE;
+    // A note only when the case's own org doesn't match where the stock
+    // actually lives — the common single-org case reads exactly as before.
+    const crossOrgNote = stockOrgId !== orgId ? ` (stock: sibling org)` : "";
+    const baseNotes = (loanOut ? `Loan out — ${p.doNo}` : `Case usage — ${p.doNo}`) + crossOrgNote;
+
+    if (item.unitId) {
+      // Serial-tracked line — the specific unit already fully identifies
+      // where this qty (always 1) comes from; no bucket depletion needed.
+      const [fieldLevel] = await db.select()
+        .from(stockLevel)
+        .where(and(
+          eq(stockLevel.organizationId, stockOrgId),
+          eq(stockLevel.productId, item.productId),
+          eq(stockLevel.warehouseLabel, fieldLabel),
+        )).limit(1);
+
+      const currentQty = parseFloat(fieldLevel?.quantity ?? "0");
+      const newQty = Math.max(0, currentQty - qty);
+
+      if (fieldLevel) {
+        await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
+          .where(eq(stockLevel.id, fieldLevel.id));
+      }
+
+      const mvId = nanoid();
+      if (sameDay) sameDayReturns.push(mvId);
+      await db.insert(stockMovement).values({
+        id: mvId, organizationId: stockOrgId, productId: item.productId,
+        productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: null,
+        movementType,
+        quantity: (-qty).toFixed(4), balanceAfter: newQty.toFixed(4),
+        referenceType: RT.CASE, referenceId: p.doId, referenceNo: p.doNo,
+        notes: baseNotes,
+        unitId: item.unitId,
+        status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+      });
+    } else {
+      // Bulk (non-serialized) line — deplete any consigned buckets held at
+      // this rep before touching their own owned field stock, so
+      // borrowed-from-a-sibling-org stock gets used (and settled) first.
+      // See lib/inventory/constants.ts for the label convention.
+      const ownerOrgIds = await getOwnerOrgIdsInternal(stockOrgId);
+      const candidateLabels = [
+        ...ownerOrgIds.map((x) => consignedFieldWarehouseLabel(p.specialistId!, x)),
+        fieldLabel,
+      ];
+
+      let remaining = ownQty;
+      for (const label of candidateLabels) {
+        if (remaining <= 0) break;
+        const isLast = label === fieldLabel;
+
+        const [level] = await db.select()
+          .from(stockLevel)
+          .where(and(
+            eq(stockLevel.organizationId, stockOrgId),
+            eq(stockLevel.productId, item.productId),
+            eq(stockLevel.warehouseLabel, label),
+          )).limit(1);
+
+        const available = parseFloat(level?.quantity ?? "0");
+        if (available <= 0 && !isLast) continue; // nothing in this bucket, try the next
+        // On the final (owned) bucket, take whatever remains even if it
+        // exceeds what's on hand — matches the original behavior of never
+        // blocking a Case DO for insufficient stock, just clamping at 0.
+        const take = isLast ? remaining : Math.min(available, remaining);
+        const newQty = Math.max(0, available - take);
+
+        if (level) {
+          await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
+            .where(eq(stockLevel.id, level.id));
+        }
+
+        const mvId = nanoid();
+        if (sameDay) sameDayReturns.push(mvId);
+        await db.insert(stockMovement).values({
+          id: mvId, organizationId: stockOrgId, productId: item.productId,
+          productCode: prod.productCode, warehouseLabel: label, warehouseTo: null,
+          movementType,
+          quantity: (-take).toFixed(4), balanceAfter: newQty.toFixed(4),
+          referenceType: RT.CASE, referenceId: p.doId, referenceNo: p.doNo,
+          notes: isLast ? baseNotes : `${baseNotes} (consigned stock)`,
+          unitId: null,
+          status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+        });
+
+        remaining -= take;
+      }
+    }
+
+    if (unit) {
+      await db.update(assetUnit).set({
+        status: loanOut ? "ON_LOAN" : "SOLD",
+        currentCustomerId: p.customerId ?? null,
+      }).where(eq(assetUnit.id, unit.id));
+    }
+  }
+
+  // Same-day machines: loaned out and back in one go, so the history shows
+  // the case while the machine stays with the specialist
+  for (const mvId of sameDayReturns) {
+    await applyLoanReturn({ movementId: mvId, qty: Infinity, doId: p.doId, doNo: p.doNo, userId, note: `Returned same day — ${p.doNo}` });
+  }
+
+  revalidatePath("/dashboard/inventory/field-stock");
+  revalidatePath("/dashboard/inventory");
+
+  // Consignment: settle this DO's consumption right away where the owner
+  // chose automatic, per-use settlement. Never fails the DO — anything not
+  // settled here stays unsettled and is picked up by a manual settlement.
+  try {
+    await autoSettlePerUse({ agentOrgId: orgId, sourceId: p.doId, sourceNo: p.doNo, userId });
+  } catch (e) {
+    console.error("Consignment auto-settlement failed:", e);
+  }
+}
+
+/**
+ * Customer-copy settings of Case DO lines, checked: complete, and any product
+ * shown instead is one of the group's. Returns per-row values to store.
+ */
+async function customerViews(orgId: string, items: DeliveryOrderItemInput[], isCase: boolean) {
+  const out = new Map<number, Required<CustomerView>>();
+  if (!isCase) return out;
+  const ids = [...new Set(items.map((i) => (i.custShow === "product" ? i.custProductId : null)).filter(Boolean) as string[])];
+  const ok = new Set(ids.length ? (await db.select({ id: productTable.id }).from(productTable)
+    .where(and(inArray(productTable.id, ids), inArray(productTable.organizationId, await getOwnerOrgIdsInternal(orgId))))).map((p) => p.id) : []);
+  for (const i of items) {
+    if (!i.custShow) continue;
+    const c = cleanCustomerView(i, true);
+    if ("error" in c) throw new Error(`${i.productCode || i.description || `Row ${i.rowNo}`}: ${c.error}`);
+    if (c.view.custShow === "product" && !ok.has(c.view.custProductId!)) throw new Error(`${i.productCode}: the product to show on the customer copy wasn't found`);
+    out.set(i.rowNo, c.view);
+  }
+  return out;
 }
 
 export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Promise<DeliveryOrderRow> {
   const { orgId, userId } = await requireAccess("delivery-order:create");
 
   const customerSnapshot: DeliveryOrderRow["customerSnapshot"] = input.customerId
-    ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
+    // the customer may be on a sister company's list (shared across the group)
+    ? await buildCustomerSnapshot(input.customerId, await getOwnerOrgIdsInternal(orgId), input.customerOrgMemberId)
     : null;
 
+  const custViews = await customerViews(orgId, input.items, !!input.isCaseDo);
+  if (input.isCaseDo && input.customerItems?.length && input.priceMode !== "total") {
+    const bad = await pricedWithoutMda(input.customerItems);
+    if (bad.length) throw new Error(pricedWithoutMdaMessage(bad));
+  }
   const doNo = await generateDoNo(orgId);
   const [row] = await db
     .insert(deliveryOrder)
@@ -827,6 +1285,13 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
       applicationSpecialistName: input.applicationSpecialistName ?? null,
       caseDate: input.caseDate ?? null,
       mrnNo: input.mrnNo ?? null,
+      caseDescription: input.caseDescription ?? null,
+      caseTemplateId: input.caseTemplateId ?? null,
+      priceMode: input.isCaseDo ? (input.priceMode === "total" ? "total" : "itemized") : null,
+      ...(input.isCaseDo && input.customerItems
+        ? { actualStatus: input.items.length ? "recorded" : "pending", actualRecordedAt: input.items.length ? new Date() : null, actualRecordedBy: input.items.length ? userId : null }
+        : {}),
+      casePrice: input.isCaseDo && input.priceMode === "total" && parseFloat(input.casePrice ?? "") >= 0 ? parseFloat(input.casePrice!).toFixed(2) : null,
       categoryIds: input.categoryIds ?? [],
       createdBy: userId,
     })
@@ -848,141 +1313,22 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
         setGroupLabel: i.setGroupLabel ?? null,
         setQty: i.setQty ?? null,
         unitId: i.unitId ?? null,
+        loanReturnMode: input.isCaseDo && i.loanOut !== false && i.loanReturnMode ? i.loanReturnMode : null,
+        usageFee: input.isCaseDo && parseFloat(i.usageFee ?? "") > 0 ? parseFloat(i.usageFee!).toFixed(2) : null,
+        loanPurpose: input.isCaseDo && i.loanOut !== false && i.loanPurpose && i.loanPurpose in LOAN_PURPOSE ? i.loanPurpose : null,
+        ...(custViews.get(i.rowNo) ?? {}),
+        unitPrice: input.isCaseDo && input.priceMode !== "total" && i.unitPrice !== undefined && i.unitPrice !== "" && parseFloat(i.unitPrice) >= 0 ? parseFloat(i.unitPrice).toFixed(2) : null,
       })),
     );
   }
 
-  // Case DO: deduct used items from the rep's field stock
-  if (input.isCaseDo && input.applicationSpecialistId) {
-    const { fieldWarehouseLabel, consignedFieldWarehouseLabel, MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
-    const fieldLabel = fieldWarehouseLabel(input.applicationSpecialistId);
-    const now = new Date();
+  if (input.isCaseDo && input.customerItems?.length) {
+    await insertCustomerItems(row.id, input.customerItems, input.priceMode === "total");
+  }
 
-    for (const item of input.items) {
-      if (!item.productId) continue;
-      const qty = parseFloat(item.qty ?? "1");
-      if (qty <= 0) continue;
-
-      const [prod] = await db.select({ productCode: productTable.productCode, isRental: productTable.isRental })
-        .from(productTable).where(eq(productTable.id, item.productId)).limit(1);
-      if (!prod) continue;
-
-      const stockOrgId = await resolveFieldStockOrg(orgId, item.productId, fieldLabel);
-
-      // Serial-tracked line: the unit's own fixed intendedUse decides
-      // CASE_USE vs LOAN_OUT — the client's loanOut is ignored so the DO
-      // creator can't set it themselves (they only pick which unit was used).
-      let loanOut = !!item.loanOut;
-      let unit: typeof assetUnit.$inferSelect | null = null;
-      if (item.unitId) {
-        const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
-        [unit] = await db.select().from(assetUnit)
-          .where(and(eq(assetUnit.id, item.unitId), inArray(assetUnit.organizationId, ownerOrgIds)))
-          .limit(1);
-        if (!unit) throw new Error(`Unit not found for ${prod.productCode}`);
-        if (unit.status !== "WITH_REP" || unit.currentHolderUserId !== input.applicationSpecialistId) {
-          throw new Error(`Unit ${unit.serialNo} (${prod.productCode}) is no longer held by this application specialist`);
-        }
-        loanOut = unit.intendedUse === "RENTAL";
-      }
-
-      const movementType = loanOut ? MT.LOAN_OUT : MT.CASE_USE;
-      // A note only when the case's own org doesn't match where the stock
-      // actually lives — the common single-org case reads exactly as before.
-      const crossOrgNote = stockOrgId !== orgId ? ` (stock: sibling org)` : "";
-      const baseNotes = (loanOut ? `Loan out — ${doNo}` : `Case usage — ${doNo}`) + crossOrgNote;
-
-      if (item.unitId) {
-        // Serial-tracked line — the specific unit already fully identifies
-        // where this qty (always 1) comes from; no bucket depletion needed.
-        const [fieldLevel] = await db.select()
-          .from(stockLevel)
-          .where(and(
-            eq(stockLevel.organizationId, stockOrgId),
-            eq(stockLevel.productId, item.productId),
-            eq(stockLevel.warehouseLabel, fieldLabel),
-          )).limit(1);
-
-        const currentQty = parseFloat(fieldLevel?.quantity ?? "0");
-        const newQty = Math.max(0, currentQty - qty);
-
-        if (fieldLevel) {
-          await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
-            .where(eq(stockLevel.id, fieldLevel.id));
-        }
-
-        await db.insert(stockMovement).values({
-          id: nanoid(), organizationId: stockOrgId, productId: item.productId,
-          productCode: prod.productCode, warehouseLabel: fieldLabel, warehouseTo: null,
-          movementType,
-          quantity: (-qty).toFixed(4), balanceAfter: newQty.toFixed(4),
-          referenceType: RT.CASE, referenceId: row.id, referenceNo: doNo,
-          notes: baseNotes,
-          unitId: item.unitId,
-          status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
-        });
-      } else {
-        // Bulk (non-serialized) line — deplete any consigned buckets held at
-        // this rep before touching their own owned field stock, so
-        // borrowed-from-a-sibling-org stock gets used (and settled) first.
-        // See lib/inventory/constants.ts for the label convention.
-        const ownerOrgIds = await getOwnerOrgIdsInternal(stockOrgId);
-        const candidateLabels = [
-          ...ownerOrgIds.map((x) => consignedFieldWarehouseLabel(input.applicationSpecialistId!, x)),
-          fieldLabel,
-        ];
-
-        let remaining = qty;
-        for (const label of candidateLabels) {
-          if (remaining <= 0) break;
-          const isLast = label === fieldLabel;
-
-          const [level] = await db.select()
-            .from(stockLevel)
-            .where(and(
-              eq(stockLevel.organizationId, stockOrgId),
-              eq(stockLevel.productId, item.productId),
-              eq(stockLevel.warehouseLabel, label),
-            )).limit(1);
-
-          const available = parseFloat(level?.quantity ?? "0");
-          if (available <= 0 && !isLast) continue; // nothing in this bucket, try the next
-          // On the final (owned) bucket, take whatever remains even if it
-          // exceeds what's on hand — matches the original behavior of never
-          // blocking a Case DO for insufficient stock, just clamping at 0.
-          const take = isLast ? remaining : Math.min(available, remaining);
-          const newQty = Math.max(0, available - take);
-
-          if (level) {
-            await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
-              .where(eq(stockLevel.id, level.id));
-          }
-
-          await db.insert(stockMovement).values({
-            id: nanoid(), organizationId: stockOrgId, productId: item.productId,
-            productCode: prod.productCode, warehouseLabel: label, warehouseTo: null,
-            movementType,
-            quantity: (-take).toFixed(4), balanceAfter: newQty.toFixed(4),
-            referenceType: RT.CASE, referenceId: row.id, referenceNo: doNo,
-            notes: isLast ? baseNotes : `${baseNotes} (consigned stock)`,
-            unitId: null,
-            status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
-          });
-
-          remaining -= take;
-        }
-      }
-
-      if (unit) {
-        await db.update(assetUnit).set({
-          status: loanOut ? "ON_LOAN" : "SOLD",
-          currentCustomerId: input.customerId ?? null,
-        }).where(eq(assetUnit.id, unit.id));
-      }
-    }
-
-    revalidatePath("/dashboard/inventory/field-stock");
-    revalidatePath("/dashboard/inventory");
+  // Case DO with its actual items: take them out of the specialist's field stock
+  if (input.isCaseDo && input.applicationSpecialistId && input.items.length > 0) {
+    await deductCaseItems({ orgId, userId, doId: row.id, doNo, specialistId: input.applicationSpecialistId, customerId: input.customerId, items: input.items });
   }
 
   if (input.salesOrderId) {
@@ -1053,6 +1399,195 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
   return row;
 }
 
+/**
+ * Change how one Case DO line is printed on the customer copy (any status —
+ * it changes no stock: the line's actual item stays what was deducted).
+ * Kits are named per line; lines with the same kit name print as one.
+ */
+export async function setDoItemCustomerView(doId: string, itemId: string, view: CustomerView): Promise<{ ok: true } | { ok: false; title: string }> {
+  try {
+    const { orgId } = await requireAccess("delivery-order:update");
+    const [do_] = await db.select({ id: deliveryOrder.id, isCaseDo: deliveryOrder.isCaseDo }).from(deliveryOrder)
+      .where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId))).limit(1);
+    if (!do_) return { ok: false, title: "Delivery order not found" };
+    if (!do_.isCaseDo) return { ok: false, title: "Customer copy settings are for Case DOs" };
+    const [st] = await db.select({ status: deliveryOrder.status }).from(deliveryOrder).where(eq(deliveryOrder.id, doId)).limit(1);
+    if (st?.status === "cancelled") return { ok: false, title: "This DO is cancelled — it can't be changed" };
+    const [item] = await db.select().from(deliveryOrderItem).where(and(eq(deliveryOrderItem.id, itemId), eq(deliveryOrderItem.deliveryOrderId, doId))).limit(1);
+    if (!item) return { ok: false, title: "Line not found" };
+    const views = await customerViews(orgId, [{ ...view, rowNo: item.rowNo, productCode: item.productCode ?? undefined, description: item.description ?? undefined, custShow: view.custShow ?? null }], true);
+    const v = views.get(item.rowNo) ?? { custShow: null, custProductId: null, custCode: null, custDescription: null, custQty: null, custUom: null, custReason: null };
+    await db.update(deliveryOrderItem).set(v).where(eq(deliveryOrderItem.id, itemId));
+    revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't save" };
+  }
+}
+
+// ── Case DO in two steps: customer items now, actual items after the case ──
+
+const money2 = (v?: string | null) => (v !== undefined && v !== null && String(v).trim() !== "" && parseFloat(String(v)) >= 0 ? parseFloat(String(v)).toFixed(2) : null);
+
+/** Replace a Case DO's customer items (what the customer copy shows and the invoice bills). */
+async function insertCustomerItems(doId: string, items: CaseCustomerItemInput[], totalPriced: boolean) {
+  const rows = items
+    .filter((i) => (i.productCode?.trim() || i.description?.trim()) && parseFloat(i.qty) > 0)
+    .map((i, idx) => ({
+      id: nanoid(), deliveryOrderId: doId, rowNo: idx + 1,
+      productId: i.productId || null, productCode: i.productCode?.trim() || null, description: i.description?.trim() || null,
+      qty: String(parseFloat(i.qty)), uom: i.uom?.trim() || null, unitPrice: totalPriced ? null : money2(i.unitPrice),
+    }));
+  await db.delete(deliveryOrderCustomerItem).where(eq(deliveryOrderCustomerItem.deliveryOrderId, doId));
+  if (rows.length) await db.insert(deliveryOrderCustomerItem).values(rows);
+}
+
+async function loadCaseDo(doId: string, orgId: string): Promise<{ error: string } | { do_: DeliveryOrderRow }> {
+  const [d] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId))).limit(1);
+  if (!d) return { error: "Delivery order not found" };
+  if (!d.isCaseDo) return { error: "This is not a Case DO" };
+  if (d.status === "cancelled") return { error: `${d.doNo} is cancelled — nothing can be changed on it` };
+  return { do_: d };
+}
+
+async function invoiceOf(doId: string, orgId: string) {
+  const [inv] = await db.select({ invoiceNo: invoice.invoiceNo }).from(invoice)
+    .where(and(eq(invoice.deliveryOrderId, doId), eq(invoice.organizationId, orgId))).limit(1);
+  return inv ?? null;
+}
+
+/** Change a Case DO's customer items and selling price — until it is invoiced. */
+export async function saveCaseCustomerItems(doId: string, input: { items: CaseCustomerItemInput[]; priceMode: "itemized" | "total"; casePrice?: string | null }): Promise<{ ok: true } | { ok: false; title: string }> {
+  try {
+    const { orgId } = await requireAccess("delivery-order:update");
+    const r = await loadCaseDo(doId, orgId);
+    if ("error" in r) return { ok: false, title: r.error };
+    const inv = await invoiceOf(doId, orgId);
+    if (inv) return { ok: false, title: `Already invoiced (${inv.invoiceNo}) — the customer items can't change any more` };
+    const total = input.priceMode === "total";
+    if (total && money2(input.casePrice) === null) return { ok: false, title: "Enter the total price for the case, or choose itemized pricing" };
+    if (!input.items.some((i) => (i.productCode?.trim() || i.description?.trim()) && parseFloat(i.qty) > 0)) return { ok: false, title: "Add at least one item for the customer copy" };
+    if (!total) {
+      const bad = await pricedWithoutMda(input.items);
+      if (bad.length) return { ok: false, title: pricedWithoutMdaMessage(bad) };
+    }
+    await insertCustomerItems(doId, input.items, total);
+    // (touching the DO also tells open pages to refresh)
+    await db.update(deliveryOrder).set({ priceMode: total ? "total" : "itemized", casePrice: total ? money2(input.casePrice) : null, updatedAt: new Date() })
+      .where(eq(deliveryOrder.id, doId));
+    revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't save the customer items" };
+  }
+}
+
+/**
+ * After the case: record what was actually used from the specialist's field
+ * stock (own / consigned items, the machine units with their loan choices).
+ * Stock is deducted now, and the internal copy becomes available.
+ */
+export async function recordCaseActuals(doId: string, items: Omit<DeliveryOrderItemInput, "rowNo">[]): Promise<{ ok: true } | { ok: false; title: string }> {
+  try {
+    const { orgId, userId } = await requireAccess("delivery-order:update");
+    const r = await loadCaseDo(doId, orgId);
+    if ("error" in r) return { ok: false, title: r.error };
+    const d = r.do_;
+    if (d.actualStatus === "recorded" || (d.actualStatus === null)) return { ok: false, title: "The actual items of this DO are already recorded — undo them first to record again" };
+    if (!d.applicationSpecialistId) return { ok: false, title: "This DO has no application specialist — whose field stock was used?" };
+    const rows: DeliveryOrderItemInput[] = items.filter((i) => i.productCode || i.description).map((i, idx) => ({ ...i, rowNo: idx + 1 }));
+    if (!rows.length) return { ok: false, title: "Select at least one item used" };
+    await db.insert(deliveryOrderItem).values(rows.map((i) => ({
+      id: nanoid(), deliveryOrderId: doId, rowNo: i.rowNo,
+      productId: i.productId ?? null, productCode: i.productCode ?? null, description: i.description ?? null,
+      qty: i.qty ?? "1", uom: i.uom ?? null, unitId: i.unitId ?? null,
+      loanReturnMode: i.loanOut !== false && i.loanReturnMode ? i.loanReturnMode : null,
+      usageFee: parseFloat(i.usageFee ?? "") > 0 ? parseFloat(i.usageFee!).toFixed(2) : null,
+      loanPurpose: i.loanOut !== false && i.loanPurpose && i.loanPurpose in LOAN_PURPOSE ? i.loanPurpose : null,
+    })));
+    try {
+      await deductCaseItems({ orgId, userId, doId, doNo: d.doNo, specialistId: d.applicationSpecialistId, customerId: d.customerId, items: rows });
+    } catch (e) {
+      // Put back whatever was taken before the problem, and drop the lines
+      await restoreDoStock({ doId, doNo: d.doNo, activeOrgId: orgId, userId, notes: (code) => `Actual items not recorded — stock put back: ${code}` }).catch(() => {});
+      await db.delete(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, doId));
+      return { ok: false, title: e instanceof Error ? e.message : "Couldn't take the items out of field stock" };
+    }
+    await db.update(deliveryOrder).set({ actualStatus: "recorded", actualRecordedAt: new Date(), actualRecordedBy: userId, updatedAt: new Date() }).where(eq(deliveryOrder.id, doId));
+    revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
+    revalidatePath("/dashboard/fulfillment/delivery");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't record the actual items" };
+  }
+}
+
+/** Undo the recorded actual items: stock goes back to the specialist, ready to record again. */
+export async function undoCaseActuals(doId: string): Promise<{ ok: true } | { ok: false; title: string }> {
+  try {
+    const { orgId, userId } = await requireAccess("delivery-order:update");
+    const r = await loadCaseDo(doId, orgId);
+    if ("error" in r) return { ok: false, title: r.error };
+    const d = r.do_;
+    if (d.actualStatus !== "recorded") return { ok: false, title: "There are no recorded actual items to undo" };
+    await restoreDoStock({ doId, doNo: d.doNo, activeOrgId: orgId, userId, notes: (code) => `Actual items undone — stock returned: ${code}` });
+    await db.delete(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, doId));
+    await db.update(deliveryOrder).set({ actualStatus: "pending", actualRecordedAt: null, actualRecordedBy: null, updatedAt: new Date() }).where(eq(deliveryOrder.id, doId));
+    revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
+    revalidatePath("/dashboard/inventory/field-stock");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't undo the actual items" };
+  }
+}
+
+/**
+ * Cancel (void) a Case DO. Unlike deleting, the DO stays on record — status
+ * "cancelled", with who, when and why — so the number sequence and the
+ * movement history still explain themselves. All stock it took (own,
+ * consigned, machines) comes back through reversing movements. Refused while
+ * an invoice is linked (cancel / credit that first) or when consigned use on
+ * it is already settled. Needs the "Cancel Case DO" permission.
+ */
+export async function cancelCaseDo(doId: string, reason: string): Promise<{ ok: true } | { ok: false; title: string }> {
+  try {
+    const { orgId, userId } = await requireAccess("delivery-order:cancel");
+    const why = reason.trim();
+    if (why.length < 3) return { ok: false, title: "Give the reason for cancelling" };
+    const [d] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId))).limit(1);
+    if (!d) return { ok: false, title: "Delivery order not found" };
+    if (!d.isCaseDo) return { ok: false, title: "Only Case DOs can be cancelled here" };
+    if (d.status === "cancelled") return { ok: false, title: `${d.doNo} is already cancelled` };
+    const inv = await invoiceOf(doId, orgId);
+    if (inv) return { ok: false, title: `Invoice ${inv.invoiceNo} is linked to ${d.doNo} — cancel or credit the invoice first` };
+    // Put back whatever stock the DO still holds (refused — nothing changed —
+    // if consigned use on it is already settled)
+    await restoreDoStock({ doId, doNo: d.doNo, activeOrgId: orgId, userId, notes: (code) => `DO cancelled — stock returned: ${code}` });
+    const [me] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1);
+    await db.update(deliveryOrder).set({
+      status: "cancelled", cancelledAt: new Date(), cancelledBy: userId, cancelledByName: me?.name ?? null, cancelReason: why, updatedAt: new Date(),
+    }).where(eq(deliveryOrder.id, doId));
+    revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
+    revalidatePath("/dashboard/fulfillment/delivery");
+    revalidatePath("/dashboard/inventory/field-stock");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't cancel the DO" };
+  }
+}
+
+/** Catalogue search for the customer-copy "show as" product (owner group). */
+export async function searchCustomerViewProducts(query: string) {
+  const { orgId } = await requireAccess("delivery-order:read");
+  const q = query.trim();
+  if (q.length < 2) return [];
+  return db.select({ id: productTable.id, productCode: productTable.productCode, description: productTable.description, uom: productTable.uom, mdaRegNo: productTable.mdaRegistrationNo })
+    .from(productTable)
+    .where(and(inArray(productTable.organizationId, await getOwnerOrgIdsInternal(orgId)),
+      or(sql`${productTable.productCode} ILIKE ${`%${q}%`}`, sql`${productTable.description} ILIKE ${`%${q}%`}`)))
+    .orderBy(asc(productTable.productCode)).limit(20);
+}
+
 export interface UpdateDeliveryOrderCaseInfoInput {
   id: string;
   customerPoId?: string | null;
@@ -1074,6 +1609,7 @@ export async function updateDeliveryOrderCaseInfo(input: UpdateDeliveryOrderCase
     .where(and(eq(deliveryOrder.id, input.id), eq(deliveryOrder.organizationId, orgId)));
   if (!existing) throw new Error("Delivery order not found");
   if (!existing.isCaseDo) throw new Error("This action is only available for case delivery orders");
+  if (existing.status === "cancelled") throw new Error(`${existing.doNo} is cancelled — it can't be changed`);
 
   const [row] = await db
     .update(deliveryOrder)
@@ -1140,6 +1676,13 @@ async function restoreDoStock(opts: {
   userId: string;
   notes: (productCode: string) => string;
 }): Promise<void> {
+  // Consigned stock this DO consumed goes back to its consignment location
+  // (and stops being billable) — refused if it was already settled. Machine
+  // uses on consigned machines are undone the same way (checked first, so a
+  // refusal leaves everything untouched).
+  const reason = opts.notes("").replace(/[:\s]+$/, "");
+  await reverseMachineUse({ sourceType: "CASE_DO", sourceId: opts.doId, reason });
+  await reverseConsumption({ sourceType: "CASE_DO", sourceId: opts.doId, userId: opts.userId, reason });
   const groupOrgIds = await getOwnerOrgIdsInternal(opts.activeOrgId);
   const movements = await db
     .select({
@@ -1182,6 +1725,33 @@ async function restoreDoStock(opts: {
       notes: opts.notes(e.productCode ?? "").trim(),
     });
   }
+
+  // Serial units this DO used or lent go back to the specialist they came from
+  const unitMoves = await db.select({ unitId: stockMovement.unitId, orgId: stockMovement.organizationId, label: stockMovement.warehouseLabel })
+    .from(stockMovement)
+    .where(and(
+      inArray(stockMovement.organizationId, groupOrgIds), eq(stockMovement.referenceId, opts.doId),
+      inArray(stockMovement.movementType, [MOVEMENT_TYPE.CASE_USE, MOVEMENT_TYPE.LOAN_OUT]), isNotNull(stockMovement.unitId),
+    ));
+  if (unitMoves.length) {
+    const [do_] = await db.select({ rep: deliveryOrder.applicationSpecialistId }).from(deliveryOrder).where(eq(deliveryOrder.id, opts.doId)).limit(1);
+    for (const m of unitMoves) {
+      // A machine the hospital kept goes back to being rental / loan / demo
+      const [kept] = await db.select({ use: stockMovement.intendedUse }).from(stockMovement).where(and(
+        eq(stockMovement.referenceId, opts.doId), eq(stockMovement.movementType, MOVEMENT_TYPE.LOAN_RETURN),
+        eq(stockMovement.unitId, m.unitId!), isNotNull(stockMovement.intendedUse),
+      )).limit(1);
+      await db.update(assetUnit).set({
+        status: "WITH_REP", currentOrgId: m.orgId, currentWarehouseLabel: m.label,
+        currentHolderUserId: do_?.rep ?? null, currentCustomerId: null,
+        ...(kept?.use ? { intendedUse: kept.use } : {}),
+      }).where(and(eq(assetUnit.id, m.unitId!), or(
+        inArray(assetUnit.status, ["ON_LOAN", "SOLD"]),
+        // a consigned machine the hospital kept is already back at its location — only its use needs restoring
+        kept?.use ? and(eq(assetUnit.status, "WITH_REP"), eq(assetUnit.currentWarehouseLabel, m.label)) : sql`false`,
+      )));
+    }
+  }
 }
 
 export async function deleteDeliveryOrder(id: string): Promise<void> {
@@ -1193,6 +1763,12 @@ export async function deleteDeliveryOrder(id: string): Promise<void> {
   // reverse in either of those two once we get here.
   if (!["draft", "delivered", "returned"].includes(existing.status)) {
     throw new Error("This delivery order can't be deleted");
+  }
+  // A Case DO is deleted only while nothing has happened (made by mistake):
+  // once its actual items took stock, it is cancelled instead — it stays on
+  // record with the reason, and the DO number sequence has no unexplained gap
+  if (existing.isCaseDo && existing.actualStatus !== "pending") {
+    throw new Error(`${existing.doNo} has already taken stock — cancel it instead (needs the "Cancel Case DO" permission); a cancelled DO stays on record with the reason`);
   }
 
   // Deleting a DO an invoice already references would orphan that invoice's
@@ -1519,7 +2095,7 @@ export async function getPendingDosForInvoice(): Promise<PendingDoForInvoiceRow[
     .from(deliveryOrder)
     .where(and(
       eq(deliveryOrder.organizationId, orgId),
-      eq(deliveryOrder.status, "delivered"),
+      or(eq(deliveryOrder.status, "delivered"), and(eq(deliveryOrder.isCaseDo, true), eq(deliveryOrder.status, "draft"))),
       notExists(
         db.select({ _: invoice.id }).from(invoice)
           .where(and(
@@ -1551,90 +2127,236 @@ export async function returnRentalItems(
   returns: { movementId: string; returnQty: number }[],
 ): Promise<void> {
   const { orgId, userId } = await requireAccess("delivery-order:update");
-  const { MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
 
   const [do_] = await db
-    .select({ doNo: deliveryOrder.doNo, applicationSpecialistId: deliveryOrder.applicationSpecialistId })
+    .select({ doNo: deliveryOrder.doNo })
     .from(deliveryOrder)
     .where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId)))
     .limit(1);
   if (!do_) throw new Error("Delivery order not found");
 
-  const now = new Date();
   // The original LOAN_OUT may have posted under a sibling org (see
-  // resolveFieldStockOrg above — the app specialist's field stock doesn't
-  // always live under this DO's own org), so the lookup and the return both
-  // need to search/act across the owner group, not just this DO's org.
+  // resolveFieldStockOrg above) or, for a consigned machine, under its owner
+  // — so the lookup searches the owner group, and the return is written back
+  // into the loan movement's own org and warehouse.
   const ownerOrgIds = await getOwnerOrgIdsInternal(orgId);
-
   for (const { movementId, returnQty } of returns) {
     if (returnQty <= 0) continue;
-
-    const [loanMovement] = await db
-      .select()
-      .from(stockMovement)
-      .where(and(
-        eq(stockMovement.id, movementId),
-        inArray(stockMovement.organizationId, ownerOrgIds),
-        eq(stockMovement.movementType, MT.LOAN_OUT),
-      ))
-      .limit(1);
-    if (!loanMovement) continue;
-
-    const movementOrgId = loanMovement.organizationId;
-    const qty = Math.min(returnQty, Math.abs(parseFloat(loanMovement.quantity)));
-
-    const [sl] = await db
-      .select()
-      .from(stockLevel)
-      .where(and(
-        eq(stockLevel.organizationId, movementOrgId),
-        eq(stockLevel.productId, loanMovement.productId),
-        eq(stockLevel.warehouseLabel, loanMovement.warehouseLabel),
-      ))
-      .limit(1);
-
-    const currentQty = parseFloat(sl?.quantity ?? "0");
-    const newQty = currentQty + qty;
-
-    if (sl) {
-      await db.update(stockLevel)
-        .set({ quantity: newQty.toFixed(4), updatedAt: now })
-        .where(eq(stockLevel.id, sl.id));
-    } else {
-      const { nanoid: nid } = await import("nanoid");
-      await db.insert(stockLevel).values({
-        id: nid(), organizationId: movementOrgId, productId: loanMovement.productId,
-        warehouseLabel: loanMovement.warehouseLabel, quantity: newQty.toFixed(4),
-        reorderPoint: null, maxStock: null, unitCost: null,
-        updatedAt: now,
-      });
-    }
-
-    await db.insert(stockMovement).values({
-      id: nanoid(), organizationId: movementOrgId,
-      productId: loanMovement.productId, productCode: loanMovement.productCode,
-      warehouseLabel: loanMovement.warehouseLabel, warehouseTo: null,
-      movementType: MT.LOAN_RETURN,
-      quantity: qty.toFixed(4), balanceAfter: newQty.toFixed(4),
-      referenceType: RT.CASE, referenceId: doId, referenceNo: do_.doNo,
-      notes: `Loan return — ${do_.doNo}`,
-      unitId: loanMovement.unitId ?? null,
-      status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
-    });
-
-    // Serial-tracked unit: back with the rep, ready to be used again.
-    if (loanMovement.unitId) {
-      await db.update(assetUnit).set({
-        status: "WITH_REP",
-        currentOrgId: movementOrgId,
-        currentWarehouseLabel: loanMovement.warehouseLabel,
-        currentCustomerId: null,
-      }).where(eq(assetUnit.id, loanMovement.unitId));
-    }
+    await applyLoanReturn({ movementId, qty: returnQty, doId, doNo: do_.doNo, userId, scopeOrgIds: ownerOrgIds });
   }
 
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard/inventory/movements");
   revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
+}
+
+// Bring a loaned-out item back to where it was lent from (the specialist's
+// field stock, or the consignment location for a consigned machine). Caps at
+// what is still out on that loan, so it can never return more than was lent.
+async function applyLoanReturn(p: { movementId: string; qty: number; doId: string; doNo: string; userId: string; note?: string; scopeOrgIds?: string[] }) {
+  const { MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
+  const [loanMovement] = await db.select().from(stockMovement)
+    .where(and(
+      eq(stockMovement.id, p.movementId), eq(stockMovement.movementType, MT.LOAN_OUT),
+      ...(p.scopeOrgIds ? [inArray(stockMovement.organizationId, p.scopeOrgIds)] : []),
+    )).limit(1);
+  if (!loanMovement) return;
+
+  // Already returned on this loan (same DO, product, warehouse, unit)
+  const returned = await db.select({ q: stockMovement.quantity }).from(stockMovement).where(and(
+    eq(stockMovement.referenceId, p.doId), eq(stockMovement.movementType, MT.LOAN_RETURN),
+    eq(stockMovement.organizationId, loanMovement.organizationId), eq(stockMovement.productId, loanMovement.productId),
+    eq(stockMovement.warehouseLabel, loanMovement.warehouseLabel),
+    loanMovement.unitId ? eq(stockMovement.unitId, loanMovement.unitId) : isNull(stockMovement.unitId),
+  ));
+  const lent = Math.abs(parseFloat(loanMovement.quantity));
+  const returnedQty = returned.reduce((s, r) => s + parseFloat(r.q), 0);
+  let outstanding = lent - returnedQty;
+  if (!loanMovement.unitId) {
+    // Bulk: several loans of the same product share one bucket — cap by what the whole DO still has out
+    const allLent = await db.select({ q: stockMovement.quantity }).from(stockMovement).where(and(
+      eq(stockMovement.referenceId, p.doId), eq(stockMovement.movementType, MT.LOAN_OUT),
+      eq(stockMovement.organizationId, loanMovement.organizationId), eq(stockMovement.productId, loanMovement.productId),
+      eq(stockMovement.warehouseLabel, loanMovement.warehouseLabel), isNull(stockMovement.unitId),
+    ));
+    outstanding = Math.min(lent, allLent.reduce((s, r) => s + Math.abs(parseFloat(r.q)), 0) - returnedQty);
+  }
+  const qty = Math.min(p.qty, outstanding);
+  if (qty <= 1e-9) return;
+
+  const movementOrgId = loanMovement.organizationId;
+  const now = new Date();
+  const [sl] = await db.select().from(stockLevel).where(and(
+    eq(stockLevel.organizationId, movementOrgId), eq(stockLevel.productId, loanMovement.productId),
+    eq(stockLevel.warehouseLabel, loanMovement.warehouseLabel),
+  )).limit(1);
+  const newQty = parseFloat(sl?.quantity ?? "0") + qty;
+  if (sl) {
+    await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now }).where(eq(stockLevel.id, sl.id));
+  } else {
+    await db.insert(stockLevel).values({
+      id: nanoid(), organizationId: movementOrgId, productId: loanMovement.productId,
+      warehouseLabel: loanMovement.warehouseLabel, quantity: newQty.toFixed(4),
+      reorderPoint: null, maxStock: null, unitCost: null, updatedAt: now,
+    });
+  }
+
+  await db.insert(stockMovement).values({
+    id: nanoid(), organizationId: movementOrgId,
+    productId: loanMovement.productId, productCode: loanMovement.productCode,
+    warehouseLabel: loanMovement.warehouseLabel, warehouseTo: null,
+    movementType: MT.LOAN_RETURN,
+    quantity: qty.toFixed(4), balanceAfter: newQty.toFixed(4),
+    referenceType: RT.CASE, referenceId: p.doId, referenceNo: p.doNo,
+    notes: p.note ?? `Loan return — ${p.doNo}`,
+    unitId: loanMovement.unitId ?? null, serialNo: loanMovement.serialNo ?? null,
+    status: "APPROVED", reviewedBy: p.userId, reviewedAt: now, createdBy: p.userId, createdAt: now,
+  });
+
+  // Serial-tracked unit: back with the rep, ready to be used again.
+  if (loanMovement.unitId) {
+    await db.update(assetUnit).set({
+      status: "WITH_REP",
+      currentOrgId: movementOrgId,
+      currentWarehouseLabel: loanMovement.warehouseLabel,
+      currentCustomerId: null,
+    }).where(eq(assetUnit.id, loanMovement.unitId));
+  }
+}
+
+
+// ── Case DO machines (loan-out lines) ────────────────────────────────────────
+
+export interface CaseMachine {
+  movementId: string;
+  productCode: string;
+  description: string | null;
+  serialNo: string | null;
+  qty: number;
+  returnedQty: number;
+  returnMode: "same_day" | "stays" | "sold" | null;
+  purpose: string | null; // RENTAL | LOAN | DEMO
+  usageFee: string | null;
+  salePrice: string | null; // the hospital kept (bought) it
+  returnedAt: Date | null;
+  consigned: boolean;
+}
+
+/** Machines lent out on a Case DO — and whether each is back with the specialist. */
+export async function getCaseMachines(doId: string): Promise<CaseMachine[]> {
+  const { orgId } = await requireAccess("delivery-order:read");
+  const [do_] = await db.select({ id: deliveryOrder.id }).from(deliveryOrder)
+    .where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId))).limit(1);
+  if (!do_) return [];
+  const groupOrgIds = await getOwnerOrgIdsInternal(orgId);
+  const moves = await db.select().from(stockMovement).where(and(
+    eq(stockMovement.referenceId, doId), inArray(stockMovement.organizationId, groupOrgIds),
+    inArray(stockMovement.movementType, [MOVEMENT_TYPE.LOAN_OUT, MOVEMENT_TYPE.LOAN_RETURN]),
+  )).orderBy(asc(stockMovement.createdAt));
+  const items = await db.select().from(deliveryOrderItem).where(eq(deliveryOrderItem.deliveryOrderId, doId));
+  const outs = moves.filter((m) => m.movementType === MOVEMENT_TYPE.LOAN_OUT);
+  // the loan movement only carries a serial for consigned machines — look the rest up
+  const outUnitIds = outs.map((o) => o.unitId).filter(Boolean) as string[];
+  const unitSerial = new Map((outUnitIds.length ? await db.select({ id: assetUnit.id, sn: assetUnit.serialNo }).from(assetUnit).where(inArray(assetUnit.id, outUnitIds)) : []).map((u) => [u.id, u.sn]));
+  const backs = moves.filter((m) => m.movementType === MOVEMENT_TYPE.LOAN_RETURN);
+  // Hand each return to the loan it belongs to (same unit, or the same product bucket, oldest loan first)
+  const left = new Map(backs.map((b) => [b.id, parseFloat(b.quantity)]));
+  return outs.map((o) => {
+    const lent = Math.abs(parseFloat(o.quantity));
+    let returned = 0; let returnedAt: Date | null = null;
+    for (const b of backs) {
+      const same = b.organizationId === o.organizationId && b.productId === o.productId && b.warehouseLabel === o.warehouseLabel && (b.unitId ?? null) === (o.unitId ?? null);
+      const avail = left.get(b.id) ?? 0;
+      if (!same || avail <= 1e-9 || returned >= lent - 1e-9) continue;
+      const take = Math.min(avail, lent - returned);
+      left.set(b.id, avail - take); returned += take; returnedAt = b.createdAt;
+    }
+    const item = items.find((i) => (o.unitId ? i.unitId === o.unitId : i.productId === o.productId && !i.unitId && i.loanReturnMode));
+    return {
+      movementId: o.id, productCode: o.productCode, description: item?.description ?? null, serialNo: o.serialNo ?? (o.unitId ? unitSerial.get(o.unitId) ?? null : null),
+      qty: lent, returnedQty: returned, returnMode: (item?.loanReturnMode ?? null) as CaseMachine["returnMode"],
+      usageFee: item?.usageFee ?? null, salePrice: item?.salePrice ?? null, purpose: item?.loanPurpose ?? null, returnedAt, consigned: o.warehouseLabel.startsWith("CS:"),
+    };
+  });
+}
+
+/** Bring a machine left at the hospital back to the specialist. Returned as data (see DeliverResult). */
+export async function returnCaseMachine(doId: string, movementId: string): Promise<DeliverResult> {
+  try {
+    const { orgId } = await requireAccess("delivery-order:update");
+    const [d] = await db.select({ status: deliveryOrder.status, doNo: deliveryOrder.doNo }).from(deliveryOrder).where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId))).limit(1);
+    if (d?.status === "cancelled") return { ok: false, title: `${d.doNo} is cancelled — its machines were already returned` };
+    await returnRentalItems(doId, [{ movementId, returnQty: Infinity }]);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't return the machine" };
+  }
+}
+
+
+/**
+ * The hospital keeps a machine that was lent on this Case DO and buys it.
+ * Recorded as "back from loan, then used up on this case", so the history
+ * reads right and deleting the DO still undoes everything. A consigned
+ * machine becomes a billable sale to its owner (at the transfer price).
+ */
+export async function sellCaseMachine(doId: string, movementId: string, price: string): Promise<DeliverResult & { invoiced?: string }> {
+  try {
+    const { orgId, userId } = await requireAccess("delivery-order:update");
+    const amount = parseFloat(price);
+    if (!(amount > 0)) return { ok: false, title: "Enter the selling price" };
+    const [do_] = await db.select().from(deliveryOrder).where(and(eq(deliveryOrder.id, doId), eq(deliveryOrder.organizationId, orgId))).limit(1);
+    if (!do_?.isCaseDo) return { ok: false, title: "Case DO not found" };
+    if (do_.status === "cancelled") return { ok: false, title: `${do_.doNo} is cancelled` };
+    const machine = (await getCaseMachines(doId)).find((m) => m.movementId === movementId);
+    if (!machine) return { ok: false, title: "Machine not found on this DO" };
+    if (machine.returnMode === "sold") return { ok: false, title: "This machine is already sold" };
+    const qty = machine.qty - machine.returnedQty;
+    if (qty <= 1e-9) return { ok: false, title: "This machine is already back with the specialist — sell it on a new DO instead" };
+
+    const [loan] = await db.select().from(stockMovement).where(eq(stockMovement.id, movementId)).limit(1);
+    // 1. Back from loan…
+    await applyLoanReturn({ movementId, qty, doId, doNo: do_.doNo, userId, note: `Kept by the hospital — sold on ${do_.doNo}` });
+    // 2. …and used up on this case
+    if (loan.warehouseLabel.startsWith("CS:")) {
+      const used = await consumeConsigned({
+        ownerOrgId: loan.organizationId, locationLabel: loan.warehouseLabel, productId: loan.productId, qty,
+        unitId: loan.unitId, source: { type: "CASE_DO", id: doId, no: do_.doNo }, userId,
+      });
+      if (used + 1e-9 < qty) throw new Error("The consigned machine could not be recorded as sold");
+    } else {
+      const now = new Date();
+      const bal = await bumpLevel(loan.organizationId, loan.productId, loan.warehouseLabel, -qty, null);
+      await db.insert(stockMovement).values({
+        id: nanoid(), organizationId: loan.organizationId, productId: loan.productId, productCode: loan.productCode,
+        warehouseLabel: loan.warehouseLabel, warehouseTo: null, movementType: MOVEMENT_TYPE.CASE_USE,
+        quantity: (-qty).toFixed(4), balanceAfter: bal.toFixed(4),
+        referenceType: REF_TYPE.CASE, referenceId: doId, referenceNo: do_.doNo,
+        notes: `Machine sold to the hospital — ${do_.doNo}`, unitId: loan.unitId, serialNo: loan.serialNo,
+        status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+      });
+    }
+    if (loan.unitId) {
+      // Remember what it was (rental / loan / demo) on the "kept" return, so deleting the DO restores it
+      const [unit] = await db.select({ use: assetUnit.intendedUse }).from(assetUnit).where(eq(assetUnit.id, loan.unitId)).limit(1);
+      await db.update(stockMovement).set({ intendedUse: unit?.use ?? null }).where(and(
+        eq(stockMovement.referenceId, doId), eq(stockMovement.movementType, MOVEMENT_TYPE.LOAN_RETURN), eq(stockMovement.unitId, loan.unitId),
+      ));
+      await db.update(assetUnit).set({ status: "SOLD", intendedUse: "SALE", currentHolderUserId: null, currentCustomerId: do_.customerId ?? null })
+        .where(eq(assetUnit.id, loan.unitId));
+    }
+    const [item] = await db.select().from(deliveryOrderItem).where(and(
+      eq(deliveryOrderItem.deliveryOrderId, doId),
+      loan.unitId ? eq(deliveryOrderItem.unitId, loan.unitId) : and(eq(deliveryOrderItem.productId, loan.productId), isNotNull(deliveryOrderItem.loanReturnMode)),
+    )).limit(1);
+    if (item) await db.update(deliveryOrderItem).set({ loanReturnMode: "sold", salePrice: amount.toFixed(2) }).where(eq(deliveryOrderItem.id, item.id));
+
+    try { await autoSettlePerUse({ agentOrgId: orgId, sourceId: doId, sourceNo: do_.doNo, userId }); } catch (e) { console.error("Consignment auto-settlement failed:", e); }
+    const [inv] = await db.select({ invoiceNo: invoice.invoiceNo }).from(invoice).where(eq(invoice.deliveryOrderId, doId)).limit(1);
+    revalidatePath(`/dashboard/fulfillment/delivery/${doId}`);
+    revalidatePath("/dashboard/inventory");
+    return { ok: true, invoiced: inv?.invoiceNo };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't record the sale" };
+  }
 }

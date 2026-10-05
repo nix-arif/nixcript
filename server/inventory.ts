@@ -12,7 +12,8 @@ import { nanoid } from "nanoid";
 import { eq, and, desc, asc, ilike, like, or, inArray, notInArray, isNull, isNotNull, lte } from "drizzle-orm";
 import { applyToLot } from "@/lib/inventory/apply-to-lot";
 import { revalidatePath } from "next/cache";
-import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
+import { INTENDED_USE, MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
+import { activeSerials, registerUnitForMovement, unregisterUnitForMovement } from "@/lib/inventory/register-units";
 
 /* =========================
    TYPES
@@ -25,8 +26,11 @@ export type StockWithProduct = StockLevelRow & {
   productCode: string;
   description: string | null;
   uom: string | null;
+  itemGroupIds: string[]; // user-defined item groups (can be several)
   availableQty: number;
   isLowStock: boolean;
+  // Serialized units (machines etc.) at this location
+  units: { id: string; serialNo: string; intendedUse: string; status: string }[];
 };
 
 export type UntrackedProduct = {
@@ -129,6 +133,17 @@ export async function getInventory(): Promise<StockWithProduct[]> {
     .where(eq(stockLevel.organizationId, orgId))
     .orderBy(asc(stockLevel.warehouseLabel), asc(product.productCode));
 
+  const { assetUnit } = await import("@/db/schema");
+  const units = await db.select({ id: assetUnit.id, serialNo: assetUnit.serialNo, intendedUse: assetUnit.intendedUse, status: assetUnit.status, productId: assetUnit.productId, label: assetUnit.currentWarehouseLabel })
+    .from(assetUnit)
+    .where(and(
+      or(eq(assetUnit.currentOrgId, orgId), and(isNull(assetUnit.currentOrgId), eq(assetUnit.organizationId, orgId))),
+      inArray(assetUnit.status, ["IN_STOCK", "WITH_REP", "CONSIGNED"]), isNotNull(assetUnit.currentWarehouseLabel),
+    ))
+    .orderBy(asc(assetUnit.serialNo));
+
+  const { groupIdsByProduct } = await import("@/lib/inventory/item-groups");
+  const memberOf = await groupIdsByProduct(rows.map((r) => r.sl.productId));
   return rows.map(({ sl, productCode, description, uom }) => {
     const qty      = parseFloat(sl.quantity);
     const reserved = parseFloat(sl.reservedQty);
@@ -138,8 +153,11 @@ export async function getInventory(): Promise<StockWithProduct[]> {
       productCode,
       description,
       uom,
+      itemGroupIds: memberOf.get(sl.productId) ?? [],
       availableQty: qty - reserved,
       isLowStock: reorder !== null && qty <= reorder,
+      units: units.filter((u) => u.productId === sl.productId && u.label === sl.warehouseLabel)
+        .map(({ id, serialNo, intendedUse, status }) => ({ id, serialNo, intendedUse, status })),
     };
   });
 }
@@ -241,12 +259,61 @@ export async function adjustStock(data: {
   referenceNo?: string;
   notes?: string;
   serialNo?: string;
+  // Machines / serial-numbered items: one entry per unit, each with its own
+  // serial number and use (for sale, rental, loan, demo). The count must
+  // equal the quantity; each becomes its own movement + registered unit.
+  units?: { serialNo: string; intendedUse: string }[];
+  intendedUse?: string;
+  // Stock out of machines: the exact units leaving (count = quantity)
+  outUnitIds?: string[];
+  unitId?: string; // set per unit when a multi-unit stock out is split up
   lotNo?: string;
   expiryDate?: Date;
 }): Promise<void> {
   const { orgId, userId } = await requireAccess("inventory:adjust");
 
   if (data.quantity === 0) throw new Error("Quantity cannot be zero");
+
+  const incoming = data.movementType !== MOVEMENT_TYPE.STOCK_OUT && data.quantity > 0;
+  if (data.units?.length) {
+    if (!incoming) throw new Error("Serial numbers are entered on stock coming in");
+    const units = data.units.map((u) => ({ serialNo: u.serialNo.trim(), intendedUse: u.intendedUse }));
+    if (units.some((u) => !u.serialNo)) throw new Error("Enter a serial number for every unit");
+    if (units.length !== data.quantity) throw new Error(`Quantity (${data.quantity}) must match the number of serial numbers (${units.length}) — one per machine`);
+    const dup = units.find((u, i) => units.findIndex((x) => x.serialNo.toLowerCase() === u.serialNo.toLowerCase()) !== i);
+    if (dup) throw new Error(`Serial number ${dup.serialNo} is entered twice`);
+    if (units.some((u) => !Object.values(INTENDED_USE).includes(u.intendedUse as (typeof INTENDED_USE)[keyof typeof INTENDED_USE]))) throw new Error("Choose for sale, rental, loan or demo for every unit");
+    const taken = await activeSerials(await getAllOwnerOrgIds(orgId), data.productId, units.map((u) => u.serialNo));
+    if (taken.length) throw new Error(`Serial number${taken.length > 1 ? "s" : ""} already in stock: ${taken.join(", ")}`);
+    for (const u of units) await adjustStock({ ...data, quantity: 1, units: undefined, serialNo: u.serialNo, intendedUse: u.intendedUse });
+    return;
+  }
+  if (data.movementType === MOVEMENT_TYPE.STOCK_OUT) {
+    const { assetUnit } = await import("@/db/schema");
+    const here = await db.select({ id: assetUnit.id, serialNo: assetUnit.serialNo }).from(assetUnit).where(and(
+      eq(assetUnit.productId, data.productId), eq(assetUnit.currentWarehouseLabel, data.warehouseLabel),
+      inArray(assetUnit.status, ["IN_STOCK", "WITH_REP"]),
+    ));
+    const picked = [...new Set(data.outUnitIds ?? [])];
+    if (here.length && !picked.length && !data.unitId) {
+      // Units without a serial number can still go out, as long as the serial ones stay covered
+      const [lvl] = await db.select({ q: stockLevel.quantity }).from(stockLevel)
+        .where(and(eq(stockLevel.productId, data.productId), eq(stockLevel.organizationId, orgId), eq(stockLevel.warehouseLabel, data.warehouseLabel))).limit(1);
+      if (parseFloat(lvl?.q ?? "0") - Math.abs(data.quantity) < here.length) {
+        throw new Error("Pick which serial number(s) are going out");
+      }
+    }
+    if (picked.length) {
+      if (picked.length !== Math.abs(data.quantity)) throw new Error(`Quantity (${Math.abs(data.quantity)}) must match the serial numbers picked (${picked.length})`);
+      const bad = picked.filter((id) => !here.some((u) => u.id === id));
+      if (bad.length) throw new Error("A picked serial number is no longer here");
+      for (const id of picked) {
+        await adjustStock({ ...data, quantity: 1, outUnitIds: undefined, units: undefined, serialNo: here.find((u) => u.id === id)!.serialNo, unitId: id });
+      }
+      return;
+    }
+  }
+  const serials = data.serialNo?.trim() ? [data.serialNo.trim()] : [];
 
   const [prod] = await db
     .select({ productCode: product.productCode })
@@ -280,7 +347,9 @@ export async function adjustStock(data: {
     referenceId: null,
     referenceNo: data.referenceNo?.trim() || null,
     notes: data.notes?.trim() || null,
-    serialNo: data.serialNo?.trim() || null,
+    serialNo: serials[0] ?? null,
+    unitId: data.unitId ?? null,
+    intendedUse: serials.length && incoming ? (data.intendedUse ?? INTENDED_USE.SALE) : null,
     lotNo: data.lotNo?.trim() || null,
     expiryDate: data.expiryDate ?? null,
     status: canApprove ? "APPROVED" : "PENDING",
@@ -327,6 +396,7 @@ export async function adjustStock(data: {
     await db.update(stockMovement)
       .set({ balanceAfter: newBalance.toFixed(4), lotId })
       .where(eq(stockMovement.id, movementId));
+    await registerUnitForMovement(movementId, userId);
   } else {
     await notifyUsersWithPermission(orgId, "inventory:approve", {
       type: "inventory:submitted",
@@ -432,6 +502,7 @@ export async function approveStockMovement(movementId: string, comment?: string)
   await db.update(stockMovement)
     .set({ status: "APPROVED", balanceAfter: newBalance.toFixed(4), lotId, reviewedBy: userId, reviewedAt: new Date(), reviewComment: comment?.trim() || null })
     .where(eq(stockMovement.id, movementId));
+  await registerUnitForMovement(movementId, userId);
 
   revalidatePath("/dashboard/inventory");
 }
@@ -465,7 +536,9 @@ export async function editStockLevel(data: {
   unitCost: string | null;
   correctionNotes?: string;
 }): Promise<void> {
-  const { orgId, userId } = await requireAccess("inventory:manage");
+  // Owner only — the Stock Overview edit button is owner-only too; everyone
+  // else corrects stock through New Movement → Adjustment (logged + reviewed)
+  const { orgId, userId } = await requireOwnerForDelete();
 
   const [sl] = await db
     .select()
@@ -476,6 +549,16 @@ export async function editStockLevel(data: {
 
   const currentQty = parseFloat(sl.quantity);
   const delta = data.targetQty - currentQty;
+  if (delta < 0) {
+    const { assetUnit } = await import("@/db/schema");
+    const serials = await db.select({ id: assetUnit.id }).from(assetUnit).where(and(
+      eq(assetUnit.productId, sl.productId), eq(assetUnit.currentWarehouseLabel, sl.warehouseLabel),
+      inArray(assetUnit.status, ["IN_STOCK", "WITH_REP", "CONSIGNED"]),
+    ));
+    if (data.targetQty < serials.length) {
+      throw new Error(`${serials.length} serial numbers are recorded here — take off the ones that aren't here (Machines section) before lowering the quantity to ${data.targetQty}`);
+    }
+  }
 
   // Update metadata regardless — reorder point / max stock / unit cost carry
   // no risk of silently moving inventory, so they're not subject to review.
@@ -626,6 +709,15 @@ export async function deleteStockLevel(stockLevelId: string): Promise<void> {
     .limit(1);
   if (!sl) throw new Error("Stock record not found");
 
+  // Machines registered here would be left pointing at a location that no
+  // longer has stock — take their serial numbers off (Edit) or move them first
+  const { assetUnit } = await import("@/db/schema");
+  const units = await db.select({ serialNo: assetUnit.serialNo }).from(assetUnit).where(and(
+    eq(assetUnit.productId, sl.productId), eq(assetUnit.currentWarehouseLabel, sl.warehouseLabel),
+    inArray(assetUnit.status, ["IN_STOCK", "WITH_REP", "CONSIGNED"]),
+  ));
+  if (units.length) throw new Error(`Serial number${units.length > 1 ? "s" : ""} ${units.map((u) => u.serialNo).join(", ")} ${units.length > 1 ? "are" : "is"} still recorded here — remove ${units.length > 1 ? "them" : "it"} in Edit, or transfer the machine${units.length > 1 ? "s" : ""}, before deleting this stock record`);
+
   // Cascade: remove all movement history for this product/warehouse
   await db.delete(stockMovement).where(and(
     eq(stockMovement.productId, sl.productId),
@@ -748,10 +840,25 @@ export async function getProductLots(productId: string, warehouseLabel?: string)
     .orderBy(asc(stockLot.expiryDate), asc(stockLot.lotNo));
 }
 
+/** Serialized units sitting at one location (warehouse or a rep's field stock). */
+export async function getUnitsAt(productId: string, warehouseLabel: string) {
+  const { orgId } = await requireAccess("inventory:read");
+  const { assetUnit } = await import("@/db/schema");
+  return db.select({ id: assetUnit.id, serialNo: assetUnit.serialNo, intendedUse: assetUnit.intendedUse, status: assetUnit.status })
+    .from(assetUnit)
+    .where(and(
+      eq(assetUnit.productId, productId), eq(assetUnit.currentWarehouseLabel, warehouseLabel),
+      or(eq(assetUnit.currentOrgId, orgId), and(isNull(assetUnit.currentOrgId), eq(assetUnit.organizationId, orgId))),
+      inArray(assetUnit.status, ["IN_STOCK", "WITH_REP"]),
+    ))
+    .orderBy(asc(assetUnit.serialNo));
+}
+
 export async function getTransferStockInfo(productId: string, warehouseLabel: string): Promise<{
   onHand: number;
   lots: { id: string; lotNo: string; expiryDate: Date | null; quantity: string }[];
   serialNos: string[];
+  units: { id: string; serialNo: string; intendedUse: string; status: string }[];
 }> {
   const { orgId } = await requireAccess("inventory:read");
 
@@ -790,6 +897,7 @@ export async function getTransferStockInfo(productId: string, warehouseLabel: st
     onHand: parseFloat(levelRow?.quantity ?? "0"),
     lots,
     serialNos: serialRows.map(r => r.serialNo!).filter(Boolean),
+    units: await getUnitsAt(productId, warehouseLabel),
   };
 }
 
@@ -997,6 +1105,8 @@ export async function deleteStockMovement(id: string): Promise<void> {
   // nothing to reverse.
   if (mv.status === "APPROVED") {
     const signed = parseFloat(mv.quantity);
+    // A serial number this stock-in registered goes with it (checked first)
+    await unregisterUnitForMovement(mv);
 
     // No DB transaction is available here (neon-http), so within each
     // warehouse the lot reversal — the one most likely to fail, e.g. if a
@@ -1093,4 +1203,121 @@ export async function getExpiringLots(): Promise<ExpiringLot[]> {
       quantity: r.quantity,
       expiryDate: r.expiryDate!,
     }));
+}
+
+/** Readable names for coded locations (consignment, field stock) across this company's group. */
+export async function getInventoryLocationNames(): Promise<Record<string, string>> {
+  const { orgId } = await requireAccess("inventory:read");
+  const { getLocationNames } = await import("@/lib/inventory/location-names");
+  return getLocationNames(await getAllOwnerOrgIds(orgId));
+}
+
+/** Whether a product is entered one serial number per unit (machines / serial-tracked). */
+export async function getProductSerialInfo(productId: string): Promise<{ serial: boolean }> {
+  const { orgId } = await requireAccess("inventory:read");
+  const { assetUnit } = await import("@/db/schema");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const [p] = await db.select({ serial: product.requiresSerialTracking, rental: product.isRental }).from(product)
+    .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds))).limit(1);
+  if (!p) return { serial: false };
+  if (p.serial || p.rental) return { serial: true };
+  const [u] = await db.select({ id: assetUnit.id }).from(assetUnit)
+    .where(and(eq(assetUnit.productId, productId), inArray(assetUnit.organizationId, ownerOrgIds))).limit(1);
+  return { serial: !!u };
+}
+
+export interface StockUnitsChange {
+  stockLevelId: string;
+  edits: { unitId: string; serialNo: string; intendedUse: string }[];
+  removeUnitIds: string[];
+  add: { serialNo: string; intendedUse: string }[];
+}
+
+/**
+ * Owner's correction of the machines (serial numbers) recorded at one stock
+ * location: fix a mistyped serial number or the use, take off a serial that
+ * was wrongly entered, or give serial numbers to stock that has none yet.
+ * Quantities never change here. Every change is noted on the unit.
+ */
+export async function saveStockUnits(input: StockUnitsChange): Promise<{ ok: true } | { ok: false; title: string }> {
+  try {
+    const { orgId, userId } = await requireOwnerForDelete();
+    const { assetUnit, consignLine, deliveryOrderItem, user: userTable } = await import("@/db/schema");
+    const [sl] = await db.select().from(stockLevel).where(and(eq(stockLevel.id, input.stockLevelId), eq(stockLevel.organizationId, orgId))).limit(1);
+    if (!sl) return { ok: false, title: "Stock record not found" };
+    const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+    const uses = Object.values(INTENDED_USE) as string[];
+    const [me] = await db.select({ name: userTable.name }).from(userTable).where(eq(userTable.id, userId)).limit(1);
+    const stamp = `${new Date().toLocaleDateString("en-MY")} by ${me?.name ?? "owner"}`;
+
+    const here = await db.select().from(assetUnit).where(and(
+      eq(assetUnit.productId, sl.productId), eq(assetUnit.currentWarehouseLabel, sl.warehouseLabel),
+      or(eq(assetUnit.currentOrgId, orgId), and(isNull(assetUnit.currentOrgId), eq(assetUnit.organizationId, orgId))),
+      inArray(assetUnit.status, ["IN_STOCK", "WITH_REP", "CONSIGNED"]),
+    ));
+    const byId = new Map(here.map((u) => [u.id, u]));
+
+    // Serial numbers after the change must be unique among this product's active units
+    const finalSerials = [
+      ...here.filter((u) => !input.removeUnitIds.includes(u.id)).map((u) => input.edits.find((e) => e.unitId === u.id)?.serialNo.trim() ?? u.serialNo),
+      ...input.add.map((a) => a.serialNo.trim()),
+    ];
+    if (finalSerials.some((x) => !x)) return { ok: false, title: "Every machine needs a serial number" };
+    const lower = finalSerials.map((x) => x.toLowerCase());
+    const dup = finalSerials.find((x, i) => lower.indexOf(x.toLowerCase()) !== i);
+    if (dup) return { ok: false, title: `Serial number ${dup} appears twice` };
+    const changedOrNew = [...input.edits.filter((e) => byId.get(e.unitId) && byId.get(e.unitId)!.serialNo !== e.serialNo.trim()).map((e) => e.serialNo.trim()), ...input.add.map((a) => a.serialNo.trim())];
+    if (changedOrNew.length) {
+      const elsewhere = (await activeSerials(ownerOrgIds, sl.productId, changedOrNew));
+      if (elsewhere.length) return { ok: false, title: `Serial number${elsewhere.length > 1 ? "s" : ""} already in use elsewhere: ${elsewhere.join(", ")}` };
+    }
+    if ([...input.edits, ...input.add].some((x) => !uses.includes(x.intendedUse))) return { ok: false, title: "Choose for sale, rental, loan or demo" };
+    const remaining = here.length - input.removeUnitIds.length + input.add.length;
+    if (remaining > parseFloat(sl.quantity) + 1e-9) return { ok: false, title: `Only ${parseFloat(sl.quantity)} in stock here — can't record ${remaining} serial numbers` };
+    if (input.add.length && sl.warehouseLabel.startsWith("CS:")) return { ok: false, title: "Add serial numbers to consigned stock from its consignment" };
+
+    for (const id of input.removeUnitIds) {
+      const u = byId.get(id);
+      if (!u) return { ok: false, title: "A machine to remove is no longer here" };
+      const [cl] = await db.select({ id: consignLine.id }).from(consignLine).where(eq(consignLine.unitId, id)).limit(1);
+      const [di] = await db.select({ id: deliveryOrderItem.id }).from(deliveryOrderItem).where(eq(deliveryOrderItem.unitId, id)).limit(1);
+      if (cl || di) return { ok: false, title: `SN ${u.serialNo} has been on a ${cl ? "consignment" : "Case DO"} — fix its serial number or use instead of removing it` };
+    }
+
+    for (const e of input.edits) {
+      const u = byId.get(e.unitId);
+      if (!u) continue;
+      const sn = e.serialNo.trim();
+      const notes: string[] = [];
+      if (sn !== u.serialNo) notes.push(`Serial corrected ${u.serialNo} → ${sn}`);
+      if (e.intendedUse !== u.intendedUse) notes.push(`Use changed ${u.intendedUse} → ${e.intendedUse}`);
+      if (!notes.length) continue;
+      await db.update(assetUnit).set({
+        serialNo: sn, intendedUse: e.intendedUse, updatedAt: new Date(),
+        notes: [u.notes, `${notes.join("; ")} (${stamp})`].filter(Boolean).join("\n"),
+      }).where(eq(assetUnit.id, u.id));
+      if (sn !== u.serialNo) {
+        // the serial number is copied onto its history — keep it consistent
+        await db.update(stockMovement).set({ serialNo: sn }).where(eq(stockMovement.unitId, u.id));
+        await db.update(consignLine).set({ serialNo: sn }).where(eq(consignLine.unitId, u.id));
+      }
+    }
+    for (const id of input.removeUnitIds) {
+      await db.update(stockMovement).set({ unitId: null }).where(eq(stockMovement.unitId, id));
+      await db.delete(assetUnit).where(eq(assetUnit.id, id));
+    }
+    const repId = sl.warehouseLabel.startsWith("Field:") ? sl.warehouseLabel.slice("Field:".length).split(":")[0] : null;
+    for (const a of input.add) {
+      await db.insert(assetUnit).values({
+        id: nanoid(), organizationId: orgId, productId: sl.productId, serialNo: a.serialNo.trim(), intendedUse: a.intendedUse,
+        status: repId ? "WITH_REP" : "IN_STOCK", currentOrgId: orgId, currentWarehouseLabel: sl.warehouseLabel, currentHolderUserId: repId,
+        referenceType: "MANUAL", notes: `Serial number added to existing stock (${stamp})`, registeredBy: userId,
+      });
+    }
+    revalidatePath("/dashboard/inventory");
+    revalidatePath("/dashboard/inventory/serialized-units");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't save the machines" };
+  }
 }

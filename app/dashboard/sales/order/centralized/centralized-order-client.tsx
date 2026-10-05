@@ -47,6 +47,9 @@ interface Props {
 export function CentralizedSalesOrderClient({ initialOrders }: Props) {
   const router = useRouter();
   const [orders, setOrders] = useState(initialOrders);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialOrders, setSeenInitialOrders] = useState(initialOrders);
+  if (initialOrders !== seenInitialOrders) { setSeenInitialOrders(initialOrders); setOrders(initialOrders); }
   const [search, setSearch] = useState("");
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);

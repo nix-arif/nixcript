@@ -36,6 +36,9 @@ interface Props {
 export function CentralizedGoodsReceiptClient({ initialGrs, pendingReturnsRepairs }: Props) {
   const router = useRouter();
   const [grs, setGrs] = useState(initialGrs);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialGrs, setSeenInitialGrs] = useState(initialGrs);
+  if (initialGrs !== seenInitialGrs) { setSeenInitialGrs(initialGrs); setGrs(initialGrs); }
   const [search, setSearch] = useState("");
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [pending, setPending] = useState(pendingReturnsRepairs);

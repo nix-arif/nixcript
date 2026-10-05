@@ -12,6 +12,13 @@ export const MOVEMENT_TYPE = {
   CASE_USE:      "CASE_USE",       // rep field stock consumed during a case
   LOAN_OUT:      "LOAN_OUT",       // rental machine sent out for a case
   LOAN_RETURN:   "LOAN_RETURN",    // rental machine returned from a case
+  // Consignment module (lib/consignment/labels.ts) — stock stays on the owner's books
+  CONSIGN_SEND:   "CONSIGN_SEND",   // owner warehouse → consignment location
+  CONSIGN_USE:    "CONSIGN_USE",    // consumed at a consignment location (ownership passes)
+  CONSIGN_BACK:   "CONSIGN_BACK",   // consignment location → owner warehouse
+  CONSIGN_ADJUST: "CONSIGN_ADJUST", // count correction at a consignment location
+  CONSIGN_REVERSE:"CONSIGN_REVERSE",
+  CONSIGN_MOVE:   "CONSIGN_MOVE",   // agent moves consigned stock between its own locations (warehouse ⇄ specialist), still the owner's// a consumption undone (Case DO deleted/returned) — stock back at the location
 } as const;
 
 export const MOVEMENT_LABELS: Record<string, string> = {
@@ -28,6 +35,12 @@ export const MOVEMENT_LABELS: Record<string, string> = {
   CASE_USE:       "Case Usage",
   LOAN_OUT:       "Loan Out",
   LOAN_RETURN:    "Loan Return",
+  CONSIGN_SEND:   "Consignment Sent",
+  CONSIGN_USE:    "Consignment Used",
+  CONSIGN_BACK:   "Consignment Returned",
+  CONSIGN_ADJUST: "Consignment Adjustment",
+  CONSIGN_REVERSE: "Consignment Use Reversed",
+  CONSIGN_MOVE:   "Consignment Moved",
 };
 
 export const REF_TYPE = {
@@ -64,20 +77,40 @@ export const ASSET_UNIT_STATUS = {
   SOLD:      "SOLD",       // sold outright, terminal
   IN_REPAIR: "IN_REPAIR",
   DISPOSED:  "DISPOSED",   // terminal
+  CONSIGNED: "CONSIGNED",  // placed at an agent's warehouse or a customer site, still the owner's (consignment module)
 } as const;
 
 // Fixed when a unit enters inventory (registration, or later Goods
 // Receipt) — NOT chosen by whoever creates the Case DO. The DO reads this
 // off the unit to decide CASE_USE (SALE) vs LOAN_OUT (RENTAL).
+// What a serialized unit IS — fixed when it is registered:
+//   SALE  — stock to sell; used up / sold on a Case DO
+//   ASSET — a company asset (machine / equipment): never sold through a case,
+//           it is lent out and comes back, and stays the organisation's
+// Why an asset is out (rental / loan / demo) is NOT a property of the unit —
+// it is chosen each time it goes out (LOAN_PURPOSE, on the Case DO / usage).
 export const INTENDED_USE = {
-  SALE:   "SALE",
-  RENTAL: "RENTAL",
+  SALE:  "SALE",
+  ASSET: "ASSET",
 } as const;
 
 export const INTENDED_USE_LABELS: Record<string, string> = {
-  SALE:   "Sale",
-  RENTAL: "Rental",
+  SALE:  "For sale",
+  ASSET: "Company asset",
 };
+
+// Older units were registered as RENTAL / LOAN / DEMO — all company assets now
+export const LENDABLE_USES = ["ASSET", "RENTAL", "LOAN", "DEMO"] as const;
+export const isLendable = (use: string | null | undefined) => !!use && use !== "SALE";
+export const unitUseLabel = (use: string | null | undefined) => (isLendable(use) ? INTENDED_USE_LABELS.ASSET : INTENDED_USE_LABELS.SALE);
+
+// Why a company asset is out on a given occasion
+export const LOAN_PURPOSE = {
+  RENTAL: "RENTAL", // hired out — usually charged a usage fee
+  LOAN:   "LOAN",   // lent, e.g. while the customer's own machine is repaired
+  DEMO:   "DEMO",   // demonstration / trial
+} as const;
+export const LOAN_PURPOSE_LABELS: Record<string, string> = { RENTAL: "Rental", LOAN: "Loan", DEMO: "Demo" };
 
 export const ASSET_UNIT_STATUS_LABELS: Record<string, string> = {
   IN_STOCK:  "In Stock",

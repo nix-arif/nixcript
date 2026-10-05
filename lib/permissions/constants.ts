@@ -30,6 +30,12 @@ export const ALL_PERMISSIONS = [
   { key: "delivery-order:create", label: "Create Delivery Order" },
   { key: "delivery-order:update", label: "Update Delivery Order" },
   { key: "delivery-order:delete", label: "Delete Delivery Order" },
+  // Case DO internal copy: every item actually deducted, MDA problems and what
+  // the customer copy shows instead — an internal stock record, not for customers
+  { key: "delivery-order:internal-copy", label: "Download Case DO Internal Copy" },
+  // Cancel (void) a Case DO: it stays on record as Cancelled with the reason,
+  // and its stock comes back through reversing movements
+  { key: "delivery-order:cancel", label: "Cancel Case DO" },
 
   // Invoice
   { key: "invoice:read",   label: "View Invoices" },
@@ -138,6 +144,12 @@ export const ALL_PERMISSIONS = [
   { key: "inventory:request", label: "Request Stock Allocation" },
   { key: "inventory:create",  label: "Transfer Stock to Rep" },
 
+  // Consignment (agent + customer, one module)
+  { key: "consignment:read",   label: "View Consignments" },
+  { key: "consignment:manage", label: "Send / Return Consignment Stock & Settings" },
+  { key: "consignment:adjust", label: "Post Consignment Count Adjustments" },
+  { key: "consignment:settle", label: "Settle Consignment (Intercompany / Customer Billing)" },
+
   // Leave management
   { key: "leave:read:own", label: "View Own Leave Applications" },
   { key: "leave:read:all", label: "View All Employees' Leave Applications" },
@@ -231,13 +243,14 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
       "sales-order:approve",
       "customer-po:read", "customer-po:create", "customer-po:update", "customer-po:delete",
-      "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
+      "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete", "delivery-order:internal-copy", "delivery-order:cancel",
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
       "purchase-requisition:read", "purchase-requisition:create", "purchase-requisition:update", "purchase-requisition:delete",
       "goods-receipt:create",
       "packing-list:create", "packing-list:inspect",
+      "consignment:read", "consignment:manage", "consignment:adjust", "consignment:settle",
       "customer:read", "customer:create", "customer:update", "customer:delete",
       "product:read", "product:update-price", "product:upload-image",
       "member:read", "member:invite", "member:remove",
@@ -314,6 +327,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
   accounting: {
     manager: [
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
+      "consignment:read", "consignment:settle",
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
       "account:read", "account:create", "account:update", "account:delete",
       "sales-order:read",
@@ -403,13 +417,14 @@ export const DEPT_ROLE_PERMISSIONS: Record<
 
   logistic: {
     manager: [
-      "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
+      "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete", "delivery-order:internal-copy", "delivery-order:cancel",
       "purchase-order:read", "purchase-order:create", "purchase-order:update", "purchase-order:delete",
       "purchase-requisition:read", "purchase-requisition:create", "purchase-requisition:update", "purchase-requisition:delete",
       "goods-receipt:create",
       "packing-list:create",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
       "inventory:read", "inventory:adjust", "inventory:manage", "inventory:create",
+      "consignment:read", "consignment:manage", "consignment:adjust",
       "sales-order:read",
       "invoice:read",
       "member:read",

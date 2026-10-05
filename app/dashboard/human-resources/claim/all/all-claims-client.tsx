@@ -95,6 +95,9 @@ interface Props {
 
 export function AllClaimsClient({ applications: initialApplications, currentUserName }: Props) {
   const [applications, setApplications] = useState(initialApplications);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialApplications, setSeenInitialApplications] = useState(initialApplications);
+  if (initialApplications !== seenInitialApplications) { setSeenInitialApplications(initialApplications); setApplications(initialApplications); }
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<typeof STATUS_FILTERS[number]>("APPROVED");
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);

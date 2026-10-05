@@ -30,6 +30,9 @@ interface Props {
 export function CentralizedPackingListClient({ initialLists }: Props) {
   const router = useRouter();
   const [lists, setLists] = useState(initialLists);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialLists, setSeenInitialLists] = useState(initialLists);
+  if (initialLists !== seenInitialLists) { setSeenInitialLists(initialLists); setLists(initialLists); }
   const [search, setSearch] = useState("");
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);

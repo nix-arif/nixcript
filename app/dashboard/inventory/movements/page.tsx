@@ -1,6 +1,7 @@
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getStockMovements, getWarehouses } from "@/server/inventory";
+import { getStockMovements, getWarehouses, getInventoryLocationNames } from "@/server/inventory";
 import { getFieldReps } from "@/server/field-stock";
+import { getConsignedInMovements } from "@/server/consign";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { MovementsClient } from "./movements-client";
 import { db } from "@/db";
@@ -12,7 +13,7 @@ export default async function MovementsPage() {
   const orgId = session.session.activeOrganizationId!;
   const userId = session.user.id;
 
-  const [movements, warehouses, fieldReps, permissions, ownerCheck] = await Promise.all([
+  const [movements, warehouses, fieldReps, permissions, ownerCheck, locationNames, consignedIn] = await Promise.all([
     getStockMovements(),
     getWarehouses(),
     getFieldReps().catch(() => []),
@@ -21,6 +22,8 @@ export default async function MovementsPage() {
       .from(member)
       .where(and(eq(member.organizationId, orgId), eq(member.userId, userId), eq(member.role, "owner"), isNull(member.deletedAt)))
       .limit(1),
+    getInventoryLocationNames().catch(() => ({})),
+    getConsignedInMovements().catch(() => []),
   ]);
 
   const isOwner = ownerCheck.length > 0;
@@ -32,5 +35,9 @@ export default async function MovementsPage() {
     ...fieldWarehouses.filter(fw => !warehouses.find(w => w.label === fw.label)),
   ];
 
-  return <MovementsClient movements={movements} warehouses={allWarehouses} permissions={permissions} isOwner={isOwner} />;
+  // Stock sister companies consigned to us moves on THEIR ledger — shown
+  // alongside ours (read-only, tagged with the owner), newest first.
+  const allMovements = [...movements, ...consignedIn].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+
+  return <MovementsClient movements={allMovements} warehouses={allWarehouses} permissions={permissions} isOwner={isOwner} locationNames={locationNames} />;
 }

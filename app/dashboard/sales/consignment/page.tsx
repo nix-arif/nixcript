@@ -1,9 +1,6 @@
-import { requirePermission } from "@/lib/auth/require-permission";
-import { getConsignments } from "@/server/consignment";
-import { ConsignmentListClient } from "./consignment-list-client";
+import { redirect } from "next/navigation";
 
-export default async function ConsignmentPage() {
-  await requirePermission("sales-order:read");
-  const consignments = await getConsignments();
-  return <ConsignmentListClient initialConsignments={consignments} />;
+// Superseded by the Consignment module (one flow for agents and customers).
+export default function SalesConsignmentPage() {
+  redirect("/dashboard/consignment");
 }

@@ -1,13 +1,6 @@
-import { requirePermission } from "@/lib/auth/require-permission";
-import { getSiblingOrgsForConsignment } from "@/server/consignment-transfer";
-import { getFieldReps } from "@/server/field-stock";
-import { ConsignTransferClient } from "./consign-transfer-client";
+import { redirect } from "next/navigation";
 
-export default async function ConsignTransferPage() {
-  await requirePermission("inventory:manage");
-  const [siblingOrgs, reps] = await Promise.all([
-    getSiblingOrgsForConsignment().catch(() => []),
-    getFieldReps().catch(() => []),
-  ]);
-  return <ConsignTransferClient siblingOrgs={siblingOrgs} reps={reps} />;
+// Superseded by the Consignment module (one flow for agents and customers).
+export default function ConsignTransferPage() {
+  redirect("/dashboard/consignment/new");
 }

@@ -45,6 +45,9 @@ interface Props {
 export function CentralizedCustomerPoClient({ initialPos }: Props) {
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialPos, setSeenInitialPos] = useState(initialPos);
+  if (initialPos !== seenInitialPos) { setSeenInitialPos(initialPos); setPos(initialPos); }
   const [search, setSearch] = useState("");
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Case DO — User Manual</title>
+<style>
+:root {
+  --bg:#F3F7F4;--surface:#FFF;--surface-2:#EAF2EC;
+  --text:#1A2820;--muted:#5A7565;
+  --accent:#1A7A4A;--accent-sub:#E0F2E9;--border:#C8DED0;--r:8px;
+  --pe:#B45309;--pe-bg:#FEF3C7;
+  --ap:#047857;--ap-bg:#D1FAE5;
+  --rj:#B91C1C;--rj-bg:#FEE2E2;
+  --ca:#9CA3AF;--ca-bg:#F1F5F9;
+  --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono","Fira Code",monospace;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0A1410;--surface:#111D16;--surface-2:#182B1F;
+  --text:#D8EDE0;--muted:#7BAF8A;
+  --accent:#3DC87A;--accent-sub:#0D2B1A;--border:#1E3D2A;
+  --pe:#FBB040;--pe-bg:#2B2010;
+  --ap:#4DD8A0;--ap-bg:#0C2B20;
+  --rj:#FF8080;--rj-bg:#2B1010;
+  --ca:#6B7A96;--ca-bg:#182B1F;
+}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+body::before{content:'';display:block;height:3px;background:var(--accent)}
+.ph{background:var(--surface);border-bottom:1px solid var(--border);padding:26px 48px}
+.phi{max-width:1080px;margin:0 auto;display:flex;align-items:center;gap:18px}
+.phi-icon{flex-shrink:0;width:46px;height:46px;background:var(--accent);border-radius:11px;display:flex;align-items:center;justify-content:center}
+.phi-meta h1{font-size:18px;font-weight:700;letter-spacing:-.025em;line-height:1.2}
+.phi-meta p{font-size:13px;color:var(--muted);margin-top:3px}
+.phi-tag{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);background:var(--accent-sub);padding:4px 10px;border-radius:6px;margin-left:auto;white-space:nowrap}
+.layout{max-width:1080px;margin:0 auto;padding:40px 48px;display:grid;grid-template-columns:200px 1fr;gap:52px;align-items:start}
+.toc{position:sticky;top:24px}
+.toc-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:10px;padding-left:10px}
+.toc nav{display:flex;flex-direction:column;gap:1px}
+.toc a{display:block;font-size:13px;color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:6px;line-height:1.3;transition:color .12s,background .12s}
+.toc a:hover{color:var(--text);background:var(--surface-2)}
+.toc a.sub{padding-left:22px;font-size:12px}
+.content{display:flex;flex-direction:column;gap:52px;min-width:0}
+.sec{display:flex;flex-direction:column;gap:22px}
+.sec-hd{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--border);padding-bottom:14px}
+.sec-n{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--accent);flex-shrink:0}
+h2{font-size:19px;font-weight:700;letter-spacing:-.02em;text-wrap:balance;line-height:1.2}
+h3{font-size:14px;font-weight:700;line-height:1.3}
+p{color:var(--text);max-width:62ch}
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--accent)}
+strong{font-weight:700}
+/* badges */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;line-height:1.6;vertical-align:middle}
+.badge::before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.b-pe{background:var(--pe-bg);color:var(--pe)}
+.b-ap{background:var(--ap-bg);color:var(--ap)}
+.b-rj{background:var(--rj-bg);color:var(--rj)}
+.b-ca{background:var(--ca-bg);color:var(--ca)}
+/* pill tags */
+.pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.03em;vertical-align:middle}
+.pill-paid{background:#D1FAE5;color:#065F46}
+.pill-unpaid{background:#FEE2E2;color:#7F1D1D}
+.pill-doc{background:#FEF3C7;color:#92400E}
+.pill-half{background:var(--accent-sub);color:var(--accent)}
+.pill-cf{background:#EDE9FE;color:#4C1D95}
+@media(prefers-color-scheme:dark){
+  .pill-paid{background:#0C2B20;color:#4DD8A0}
+  .pill-unpaid{background:#2B1010;color:#FF8080}
+  .pill-doc{background:#2B2010;color:#FBB040}
+  .pill-half{background:var(--accent-sub);color:var(--accent)}
+  .pill-cf{background:#1E1438;color:#BB9EFF}
+}
+/* info / warn boxes */
+.info{background:var(--accent-sub);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch}
+.warn{background:var(--pe-bg);border-left:3px solid var(--pe);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch;color:var(--pe)}
+/* steps */
+.steps{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:40px 1fr;gap:16px;padding-bottom:24px;position:relative}
+.step:not(:last-child)::after{content:'';position:absolute;left:19px;top:42px;bottom:0;width:2px;background:var(--border)}
+.step-n{width:40px;height:40px;background:var(--surface);border:2px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);position:relative;z-index:1;flex-shrink:0}
+.step-b{padding-top:8px}
+.step-b h3{margin-bottom:5px;font-size:14px}
+.step-b p{font-size:13.5px;color:var(--muted);max-width:54ch}
+/* leave type table */
+.lt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* generic table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle;line-height:1.5}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--surface-2)}
+.td-m{color:var(--muted);font-size:12px}
+/* balance card */
+.bal-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.bal-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.bal-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+.bal-val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+.bal-sub{font-size:11px;color:var(--muted);margin-top:3px}
+/* flowchart */
+.fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fw svg{display:block;max-width:100%;height:auto}
+.fw-loading{display:flex;align-items:center;justify-content:center;min-height:160px;color:var(--muted);font-size:13px}
+/* status wrap */
+.status-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* roles */
+.roles-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.rc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 20px}
+.rc-perm{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:6px}
+.rc h3{font-size:15px;margin-bottom:14px}
+.rc-acts{display:flex;flex-direction:column;gap:8px}
+.rc-act{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted)}
+.rc-act::before{content:'→';color:var(--accent);font-size:11px;margin-top:2px;flex-shrink:0}
+/* formula */
+.formula{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;font-family:var(--mono);font-size:13px;color:var(--text);line-height:2}
+.formula span{color:var(--accent);font-weight:700}
+/* ref */
+.ref-row{display:flex;align-items:center;gap:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 22px;width:fit-content}
+.ref-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;font-weight:600}
+.ref-fmt{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.ref-fmt span{color:var(--accent)}
+.ref-div{width:1px;background:var(--border);align-self:stretch}
+.ref-key{font-size:12.5px;color:var(--muted);line-height:1.7}
+.ref-key strong{color:var(--accent)}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+/* cancel cards */
+.act-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ac{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.ac h3{margin-bottom:8px}
+.ac p{font-size:13px;color:var(--muted);max-width:none;line-height:1.55}
+.ac ol{margin-top:10px;padding-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+@media(max-width:800px){
+  .ph{padding:20px}
+  .phi-tag{display:none}
+  .layout{grid-template-columns:1fr;padding:24px 16px;gap:0}
+  .toc{display:none}
+  .bal-grid{grid-template-columns:1fr 1fr}
+  .roles-grid,.act-grid{grid-template-columns:1fr}
+  .ref-row{flex-direction:column;align-items:flex-start;gap:12px;width:100%}
+  .ref-div{display:none}
+  .fw{padding:16px 12px}
+}
+@media(max-width:480px){
+  .bal-grid{grid-template-columns:1fr}
+}
+/* consignment extras */
+.cmp td:first-child{font-weight:600;white-space:nowrap}
+.kv{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.kv .bal-val{font-size:15px}
+@media(max-width:800px){.kv{grid-template-columns:1fr}}
+ul.plain{padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;color:var(--muted);max-width:62ch}
+ul.plain strong{color:var(--text)}
+</style>
+</head>
+<body>
+
+<header class="ph">
+  <div class="phi">
+    <div class="phi-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M9 5h6M9 3h6v4H9zM6 5H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-1M8 12l2.5 2.5L16 9" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="phi-meta">
+      <h1>Case DO — User Manual</h1>
+      <p>Fulfillment · Doctor templates, customer copy, actual items, internal copy and invoice</p>
+    </div>
+    <div class="phi-tag">Fulfillment</div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="toc">
+    <p class="toc-lbl">Contents</p>
+    <nav>
+      <a href="#overview">Overview</a>
+      <a href="#flow">The Two Steps</a>
+      <a href="#roles">Roles &amp; Permissions</a>
+      <a href="#templates">Doctor Templates</a>
+      <a href="#pricing" class="sub">Selling Price</a>
+      <a href="#machine" class="sub">Machines in a Template</a>
+      <a href="#create">Step 1 — Create the Case DO</a>
+      <a href="#record">Step 2 — Record Actual Items</a>
+      <a href="#groups" class="sub">Item Groups in the Picker</a>
+      <a href="#dopage">The DO Page</a>
+      <a href="#copies">Customer &amp; Internal Copy</a>
+      <a href="#invoice">Invoice</a>
+      <a href="#cancel">Cancelling a Case DO</a>
+      <a href="#machines">Machines After the Case</a>
+      <a href="#example">Worked Example</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+
+    <section class="sec" id="overview">
+      <div class="sec-hd"><span class="sec-n">01</span><h2>Overview</h2></div>
+      <p>A <strong>Case DO</strong> records one case (procedure) for a doctor: what the hospital receives and pays for, and what the application specialist actually used from their field stock.</p>
+      <p>It keeps these as <strong>two lists</strong>, because they can differ:</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>List</th><th>What it is</th><th>Where it goes</th><th>When</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Customer copy items</strong></td><td class="td-m">What the hospital sees and is billed for — from the doctor's template</td><td class="td-m">Customer copy (with MDA certificates) and the invoice</td><td class="td-m">When the DO is created; editable until invoiced</td></tr>
+            <tr><td><strong>Actual items used</strong></td><td class="td-m">What the specialist really used from field stock, including which machine (serial no.)</td><td class="td-m">Internal copy; stock and consignment</td><td class="td-m">After the case — stock is deducted only then</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Everything is under <strong>Fulfillment → Delivery Orders</strong> (Case DOs) and <strong>Fulfillment → Case Templates</strong>.</p>
+    </section>
+
+    <section class="sec" id="flow">
+      <div class="sec-hd"><span class="sec-n">02</span><h2>The Two Steps</h2></div>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Before or at the case — create the Case DO</h3><p>Pick the specialist and the doctor. The doctor's template fills the <strong>customer copy items</strong> and the selling price. <strong>No stock moves.</strong> Print the <strong>customer copy</strong> for the hospital.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>After the case — record the actual items</h3><p>On the DO page click <strong>Record actual items</strong>, tick what was really used (and the machine's serial no.). <strong>Stock is deducted now</strong>, the <strong>internal copy</strong> becomes available, and the customer copy shows the machine's serial no.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Invoice</h3><p><strong>Create Invoice</strong> from the DO — it starts with the customer items and their prices (plus machine usage fees).</p></div></div>
+      </div>
+      <div class="info">If the DO is created after the case is already done, tick <strong>The case is done — record the items actually used now</strong> on the create form to do both steps at once.</div>
+      <p>Until step 2 is done, the Delivery Orders list shows the DO with the tag <strong>actual items to record</strong>.</p>
+    </section>
+
+    <section class="sec" id="roles">
+      <div class="sec-hd"><span class="sec-n">03</span><h2>Roles &amp; Permissions</h2></div>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Permission</th><th>Allows</th></tr></thead>
+          <tbody>
+            <tr><td>View Delivery Orders</td><td class="td-m">Open Case DOs and templates; download the <strong>customer copy</strong></td></tr>
+            <tr><td>Create Delivery Order</td><td class="td-m">Create Case DOs; create and edit doctor templates</td></tr>
+            <tr><td>Update Delivery Order</td><td class="td-m">Record / undo actual items; edit customer items (until invoiced); return or sell machines</td></tr>
+            <tr><td><strong>Download Case DO Internal Copy</strong></td><td class="td-m">See and download the <strong>internal copy</strong> — without it the button is hidden and the download is refused. Owners always have it; grant it to other roles in Organization → Roles.</td></tr>
+            <tr><td><strong>Cancel Case DO</strong></td><td class="td-m">Cancel (void) a Case DO with a reason — see section 10. Managers have it by default in new companies; grant it in Organization → Roles.</td></tr>
+            <tr><td>Delete Delivery Order</td><td class="td-m">Delete a Case DO <em>you created</em>, only while nothing has happened (no actual items recorded, no invoice)</td></tr>
+            <tr><td>Create Invoice</td><td class="td-m">Create the invoice from the Case DO</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sec" id="templates">
+      <div class="sec-hd"><span class="sec-n">04</span><h2>Doctor Templates</h2></div>
+      <div class="info"><strong>A template is the customer copy DO.</strong> Everything in it is what the hospital receives on the customer copy and is invoiced for. What the specialist actually uses is recorded on the DO after the case (internal copy).</div>
+      <p>A template is a doctor's usual case: case category, description, the <strong>customer copy items</strong> and their selling price. <strong>Each company keeps its own templates</strong> — a template made in Smart Innosys is used only on Smart Innosys Case DOs (doctors and products can still be any of the group's). Open <strong>Fulfillment → Case Templates</strong> → <strong>New template</strong> (or the pencil on an existing one).</p>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Doctor, hospital, name, category, description</h3><p>A doctor who works at several hospitals can keep a template <strong>per hospital</strong> — choose the hospital, or <em>Any of the doctor's hospitals</em>. The description prints on the DO (e.g. “Laser haemorrhoidoplasty (MILH), grade III”).</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Customer copy items</h3><p>Search a product — it prints with its MDA number and certificate. A product <strong>without a valid MDA registration is shown in red</strong> (in the template and on the Case DO form): it will not print on the customer copy — update the product's MDA details or remove it. Or type a name and choose <strong>Use “…” as a line without a product</strong> for a line that prints as written, e.g. <em>MILH procedure kit</em>.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Selling price</h3><p>Itemized or Total — see below.</p></div></div>
+        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Save</h3><p>A doctor's first template for a hospital is their <strong>default</strong> there: it fills in automatically on a Case DO for that doctor at that hospital. Use <em>make default</em> to change it. Each hospital (and “any hospital”) has its own default.</p></div></div>
+      </div>
+      <div class="info">A Case DO can also be saved as a template: <strong>Save this case as a template</strong> on the create form.</div>
+
+      <h3 id="pricing" style="margin-top:24px">Selling price</h3>
+      <div class="act-grid">
+        <div class="ac"><h3>Itemized</h3><p>Each item has its own price (filled from the product's selling price, changeable). The invoice lists each item at its price.</p></div>
+        <div class="ac"><h3>Total</h3><p>One price for the whole case. The invoice has one <em>Case package</em> line at that price; the items are listed as “included”.</p></div>
+      </div>
+      <p>A machine lent on the case (company asset) is charged its <strong>usage fee</strong> (e.g. rental RM 2,000 per case): with <strong>Itemized</strong> pricing the fee is the machine's price on the customer copy and invoice (shown in its price column); with <strong>Total</strong> it is charged on top of the case price.</p>
+      <div class="warn"><strong>Itemized price and items without MDA don't mix.</strong> A product without a valid MDA registration is left off the customer copy, so with a price per item the customer copy total wouldn't match what is invoiced. A red warning appears, and saving the template, creating the Case DO or saving the DO's customer items is refused until you remove the item, update its MDA details, or switch to a <strong>Total</strong> price.</div>
+
+      <h3 id="machine" style="margin-top:24px">Machines in a template</h3>
+      <p>For a machine (e.g. SWING 15) choose <strong>Machine to pick</strong>:</p>
+      <ul class="plain">
+        <li><strong>Company asset (lent)</strong> — with purpose (Rental / Loan / Demo), <em>Returned same day</em> or <em>Stays at hospital</em>, and the usage fee</li>
+        <li><strong>For sale (sold)</strong> — the machine is sold to the hospital</li>
+        <li><strong>Any</strong> — choose the unit when recording</li>
+      </ul>
+      <p>When the actual items are recorded, a unit of that kind is ticked from the specialist's holding with these choices filled in.</p>
+    </section>
+
+    <section class="sec" id="create">
+      <div class="sec-hd"><span class="sec-n">05</span><h2>Step 1 — Create the Case DO</h2></div>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Delivery Orders → New → Case DO</h3><p>Case date, MRN no., case category.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Application specialist</h3><p>Whose field stock the items come from (the sales person is the same person unless you untick it).</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Customer (doctor) and hospital</h3><p>Once the hospital is known (chosen, or the doctor's only one), that hospital's default template — else the “any hospital” default — fills in everything: case category, description, <strong>Customer copy items</strong>, <strong>Selling price</strong> and the machine choices. Only templates for that hospital (and “any hospital”) show as buttons. Switching hospital switches to its template.</p></div></div>
+        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Check the customer copy items and price</h3><p>Add, change or remove lines for this case. These are what the hospital sees and pays for.</p></div></div>
+        <div class="step"><div class="step-n">5</div><div class="step-b"><h3>Create Case DO</h3><p>Leave <em>The case is done — record now</em> unticked unless the case is already over. Nothing is taken from stock yet.</p></div></div>
+      </div>
+    </section>
+
+    <section class="sec" id="record">
+      <div class="sec-hd"><span class="sec-n">06</span><h2>Step 2 — Record Actual Items</h2></div>
+      <p>After the case, open the DO and click <strong>Record actual items</strong> (the amber box <em>Actual items used — not recorded yet</em>).</p>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Check the prefilled items</h3><p>The specialist's field stock is listed (under your item groups); the customer copy items they hold are ticked with their quantities. Free-text lines (e.g. a kit name) are not stock and are skipped.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Adjust to what was really used</h3><p>Change quantities, tick or untick items, pick the lot if asked. For machines, tick the unit (serial no.) used and check its purpose, return mode and usage fee. <em>Other items used</em> is for anything not from field stock.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Record actual items</h3><p>Stock is taken out of the specialist's field stock now — consigned stock first or last as set in Consignment Settings — and machines are lent or sold.</p></div></div>
+      </div>
+      <div class="warn">Recorded the wrong items? On the DO page click <strong>undo recording</strong>: all stock (machines and consigned stock included) goes back to the specialist and you can record again. Undo is refused if consigned stock it used is already settled.</div>
+
+      <h3 id="groups" style="margin-top:24px">Item groups in the picker</h3>
+      <p>The specialist's stock is listed under your item groups (Inventory → Item Groups). When the case category matches a group name — e.g. category <em>milh</em> and group <em>milh</em> — that group is first, open and marked <strong>matches case type</strong>; other groups are folded. A product in several groups (e.g. SWING 15 in milh, evlt and pldd) appears once, under the group matching the case.</p>
+    </section>
+
+    <section class="sec" id="dopage">
+      <div class="sec-hd"><span class="sec-n">07</span><h2>The DO Page</h2></div>
+      <ul class="plain">
+        <li><strong>Customer copy items</strong> — with the selling price. Click <strong>edit</strong> to change items, quantities, prices or the price mode — allowed until the DO is invoiced, then fixed.</li>
+        <li><strong>Actual items used</strong> — the amber <em>not recorded yet</em> box with <strong>Record actual items</strong>, or the recorded list with the time and <strong>undo recording</strong>.</li>
+        <li><strong>Machines</strong> — machines lent on this case: <strong>Return to specialist</strong> or <strong>Sell to hospital</strong> (see section 11).</li>
+        <li><strong>Customer copy / Internal copy</strong> buttons, and <strong>with price / no price</strong> for the PDF.</li>
+        <li>A warning lists customer items that won't print because they have no valid MDA registration.</li>
+      </ul>
+    </section>
+
+    <section class="sec" id="copies">
+      <div class="sec-hd"><span class="sec-n">08</span><h2>Customer &amp; Internal Copy</h2></div>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th></th><th>Customer copy</th><th>Internal copy</th></tr></thead>
+          <tbody>
+            <tr><td>For</td><td class="td-m">The hospital</td><td class="td-m">Stock record, audit (needs the permission)</td></tr>
+            <tr><td>Lists</td><td class="td-m">Customer copy items</td><td class="td-m">Actual items used</td></tr>
+            <tr><td>Available</td><td class="td-m">From creation</td><td class="td-m">After the actual items are recorded</td></tr>
+            <tr><td>MDA</td><td class="td-m">Each product's MDA no. and certificate (pages at the back). Products without a valid MDA registration are left off; free-text lines print as written</td><td class="td-m">Items without a valid MDA are flagged in red</td></tr>
+            <tr><td>Machines</td><td class="td-m">Serial no. and “on loan — left at the hospital / returned after the case” once recorded</td><td class="td-m">Serial no. and loan</td></tr>
+            <tr><td>With price</td><td class="td-m">Item prices, or the Case package line for a total price; usage fees</td><td class="td-m">—</td></tr>
+            <tr><td>Boxes after the table</td><td class="td-m"><strong>Terms &amp; notes</strong> (e.g. goods sold are not returnable), <strong>payment details</strong> (primary bank account) and a <strong>received-by</strong> box for name, signature &amp; stamp, date — set in Organization → Document Settings → Table</td><td class="td-m">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sec" id="invoice">
+      <div class="sec-hd"><span class="sec-n">09</span><h2>Invoice</h2></div>
+      <p>On the DO page click <strong>Create Invoice</strong>. It is prefilled from the <strong>customer copy items</strong>:</p>
+      <ul class="plain">
+        <li><strong>Itemized</strong> — each customer item at its price</li>
+        <li><strong>Total</strong> — one <em>Case package — …</em> line at the case price; the items as “(included)” at 0</li>
+        <li><strong>Machine lent</strong> — its usage fee on the machine's line (once the actual items are recorded)</li>
+        <li><strong>Machine sold to the hospital</strong> — its sale as its own line</li>
+      </ul>
+      <p>A Case DO can be invoiced without being marked delivered. Once invoiced, its customer copy items can no longer be edited.</p>
+    </section>
+
+    <section class="sec" id="cancel">
+      <div class="sec-hd"><span class="sec-n">10</span><h2>Cancelling a Case DO</h2></div>
+      <p>A Case DO that has been issued is <strong>cancelled, not deleted</strong>: it stays in the list marked <strong>Cancelled</strong>, with who, when and why — so the DO numbers and the movement history still explain themselves.</p>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Open the DO → Cancel DO</h3><p>Needs the <em>Cancel Case DO</em> permission.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Give the reason → Cancel DO</h3><p>e.g. “Case postponed by the doctor”.</p></div></div>
+      </div>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>What happens</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>Stock</td><td class="td-m">Everything the DO took — own stock, consigned stock, machines — goes back to the specialist</td></tr>
+            <tr><td>Movement History</td><td class="td-m">Kept; reversing entries are added (“DO cancelled — stock returned”) next to the original ones</td></tr>
+            <tr><td>The DO</td><td class="td-m">Status <strong>Cancelled</strong> with the reason, date and person; locked — no recording, editing, invoicing or machine actions; PDFs stamped <strong>CANCELLED</strong></td></tr>
+            <tr><td>Refused when</td><td class="td-m">An invoice is linked (cancel or credit the invoice first), or consigned stock it used is already settled</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="info"><strong>Delete vs Cancel vs Undo.</strong> <em>Delete</em> is only for a DO made by mistake — before any actual items are recorded. <em>Undo recording</em> corrects the actual items but keeps the DO. <em>Cancel</em> voids the whole case.</div>
+    </section>
+
+    <section class="sec" id="machines">
+      <div class="sec-hd"><span class="sec-n">11</span><h2>Machines After the Case</h2></div>
+      <div class="act-grid">
+        <div class="ac"><h3>Returned same day</h3><p>Lent and back with the specialist in one go; the case shows in the machine's history.</p></div>
+        <div class="ac"><h3>Stays at hospital</h3><p>Shows <em>At the hospital</em> in the DO's Machines box and on Field Stock until someone clicks <strong>Return to specialist</strong>.</p></div>
+        <div class="ac"><h3>Hospital buys it</h3><p>In the Machines box click <strong>Sell to hospital</strong>, enter the price — it is sold and added to the invoice.</p></div>
+      </div>
+      <p>A machine tagged <strong>For sale</strong> is sold to the hospital when ticked, not lent. Consigned machines (owned by a sister company) are billed by their owner as set in Consignment Settings — see the Consignment Manual.</p>
+    </section>
+
+    <section class="sec" id="example">
+      <div class="sec-hd"><span class="sec-n">12</span><h2>Worked Example</h2></div>
+      <p><strong>Mr Atiki · MILH · specialist Zilarahim.</strong> Template (itemized): SFCS000345 × 1 at RM 500 · “MILH procedure kit” × 1 at RM 300 · SWING 15 company asset, Loan, stays at hospital, fee RM 250.</p>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Create</h3><p>Customer copy: SFCS000345 (MDA) RM 500 · MILH procedure kit RM 300 · SWING 15 (MDA). Stock unchanged; DO tagged <em>actual items to record</em>.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Record after the case</h3><p>Prefilled: SFCS000345 × 1 and SWING 15 unit LD15421JW (Loan, stays, RM 250). Record → 1 SFCS000345 leaves Zilarahim's stock (consigned first), LD15421JW goes on loan.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Copies</h3><p>Customer copy now shows SWING 15 “Serial No: LD15421JW · on loan — left at the hospital” and RM 250 — total RM 1,050. Internal copy: SFCS000345 × 1, SWING 15 LD15421JW.</p></div></div>
+        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Invoice</h3><p>SFCS000345 RM 500 · MILH procedure kit RM 300 · SWING 15 usage fee RM 250 = RM 1,050.</p></div></div>
+      </div>
+    </section>
+
+    <section class="sec" id="faq">
+      <div class="sec-hd"><span class="sec-n">13</span><h2>FAQ</h2></div>
+      <div class="act-grid">
+        <div class="ac"><h3>Why can't I download the internal copy?</h3><p>Either the actual items aren't recorded yet, or you don't have <em>Download Case DO Internal Copy</em> — ask an owner to add it to your role.</p></div>
+        <div class="ac"><h3>An item is missing from the customer copy</h3><p>It has no valid MDA registration on the case date. Update the product's MDA details, or use a free-text line if that is acceptable.</p></div>
+        <div class="ac"><h3>The hospital wants a different item name</h3><p>Edit the customer copy item's description (or the template). The actual item recorded is unaffected.</p></div>
+        <div class="ac"><h3>I can't edit the customer items</h3><p>The DO is already invoiced — change the invoice instead.</p></div>
+        <div class="ac"><h3>Stock didn't go down after creating the DO</h3><p>That's expected: stock moves when the actual items are recorded (step 2).</p></div>
+        <div class="ac"><h3>Why is there no Delete button?</h3><p>The DO has already taken stock (or is invoiced). Cancel it instead — it needs the <em>Cancel Case DO</em> permission.</p></div>
+        <div class="ac"><h3>How do I change the notes or bank on the DO?</h3><p>Organization → Document Settings → Table → <em>Delivery order — below the table</em>. The bank is your primary account in Organization Profile → Banking.</p></div>
+        <div class="ac"><h3>What about Case DOs made before this change?</h3><p>They keep working as before: their items were deducted when created, and their customer copy is made from those items.</p></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>

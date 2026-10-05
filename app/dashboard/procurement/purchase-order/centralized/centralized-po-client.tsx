@@ -70,15 +70,31 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
 
-interface Props {
-  initialPos: CentralizedPurchaseOrder[];
+const DEFAULT_SORT = SORT_OPTIONS.find((o) => o.key === "poNo" && o.dir === "desc")!;
+const sortFromCookie = (v: string | null) => SORT_OPTIONS.find((o) => `${o.key}:${o.dir}` === v) ?? DEFAULT_SORT;
+// Remember the user's sort choice for next time (read back by page.tsx)
+function rememberSort(cookie: string, opt: SortOption) {
+  document.cookie = `${cookie}=${opt.key}:${opt.dir}; path=/; max-age=31536000; samesite=lax`;
 }
 
-export function CentralizedPurchaseOrderClient({ initialPos }: Props) {
+interface Props {
+  initialPos: CentralizedPurchaseOrder[];
+  initialSort?: string | null;
+  sortCookie?: string;
+}
+
+export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null, sortCookie }: Props) {
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialPos, setSeenInitialPos] = useState(initialPos);
+  if (initialPos !== seenInitialPos) { setSeenInitialPos(initialPos); setPos(initialPos); }
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortOption>(SORT_OPTIONS.find((o) => o.key === "poNo" && o.dir === "desc")!);
+  const [sort, setSortState] = useState<SortOption>(() => sortFromCookie(initialSort));
+  const setSort = (opt: SortOption) => {
+    setSortState(opt);
+    if (sortCookie) rememberSort(sortCookie, opt);
+  };
   const [orgFilter, setOrgFilter] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 

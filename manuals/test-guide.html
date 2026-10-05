@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Test Guide — Consignment, Machines &amp; Case DO</title>
+<style>
+:root {
+  --bg:#F3F7F4;--surface:#FFF;--surface-2:#EAF2EC;
+  --text:#1A2820;--muted:#5A7565;
+  --accent:#1A7A4A;--accent-sub:#E0F2E9;--border:#C8DED0;--r:8px;
+  --pe:#B45309;--pe-bg:#FEF3C7;
+  --ap:#047857;--ap-bg:#D1FAE5;
+  --rj:#B91C1C;--rj-bg:#FEE2E2;
+  --ca:#9CA3AF;--ca-bg:#F1F5F9;
+  --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono","Fira Code",monospace;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0A1410;--surface:#111D16;--surface-2:#182B1F;
+  --text:#D8EDE0;--muted:#7BAF8A;
+  --accent:#3DC87A;--accent-sub:#0D2B1A;--border:#1E3D2A;
+  --pe:#FBB040;--pe-bg:#2B2010;
+  --ap:#4DD8A0;--ap-bg:#0C2B20;
+  --rj:#FF8080;--rj-bg:#2B1010;
+  --ca:#6B7A96;--ca-bg:#182B1F;
+}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+body::before{content:'';display:block;height:3px;background:var(--accent)}
+.ph{background:var(--surface);border-bottom:1px solid var(--border);padding:26px 48px}
+.phi{max-width:1080px;margin:0 auto;display:flex;align-items:center;gap:18px}
+.phi-icon{flex-shrink:0;width:46px;height:46px;background:var(--accent);border-radius:11px;display:flex;align-items:center;justify-content:center}
+.phi-meta h1{font-size:18px;font-weight:700;letter-spacing:-.025em;line-height:1.2}
+.phi-meta p{font-size:13px;color:var(--muted);margin-top:3px}
+.phi-tag{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);background:var(--accent-sub);padding:4px 10px;border-radius:6px;margin-left:auto;white-space:nowrap}
+.layout{max-width:1080px;margin:0 auto;padding:40px 48px;display:grid;grid-template-columns:200px 1fr;gap:52px;align-items:start}
+.toc{position:sticky;top:24px}
+.toc-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:10px;padding-left:10px}
+.toc nav{display:flex;flex-direction:column;gap:1px}
+.toc a{display:block;font-size:13px;color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:6px;line-height:1.3;transition:color .12s,background .12s}
+.toc a:hover{color:var(--text);background:var(--surface-2)}
+.toc a.sub{padding-left:22px;font-size:12px}
+.content{display:flex;flex-direction:column;gap:52px;min-width:0}
+.sec{display:flex;flex-direction:column;gap:22px}
+.sec-hd{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--border);padding-bottom:14px}
+.sec-n{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--accent);flex-shrink:0}
+h2{font-size:19px;font-weight:700;letter-spacing:-.02em;text-wrap:balance;line-height:1.2}
+h3{font-size:14px;font-weight:700;line-height:1.3}
+p{color:var(--text);max-width:62ch}
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--accent)}
+strong{font-weight:700}
+/* badges */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;line-height:1.6;vertical-align:middle}
+.badge::before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.b-pe{background:var(--pe-bg);color:var(--pe)}
+.b-ap{background:var(--ap-bg);color:var(--ap)}
+.b-rj{background:var(--rj-bg);color:var(--rj)}
+.b-ca{background:var(--ca-bg);color:var(--ca)}
+/* pill tags */
+.pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.03em;vertical-align:middle}
+.pill-paid{background:#D1FAE5;color:#065F46}
+.pill-unpaid{background:#FEE2E2;color:#7F1D1D}
+.pill-doc{background:#FEF3C7;color:#92400E}
+.pill-half{background:var(--accent-sub);color:var(--accent)}
+.pill-cf{background:#EDE9FE;color:#4C1D95}
+@media(prefers-color-scheme:dark){
+  .pill-paid{background:#0C2B20;color:#4DD8A0}
+  .pill-unpaid{background:#2B1010;color:#FF8080}
+  .pill-doc{background:#2B2010;color:#FBB040}
+  .pill-half{background:var(--accent-sub);color:var(--accent)}
+  .pill-cf{background:#1E1438;color:#BB9EFF}
+}
+/* info / warn boxes */
+.info{background:var(--accent-sub);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch}
+.warn{background:var(--pe-bg);border-left:3px solid var(--pe);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch;color:var(--pe)}
+/* steps */
+.steps{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:40px 1fr;gap:16px;padding-bottom:24px;position:relative}
+.step:not(:last-child)::after{content:'';position:absolute;left:19px;top:42px;bottom:0;width:2px;background:var(--border)}
+.step-n{width:40px;height:40px;background:var(--surface);border:2px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);position:relative;z-index:1;flex-shrink:0}
+.step-b{padding-top:8px}
+.step-b h3{margin-bottom:5px;font-size:14px}
+.step-b p{font-size:13.5px;color:var(--muted);max-width:54ch}
+/* leave type table */
+.lt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* generic table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle;line-height:1.5}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--surface-2)}
+.td-m{color:var(--muted);font-size:12px}
+/* balance card */
+.bal-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.bal-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.bal-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+.bal-val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+.bal-sub{font-size:11px;color:var(--muted);margin-top:3px}
+/* flowchart */
+.fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fw svg{display:block;max-width:100%;height:auto}
+.fw-loading{display:flex;align-items:center;justify-content:center;min-height:160px;color:var(--muted);font-size:13px}
+/* status wrap */
+.status-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* roles */
+.roles-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.rc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 20px}
+.rc-perm{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:6px}
+.rc h3{font-size:15px;margin-bottom:14px}
+.rc-acts{display:flex;flex-direction:column;gap:8px}
+.rc-act{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted)}
+.rc-act::before{content:'→';color:var(--accent);font-size:11px;margin-top:2px;flex-shrink:0}
+/* formula */
+.formula{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;font-family:var(--mono);font-size:13px;color:var(--text);line-height:2}
+.formula span{color:var(--accent);font-weight:700}
+/* ref */
+.ref-row{display:flex;align-items:center;gap:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 22px;width:fit-content}
+.ref-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;font-weight:600}
+.ref-fmt{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.ref-fmt span{color:var(--accent)}
+.ref-div{width:1px;background:var(--border);align-self:stretch}
+.ref-key{font-size:12.5px;color:var(--muted);line-height:1.7}
+.ref-key strong{color:var(--accent)}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+/* cancel cards */
+.act-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ac{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.ac h3{margin-bottom:8px}
+.ac p{font-size:13px;color:var(--muted);max-width:none;line-height:1.55}
+.ac ol{margin-top:10px;padding-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+@media(max-width:800px){
+  .ph{padding:20px}
+  .phi-tag{display:none}
+  .layout{grid-template-columns:1fr;padding:24px 16px;gap:0}
+  .toc{display:none}
+  .bal-grid{grid-template-columns:1fr 1fr}
+  .roles-grid,.act-grid{grid-template-columns:1fr}
+  .ref-row{flex-direction:column;align-items:flex-start;gap:12px;width:100%}
+  .ref-div{display:none}
+  .fw{padding:16px 12px}
+}
+@media(max-width:480px){
+  .bal-grid{grid-template-columns:1fr}
+}
+/* consignment extras */
+.cmp td:first-child{font-weight:600;white-space:nowrap}
+.kv{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.kv .bal-val{font-size:15px}
+@media(max-width:800px){.kv{grid-template-columns:1fr}}
+ul.plain{padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;color:var(--muted);max-width:62ch}
+ul.plain strong{color:var(--text)}
+
+/* test guide */
+.uc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.uc-hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.uc-id{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--accent);background:var(--accent-sub);padding:2px 8px;border-radius:5px}
+.uc h3{font-size:15px}
+.uc .who{font-size:12px;color:var(--muted)}
+.uc ol.st{padding-left:20px;display:flex;flex-direction:column;gap:5px;font-size:13.5px}
+.uc ol.st li::marker{color:var(--accent);font-weight:700}
+.exp{display:flex;flex-direction:column;gap:6px;border-top:1px dashed var(--border);padding-top:10px}
+.exp-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.chk{display:flex;gap:9px;align-items:flex-start;font-size:13.5px;cursor:pointer;line-height:1.5}
+.chk input{margin-top:3px;width:16px;height:16px;accent-color:var(--accent);flex-shrink:0}
+.chk input:checked + span{color:var(--muted);text-decoration:line-through}
+.prog{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--border);padding:10px 48px;display:flex;align-items:center;gap:14px;font-size:13px}
+.bar{flex:1;max-width:420px;height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+.bar>div{height:100%;background:var(--accent);width:0;transition:width .2s}
+.prog button{font:inherit;font-size:12px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;padding:3px 10px;cursor:pointer}
+kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px}
+@media(max-width:800px){.prog{padding:10px 16px}}
+</style>
+</head>
+<body>
+
+<header class="ph">
+  <div class="phi">
+    <div class="phi-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="phi-meta">
+      <h1>Test Guide — Consignment, Machines &amp; Case DO</h1>
+      <p>Step-by-step use cases to retest on the dev system · ticks are saved in this browser</p>
+    </div>
+    <div class="phi-tag">Testing</div>
+  </div>
+</header>
+<div class="prog"><strong id="pc">0 / 69</strong> checks done <div class="bar"><div id="pb"></div></div><button type="button" id="reset">Reset ticks</button></div>
+
+<div class="layout">
+  <aside class="toc">
+    <p class="toc-lbl">Contents</p>
+    <nav>
+      <a href="#before">Before you start</a>
+      <a href="#uc-01" class="sub">UC-01 Documentation is for signed-in users only</a>
+      <a href="#uc-02" class="sub">UC-02 Register machines with serial numbers</a>
+      <a href="#uc-03" class="sub">UC-03 Correct machine details (owner)</a>
+      <a href="#uc-04" class="sub">UC-04 Stock out a machine — pick which one</a>
+      <a href="#uc-05" class="sub">UC-05 Transfer a machine to a specialist by serial</a>
+      <a href="#uc-06" class="sub">UC-06 Consignment set-up</a>
+      <a href="#uc-07" class="sub">UC-07 Consign stock to Affirma's specialist</a>
+      <a href="#uc-08" class="sub">UC-08 Doctor case template</a>
+      <a href="#uc-09" class="sub">UC-09 Case DO — auto-filled from the template</a>
+      <a href="#uc-10" class="sub">UC-10 Case DO — customer copy & internal copy</a>
+      <a href="#uc-11" class="sub">UC-11 Machine left at the hospital — return or sell</a>
+      <a href="#uc-12" class="sub">UC-12 Deleting a Case DO puts everything back</a>
+      <a href="#uc-13" class="sub">UC-13 Settle with the sister company</a>
+      <a href="#uc-14" class="sub">UC-14 External agents — dealer and sales agent</a>
+      <a href="#uc-15" class="sub">UC-15 Readable locations everywhere</a>
+      <a href="#uc-16" class="sub">UC-16 Supplier POs remember the sort</a>
+      <a href="#uc-17" class="sub">UC-17 Deleting a draft DO</a>
+      <a href="#uc-18" class="sub">UC-18 Agent moves consigned stock</a>
+      <a href="#uc-19" class="sub">UC-19 Case DO in two steps</a>
+      <a href="#uc-20" class="sub">UC-20 Your own item groups</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <section class="sec" id="before">
+      <div class="sec-hd"><span class="sec-n">00</span><h2>Before you start</h2></div>
+      <ul class="plain">
+        <li>Test on the <strong>dev</strong> system only. It is a fresh copy of production (02 Oct 2026) — real customers and stock, nothing you do touches production.</li>
+        <li>Switch company with the workspace switcher (top-left). Stock owner = <strong>Smart Innosys</strong>; sister company / agent = <strong>Affirma</strong> (specialist <strong>Zilarahim</strong>).</li>
+        <li>No machines are registered yet — <a href="#uc-02">UC-02</a> sets one up. Do the use cases in order; later ones use what earlier ones create.</li>
+        <li>Products have <strong>no unit cost</strong> in this data, so anything priced “cost-plus” shows <em>pending</em> — use the price lists as described.</li>
+        <li>Good test items: <code>SFCS000345</code>, <code>SSP-8030</code> (have MDA certificates) and <code>A.4086.1</code>, <code>STRC1406C</code> (no MDA).</li>
+        <li>Something not as expected? Note the use-case number, step and a screenshot.</li>
+      </ul>
+    </section>
+
+    <section class="sec">
+      <div class="sec-hd"><span class="sec-n">01</span><h2>Use cases</h2></div>
+      <div class="uc" id="uc-01">
+        <div class="uc-hd"><span class="uc-id">UC-01</span><h3>Documentation is for signed-in users only</h3><span class="who">Any user</span></div>
+        <ol class="st">
+          <li>Sign out. Open <code>/manuals/consignment</code> in the browser.</li>
+          <li>Sign in on the page you are sent to.</li>
+          <li>Open the home page <code>/</code> while signed out.</li>
+          <li>Sign in → sidebar <b>Help → Documentation</b>.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-01-1"><span>Step 1 goes to the sign-in page, not the manual</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-01-2"><span>After signing in you land straight on the Consignment manual</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-01-3"><span>The home page shows only Sign In / Register — no Documentation</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-01-4"><span>Documentation lists Claim, Leave, Consignment manuals and this Test Guide; each opens in a new tab</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-02">
+        <div class="uc-hd"><span class="uc-id">UC-02</span><h3>Register machines with serial numbers</h3><span class="who">Smart Innosys · owner / logistic</span></div>
+        <ol class="st">
+          <li>Product → find a machine product (e.g. <b>SWING 15</b>) and mark it <b>Rental-capable (machine / equipment)</b>.</li>
+          <li>Inventory → Movement History → <b>New Movement</b>: Warehouse <b>Main Warehouse</b>, product SWING 15, type <b>Opening Balance</b>.</li>
+          <li>Tick <b>Each unit has its own serial number</b> (already ticked for machines). Quantity <b>3</b>.</li>
+          <li>Enter only 2 serial numbers and Save.</li>
+          <li>Enter the 3rd serial number; set two to <b>Company asset</b> and one to <b>For sale</b>. Save.</li>
+          <li>Try New Movement again with one of the same serial numbers.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-02-5"><span>A row appears for each unit (3 rows for quantity 3)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-02-6"><span>Step 4 is refused: “Enter the serial number for unit 3 — one per machine”</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-02-7"><span>Saved; Stock Overview → Main Warehouse → SWING 15 shows the 3 serial numbers, the two company assets highlighted (“· asset”)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-02-8"><span>Step 6 is refused: serial number already in stock</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-02-9"><span>Inventory → Serialized Units lists them; the use dropdown offers only For sale / Company asset</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-03">
+        <div class="uc-hd"><span class="uc-id">UC-03</span><h3>Correct machine details (owner)</h3><span class="who">Owner</span></div>
+        <ol class="st">
+          <li>Stock Overview → SWING 15 row → <b>Edit</b> (pencil).</li>
+          <li>In <b>Machines (serial numbers)</b>: fix one serial number, change one use, save.</li>
+          <li>Edit again: lower the quantity below the number of serial numbers, save.</li>
+          <li>Remove one serial (bin), keep quantity, save; then <b>+ Add serial no.</b> to give it back a serial.</li>
+          <li>Try the row's <b>Delete</b> (bin) while serial numbers are recorded.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-03-10"><span>Corrections saved; Serialized Units shows the note “Serial corrected … by …”</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-11"><span>Lowering quantity below the serial count is refused</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-12"><span>Removing / adding serial numbers works and quantity stays the same</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-13"><span>Delete is refused while serial numbers are recorded there</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-14"><span>A red warning appears on any row with more serial numbers than quantity</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-04">
+        <div class="uc-hd"><span class="uc-id">UC-04</span><h3>Stock out a machine — pick which one</h3><span class="who">Logistic</span></div>
+        <ol class="st">
+          <li>New Movement → Main Warehouse → SWING 15 → type <b>Stock Out</b>.</li>
+          <li>Save without picking a serial number.</li>
+          <li>Pick one serial (e.g. the For sale unit) and save.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-04-15"><span>“Which machine(s) are going out?” lists the serial numbers</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-04-16"><span>Saving without a pick is refused (when all units have serial numbers)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-04-17"><span>The picked unit disappears from the row; Serialized Units shows it as Disposed</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-05">
+        <div class="uc-hd"><span class="uc-id">UC-05</span><h3>Transfer a machine to a specialist by serial</h3><span class="who">Logistic · Smart Innosys</span></div>
+        <ol class="st">
+          <li>Inventory → <b>Transfer to Rep</b> → <b>Send to Rep</b> → rep <b>Hadif</b>.</li>
+          <li>Product SWING 15 → pick a <b>Company asset</b> serial number → Transfer.</li>
+          <li>Inventory → <b>Field Stock</b> → Hadif → Current Holdings.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-05-18"><span>Quantity follows the serial numbers picked (cannot type a different number)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-05-19"><span>Hadif's holding shows SWING 15 with that serial, tagged “company asset”</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-05-20"><span>Current Holdings also shows lots with expiry (expired = red, ≤ 90 days = amber), unit cost / value and a summary line</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-06">
+        <div class="uc-hd"><span class="uc-id">UC-06</span><h3>Consignment set-up</h3><span class="who">Smart Innosys · owner</span></div>
+        <ol class="st">
+          <li>Consignment → <b>Settings</b> → card <b>Smart Innosys → Affirma</b>: Transfer price <b>Fixed price list</b>; add <b>SFCS000345 = RM 500</b>, <b>SSP-8030 = RM 120</b> (fallback markup 10%).</li>
+          <li>Same card → Machines: <b>Fixed fee per case RM 100</b>. Settlement <b>Manual · Monthly</b>. Save.</li>
+          <li>Consignment → <b>External agents</b> → New agent: <b>Test Dealer</b>, model <b>Dealer</b>, Discount 20%; Machines <b>Monthly rental RM 300</b>. Save.</li>
+          <li>New agent: <b>Test Sales Agent</b>, model <b>Sales agent</b>, Commission 10%; Machines <b>Invoice the hospital per case</b>, untick commission on machine fees. Save.</li>
+        </ol>
+        <div class="info" style="max-width:none">Products in prod have no unit cost, so cost-plus prices show as “pending” — the price list in step 1 avoids that.</div>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-06-21"><span>Settings saved with a confirmation</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-06-22"><span>Both agents appear as cards with their terms (e.g. “machines RM 300.00/month”)</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-07">
+        <div class="uc-hd"><span class="uc-id">UC-07</span><h3>Consign stock to Affirma's specialist</h3><span class="who">Smart Innosys · logistic</span></div>
+        <ol class="st">
+          <li>Consignment → <b>New</b> → Your other company <b>Affirma</b> → Where: <b>Specialist: Zilarahim</b>.</li>
+          <li>From Main Warehouse add <b>SFCS000345 × 5</b> (choose its lot if asked), <b>SSP-8030 × 5</b>, and a SWING 15 machine (pick its serial).</li>
+          <li>Send consignment.</li>
+          <li>Inventory → Stock Overview.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-07-23"><span>A consignment CSSI/26-xxxx is created and opens</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-07-24"><span>Stock Overview shows the location as “Consigned → Affirma Sdn Bhd · Zilarahim” (no raw codes)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-07-25"><span>Switch to Affirma: Field Stock → Zilarahim shows the items tagged “consigned · owned by Smart Innosys”</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-08">
+        <div class="uc-hd"><span class="uc-id">UC-08</span><h3>Doctor case template</h3><span class="who">Affirma · DO user</span></div>
+        <ol class="st">
+          <li>Fulfillment → <b>Case Templates</b> → New template → doctor <b>Mr Atiki</b>.</li>
+          <li>Name <b>MILH standard</b>, category <b>milh</b>, description e.g. “Laser haemorrhoidoplasty (MILH)”.</li>
+          <li>Items: SFCS000345 × 1, SSP-8030 × 1, A.4086.1 × 1, STRC1406C × 2. Save template.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-08-26"><span>The template shows under Mr Atiki with ★ Default</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-08-27"><span>Category chip, description and items are listed</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-09">
+        <div class="uc-hd"><span class="uc-id">UC-09</span><h3>Case DO — auto-filled from the template</h3><span class="who">Affirma · DO user</span></div>
+        <ol class="st">
+          <li>Delivery Orders → New → <b>Case DO</b>.</li>
+          <li>Application specialist <b>Zilarahim</b>; customer <b>Mr Atiki</b> (then the hospital).</li>
+          <li>Tick the SWING 15 machine: Purpose <b>Rental</b> (usage fee becomes ticked) → fee RM 500, <b>Returned same day</b>.</li>
+          <li>Switch Purpose to <b>Demo</b> and back to <b>Rental</b> to see the fee tick change.</li>
+          <li>Create Case DO and open it.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-09-28"><span>Picking Mr Atiki fills category, description and items immediately (“Filled in from … default”)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-09-29"><span>Items come from Zilarahim's holding; consigned stock is used first</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-09-30"><span>DO page shows <b>Machines</b>: “Rental · Returned same day · Usage fee RM 500 · Consigned”</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-09-31"><span>Case details show the case description</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-10">
+        <div class="uc-hd"><span class="uc-id">UC-10</span><h3>Case DO — customer copy & internal copy</h3><span class="who">Affirma · DO user</span></div>
+        <ol class="st">
+          <li>On the Case DO click <b>Customer copy</b>.</li>
+          <li>Click <b>Internal copy</b>.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-10-32"><span>DO page warns “Not on the customer copy”: A.4086.1, STRC1406C (no MDA registration)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-10-33"><span>Customer copy lists only SFCS000345 and SSP-8030, each with MDA Reg. No + validity, followed by their MDA certificate pages</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-10-34"><span>Internal copy lists every item, banner “INTERNAL INVENTORY RECORD — NOT FOR THE CUSTOMER”, items without MDA flagged red</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-10-35"><span>Both show doctor, hospital, case date, case type, specialist and case description</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-10-35b"><span>A machine line reads e.g. “Machine on rental — returned after the case”</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-11">
+        <div class="uc-hd"><span class="uc-id">UC-11</span><h3>Machine left at the hospital — return or sell</h3><span class="who">Affirma · DO user</span></div>
+        <ol class="st">
+          <li>New Case DO with a machine, Purpose <b>Loan</b>, <b>Stays at hospital</b>; create and open it.</li>
+          <li>Field Stock → Zilarahim → <b>Machines at hospitals</b>.</li>
+          <li>On the DO, Machines box → <b>Return to specialist</b>.</li>
+          <li>Another Case DO with a machine that stays → <b>Sell to hospital</b> → price → Confirm sale.</li>
+          <li><b>Create Invoice</b> on that DO.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-11-36"><span>Machine shows “Loan · At the hospital” and appears under Field Stock → Machines at hospitals as “loan” with the DO and days out</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-11-37"><span>Return puts it back with Zilarahim (“Returned dd Mmm”)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-11-38"><span>Sell marks it “Sold to the hospital · RM …”; Serialized Units shows it Sold / For sale</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-11-39"><span>The invoice is pre-filled with usage-fee and “— sold” lines</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-12">
+        <div class="uc-hd"><span class="uc-id">UC-12</span><h3>Deleting a Case DO puts everything back</h3><span class="who">Affirma · owner</span></div>
+        <ol class="st">
+          <li>Open an unsettled Case DO → <b>Delete</b>.</li>
+          <li>Check Field Stock → Zilarahim, and the consignment's history.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-12-40"><span>You return to the Delivery Orders list (no 404)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-12-41"><span>Stock and machines are back with the specialist; a sold machine is a Company asset again</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-12-42"><span>A Case DO whose consigned use is already settled cannot be deleted (clear message)</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-13">
+        <div class="uc-hd"><span class="uc-id">UC-13</span><h3>Settle with the sister company</h3><span class="who">Smart Innosys · accounting</span></div>
+        <ol class="st">
+          <li>Consignment → <b>Settlement</b> → <b>Our companies</b> → Affirma → tick all unsettled → <b>Preview</b>.</li>
+          <li><b>Generate invoice + PO</b>.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-13-43"><span>Lines priced from the price list (RM 500 / RM 120) and “Machine use (per case)” RM 100 lines</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-13-44"><span>An invoice from Smart Innosys and a confirmed PO in Affirma are created and shown in Settlement history</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-14">
+        <div class="uc-hd"><span class="uc-id">UC-14</span><h3>External agents — dealer and sales agent</h3><span class="who">Smart Innosys</span></div>
+        <ol class="st">
+          <li>Inventory → Transfer to Rep → <b>Send to dealer / sales agent</b> → Test Dealer → a consumable + a SWING 15 serial → Send.</li>
+          <li>Send something to Test Sales Agent the same way (or Consignment → New → External agent).</li>
+          <li>Open the dealer consignment → <b>Record usage</b> → 1 consumable; tick the machine “used on a case”, purpose <b>Demo</b>, usage fee RM 600.</li>
+          <li>Open the sales-agent consignment → Record usage → pick the hospital → quantity + price; for a machine enter a usage fee.</li>
+          <li>Settlement → <b>External agents</b> → each agent → all unsettled → Preview → Generate.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-14-45"><span>Sending from the transfer page creates a consignment</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-14-45b"><span>The consignment history shows the machine use as “Asset used · demo · usage fee RM 600”</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-14-46"><span>Dealer: consumable at dealer price, machine charged as “Machine rental &lt;month&gt;” RM 300 (no per-case charge)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-14-47"><span>Sales agent: one invoice per hospital + a commission PO; machine fee carries no commission</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-14-48"><span>Lines that cannot be priced show “pending” with the reason (never billed at RM 0)</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-15">
+        <div class="uc-hd"><span class="uc-id">UC-15</span><h3>Readable locations everywhere</h3><span class="who">Any</span></div>
+        <ol class="st">
+          <li>Inventory → Stock Overview, Movement History, Pending Approvals, Serialized Units.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-15-49"><span>No raw codes like CS:ORG:… — names such as “Consigned → Test Dealer (dealer)”, “Field stock — Hadif”</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-16">
+        <div class="uc-hd"><span class="uc-id">UC-16</span><h3>Supplier POs remember the sort</h3><span class="who">Procurement</span></div>
+        <ol class="st">
+          <li>Procurement → <b>Supplier POs</b> → sort <b>Supplier (A→Z)</b>.</li>
+          <li>Reload; go to Dashboard and back.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-16-50"><span>The list opens sorted by Supplier (A→Z) each time</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-17">
+        <div class="uc-hd"><span class="uc-id">UC-17</span><h3>Deleting a draft DO</h3><span class="who">Owner</span></div>
+        <ol class="st">
+          <li>Open any draft DO → Delete → confirm.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-17-51"><span>You land on the Delivery Orders list with “Delivery order deleted” — no 404 page</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-18">
+        <div class="uc-hd"><span class="uc-id">UC-18</span><h3>Agent moves consigned stock to its specialist and back</h3><span class="who">Affirma · logistic</span></div>
+        <ol class="st">
+          <li>As Smart Innosys, consign a few items to <b>Affirma → Warehouse</b> (like UC-07, but choose Warehouse), including a SWING 15 machine.</li>
+          <li>Switch to <b>Affirma</b> → Inventory → Stock Overview → section <b>Consigned in — owned by others</b> → on <b>Warehouse</b> click <b>Move</b>.</li>
+          <li>Move to <b>Specialist — Zilarahim</b>: 2 of the lot item, and tick the machine. Click Move.</li>
+          <li>On the new <b>With Zilarahim</b> group click <b>Move</b> → Warehouse → try a quantity larger than is there, then the right quantity → Move.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-18-52"><span>After step 3, the section shows a “With Zilarahim” group (2 of the lot item + the machine) and the Warehouse group is lower by the same</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-18-53"><span>Field Stock → Zilarahim shows them tagged consigned; Consignment list shows a new CSSI/26-xxxx “Moved within Affirma from …”</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-18-54"><span>Movement History → <b>Consigned in</b> shows “Consigned moved” rows with Owner: Smart Innosys; nothing can be edited or deleted there</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-18-55"><span>Too large a quantity shows “More than is here” and Move stays disabled; the right quantity moves it back to Warehouse</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-18-56"><span>Switch to Smart Innosys: the original consignment shows a <b>Moved</b> column and Moved out / Moved in history linked to the other consignment; no RM value appears anywhere on Affirma's side</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-19">
+        <div class="uc-hd"><span class="uc-id">UC-19</span><h3>Case DO in two steps: customer items now, actual items after the case</h3><span class="who">Affirma · DO user</span></div>
+        <div class="info">The doctor's template is the <b>customer copy</b>: what the hospital sees (with MDA certificates) and is billed for. What the specialist actually used is recorded <b>after the case</b>; only then is stock deducted and the internal copy available.</div>
+        <ol class="st">
+          <li>Fulfillment → <b>Case Templates</b> → Mr Atiki → edit or new. Selling price <b>Itemized</b>. Items: SFCS000345 × 1 at RM 500; type <i>MILH procedure kit</i> and choose <b>Use “MILH procedure kit” as a line without a product</b>, RM 300; SWING 15 × 1 → Machine to pick <b>Company asset (lent)</b> → Loan → Stays at hospital → fee 250. Save.</li>
+          <li>New Case DO → specialist Zilarahim → doctor Mr Atiki (the template fills <b>Customer copy items</b> and the price). Leave <i>The case is done — record now</i> unticked → <b>Create Case DO</b>.</li>
+          <li>Open the DO → download the <b>Customer copy</b> (with price). Try the <b>Internal copy</b>.</li>
+          <li>Click <b>Record actual items</b> → check the prefilled items (SWING 15 serial ticked, fee 250) → <b>Record actual items</b>.</li>
+          <li>Download both copies again; open <b>Create Invoice</b> from the DO (don't save). Then click <b>undo recording</b> and record again.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-19-57"><span>After create: the DO list shows <b>actual items to record</b>; Zilarahim's field stock is unchanged</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-19-58"><span>Customer copy before recording: SFCS000345 (MDA) RM 500, “MILH procedure kit” RM 300 as written, SWING 15 (MDA, no serial yet); the Internal copy button is disabled</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-19-59"><span>Record page is prefilled from the customer items (not the kit line) with a company-asset SWING 15 unit and Loan / Stays / RM 250; after recording, stock goes down and the machine shows on loan</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-19-60"><span>Customer copy now shows SWING 15's serial no., “on loan — left at the hospital” and RM 250 (total RM 1,050); internal copy lists the items actually used</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-19-60b"><span>Invoice prefill: the customer items (500 + 300) and one SWING 15 usage-fee line (250); <b>undo recording</b> returns the stock and the DO goes back to “actual items to record”</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-20">
+        <div class="uc-hd"><span class="uc-id">UC-20</span><h3>Your own item groups</h3><span class="who">Inventory manager · Case DO user</span></div>
+        <div class="info">Groups are yours to define (any names, e.g. matching your case types: <i>milh</i>, <i>evlt</i>, <i>pldd</i>). A product can be in several groups, but every stock list shows it <b>once</b> — under its first group, or the group that matches the case type on a Case DO — and names its other groups on the row. Groups never change stock.</div>
+        <ol class="st">
+          <li>Inventory → <b>Item Groups</b>. Add your groups (any name, any colour) and use ↑ ↓ to put them in the order you want.</li>
+          <li>Under <b>Products you hold</b>, click a group chip on a product to put it in (<i>+ evlt</i> → <i>✓ evlt</i>) or take it out. Give SWING 15 <b>✓ milh ✓ evlt ✓ pldd</b>. (Or: a group's <b>Add products</b> search, or tick several products and <i>Add selected to…</i>.)</li>
+          <li>Open Inventory → Stock Overview, then Field Stock → a specialist.</li>
+          <li>New Case DO → choose a specialist → tick case type <b>milh</b>, then untick it and tick <b>evlt</b>. Do not save.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-20-61"><span>Item Groups: SWING 15's row shows ✓ milh ✓ evlt ✓ pldd; on each group card its chip shows <b>+2</b> (hover: the other groups). <i>Only those in no group</i> lists what still needs a group</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-20-62"><span>Stock Overview: each warehouse lists items under your headings in your order, “Other” last; <b>SWING 15 appears once</b>, under milh (its first group), marked “also in evlt, pldd”; group counts add up to the warehouse's product count; clicking a heading folds it</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-20-63"><span>Group filter <b>pldd</b>: only the pldd heading, and SWING 15 is in it (“also in milh, evlt”) — across all warehouses, consigned-in stock included</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-20-64"><span>Field Stock → Current Holdings is grouped the same way (each item once, “also in …”); the groups are the same in both companies</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-20-65"><span>Case DO, case type <b>milh</b>: the milh group is first, open and marked “matches case type”, SWING 15 is in it; other groups are folded. Case type <b>evlt</b>: the evlt group moves to the top with SWING 15 in it — and SWING 15 is <b>not</b> repeated under milh. Ticking it selects it once; stock is deducted once</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-20-66"><span>Taking SWING 15 out of one group (click ✓ evlt, or × on the evlt card) keeps it in milh and pldd; deleting a group sends products in no other group to “Other” — no stock changes</span></label>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  var KEY = "test-guide-v1";
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) {}
+  var boxes = Array.prototype.slice.call(document.querySelectorAll("input[data-k]"));
+  function render() {
+    var done = boxes.filter(function (b) { return b.checked; }).length;
+    document.getElementById("pc").textContent = done + " / " + boxes.length;
+    document.getElementById("pb").style.width = (100 * done / boxes.length) + "%";
+  }
+  boxes.forEach(function (b) {
+    b.checked = !!saved[b.dataset.k];
+    b.addEventListener("change", function () {
+      saved[b.dataset.k] = b.checked;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) {}
+      render();
+    });
+  });
+  document.getElementById("reset").addEventListener("click", function () {
+    if (!confirm("Clear all ticks?")) return;
+    saved = {}; boxes.forEach(function (b) { b.checked = false; });
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

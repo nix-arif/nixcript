@@ -8,8 +8,15 @@ import {
   deleteDeliveryOrder,
   deliverDeliveryOrder,
   returnDeliveryOrder,
+  returnCaseMachine,
+  sellCaseMachine,
+  setDoItemCustomerView,
+  saveCaseCustomerItems,
+  cancelCaseDo,
+  undoCaseActuals,
   updateDeliveryOrderCaseInfo,
   updateDeliveryOrderNumber,
+  type CaseMachine,
   type DeliveryOrderWithItems,
 } from "@/server/delivery-order";
 import { getCustomerPosByCustomer, type CustomerPo } from "@/server/customer-purchase-order";
@@ -24,9 +31,16 @@ import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   UserIcon, BuildingIcon, CalendarIcon, PackageIcon, MapPinIcon,
   TruckIcon, RotateCcwIcon, LinkIcon, ReceiptIcon, CheckCircle2Icon,
-  PrinterIcon, DollarSignIcon, Loader2Icon, ChevronDownIcon, StethoscopeIcon,
+  PrinterIcon, DollarSignIcon, Loader2Icon, ChevronDownIcon, StethoscopeIcon, BanIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LOAN_PURPOSE_LABELS } from "@/lib/inventory/constants";
+import { CustomerViewEditor, customerViewSummary } from "@/components/customer-view-editor";
+import { CaseExtraProductCell, type CaseLineItem } from "../create/create-do-client";
+import { getProductsMda } from "@/server/case-template";
+import { pricedWithoutMdaMessage } from "@/lib/mda/priced-message";
+import { ItemizedMdaWarning } from "@/components/itemized-mda-warning";
+import type { CustomerView } from "@/lib/delivery/customer-view";
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -35,6 +49,7 @@ const DO_STATUS: Record<string, { label: string; className: string }> = {
   draft:     { label: "Draft",     className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
   delivered: { label: "Delivered", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
   returned:  { label: "Returned",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
+  cancelled: { label: "Cancelled", className: "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 line-through" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -119,10 +134,14 @@ function DoNumberField({
 
 export function DeliveryOrderDetailClient({
   order,
+  machines = [],
+  noMda = [],
   permissions,
   currentUserId,
 }: {
   order: DeliveryOrderWithItems;
+  machines?: CaseMachine[];
+  noMda?: { code: string; reason: string }[];
   permissions: string[];
   currentUserId: string;
 }) {
@@ -196,10 +215,13 @@ export function DeliveryOrderDetailClient({
     }
   }
 
-  async function handleDownloadPdf() {
+  async function handleDownloadPdf(copy?: "customer" | "internal") {
     setDownloadingPdf(true);
     try {
-      const res = await fetch(`/api/delivery-order/${order.id}/pdf${pdfWithPrice ? "?withPrice=1" : ""}`);
+      const qs = new URLSearchParams();
+      if (pdfWithPrice) qs.set("withPrice", "1");
+      if (copy) qs.set("copy", copy);
+      const res = await fetch(`/api/delivery-order/${order.id}/pdf${qs.size ? `?${qs}` : ""}`);
       if (!res.ok) {
         const text = (await res.text().catch(() => "")).trim();
         throw new Error(text || `Failed to download PDF (HTTP ${res.status})`);
@@ -208,7 +230,7 @@ export function DeliveryOrderDetailClient({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${order.doNo}.pdf`;
+      a.download = `${order.doNo}${copy === "internal" ? "-internal" : ""}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -221,6 +243,28 @@ export function DeliveryOrderDetailClient({
   }
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
+  // Case DO in two steps (customer items now, actual items after the case)
+  const twoStep = !!order.isCaseDo && order.actualStatus !== null;
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+  async function doCancel() {
+    setCancelling(true);
+    try {
+      const res = await cancelCaseDo(order.id, cancelReason);
+      if (!res.ok) { toast.error(res.title, { duration: 10000 }); return; }
+      toast.success(`${order.doNo} cancelled — stock returned`);
+      setCancelOpen(false);
+      router.refresh();
+    } finally { setCancelling(false); }
+  }
+  async function undoActuals() {
+    if (!confirm("Undo the recorded actual items? The stock goes back to the specialist (machines too) and you can record them again.")) return;
+    const res = await undoCaseActuals(order.id);
+    if (!res.ok) { toast.error(res.title, { duration: 10000 }); return; }
+    toast.success("Actual items undone — stock returned");
+    router.refresh();
+  }
   const isOwner = order.createdBy === currentUserId;
   // Distinct from `isOwner` above (which means "created this record") — this
   // is the org-owner role check, matching updateDeliveryOrderNumber's own
@@ -272,8 +316,15 @@ export function DeliveryOrderDetailClient({
 
   const isDraft = status === "draft";
   const isDelivered = status === "delivered";
+  const isCancelled = status === "cancelled";
+  // A Case DO is invoiceable as soon as it is recorded (it never goes through delivery)
+  const canInvoice = (isDelivered || (order.isCaseDo && isDraft)) && !order.invoiceId;
   const isReturned = status === "returned";
-  const canDelete = (isDraft || isDelivered || isReturned) && isOwner && !order.invoiceId && can("delivery-order:delete");
+  // A Case DO is deleted only while nothing has happened (no stock taken);
+  // after that it is cancelled instead, and stays on record
+  const canDelete = (isDraft || isDelivered || isReturned) && isOwner && !order.invoiceId && can("delivery-order:delete")
+    && (!order.isCaseDo || order.actualStatus === "pending");
+  const canCancel = !!order.isCaseDo && !isCancelled && !order.invoiceId && can("delivery-order:cancel");
 
   return (
     <div className="p-6 space-y-6">
@@ -295,7 +346,7 @@ export function DeliveryOrderDetailClient({
                 <ReceiptIcon className="w-3.5 h-3.5" /> View Invoice
               </Button>
             )}
-            {isDelivered && !order.invoiceId && can("invoice:create") && (
+            {canInvoice && can("invoice:create") && (
               <Button
                 size="sm"
                 className="gap-1.5"
@@ -314,21 +365,48 @@ export function DeliveryOrderDetailClient({
                 <PencilIcon className="w-3.5 h-3.5" /> Edit
               </Button>
             )}
+            {canCancel && (
+              <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={() => setCancelOpen(true)}>
+                <BanIcon className="w-3.5 h-3.5" /> Cancel DO
+              </Button>
+            )}
             {canDelete && (
               <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                 <TrashIcon className="w-3.5 h-3.5" /> Delete
               </Button>
             )}
             <div className="flex items-center rounded-md border border-border overflow-hidden">
+              {order.isCaseDo ? (
+                <>
+                  <button type="button" disabled={downloadingPdf} onClick={() => handleDownloadPdf("customer")}
+                    title="For the customer: items with a valid MDA registration, with their MDA certificates"
+                    className="flex items-center gap-1.5 px-3 h-8 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50">
+                    {downloadingPdf ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> : <PrinterIcon className="w-3.5 h-3.5" />}
+                    Customer copy
+                  </button>
+                  {/* Internal copy: only for users given "Download Case DO Internal Copy" (also checked on download) */}
+                  {can("delivery-order:internal-copy") && (
+                    <>
+                      <div className="w-px h-5 bg-border" />
+                      <button type="button" disabled={downloadingPdf || (twoStep && order.actualStatus === "pending")} onClick={() => handleDownloadPdf("internal")}
+                        title={twoStep && order.actualStatus === "pending" ? "Record the actual items first (after the case)" : "Internal inventory record: every item actually used, MDA status flagged"}
+                        className="flex items-center gap-1.5 px-3 h-8 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50">
+                        Internal copy
+                      </button>
+                    </>
+                  )}
+                </>
+              ) : (
               <button
                 type="button"
                 disabled={downloadingPdf}
-                onClick={handleDownloadPdf}
+                onClick={() => handleDownloadPdf()}
                 className="flex items-center gap-1.5 px-3 h-8 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
               >
                 {downloadingPdf ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> : <PrinterIcon className="w-3.5 h-3.5" />}
                 {downloadingPdf ? "Generating…" : "PDF"}
               </button>
+              )}
               <div className="w-px h-5 bg-border" />
               <button
                 type="button"
@@ -350,7 +428,18 @@ export function DeliveryOrderDetailClient({
         }
       />
 
-      {isDelivered && !order.invoiceId && can("invoice:create") && (
+      {isCancelled && (
+        <div className="flex items-start gap-3 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 px-4 py-3">
+          <BanIcon className="w-4 h-4 mt-0.5 shrink-0 text-zinc-600 dark:text-zinc-400" />
+          <div className="text-sm">
+            <p className="font-semibold">Cancelled{order.cancelledAt ? ` on ${new Date(order.cancelledAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}{order.cancelledByName ? ` by ${order.cancelledByName}` : ""}</p>
+            <p className="text-muted-foreground">Reason: {order.cancelReason ?? "—"}</p>
+            <p className="text-xs text-muted-foreground mt-1">Kept on record for audit; all stock it took was returned (see Movement History). It can no longer be changed or invoiced.</p>
+          </div>
+        </div>
+      )}
+
+      {canInvoice && can("invoice:create") && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3">
           <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
             <ReceiptIcon className="w-4 h-4 shrink-0" />
@@ -398,11 +487,48 @@ export function DeliveryOrderDetailClient({
             </section>
           )}
 
-          {/* Items */}
+          {noMda.length > 0 && (
+            <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm">
+              <div className="font-medium text-amber-800 dark:text-amber-300">Not on the customer copy ({noMda.length})</div>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">These items have no valid MDA registration, so they can&apos;t be given to the customer — they appear on the internal copy only:</p>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {noMda.map((m, i) => <span key={i} className="text-[11px] rounded border border-amber-300 dark:border-amber-700 px-1.5 py-0.5"><span className="font-mono">{m.code}</span> · {m.reason}</span>)}
+              </div>
+            </div>
+          )}
+
+          {/* Two-step Case DO: customer items (customer copy + invoice) and the actual items used */}
+          {twoStep && (
+            <CustomerItemsSection order={order} canEdit={can("delivery-order:update") && !order.invoiceId && !isCancelled} onSaved={() => router.refresh()} />
+          )}
+          {twoStep && order.actualStatus === "pending" && !isCancelled ? (
+            <section className="border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10 rounded-xl p-4 flex flex-wrap items-center gap-3">
+              <div className="flex-1 min-w-56">
+                <h2 className="text-sm font-semibold">Actual items used — not recorded yet</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">After the case, record what {order.applicationSpecialistName ?? "the specialist"} actually used from field stock (and which machine). Stock is deducted then, and the internal copy becomes available.</p>
+              </div>
+              {can("delivery-order:update") && (
+                <Button size="sm" onClick={() => router.push(`/dashboard/fulfillment/delivery/${order.id}/record`)}>Record actual items</Button>
+              )}
+            </section>
+          ) : (
           <section className="border border-border rounded-xl p-4">
-            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Items <span className="font-normal">({order.items.length})</span>
+            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
+              {twoStep ? "Actual items used" : "Items"} <span className="font-normal">({order.items.length})</span>
+              {twoStep && order.actualRecordedAt && <span className="font-normal normal-case tracking-normal">· recorded {new Date(order.actualRecordedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</span>}
+              {twoStep && !isCancelled && order.actualStatus === "recorded" && can("delivery-order:update") && (
+                <button type="button" className="ml-auto text-[11px] font-normal normal-case tracking-normal text-muted-foreground hover:text-destructive underline" onClick={undoActuals}>undo recording</button>
+              )}
             </h2>
+            {!twoStep && order.isCaseDo && order.priceMode && (
+              <p className="text-xs text-muted-foreground -mt-1.5 mb-2">
+                Selling price: {order.priceMode === "total"
+                  ? <><b className="text-foreground">total RM {Number(order.casePrice ?? 0).toFixed(2)}</b> for the case (items included)</>
+                  : <>itemized — <b className="text-foreground">RM {order.items.reduce((s, i) => s + (Number(i.unitPrice ?? 0) * Number(i.qty ?? 0)), 0).toFixed(2)}</b></>}
+                {order.items.some((i) => i.usageFee) && <> + machine usage fees RM {order.items.reduce((s, i) => s + Number(i.usageFee ?? 0), 0).toFixed(2)}</>}
+                {" "}· the invoice made from this DO starts with these prices
+              </p>
+            )}
             {order.items.length === 0 ? (
               <p className="text-sm text-muted-foreground">No items</p>
             ) : (
@@ -415,23 +541,26 @@ export function DeliveryOrderDetailClient({
                       <th className="text-left pb-2 pr-3">Description</th>
                       <th className="text-right pb-2 pr-3 w-12">Qty</th>
                       <th className="text-left pb-2 w-12">UOM</th>
+                      {!twoStep && order.isCaseDo && order.priceMode === "itemized" && <th className="text-right pb-2 pl-3 w-20">Price</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {order.items.map((item) => (
-                      <tr key={item.id} className="border-b border-border/40 last:border-0">
-                        <td className="py-2 pr-3 text-muted-foreground">{item.rowNo}</td>
-                        <td className="py-2 pr-3 font-mono text-muted-foreground">{item.productCode || "—"}</td>
-                        <td className="py-2 pr-3">{item.description || "—"}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{item.qty}</td>
-                        <td className="py-2 text-muted-foreground">{item.uom || "—"}</td>
-                      </tr>
+                      <ItemRow key={item.id} item={item} doId={order.id} isCase={!!order.isCaseDo && !twoStep} canEdit={can("delivery-order:update") && !isCancelled} showPrice={!twoStep && !!order.isCaseDo && order.priceMode === "itemized"}
+                        kitNames={[...new Set(order.items.filter((x) => x.custShow === "kit" && x.custDescription).map((x) => x.custDescription!))]}
+                        onSaved={() => router.refresh()} />
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
           </section>
+
+          )}
+
+          {machines.length > 0 && !isCancelled && (
+            <CaseMachinesSection doId={order.id} machines={machines} canReturn={can("delivery-order:update")} onDone={() => router.refresh()} />
+          )}
 
           {order.notes && (
             <section className="border border-border rounded-xl p-4">
@@ -475,7 +604,7 @@ export function DeliveryOrderDetailClient({
                   {actioning === "return" ? "Updating…" : "Mark as Returned"}
                 </Button>
               )}
-              {isDelivered && !order.invoiceId && can("invoice:create") && (
+              {canInvoice && can("invoice:create") && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -596,7 +725,7 @@ export function DeliveryOrderDetailClient({
             <section className="border border-border rounded-xl p-4 space-y-2.5">
               <div className="flex items-center justify-between mb-1">
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Case Details</h2>
-                {can("delivery-order:update") && (
+                {can("delivery-order:update") && !isCancelled && (
                   <button
                     type="button"
                     onClick={openCaseDialog}
@@ -631,6 +760,15 @@ export function DeliveryOrderDetailClient({
                   <p className="text-xs font-mono">{order.mrnNo || "—"}</p>
                 </div>
               </div>
+              {order.caseDescription && (
+                <div className="flex items-start gap-2">
+                  <ReceiptIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[10px] text-muted-foreground">Case description</p>
+                    <p className="text-xs whitespace-pre-wrap">{order.caseDescription}</p>
+                  </div>
+                </div>
+              )}
               <div className="flex items-start gap-2">
                 <LinkIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                 <div>
@@ -642,6 +780,30 @@ export function DeliveryOrderDetailClient({
           )}
         </div>
       </div>
+
+      <Dialog open={cancelOpen} onOpenChange={(o) => { if (!cancelling) setCancelOpen(o); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel {order.doNo}?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              The DO stays on record marked <b>Cancelled</b> with your name, the date and the reason. All stock it took
+              {order.actualStatus === "pending" ? " (none yet)" : " — items, consigned stock and machines —"} goes back to {order.applicationSpecialistName ?? "the specialist"} through reversing entries in Movement History. It can&apos;t be undone.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Reason *</Label>
+              <Input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="e.g. Case postponed by the doctor" autoFocus />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelOpen(false)} disabled={cancelling}>Keep the DO</Button>
+            <Button variant="destructive" onClick={doCancel} disabled={cancelling || cancelReason.trim().length < 3}>
+              {cancelling ? "Cancelling…" : "Cancel DO"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={caseDialogOpen} onOpenChange={setCaseDialogOpen}>
         <DialogContent>
@@ -699,5 +861,256 @@ export function DeliveryOrderDetailClient({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function CaseMachinesSection({ doId, machines, canReturn, onDone }: { doId: string; machines: CaseMachine[]; canReturn: boolean; onDone: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [selling, setSelling] = useState<{ id: string; price: string } | null>(null);
+  const out = machines.filter((m) => m.returnMode !== "sold" && m.returnedQty < m.qty - 1e-9).length;
+  async function sell(m: CaseMachine) {
+    if (!selling || !(parseFloat(selling.price) > 0)) { toast.error("Enter the selling price"); return; }
+    if (!confirm(`Sell ${m.productCode}${m.serialNo ? ` (SN ${m.serialNo})` : ""} to the hospital for RM ${parseFloat(selling.price).toFixed(2)}? It will no longer come back.`)) return;
+    setBusy(m.movementId);
+    try {
+      const res = await sellCaseMachine(doId, m.movementId, selling.price);
+      if (!res.ok) { toast.error(res.title); return; }
+      toast.success("Machine sold to the hospital", res.invoiced ? { description: `${res.invoiced} was already created — invoice the sale separately.` } : { description: "It is added when you create the invoice from this DO." });
+      setSelling(null);
+      onDone();
+    } finally { setBusy(null); }
+  }
+  async function giveBack(m: CaseMachine) {
+    if (!confirm(`Return ${m.productCode}${m.serialNo ? ` (SN ${m.serialNo})` : ""} to the application specialist?`)) return;
+    setBusy(m.movementId);
+    try {
+      const res = await returnCaseMachine(doId, m.movementId);
+      if (!res.ok) { toast.error(res.title); return; }
+      toast.success("Machine returned to the specialist");
+      onDone();
+    } finally { setBusy(null); }
+  }
+  const fmt = (d: Date | string) => new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+  return (
+    <section className="border border-border rounded-xl p-4">
+      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+        Machines <span className="font-normal">({machines.length}{out ? ` · ${out} at hospital` : ""})</span>
+      </h2>
+      <div className="flex flex-col divide-y divide-border/60">
+        {machines.map((m) => {
+          const sold = m.returnMode === "sold";
+          const back = !sold && m.returnedQty >= m.qty - 1e-9;
+          return (
+            <div key={m.movementId} className="py-2.5 first:pt-0 last:pb-0 flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-xs"><span className="font-mono font-semibold">{m.productCode}</span>{m.serialNo && <span className="font-mono text-muted-foreground"> · SN {m.serialNo}</span>}{m.qty !== 1 && <span className="text-muted-foreground"> · × {m.qty}</span>}</div>
+                {m.description && <div className="text-[11px] text-muted-foreground break-words">{m.description}</div>}
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  <span className={cn("text-[10px] font-medium rounded px-1.5 py-0.5",
+                    back ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400")}>
+                    {sold ? `Sold to the hospital · RM ${Number(m.salePrice ?? 0).toFixed(2)}` : back ? (m.returnMode === "same_day" ? "Returned same day" : `Returned${m.returnedAt ? ` ${fmt(m.returnedAt)}` : ""}`) : "At the hospital"}
+                  </span>
+                  {m.purpose && <span className="text-[10px] font-medium rounded px-1.5 py-0.5 bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">{LOAN_PURPOSE_LABELS[m.purpose] ?? m.purpose}</span>}
+                  <span className="text-[10px] rounded px-1.5 py-0.5 bg-muted text-muted-foreground">{m.usageFee ? `Usage fee RM ${Number(m.usageFee).toFixed(2)}` : "No usage fee"}</span>
+                  {m.consigned && <span className="text-[10px] rounded px-1.5 py-0.5 bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">Consigned</span>}
+                </div>
+              </div>
+              {!back && !sold && canReturn && (
+                selling?.id === m.movementId ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs">RM</span>
+                    <Input type="number" min="0" step="0.01" autoFocus value={selling.price} onChange={(e) => setSelling({ id: m.movementId, price: e.target.value })} className="h-7 w-28 text-xs text-right" placeholder="Selling price" />
+                    <Button size="sm" className="h-7 text-xs" disabled={busy === m.movementId} onClick={() => sell(m)}>{busy === m.movementId ? "Saving…" : "Confirm sale"}</Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setSelling(null)}>Cancel</Button>
+                  </div>
+                ) : (
+                  <div className="flex gap-1.5">
+                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy === m.movementId} onClick={() => giveBack(m)}>
+                      {busy === m.movementId ? "Returning…" : "Return to specialist"}
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSelling({ id: m.movementId, price: "" })}>Sell to hospital</Button>
+                  </div>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+type DoItem = DeliveryOrderWithItems["items"][number];
+
+// A DO line; on a Case DO also how the customer copy prints it (the stock
+// deducted is always the line's own item), editable
+function ItemRow({ item, doId, isCase, canEdit, kitNames, onSaved, showPrice }: { item: DoItem; doId: string; isCase: boolean; canEdit: boolean; kitNames: string[]; onSaved: () => void; showPrice?: boolean }) {
+  const [editing, setEditing] = useState<CustomerView | null>(null);
+  const [saving, setSaving] = useState(false);
+  const summary = isCase ? customerViewSummary(item) : null;
+  async function save() {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      const res = await setDoItemCustomerView(doId, item.id, editing);
+      if (!res.ok) { toast.error(res.title); return; }
+      toast.success(editing.custShow ? "Customer copy updated" : "Printed as is on the customer copy");
+      setEditing(null);
+      onSaved();
+    } finally { setSaving(false); }
+  }
+  return (
+    <>
+      <tr className={cn("border-b border-border/40 last:border-0", editing && "border-b-0")}>
+        <td className="py-2 pr-3 text-muted-foreground align-top">{item.rowNo}</td>
+        <td className="py-2 pr-3 font-mono text-muted-foreground align-top">{item.productCode || "—"}</td>
+        <td className="py-2 pr-3 align-top">
+          {item.description || "—"}
+          {isCase && (summary || canEdit) && (
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+              {summary && <span className="rounded px-1.5 py-0.5 bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">Customer copy: {summary}</span>}
+              {item.custReason && <span className="text-muted-foreground">({item.custReason})</span>}
+              {canEdit && !editing && (
+                <button type="button" onClick={() => setEditing({ custShow: item.custShow as CustomerView["custShow"], custProductId: item.custProductId, custCode: item.custCode, custDescription: item.custDescription, custQty: item.custQty, custUom: item.custUom, custReason: item.custReason })}
+                  className="text-muted-foreground hover:text-foreground underline">{summary ? "change" : "customer copy…"}</button>
+              )}
+            </div>
+          )}
+        </td>
+        <td className="py-2 pr-3 text-right tabular-nums align-top">{item.qty}</td>
+        <td className="py-2 text-muted-foreground align-top">{item.uom || "—"}</td>
+        {showPrice && (
+          <td className="py-2 pl-3 text-right tabular-nums align-top">
+            {item.usageFee ? <span title="Machine usage fee (per case)">{Number(item.usageFee).toFixed(2)}<span className="block text-[10px] text-muted-foreground">usage fee</span></span>
+              : item.unitPrice ? Number(item.unitPrice).toFixed(2) : <span className="text-muted-foreground">—</span>}
+          </td>
+        )}
+      </tr>
+      {editing && (
+        <tr className="border-b border-border/40">
+          <td />
+          <td colSpan={showPrice ? 5 : 4} className="pb-2 pr-3">
+            <CustomerViewEditor value={editing} onChange={setEditing} needReason kitNames={kitNames} />
+            <div className="mt-1.5 flex gap-1.5">
+              <Button size="sm" className="h-7 text-xs" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// Two-step Case DO: what the customer copy shows and the invoice bills — from
+// the doctor's template, editable until the DO is invoiced
+function CustomerItemsSection({ order, canEdit, onSaved }: { order: DeliveryOrderWithItems; canEdit: boolean; onSaved: () => void }) {
+  const [editing, setEditing] = useState<null | { rows: CaseLineItem[]; priceMode: "itemized" | "total"; casePrice: string }>(null);
+  const [saving, setSaving] = useState(false);
+  const total = order.priceMode === "total";
+  const itemsTotal = order.customerItems.reduce((s, i) => s + Number(i.unitPrice ?? 0) * Number(i.qty ?? 0), 0);
+  // usage fees of machines used that aren't on the customer copy (those are priced there)
+  const fees = order.items.filter((i) => !order.customerItems.some((c) => c.productId && c.productId === i.productId)).reduce((s, i) => s + Number(i.usageFee ?? 0), 0);
+  const startEdit = () => setEditing({
+    rows: order.customerItems.map((c, k) => ({ _key: `c${k}`, productId: c.productId ?? undefined, productCode: c.productCode ?? "", description: c.description ?? "", qty: c.qty, uom: c.uom ?? "", unitPrice: c.unitPrice ? String(Number(c.unitPrice)) : "" })),
+    priceMode: total ? "total" : "itemized", casePrice: order.casePrice ? String(Number(order.casePrice)) : "",
+  });
+  const upd = (key: string, patch: Partial<CaseLineItem>) => setEditing((e) => e && { ...e, rows: e.rows.map((r) => (r._key === key ? { ...r, ...patch } : r)) });
+  // MDA of the products listed: one without a valid registration won't print on the customer copy
+  const [mdaOf, setMdaOf] = useState<Record<string, { regNo: string | null; valid: boolean }>>({});
+  const productKey = [...new Set((editing ? editing.rows : order.customerItems).map((r) => r.productId).filter(Boolean) as string[])].sort().join(",");
+  useEffect(() => {
+    if (!productKey) return;
+    let cancelled = false;
+    getProductsMda(productKey.split(",")).then((m) => { if (!cancelled) setMdaOf((prev) => ({ ...prev, ...m })); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [productKey]);
+  const noMda = (productId?: string | null) => !!productId && mdaOf[productId]?.valid === false;
+  const badCodes = (editing ? editing.rows : order.customerItems).filter((r) => noMda(r.productId)).map((r) => r.productCode ?? "");
+  async function save() {
+    if (!editing) return;
+    if (editing.priceMode === "itemized" && badCodes.length) { toast.error(pricedWithoutMdaMessage(badCodes), { duration: 12000 }); return; }
+    setSaving(true);
+    try {
+      const res = await saveCaseCustomerItems(order.id, {
+        priceMode: editing.priceMode, casePrice: editing.casePrice,
+        items: editing.rows.map((r) => ({ productId: r.productId ?? null, productCode: r.productCode, description: r.description, qty: r.qty || "1", uom: r.uom, unitPrice: r.unitPrice ?? null })),
+      });
+      if (!res.ok) { toast.error(res.title); return; }
+      toast.success("Customer items saved");
+      setEditing(null);
+      onSaved();
+    } finally { setSaving(false); }
+  }
+  return (
+    <section className="border border-border rounded-xl p-4">
+      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-2">
+        Customer copy items <span className="font-normal">({order.customerItems.length})</span>
+        {canEdit && !editing && <button type="button" onClick={startEdit} className="ml-auto text-[11px] font-normal normal-case tracking-normal text-primary hover:underline">edit</button>}
+        {!canEdit && order.invoiceId && <span className="ml-auto text-[11px] font-normal normal-case tracking-normal">invoiced {order.invoiceNo} — fixed</span>}
+      </h2>
+      <p className="text-xs text-muted-foreground mb-2">
+        What the hospital sees and is billed for. Selling price: {total
+          ? <b className="text-foreground">total RM {Number(order.casePrice ?? 0).toFixed(2)}</b>
+          : <>itemized — <b className="text-foreground">RM {itemsTotal.toFixed(2)}</b></>}
+        {fees > 0 && <> + usage fees of machines not listed RM {fees.toFixed(2)}</>}
+      </p>
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            {([["itemized", "Itemized"], ["total", "Total for the case"]] as const).map(([m, label]) => (
+              <button key={m} type="button" onClick={() => setEditing({ ...editing, priceMode: m })}
+                className={cn("rounded-full border px-2.5 py-0.5", editing.priceMode === m ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background")}>{label}</button>
+            ))}
+            {editing.priceMode === "total" && (
+              <span className="flex items-center gap-1 ml-2">RM <Input type="number" min="0" step="0.01" value={editing.casePrice} onChange={(e) => setEditing({ ...editing, casePrice: e.target.value })} className="h-7 w-28 text-xs text-right" /></span>
+            )}
+          </div>
+          {editing.priceMode === "itemized" && <ItemizedMdaWarning codes={badCodes} />}
+          <table className="w-full text-xs">
+            <tbody>
+              {editing.rows.map((r) => (
+                <tr key={r._key} className={cn("border-b border-border/40", noMda(r.productId) && "bg-red-50 dark:bg-red-950/30 outline outline-1 outline-red-400")}
+                  title={noMda(r.productId) ? "No valid MDA registration — won't print on the customer copy" : undefined}>
+                  <td className="py-1 pr-1 w-32"><CaseExtraProductCell item={r} onUpdate={upd} /></td>
+                  <td className="py-1 pr-1"><Input value={r.description} onChange={(e) => upd(r._key, { description: e.target.value })} className="h-7 text-xs" placeholder="Description" /></td>
+                  <td className="py-1 pr-1 w-16"><Input type="number" min="0" step="any" value={r.qty} onChange={(e) => upd(r._key, { qty: e.target.value })} className="h-7 text-xs text-right" /></td>
+                  <td className="py-1 pr-1 w-16"><Input value={r.uom} onChange={(e) => upd(r._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="UOM" /></td>
+                  {editing.priceMode === "itemized" && <td className="py-1 pr-1 w-24"><Input type="number" min="0" step="0.01" value={r.unitPrice ?? ""} onChange={(e) => upd(r._key, { unitPrice: e.target.value })} className="h-7 text-xs text-right" placeholder="price" /></td>}
+                  <td className="py-1 w-6"><button type="button" onClick={() => setEditing({ ...editing, rows: editing.rows.filter((x) => x._key !== r._key) })} className="text-muted-foreground hover:text-destructive">✕</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditing({ ...editing, rows: [...editing.rows, { _key: `n${Date.now()}`, productCode: "", description: "", qty: "1", uom: "" }] })}>Add row</Button>
+            <Button size="sm" className="h-7 text-xs" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
+          </div>
+        </div>
+      ) : order.customerItems.length === 0 ? <p className="text-sm text-muted-foreground">No customer items.</p> : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border text-muted-foreground">
+              <th className="text-left pb-2 pr-3 w-6">#</th><th className="text-left pb-2 pr-3 w-24">Code</th><th className="text-left pb-2 pr-3">Description</th>
+              <th className="text-right pb-2 pr-3 w-12">Qty</th><th className="text-left pb-2 w-12">UOM</th>{!total && <th className="text-right pb-2 pl-3 w-20">Price</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {order.customerItems.map((c) => (
+              <tr key={c.id} className={cn("border-b border-border/40 last:border-0", noMda(c.productId) && "bg-red-50 text-red-800 dark:bg-red-950/30 dark:text-red-300")}
+                title={noMda(c.productId) ? "No valid MDA registration — won't print on the customer copy" : undefined}>
+                <td className="py-2 pr-3 text-muted-foreground">{c.rowNo}</td>
+                <td className="py-2 pr-3 font-mono text-muted-foreground">{c.productCode || "—"}</td>
+                <td className="py-2 pr-3">{c.description || "—"}</td>
+                <td className="py-2 pr-3 text-right tabular-nums">{Number(c.qty)}</td>
+                <td className="py-2 text-muted-foreground">{c.uom || "—"}</td>
+                {!total && <td className="py-2 pl-3 text-right tabular-nums">{c.unitPrice ? Number(c.unitPrice).toFixed(2) : "—"}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }

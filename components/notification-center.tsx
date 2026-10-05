@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { BellIcon, CheckCheckIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TAB_ORG_RESTORED } from "@/lib/tab-org";
 import {
   getNotifications,
   getUnreadNotificationCount,
@@ -43,6 +44,7 @@ export function NotificationCenter() {
       if (!document.hidden) fetchCount();
     };
     window.addEventListener("focus", onFocus);
+    window.addEventListener(TAB_ORG_RESTORED, fetchCount);
 
     const interval = setInterval(() => {
       if (!document.hidden) fetchCount();
@@ -50,6 +52,7 @@ export function NotificationCenter() {
 
     return () => {
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(TAB_ORG_RESTORED, fetchCount);
       clearInterval(interval);
     };
   }, []);

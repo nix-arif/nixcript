@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consignment — User Manual</title>
+<style>
+:root {
+  --bg:#F3F7F4;--surface:#FFF;--surface-2:#EAF2EC;
+  --text:#1A2820;--muted:#5A7565;
+  --accent:#1A7A4A;--accent-sub:#E0F2E9;--border:#C8DED0;--r:8px;
+  --pe:#B45309;--pe-bg:#FEF3C7;
+  --ap:#047857;--ap-bg:#D1FAE5;
+  --rj:#B91C1C;--rj-bg:#FEE2E2;
+  --ca:#9CA3AF;--ca-bg:#F1F5F9;
+  --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono","Fira Code",monospace;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0A1410;--surface:#111D16;--surface-2:#182B1F;
+  --text:#D8EDE0;--muted:#7BAF8A;
+  --accent:#3DC87A;--accent-sub:#0D2B1A;--border:#1E3D2A;
+  --pe:#FBB040;--pe-bg:#2B2010;
+  --ap:#4DD8A0;--ap-bg:#0C2B20;
+  --rj:#FF8080;--rj-bg:#2B1010;
+  --ca:#6B7A96;--ca-bg:#182B1F;
+}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+body::before{content:'';display:block;height:3px;background:var(--accent)}
+.ph{background:var(--surface);border-bottom:1px solid var(--border);padding:26px 48px}
+.phi{max-width:1080px;margin:0 auto;display:flex;align-items:center;gap:18px}
+.phi-icon{flex-shrink:0;width:46px;height:46px;background:var(--accent);border-radius:11px;display:flex;align-items:center;justify-content:center}
+.phi-meta h1{font-size:18px;font-weight:700;letter-spacing:-.025em;line-height:1.2}
+.phi-meta p{font-size:13px;color:var(--muted);margin-top:3px}
+.phi-tag{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);background:var(--accent-sub);padding:4px 10px;border-radius:6px;margin-left:auto;white-space:nowrap}
+.layout{max-width:1080px;margin:0 auto;padding:40px 48px;display:grid;grid-template-columns:200px 1fr;gap:52px;align-items:start}
+.toc{position:sticky;top:24px}
+.toc-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:10px;padding-left:10px}
+.toc nav{display:flex;flex-direction:column;gap:1px}
+.toc a{display:block;font-size:13px;color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:6px;line-height:1.3;transition:color .12s,background .12s}
+.toc a:hover{color:var(--text);background:var(--surface-2)}
+.toc a.sub{padding-left:22px;font-size:12px}
+.content{display:flex;flex-direction:column;gap:52px;min-width:0}
+.sec{display:flex;flex-direction:column;gap:22px}
+.sec-hd{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--border);padding-bottom:14px}
+.sec-n{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--accent);flex-shrink:0}
+h2{font-size:19px;font-weight:700;letter-spacing:-.02em;text-wrap:balance;line-height:1.2}
+h3{font-size:14px;font-weight:700;line-height:1.3}
+p{color:var(--text);max-width:62ch}
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--accent)}
+strong{font-weight:700}
+/* badges */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;line-height:1.6;vertical-align:middle}
+.badge::before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.b-pe{background:var(--pe-bg);color:var(--pe)}
+.b-ap{background:var(--ap-bg);color:var(--ap)}
+.b-rj{background:var(--rj-bg);color:var(--rj)}
+.b-ca{background:var(--ca-bg);color:var(--ca)}
+/* pill tags */
+.pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.03em;vertical-align:middle}
+.pill-paid{background:#D1FAE5;color:#065F46}
+.pill-unpaid{background:#FEE2E2;color:#7F1D1D}
+.pill-doc{background:#FEF3C7;color:#92400E}
+.pill-half{background:var(--accent-sub);color:var(--accent)}
+.pill-cf{background:#EDE9FE;color:#4C1D95}
+@media(prefers-color-scheme:dark){
+  .pill-paid{background:#0C2B20;color:#4DD8A0}
+  .pill-unpaid{background:#2B1010;color:#FF8080}
+  .pill-doc{background:#2B2010;color:#FBB040}
+  .pill-half{background:var(--accent-sub);color:var(--accent)}
+  .pill-cf{background:#1E1438;color:#BB9EFF}
+}
+/* info / warn boxes */
+.info{background:var(--accent-sub);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch}
+.warn{background:var(--pe-bg);border-left:3px solid var(--pe);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch;color:var(--pe)}
+/* steps */
+.steps{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:40px 1fr;gap:16px;padding-bottom:24px;position:relative}
+.step:not(:last-child)::after{content:'';position:absolute;left:19px;top:42px;bottom:0;width:2px;background:var(--border)}
+.step-n{width:40px;height:40px;background:var(--surface);border:2px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);position:relative;z-index:1;flex-shrink:0}
+.step-b{padding-top:8px}
+.step-b h3{margin-bottom:5px;font-size:14px}
+.step-b p{font-size:13.5px;color:var(--muted);max-width:54ch}
+/* leave type table */
+.lt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* generic table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle;line-height:1.5}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--surface-2)}
+.td-m{color:var(--muted);font-size:12px}
+/* balance card */
+.bal-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.bal-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.bal-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+.bal-val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+.bal-sub{font-size:11px;color:var(--muted);margin-top:3px}
+/* flowchart */
+.fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fw svg{display:block;max-width:100%;height:auto}
+.fw-loading{display:flex;align-items:center;justify-content:center;min-height:160px;color:var(--muted);font-size:13px}
+/* status wrap */
+.status-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* roles */
+.roles-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.rc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 20px}
+.rc-perm{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:6px}
+.rc h3{font-size:15px;margin-bottom:14px}
+.rc-acts{display:flex;flex-direction:column;gap:8px}
+.rc-act{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted)}
+.rc-act::before{content:'→';color:var(--accent);font-size:11px;margin-top:2px;flex-shrink:0}
+/* formula */
+.formula{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;font-family:var(--mono);font-size:13px;color:var(--text);line-height:2}
+.formula span{color:var(--accent);font-weight:700}
+/* ref */
+.ref-row{display:flex;align-items:center;gap:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 22px;width:fit-content}
+.ref-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;font-weight:600}
+.ref-fmt{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.ref-fmt span{color:var(--accent)}
+.ref-div{width:1px;background:var(--border);align-self:stretch}
+.ref-key{font-size:12.5px;color:var(--muted);line-height:1.7}
+.ref-key strong{color:var(--accent)}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+/* cancel cards */
+.act-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ac{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.ac h3{margin-bottom:8px}
+.ac p{font-size:13px;color:var(--muted);max-width:none;line-height:1.55}
+.ac ol{margin-top:10px;padding-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+@media(max-width:800px){
+  .ph{padding:20px}
+  .phi-tag{display:none}
+  .layout{grid-template-columns:1fr;padding:24px 16px;gap:0}
+  .toc{display:none}
+  .bal-grid{grid-template-columns:1fr 1fr}
+  .roles-grid,.act-grid{grid-template-columns:1fr}
+  .ref-row{flex-direction:column;align-items:flex-start;gap:12px;width:100%}
+  .ref-div{display:none}
+  .fw{padding:16px 12px}
+}
+@media(max-width:480px){
+  .bal-grid{grid-template-columns:1fr}
+}
+/* consignment extras */
+.cmp td:first-child{font-weight:600;white-space:nowrap}
+.kv{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.kv .bal-val{font-size:15px}
+@media(max-width:800px){.kv{grid-template-columns:1fr}}
+ul.plain{padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;color:var(--muted);max-width:62ch}
+ul.plain strong{color:var(--text)}
+</style>
+</head>
+<body>
+
+<header class="ph">
+  <div class="phi">
+    <div class="phi-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M7 7h11l-3-3M17 17H6l3 3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="phi-meta">
+      <h1>Consignment — User Manual</h1>
+      <p>Inventory · Consignment to sister companies, external agents and hospitals</p>
+    </div>
+    <div class="phi-tag">Inventory</div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="toc">
+    <p class="toc-lbl">Contents</p>
+    <nav>
+      <a href="#overview">Overview</a>
+      <a href="#flow">How It Flows</a>
+      <a href="#concepts">Key Concepts</a>
+      <a href="#roles">Roles &amp; Permissions</a>
+      <a href="#setup">Setting Up</a>
+      <a href="#transfer-price" class="sub">Transfer Price Example</a>
+      <a href="#agents">External Agents</a>
+      <a href="#send">Sending Stock</a>
+      <a href="#manage">Managing a Consignment</a>
+      <a href="#usage" class="sub">Recording Usage</a>
+      <a href="#casedo">Case DOs (Agent Company)</a>
+      <a href="#move" class="sub">Moving Consigned Stock</a>
+      <a href="#machines">Machines (Company Assets)</a>
+      <a href="#settle">Settlement</a>
+      <a href="#balance">Balance &amp; History</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+
+    <section class="sec" id="overview">
+      <div class="sec-hd"><span class="sec-n">01</span><h2>Overview</h2></div>
+      <p>Consignment lets a company place its stock with someone else while <strong>keeping ownership until the stock is used</strong>. Only what is used is billed. Anything unused can come back.</p>
+      <p>Everything lives under the <strong>Consignment</strong> menu: Consignments, New, External agents, Balance, Settlement and Settings.</p>
+      <p>The company that owns the stock is the <strong>owner</strong>. It can place stock with three kinds of <strong>consignee</strong>:</p>
+      <div class="lt-wrap">
+        <table>
+          <thead><tr><th>Consignee</th><th>Example</th><th>Who records use</th><th>Who is billed</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Your other company</strong><div class="td-m">same owner</div></td><td class="td-m">Smart Innosys stock placed with Affirma</td><td>Affirma, automatically through its Case DOs</td><td>Affirma — intercompany invoice + matching PO in Affirma</td></tr>
+            <tr><td><strong>Dealer</strong><div class="td-m">external agent</div></td><td class="td-m">An outside distributor reselling in its own name</td><td>Owner, from the dealer's usage report</td><td>The dealer, at a dealer price</td></tr>
+            <tr><td><strong>Sales agent</strong><div class="td-m">external agent</div></td><td class="td-m">An outside agent selling on your behalf</td><td>Owner, from the agent's usage report</td><td>Each hospital, at the selling price; the agent earns commission</td></tr>
+            <tr><td><strong>Customer</strong><div class="td-m">hospital</div></td><td class="td-m">Stock kept at Hospital Sungai Buloh</td><td>Owner, from the hospital's usage sheet</td><td>The hospital</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="info"><strong>Golden rule:</strong> consigned stock stays on the owner's books, at a consignment location, until it is used. Only then does ownership pass and a bill follow.</div>
+    </section>
+
+    <section class="sec" id="flow">
+      <div class="sec-hd"><span class="sec-n">02</span><h2>How It Flows</h2></div>
+      <p>Every consignment follows the same path: send, then use, return or adjust, then settle what was used.</p>
+      <div id="fw-wrap" class="fw"><div class="fw-loading">Loading diagram…</div></div>
+      <p style="font-size:13px;color:var(--muted)">Consigned stock at a sister company is used through its Case DOs. At an external agent or a hospital, the owner records usage from their report.</p>
+    </section>
+
+    <section class="sec" id="concepts">
+      <div class="sec-hd"><span class="sec-n">03</span><h2>Key Concepts</h2></div>
+      <p>A <strong>consignment</strong> is one shipment document, numbered like <code>CSSI/26-0001</code>, from one owner warehouse to one consignment location. Each product line tracks what is still out:</p>
+      <div class="formula"><span>On hand</span> = Sent − Consumed − Returned − Adjusted</div>
+      <h3>Consignment locations</h3>
+      <p>Where consigned stock sits. It still appears in the owner's inventory.</p>
+      <div class="lt-wrap">
+        <table>
+          <thead><tr><th>Location</th><th>Used for</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Agent company warehouse</strong></td><td class="td-m">Stock placed with your other company, not yet with a person</td></tr>
+            <tr><td><strong>Agent specialist</strong></td><td class="td-m">Stock carried by one application specialist of your other company — their Case DOs draw from it</td></tr>
+            <tr><td><strong>External agent</strong></td><td class="td-m">Stock held by a dealer or sales agent</td></tr>
+            <tr><td><strong>Customer site</strong></td><td class="td-m">Stock kept at a hospital</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Events</h3>
+      <p>Every change is recorded as an event on the consignment. Events drive both the balance and the bill.</p>
+      <div class="status-wrap">
+        <table>
+          <thead><tr><th>Event</th><th>What happened</th><th>Billed?</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge b-ca">Send</span></td><td class="td-m">Stock left the owner warehouse for the location</td><td>No</td></tr>
+            <tr><td><span class="badge b-ap">Consume</span></td><td class="td-m">Stock was used — by a Case DO or a usage report</td><td><strong>Yes</strong></td></tr>
+            <tr><td><span class="badge b-ca">Return</span></td><td class="td-m">Unused stock came back to the owner warehouse</td><td>No</td></tr>
+            <tr><td><span class="badge b-pe">Adjust</span></td><td class="td-m">A count found stock lost, damaged, expired or short</td><td>Only if "charge the consignee" is ticked</td></tr>
+            <tr><td><span class="badge b-rj">Reverse</span></td><td class="td-m">A Case DO that used consigned stock was deleted, so the use is undone</td><td>Cancels the consume</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A billable event stays <strong>unsettled</strong> until a settlement picks it up. Once settled it is locked and can no longer be reversed.</p>
+      <p>Lots and serials carry through. A lot-tracked line keeps its lot and expiry. A serial-tracked unit shows <strong>Consigned</strong> while it is out and <strong>Sold</strong> once used.</p>
+    </section>
+
+    <section class="sec" id="roles">
+      <div class="sec-hd"><span class="sec-n">04</span><h2>Roles &amp; Permissions</h2></div>
+      <p>Four permissions control the module. The organisation owner has all of them; an admin can grant any of them to more people, so several people can settle.</p>
+      <div class="roles-grid">
+        <div class="rc"><p class="rc-perm">View Consignments</p><h3>Everyone involved</h3><div class="rc-acts">
+          <div class="rc-act">See consignments, balances, external agents and settings</div>
+          <div class="rc-act">See settlement history</div>
+          <div class="rc-act">Default: Logistic, Accounting and Management managers</div></div></div>
+        <div class="rc"><p class="rc-perm">Send / Return Consignment Stock &amp; Settings</p><h3>Logistics</h3><div class="rc-acts">
+          <div class="rc-act">Create and send consignments</div>
+          <div class="rc-act">Record usage, return stock, close consignments</div>
+          <div class="rc-act">Edit settings and external agents</div>
+          <div class="rc-act">Default: Logistic and Management managers</div></div></div>
+        <div class="rc"><p class="rc-perm">Post Consignment Count Adjustments</p><h3>Stock count</h3><div class="rc-acts">
+          <div class="rc-act">Write off stock after a count — lost, damaged, expired</div>
+          <div class="rc-act">Default: Logistic and Management managers</div></div></div>
+        <div class="rc"><p class="rc-perm">Settle Consignment</p><h3>Finance</h3><div class="rc-acts">
+          <div class="rc-act">Preview and generate settlements (invoices, POs)</div>
+          <div class="rc-act">Default: Accounting and Management managers</div></div></div>
+      </div>
+      <div class="info">When you are the <strong>agent company</strong> (e.g. Affirma viewing Smart Innosys stock placed with it), consignments are <strong>read-only</strong>. Only the owner can send, return, adjust or settle.</div>
+    </section>
+
+    <section class="sec" id="setup">
+      <div class="sec-hd"><span class="sec-n">05</span><h2>Setting Up</h2></div>
+      <p>Set up once per company under <strong>Consignment → Settings</strong>, before the first consignment. Each company decides its own settings.</p>
+      <div class="act-grid">
+        <div class="ac"><h3>When this company is the agent</h3><p>Which stock a Case DO uses first when a specialist carries both consigned stock and the company's own:</p>
+          <ol><li><strong>Consigned stock first</strong> — owner's stock is used and settled sooner</li><li><strong>Own stock first</strong> — consigned stock only when own stock runs out</li></ol></div>
+        <div class="ac"><h3>When this company is the owner</h3><p>How often consignment locations should be counted:</p>
+          <ol><li>Monthly</li><li>Quarterly</li><li>Only when needed</li></ol></div>
+      </div>
+      <h3>One card per sister company (owner → agent)</h3>
+      <p>The owner decides how stock placed with each of its other companies is handled and billed.</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Setting</th><th>Choices</th></tr></thead>
+          <tbody>
+            <tr><td>Allow pass-on</td><td class="td-m">Whether the agent may place this stock at its own customers (stored for now; the pass-on flow is not built yet). Moving stock between the agent's own warehouse and specialists needs no permission from the owner; see <a href="#move">Moving consigned stock</a>.</td></tr>
+            <tr><td>Settlement</td><td class="td-m"><strong>Manual</strong> — someone with Settle permission generates it · <strong>Automatic</strong> — generated on the schedule</td></tr>
+            <tr><td>Frequency</td><td class="td-m"><strong>Monthly</strong> — one invoice + PO per month · <strong>Per use</strong> — one per Case DO that used consigned stock</td></tr>
+            <tr><td>Machines</td><td class="td-m">How the owner charges for its machines — see <a href="#machines">Machines</a></td></tr>
+            <tr><td>Transfer price</td><td class="td-m"><strong>Cost-plus</strong> — owner's unit cost + markup % · <strong>Fixed price list</strong> — a price per product, unlisted products fall back to cost-plus · <strong>% of selling price</strong> — a share of what the agent invoiced its customer</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="transfer-price">Transfer price — worked example</h3>
+      <p>The transfer price is what the owner charges its sister company for each consigned unit the sister company uses. Example: <strong>Smart Innosys</strong> consigns a stent to <strong>Affirma</strong>. Smart Innosys bought it for <strong>RM 1,000</strong>. Affirma uses 1 unit on a Case DO and invoices the hospital <strong>RM 1,800</strong>.</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Method</th><th>Setting</th><th>Calculation</th><th>Smart Innosys bills Affirma</th></tr></thead>
+          <tbody>
+            <tr><td>Cost-plus</td><td class="td-m">Markup 10%</td><td class="td-m">RM 1,000 cost + 10%</td><td><strong>RM 1,100</strong></td></tr>
+            <tr><td>Fixed price list</td><td class="td-m">Stent listed at RM 1,200</td><td class="td-m">The listed price, whatever the cost or sale</td><td><strong>RM 1,200</strong></td></tr>
+            <tr><td>% of selling price</td><td class="td-m">Share 60%</td><td class="td-m">RM 1,800 hospital price × 60%</td><td><strong>RM 1,080</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="act-grid">
+        <div class="ac"><h3>Cost-plus</h3><p>The owner's cost plus a fixed markup. Cost is the unit cost recorded when the stock was sent, or the product's cost price.</p>
+          <ol><li><strong>Good for:</strong> simple, stable margin for the owner</li><li><strong>Needs:</strong> a unit cost on the product — without one the line stays <em>pending</em></li><li>Agent's margin moves with its own selling price</li></ol></div>
+        <div class="ac"><h3>Fixed price list</h3><p>An agreed intercompany price per product. A product not on the list falls back to cost-plus with the markup you set (e.g. a gauze with cost RM 50 and 10% markup → RM 55).</p>
+          <ol><li><strong>Good for:</strong> agreed prices that don't change with cost</li><li><strong>Needs:</strong> the list kept up to date</li><li>Both sides know the price in advance</li></ol></div>
+        <div class="ac"><h3>% of selling price</h3><p>A share of what the agent actually charged. If Affirma sells the same stent for RM 2,000 next time, Smart Innosys gets RM 1,200 (60%).</p>
+          <ol><li><strong>Good for:</strong> sharing the upside and the risk of the sale</li><li><strong>Needs:</strong> Affirma's invoice for the Case DO — until it exists the line shows <em>Waiting for the Case DO's invoice</em></li><li>Only works for use through Case DOs</li></ol></div>
+        <div class="ac"><h3>Which to choose?</h3><p>Owner wants a guaranteed margin → <strong>Cost-plus</strong>. Both companies agreed prices up front → <strong>Fixed price list</strong>. Owner shares in what the agent earns → <strong>% of selling price</strong>. You can change the method any time; it applies to lines settled afterwards.</p></div>
+      </div>
+      <p>With <strong>Fixed price list</strong>, a price list editor appears under the card: search a product, add it, type the price and click away to save. The bin icon removes it.</p>
+      <div class="warn">If a price can't be worked out — for example cost-plus on a product with no unit cost — the line stays <strong>pending</strong> instead of being billed at RM 0. Fix the product cost or add a price and it settles next time.</div>
+    </section>
+
+    <section class="sec" id="agents">
+      <div class="sec-hd"><span class="sec-n">06</span><h2>External Agents</h2></div>
+      <p>An external agent is an outside party holding your stock. Add them under <strong>Consignment → External agents → New agent</strong> and choose how each one works.</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th></th><th>Dealer</th><th>Sales agent</th></tr></thead>
+          <tbody>
+            <tr><td>Sells in the name of</td><td>The dealer</td><td>Your company</td></tr>
+            <tr><td>You invoice</td><td>The dealer</td><td>Each hospital where the stock was used</td></tr>
+            <tr><td>Price</td><td>Dealer price (below)</td><td>Price charged to the hospital, entered with the usage — blank = product selling price</td></tr>
+            <tr><td>Agent earns</td><td>Its own margin on resale</td><td>Commission % of the hospital invoice</td></tr>
+            <tr><td>Commission paid by</td><td>—</td><td>A commission PO from your company to the agent</td></tr>
+            <tr><td>Hospital on usage</td><td>Optional</td><td><strong>Required</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Dealer price — pick one</h3>
+      <ul class="plain">
+        <li><strong>Discount off selling price</strong> — product selling price less a discount %</li>
+        <li><strong>Dealer price list</strong> — a price per product, edited on the agent's form after the first save; unlisted products use the discount</li>
+        <li><strong>Cost-plus</strong> — your unit cost plus a markup %</li>
+      </ul>
+      <p>Every agent also has contact details, settlement <strong>Manual / Automatic</strong>, frequency <strong>Monthly / Per report</strong>, and an <strong>Active</strong> switch. An inactive agent keeps its stock and history but can't receive new consignments.</p>
+      <p>The first settlement creates a linked customer record (for dealer invoices) or supplier record (for commission POs) automatically.</p>
+      <div class="warn">You can't switch an agent between dealer and sales agent while it has unbilled usage. Settle first, then switch.</div>
+    </section>
+
+    <section class="sec" id="send">
+      <div class="sec-hd"><span class="sec-n">07</span><h2>Sending Stock</h2></div>
+      <p>Consignments are always created from the <strong>owner</strong> company. Switch the workspace to the owner (e.g. Smart Innosys) first.</p>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Open Consignment → New</h3><p>Or click <strong>Create Consignment</strong> on a sales order — the hospital is preselected and the consignment is linked to that SO.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Choose who to send to</h3><p><strong>Your other company</strong>: pick the company, then its warehouse or a named application specialist (choose the specialist if they will use it on Case DOs). <strong>External agent</strong>: pick the dealer or sales agent. <strong>Customer (hospital)</strong>: search and pick the hospital.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Pick the warehouse and date</h3><p>Choose <strong>From warehouse</strong> (where the stock leaves) and the <strong>Sent date</strong>. Changing the warehouse clears the item list.</p></div></div>
+        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Add items</h3><p>Search stock in that warehouse. Plain products: enter the quantity. Lot-tracked: choose the lot, then the quantity. Serial-tracked: tick each serial number.</p></div></div>
+        <div class="step"><div class="step-n">5</div><div class="step-b"><h3>Send consignment</h3><p>Add notes if needed and click <strong>Send consignment</strong>. Stock moves to the consignment location and you land on the new consignment's page.</p></div></div>
+      </div>
+      <div class="warn">Nothing moves if any line is wrong. The message lists every problem — e.g. more than the warehouse holds, a lot-tracked product without a lot, or a serial unit that isn't in stock.</div>
+    </section>
+
+    <section class="sec" id="manage">
+      <div class="sec-hd"><span class="sec-n">08</span><h2>Managing a Consignment</h2></div>
+      <p>Open a consignment from <strong>Consignment → Consignments</strong> (filter by All, Company, External or Customer). Its page shows every line with Sent, Consumed, Returned, Adjusted and On hand, plus the full event history. The owner has four actions:</p>
+      <div class="act-grid">
+        <div class="ac" id="usage"><h3>Record usage</h3><p>For hospitals and external agents. Enter what was used from their usage sheet.</p>
+          <ol><li>Set the <strong>date</strong> and a <strong>reference</strong> (usage sheet or hospital PO no.)</li><li>External agent: pick the <strong>hospital</strong> where it was used (required for sales agents)</li><li>Enter the quantity per line (serials: tick the unit)</li><li>Sales agent: enter the price charged per line (blank = catalogue price)</li><li>Click <strong>Confirm usage</strong></li></ol></div>
+        <div class="ac"><h3>Return to warehouse</h3><p>Unused stock comes back to the warehouse it was sent from. Enter the quantity per line and confirm. Serial units return to In stock.</p></div>
+        <div class="ac"><h3>Adjust after count</h3><p>After a physical count, write off what's missing. Choose a reason — <strong>Lost, Damaged, Expired</strong> or <strong>Count difference</strong> — and whether to <strong>charge the consignee</strong>. Charged adjustments are billed at settlement. Needs the Count Adjustments permission.</p></div>
+        <div class="ac"><h3>Close consignment</h3><p>Once nothing is on hand, close it. A consignment with stock still out can't be closed — return, record usage or adjust first.</p></div>
+      </div>
+      <div class="info">Usage is taken from the exact line you enter it on, so the right consignment and lot are used. With per-report settlement set, the invoice is created as soon as you confirm.</div>
+    </section>
+
+    <section class="sec" id="casedo">
+      <div class="sec-hd"><span class="sec-n">09</span><h2>Case DOs (Agent Company)</h2></div>
+      <p>When stock is consigned to a <strong>specialist</strong> of your other company, that company uses it through its normal Case DOs — nobody records usage by hand. Consigned stock is used when the Case DO's <strong>actual items are recorded</strong> (after the case, or at creation if the case is already done) — see the <a href="/manuals/case-do">Case DO Manual</a>.</p>
+      <ul class="plain">
+        <li>The specialist's field stock shows consigned items with a <strong>Consigned</strong> tag</li>
+        <li>When the actual items are recorded, consigned and own stock are used in the order set in the agent company's settings (consigned first by default); any remainder comes from own stock</li>
+        <li>The oldest consignment is used first, earliest expiry first</li>
+        <li>Each use becomes a billable consume event, linked to the DO number</li>
+        <li>With <strong>per use</strong> automatic settlement, the intercompany invoice and PO are created as soon as the Case DO's actual items are recorded</li>
+      </ul>
+      <div class="warn">Deleting a Case DO, or <strong>undoing its recorded actual items</strong>, reverses its consigned use and puts the stock back at the specialist. If that use was <strong>already settled</strong>, it is refused — cancel or credit the settlement documents first.</div>
+
+      <h3 id="move" style="margin-top:28px">Moving consigned stock inside the agent company</h3>
+      <p>The agent company can move stock consigned to it between <strong>its own warehouse and its specialists</strong> without asking the owner. Ownership doesn't change: it is still the owner's stock and still with the agent, only its location changes, and the owner sees the new location. This is the industry practice for consignment stock: internal moves are the consignee's job; placing the stock with anyone outside the company is the owner's decision.</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Move</th><th>Who</th></tr></thead>
+          <tbody>
+            <tr><td>Warehouse → specialist, specialist → warehouse, specialist → specialist</td><td class="td-m"><strong>The agent company</strong>, by users who can create stock transfers. No owner approval needed.</td></tr>
+            <tr><td>To the agent's customers (hospitals) or another company</td><td class="td-m"><strong>The owner only.</strong> The <em>Allow pass-on</em> setting covers this; that flow is not built yet.</td></tr>
+            <tr><td>Use on a case, return to the owner, count adjustment</td><td class="td-m">Unchanged: Case DO (agent), or return and adjust on the consignment (owner).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Open Inventory → Stock Overview</h3><p>Switch to the agent company. Consigned stock is under <strong>Consigned in — owned by others</strong>, grouped by location (Warehouse, or With &lt;specialist&gt;) and owner. The same list is on <em>Consignment → Balance</em> under <strong>Held for others</strong>.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Click Move on the location the stock is at</h3><p>Choose where it goes: <strong>Warehouse</strong> or <strong>Specialist — name</strong>.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Pick the items</h3><p>Enter a quantity per lot, or tick each machine by serial number. You can't move more than is at that location. A machine that is out at a hospital can't be moved until it is back.</p></div></div>
+        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Click Move</h3><p>The stock is now at the new location. A specialist sees it in Field Stock with the <strong>Consigned</strong> tag, and their Case DOs use it as usual.</p></div></div>
+      </div>
+      <p>What is recorded:</p>
+      <ul class="plain">
+        <li>The quantity leaves the original consignment (its <strong>Moved</strong> column) and goes onto the owner's open consignment for the new location. One is created automatically if needed, e.g. <em>CSSI/26-0002 — Moved within Affirma from CSSI/26-0001</em>.</li>
+        <li>Both consignments show the move in their history (<strong>Moved out</strong> / <strong>Moved in</strong>), linked to each other.</li>
+        <li>Movement History shows it for both companies: the agent sees <em>Consigned moved</em>, the owner sees <em>Consignment Moved</em>.</li>
+        <li>Moving doesn't bill anything. Monthly machine rental follows the machine without charging the same month twice.</li>
+      </ul>
+    </section>
+
+    <section class="sec" id="machines">
+      <div class="sec-hd"><span class="sec-n">10</span><h2>Machines (Company Assets)</h2></div>
+      <p>A machine (e.g. a phaco machine or drill console) is <strong>lent for a case and comes back</strong>. It is never used up or sold through consignment. Consumables on the same case are used up as usual.</p>
+      <p>Every serial-numbered unit is one of two things — decided once, when it is registered:</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Category</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>For sale</td><td class="td-m">Stock to sell — used up / sold on a case, like any item.</td></tr>
+            <tr><td>Company asset</td><td class="td-m">Stays the organisation's (machine / equipment). Never sold through a case — lent out and comes back.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Why</strong> a company asset is out is chosen <strong>each time it goes out</strong>, not fixed on the machine — the same machine can be a demo this month and on rental next month:</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Purpose</th><th>Typical use</th><th>Usage fee</th></tr></thead>
+          <tbody>
+            <tr><td>Rental</td><td class="td-m">Hired out for the case</td><td class="td-m">Ticked by default — enter the fee</td></tr>
+            <tr><td>Loan</td><td class="td-m">Lent, e.g. while the hospital's own machine is repaired</td><td class="td-m">Not charged by default</td></tr>
+            <tr><td>Demo</td><td class="td-m">Demonstration / trial</td><td class="td-m">Not charged by default</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="info">Register machines in <strong>Inventory → Movement History → New Movement</strong>: tick <em>Each unit has its own serial number</em>, enter the quantity, then one serial number per machine (the count must match the quantity) and choose <strong>For sale</strong> or <strong>Company asset</strong>. Correct it later under Inventory → Serialized Units or Stock Overview → Edit.</div>
+
+      <h3>On a Case DO</h3>
+      <p>When the actual items are recorded (after the case) and a company asset is ticked, these choices appear under it — prefilled from the doctor's template:</p>
+      <div class="act-grid">
+        <div class="ac"><h3>Purpose — Rental / Loan / Demo</h3><p>Why the machine goes out on this case. <strong>Rental</strong> ticks <em>Charge usage fee</em>; <strong>Loan</strong> and <strong>Demo</strong> untick it (you can still change it). The purpose shows on the DO, on Field Stock and on both Case DO copies (e.g. “Machine on loan — returned after the case”).</p></div>
+        <div class="ac"><h3>Returned same day / Stays at hospital</h3><p><strong>Returned same day</strong> (default): the machine goes out and comes straight back with the specialist; the case still shows in its history. <strong>Stays at hospital</strong>: it shows <em>At the hospital</em> on the DO until someone clicks <strong>Return to specialist</strong> in the DO's <strong>Machines</strong> box.</p></div>
+        <div class="ac"><h3>Charge usage fee</h3><p>Tick it and enter the fee per case if the hospital pays for using the machine this time. Leave it unticked when the machine is free (e.g. included with consumables). The fee fills in automatically when you <strong>Create Invoice</strong> from the Case DO.</p></div>
+      </div>
+      <p>A Case DO can be invoiced as soon as it is saved — it doesn't need to be marked delivered. The usage fee is added once the actual items are recorded.</p>
+
+      <h3>Selling a company asset</h3>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Where the machine is</th><th>How to sell it</th></tr></thead>
+          <tbody>
+            <tr><td>At the hospital on a Case DO</td><td class="td-m">On the DO's <strong>Machines</strong> box click <strong>Sell to hospital</strong>, enter the price, <strong>Confirm sale</strong>. It becomes <em>For sale → Sold</em>, never comes back, and the sale is added as its own line when you <strong>Create Invoice</strong> from the DO (if the DO was already invoiced, invoice the sale separately). A consigned machine is also billed by its owner at the transfer price.</td></tr>
+            <tr><td>In the warehouse or with a rep</td><td class="td-m">Change its use to <strong>For sale</strong> on Inventory → Serialized Units, then sell it like any stock (sales order / DO, or tick it on a Case DO).</td></tr>
+            <tr><td>With a dealer, sales agent or hospital on consignment</td><td class="td-m">Change its use to <strong>For sale</strong>, then <strong>Record usage</strong> on the consignment — billed at that agent's price.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Deleting the Case DO undoes a sale: the machine goes back to the specialist as a company asset again (refused if a consigned machine's sale was already settled).</p>
+
+      <h3>Machines owned by another company or placed with an agent</h3>
+      <p>The owner decides, per sister company and per external agent, how its machines are charged. Set it in <strong>Consignment → Settings</strong> (sister company card) or <strong>External agents</strong> (agent form), under <strong>Machines (rental units)</strong>.</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Option</th><th>Who can use it</th><th>What the owner bills</th></tr></thead>
+          <tbody>
+            <tr><td>No charge</td><td class="td-m">Sister company, dealer, sales agent</td><td class="td-m">Nothing — machine use is only recorded</td></tr>
+            <tr><td>Fixed fee per case</td><td class="td-m">Sister company, dealer</td><td class="td-m">A set amount every time the machine is used on a case</td></tr>
+            <tr><td>Share of the usage fee</td><td class="td-m">Sister company, dealer</td><td class="td-m">A % of the usage fee they charged the hospital. No fee charged → nothing</td></tr>
+            <tr><td>Monthly rental</td><td class="td-m">Sister company, dealer</td><td class="td-m">A set amount per machine for every month they hold it, however often it's used</td></tr>
+            <tr><td>Invoice the hospital per case</td><td class="td-m">Sales agent</td><td class="td-m">The hospital is invoiced the usage fee entered with each case; commission on it is optional</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Worked example</h3>
+      <p>Smart Innosys places a phaco machine with Affirma. Affirma uses it on a case and charges the hospital a <strong>RM 500</strong> usage fee.</p>
+      <div class="lt-wrap">
+        <table>
+          <thead><tr><th>Setting</th><th>Smart Innosys bills Affirma</th></tr></thead>
+          <tbody>
+            <tr><td>No charge</td><td><strong>RM 0</strong></td></tr>
+            <tr><td>Fixed fee per case, RM 100</td><td><strong>RM 100</strong> for this case</td></tr>
+            <tr><td>Share of the usage fee, 40%</td><td><strong>RM 200</strong> (40% of RM 500)</td></tr>
+            <tr><td>Monthly rental, RM 300</td><td><strong>RM 300</strong> for the month, no matter how many cases</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul class="plain">
+        <li><strong>Sister company:</strong> machine use is recorded automatically from Affirma's Case DOs.</li>
+        <li><strong>Dealer, sales agent or hospital:</strong> open the consignment, click <strong>Record usage</strong>, tick <strong>used on a case</strong> on the machine, choose its purpose (Rental / Loan / Demo) and enter the usage fee (blank = no fee). Sales agents also pick the hospital.</li>
+        <li><strong>Machine kept at a hospital</strong> (customer consignment): the usage fee you enter is invoiced to that hospital.</li>
+        <li>The charge is fixed when the use is recorded — changing the setting later only affects later uses.</li>
+        <li>Monthly rental is added for each month the machine was held when you preview or generate a settlement (and by the automatic monthly run).</li>
+        <li>The consignment page shows each machine with a <strong>Machine</strong> tag and how many cases it was used on.</li>
+      </ul>
+      <div class="warn">Deleting a Case DO, or undoing its recorded actual items, puts its machines back with the specialist. If a consigned machine's use on it was <strong>already settled</strong>, the delete is refused.</div>
+    </section>
+
+    <section class="sec" id="settle">
+      <div class="sec-hd"><span class="sec-n">11</span><h2>Settlement</h2></div>
+      <p><strong>Consignment → Settlement</strong> bills what has been used. Only billable events are included. Needs the Settle permission.</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Tab</th><th>How to settle</th><th>Documents created</th></tr></thead>
+          <tbody>
+            <tr><td>Our companies</td><td class="td-m">Pick the agent company and a month (or tick <em>all unsettled</em>) → <strong>Preview</strong> → <strong>Generate invoice + PO</strong></td><td>Draft invoice from the owner to the agent + confirmed PO in the agent company, linked to each other</td></tr>
+            <tr><td>External agents — dealer</td><td class="td-m">Pick the dealer and month → Preview → <strong>Generate invoice</strong></td><td>Draft invoice to the dealer at the dealer price</td></tr>
+            <tr><td>External agents — sales agent</td><td class="td-m">Pick the agent and month → Preview (shows hospital and commission per line) → <strong>Generate invoices + commission PO</strong></td><td>One draft invoice per hospital + a confirmed commission PO to the agent (service, no goods receipt)</td></tr>
+            <tr><td>Customers</td><td class="td-m">Each hospital consignment with unbilled usage is listed → <strong>Create invoice</strong></td><td>Draft invoice to the hospital</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Lines that can't be priced yet show <strong>pending</strong> with the reason (e.g. no selling price, no unit cost). They're left for later and don't block the rest. A sales-agent line without a hospital is also pending.</p>
+      <h3>Automatic settlement</h3>
+      <ul class="plain">
+        <li><strong>Per use / per report</strong> — runs immediately after each Case DO or usage report</li>
+        <li><strong>Monthly</strong> — runs once a month for the previous month, for every company pair and active external agent set to Automatic + Monthly</li>
+        <li>Settled events are stamped, so nothing is billed twice</li>
+      </ul>
+      <p>The <strong>Settlement history</strong> at the bottom lists every settlement with its invoices, POs and commission.</p>
+    </section>
+
+    <section class="sec" id="balance">
+      <div class="sec-hd"><span class="sec-n">12</span><h2>Balance &amp; History</h2></div>
+      <ul class="plain">
+        <li><strong>Consignment → Balance</strong> — all your stock still out, grouped by location (sister company, specialist, external agent, hospital), with lot and serial</li>
+        <li><strong>Consignment detail</strong> — the full event history of one consignment, including hospital and price for usage</li>
+        <li><strong>Inventory → Field Stock</strong> — the specialist's view. Consigned items are tagged with the owner and left out of the stock value. The <em>Movement History</em> tab lists every movement of the specialist's own and consigned stock (received, used, returned, moved), with the quantity and a running <strong>Balance</strong> from the specialist's side. The balances end at what Current Holdings shows.</li>
+        <li><strong>External agents</strong> — each agent's card shows how many of your units it holds</li>
+        <li><strong>Receiving company (agent)</strong> — <em>Inventory → Stock Overview</em> lists what a sister company consigned to you under <strong>Consigned in — owned by others</strong> (filter button <em>Consigned in</em>), and <em>Consignment → Balance</em> shows it under <strong>Held for others</strong>. Quantity, lot and serial only, with no value. <em>Inventory → Movement History</em> lists every movement of it (received, used, returned to owner, count adjustments), tagged with the owner, with quantities and balances from your side. Filter button: <em>Consigned in</em>. These rows are read-only.</li>
+      </ul>
+      <div class="info"><strong>Why consigned-in stock is not in your own stock:</strong> this is the accounting standard (MFRS 15 / IFRS 15). The sender still owns and controls the goods until you use or sell them, so they stay in the sender's stock and stock value. You see them so your shelf count matches and you know what you can use. Use, return or adjust them through the consignment, not with stock movements.</div>
+    </section>
+
+    <section class="sec" id="faq">
+      <div class="sec-hd"><span class="sec-n">13</span><h2>FAQ</h2></div>
+      <div class="act-grid">
+        <div class="ac"><h3>Why is a line "pending" in settlement?</h3><p>Its price can't be worked out — usually the product has no unit cost or selling price, or a sales-agent use has no hospital. Fix the product or price list and preview again.</p></div>
+        <div class="ac"><h3>Can the agent company send or return stock?</h3><p>It can't return stock to the owner, adjust it or settle it; the owner does that. It <strong>can</strong> move consigned stock between its own warehouse and specialists (Stock Overview → Consigned in → <strong>Move</strong>).</p></div>
+        <div class="ac"><h3>Why isn't consigned-in stock in my stock value?</h3><p>It is still the owner's stock (MFRS 15 / IFRS 15) until you use it. You see it, by quantity only, under <em>Consigned in</em> in Stock Overview and Movement History.</p></div>
+        <div class="ac"><h3>Why can't I delete this Case DO?</h3><p>It used consigned stock that is already settled. Deal with the settlement invoice/PO first.</p></div>
+        <div class="ac"><h3>Why can't I close the consignment?</h3><p>Stock is still on hand. Return it, record its usage, or adjust it after a count.</p></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var diagramBase = [
+    'flowchart LR',
+    '    SEND[Send consignment<br/>owner warehouse → location] --> HELD[On hand at location<br/>still owner stock]',
+    '    HELD -->|Case DO<br/>sister company| USE[Consumed<br/>billable]',
+    '    HELD -->|Usage report<br/>agent or hospital| USE',
+    '    HELD -->|Return| BACK[Back in owner warehouse]',
+    '    HELD -->|Count adjustment| ADJ[Written off<br/>billed if charged]',
+    '    USE --> SET[Settlement<br/>invoice / PO]',
+    '    ADJ -.->|charged| SET'
+  ].join('\n');
+  var lightDefs = [
+    '    classDef use fill:#D1FAE5,stroke:#059669,color:#065F46,font-weight:600',
+    '    classDef set fill:#FEF3C7,stroke:#D97706,color:#92400E,font-weight:600'
+  ].join('\n');
+  var darkDefs = [
+    '    classDef use fill:#0C2B20,stroke:#4DD8A0,color:#A7F3D0,font-weight:600',
+    '    classDef set fill:#2B2010,stroke:#FBB040,color:#FDE8A0,font-weight:600'
+  ].join('\n');
+  var classAssign = '    class USE use\n    class SET set';
+  function render(dark) {
+    var diagram = diagramBase + '\n' + (dark ? darkDefs : lightDefs) + '\n' + classAssign;
+    var wrap = document.getElementById('fw-wrap');
+    var el = document.createElement('div');
+    el.className = 'mermaid';
+    el.textContent = diagram;
+    wrap.innerHTML = '';
+    wrap.appendChild(el);
+    mermaid.initialize({
+      startOnLoad: false, theme: 'base',
+      themeVariables: dark ? {
+        background: 'transparent', primaryColor: '#182B1F', primaryTextColor: '#D8EDE0', primaryBorderColor: '#1E3D2A',
+        lineColor: '#2E5E3A', secondaryColor: '#0D2B1A', tertiaryColor: '#111D16', edgeLabelBackground: '#111D16', fontSize: '14px'
+      } : {
+        background: 'transparent', primaryColor: '#EAF2EC', primaryTextColor: '#1A2820', primaryBorderColor: '#C8DED0',
+        lineColor: '#8AB89A', secondaryColor: '#E0F2E9', tertiaryColor: '#F3F7F4', edgeLabelBackground: '#F3F7F4', fontSize: '14px'
+      },
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+    });
+    mermaid.run({ nodes: [el] });
+  }
+  render(isDark);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) { render(e.matches); });
+})();
+</script>
+</body>
+</html>

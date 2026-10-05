@@ -10,6 +10,16 @@ const nextConfig: NextConfig = {
     },
   },
   serverExternalPackages: ["pdfjs-dist", "pdf-parse"],
+  // The manuals are read from disk by app/manuals/[slug] (not public/ — sign-in required)
+  outputFileTracingIncludes: {
+    "/manuals/*": ["./manuals/**/*"],
+  },
+  // Old public links to the manuals → the signed-in-only addresses
+  async redirects() {
+    return ["claim", "leave", "consignment"].map((m) => ({
+      source: `/${m}-manual.html`, destination: `/manuals/${m}`, permanent: true,
+    }));
+  },
   allowedDevOrigins: [
     "192.168.0.*",
     "192.168.1.*",

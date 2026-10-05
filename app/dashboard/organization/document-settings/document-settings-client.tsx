@@ -169,6 +169,10 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
   // ── Table ─────────────────────────────────────────────────────────────
   const [tableFontSize,   setTableFontSize]   = useState(data.tableFontSize   ?? "normal");
   const [showCodeColumn,  setShowCodeColumn]  = useState(!!(data.showCodeColumn ?? 1));
+  // Delivery order PDF: boxes after the item table
+  const [doFooterNotes,    setDoFooterNotes]    = useState(data.doFooterNotes ?? "");
+  const [doShowBank,       setDoShowBank]       = useState((data.doShowBank ?? 1) === 1);
+  const [doShowReceivedBy, setDoShowReceivedBy] = useState((data.doShowReceivedBy ?? 1) === 1);
   const [tableRowStyle,   setTableRowStyle]   = useState(data.tableRowStyle   ?? "default");
   const [titlePosition,   setTitlePosition]   = useState(data.titlePosition   ?? "stamp");
 
@@ -215,6 +219,9 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
           quotationLabelAlign,
           tableRowStyle,
           showCodeColumn:        showCodeColumn        ? 1 : 0,
+          doFooterNotes:         doFooterNotes.trim() || null,
+          doShowBank:            doShowBank       ? 1 : 0,
+          doShowReceivedBy:      doShowReceivedBy ? 1 : 0,
           tableFontSize,
           titlePosition,
           quotationNoFormat,
@@ -802,6 +809,35 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
               checked={titlePosition === "table-banner"}
               onChange={() => setTitlePosition(v => v === "table-banner" ? "stamp" : "table-banner")}
             />
+          </div>
+
+          {/* Delivery order: boxes after the item table */}
+          <div className="border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border bg-muted/30">
+              <p className="text-sm font-medium">Delivery order — below the table</p>
+              <p className="text-xs text-muted-foreground">Boxes printed after the items on the delivery order and the Case DO customer copy (not on the internal copy).</p>
+            </div>
+            <div className="px-4 py-3 space-y-1.5">
+              <p className="text-xs font-medium">Terms &amp; notes — one per line</p>
+              <textarea value={doFooterNotes} onChange={(e) => setDoFooterNotes(e.target.value)} rows={4}
+                placeholder={"Goods sold are not returnable or exchangeable.\nPlease check the goods upon delivery and report any shortage or damage within 7 days."}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+              <p className="text-[11px] text-muted-foreground">Left empty, the two lines shown above are printed.</p>
+            </div>
+            <div className="divide-y divide-border border-t border-border">
+              <Switch
+                label="Payment details box"
+                desc="Your primary bank account from Organization Profile → Banking (bank, account name, account no., SWIFT)"
+                checked={doShowBank}
+                onChange={() => setDoShowBank(v => !v)}
+              />
+              <Switch
+                label="Received-by box"
+                desc="Name, signature & company stamp and date — for the customer to sign on receipt"
+                checked={doShowReceivedBy}
+                onChange={() => setDoShowReceivedBy(v => !v)}
+              />
+            </div>
           </div>
         </div>
       )}

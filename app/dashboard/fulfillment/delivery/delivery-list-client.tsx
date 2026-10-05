@@ -25,6 +25,7 @@ const DO_STATUS: Record<string, { label: string; className: string; accent: stri
   draft:     { label: "Draft",     className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400",  accent: "bg-amber-400"  },
   delivered: { label: "Delivered", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400",  accent: "bg-green-500"  },
   returned:  { label: "Returned",  className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400",          accent: "bg-red-400"    },
+  cancelled: { label: "Cancelled", className: "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 line-through", accent: "bg-zinc-400" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -45,6 +46,7 @@ const STATUS_FILTERS = [
   { value: "draft",     label: "Draft" },
   { value: "delivered", label: "Delivered" },
   { value: "returned",  label: "Returned" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 // ── Pagination ────────────────────────────────────────────────────────────
@@ -366,6 +368,10 @@ export function DeliveryOrderListClient({ initialOrders, total, page, pageSize, 
                           <Highlight text={o.doNo} query={searchInput} />
                         </Link>
                         <StatusBadge status={o.status} />
+                        {o.isCaseDo && o.actualStatus === "pending" && o.status !== "cancelled" && (
+                          <span className="text-[10px] font-medium rounded px-1.5 py-0.5 bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                            title="After the case, record the items actually used (stock is deducted then)">actual items to record</span>
+                        )}
                         {o.status === "delivered" && !o.invoiceId && can("invoice:read") && (
                           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700">
                             <ReceiptIcon className="w-3 h-3 shrink-0" />invoice pending
@@ -430,7 +436,7 @@ export function DeliveryOrderListClient({ initialOrders, total, page, pageSize, 
                             <PencilIcon className="w-3.5 h-3.5" />
                           </Button>
                         )}
-                        {can("delivery-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && !o.invoiceId && (
+                        {can("delivery-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && !o.invoiceId && (!o.isCaseDo || o.actualStatus === "pending") && (
                           <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
                             disabled={deleting === o.id} onClick={() => handleDelete(o.id, o.doNo, o.status)}>
                             <TrashIcon className="w-3.5 h-3.5" />

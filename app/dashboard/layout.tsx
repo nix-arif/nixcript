@@ -2,6 +2,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { DashboardBreadcrumb } from "@/components/dashboard-breadcrumb";
 import { NotificationCenter } from "@/components/notification-center";
 import { NavigationLoader } from "./_navigation-loader";
+import { LiveRefresh } from "@/components/live-refresh";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
@@ -11,6 +12,8 @@ import {
 import { getCurrentUser } from "@/server/users";
 import Image from "next/image";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { NAV_SECTIONS_COOKIE, parseNavSections } from "@/lib/nav-sections";
 import authLogo from "@/branding/authlogo.svg";
 // import { getOrganizations } from "@/server/organizations";
 // import { getCurrentUser } from "@/server/users";
@@ -30,9 +33,15 @@ export default async function DashboardLayout({
     redirect("/auth/login");
   }
 
+  // The sidebar opens the way the user left it: collapsed or expanded, and
+  // which menu sections were open (both saved in cookies when changed)
+  const jar = await cookies();
+  const sidebarOpen = jar.get("sidebar_state")?.value !== "false";
+  const navSections = parseNavSections(jar.get(NAV_SECTIONS_COOKIE)?.value);
+
   return (
-    <SidebarProvider>
-      <AppSidebar />
+    <SidebarProvider defaultOpen={sidebarOpen}>
+      <AppSidebar navSections={navSections} />
       <SidebarInset>
         <header className="sticky top-0 z-10 flex h-13 shrink-0 items-center border-b border-border/60 bg-background/95 backdrop-blur-sm transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4 flex-1 min-w-0">
@@ -50,6 +59,7 @@ export default async function DashboardLayout({
         </header>
         <div className="flex flex-1 flex-col min-h-0 min-w-0">
           <NavigationLoader>{children}</NavigationLoader>
+          <LiveRefresh />
         </div>
       </SidebarInset>
     </SidebarProvider>

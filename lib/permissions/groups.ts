@@ -22,6 +22,7 @@ export const KEY_GROUP: Record<string, string> = {
 
   "delivery-order:read": "fulfillment", "delivery-order:create": "fulfillment",
   "delivery-order:update": "fulfillment", "delivery-order:delete": "fulfillment",
+  "delivery-order:internal-copy": "fulfillment", "delivery-order:cancel": "fulfillment",
   "invoice:read": "fulfillment", "invoice:create": "fulfillment",
   "invoice:update": "fulfillment", "invoice:delete": "fulfillment",
   "account:read": "fulfillment", "account:create": "fulfillment",
@@ -34,6 +35,8 @@ export const KEY_GROUP: Record<string, string> = {
   "inventory:read": "inventory", "inventory:adjust": "inventory",
   "inventory:manage": "inventory", "inventory:request": "inventory",
   "inventory:create": "inventory",
+  "consignment:read": "inventory", "consignment:manage": "inventory",
+  "consignment:adjust": "inventory", "consignment:settle": "inventory",
 
   "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr",
   "claim:read:own": "hr", "claim:apply": "hr", "claim:manage": "hr", "claim:read:all": "hr",

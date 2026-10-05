@@ -1,17 +1,10 @@
-import { requirePermission } from "@/lib/auth/require-permission";
-import { getSalesOrderDetail } from "@/server/sales-order";
-import { notFound, redirect } from "next/navigation";
-import { CreateConsignmentClient } from "./create-consignment-client";
+import { redirect } from "next/navigation";
 
-export default async function CreateConsignmentPage({ searchParams }: { searchParams: Promise<{ soId?: string; soNo?: string }> }) {
-  await requirePermission("sales-order:update");
+// Superseded by the Consignment module — keeps a linked sales order.
+export default async function CreateSalesConsignmentPage({ searchParams }: { searchParams: Promise<{ soId?: string; soNo?: string }> }) {
   const { soId, soNo } = await searchParams;
-
-  if (!soId) redirect("/dashboard/sales/consignment");
-
-  const so = await getSalesOrderDetail(soId);
-  if (!so) notFound();
-  if (so.status !== "confirmed") redirect(`/dashboard/sales/order/${soId}`);
-
-  return <CreateConsignmentClient so={so} />;
+  const qs = new URLSearchParams();
+  if (soId) qs.set("soId", soId);
+  if (soNo) qs.set("soNo", soNo);
+  redirect(`/dashboard/consignment/new${qs.size ? `?${qs}` : ""}`);
 }

@@ -9,6 +9,8 @@ import {
   integer,
   date,
   json,
+  bigint,
+  primaryKey,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
@@ -813,6 +815,9 @@ export const stockMovement = pgTable(
     expiryDate: timestamp("expiry_date"),
     lotId: text("lot_id"),   // FK to stock_lot — populated at approval time
     unitId: text("unit_id"), // FK to asset_unit — populated for serial-tracked products
+    // Stock-in of a serial number: register the unit as SALE or RENTAL once
+    // the movement is approved (kept here while it waits for approval)
+    intendedUse: text("intended_use"),
     // PENDING | APPROVED | REJECTED
     status: text("status").notNull().default("PENDING"),
     reviewedBy: text("reviewed_by").references(() => user.id),
@@ -1083,6 +1088,13 @@ export const organizationProfile = pgTable("organization_profile", {
   // Lampiran
   lampiran12Url: text("lampiran12_url"),
   lampiran13Url: text("lampiran13_url"),
+
+  // Delivery order PDF — boxes after the item table (customer-facing copies):
+  // terms / notes (one per line), the primary bank account for payment, and
+  // a "received in good order" box for the customer's name, signature, date
+  doFooterNotes: text("do_footer_notes"),
+  doShowBank: integer("do_show_bank").notNull().default(1),
+  doShowReceivedBy: integer("do_show_received_by").notNull().default(1),
 
   // Banking
   bankingInfo: json("banking_info")
@@ -1986,6 +1998,245 @@ export const consignmentUsageRelations = relations(consignmentUsage, ({ one }) =
 }));
 
 /* ============================================================================================================================================================================================================================================
+   CONSIGNMENT MODULE (model B) — one flow for agent (sibling company) and customer consignment.
+   Consigned stock stays on the OWNER's books (stock_level.organization_id = owner); its location is a
+   warehouse label (see lib/consignment/labels.ts). Only consumption transfers ownership and is billed.
+   Design: "Consignment Module — Design" doc. The older consignment* tables above are superseded (empty).
+=============================================================================================================================================================================================================================================== */
+
+// One placement of stock with a consignee (header).
+export const consignHeader = pgTable(
+  "consign_header",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }), // owner
+    consignmentNo: text("consignment_no").notNull(),
+    consigneeType: text("consignee_type").notNull(), // "agent" (sibling company) | "customer" | "partner" (external agent)
+    agentOrgId: text("agent_org_id").references(() => organization.id),
+    partnerId: text("partner_id").references((): AnyPgColumn => consignPartner.id),
+    agentRepId: text("agent_rep_id").references(() => user.id),
+    customerId: text("customer_id").references(() => customer.id),
+    customerOrgId: text("customer_org_id").references(() => customerOrganization.id),
+    soId: text("so_id").references(() => salesOrder.id),
+    sourceWarehouseLabel: text("source_warehouse_label").notNull(), // owner warehouse stock is sent from / returned to
+    locationLabel: text("location_label").notNull(), // where the stock sits, on the owner's books
+    status: text("status").notNull().default("open"), // "open" | "closed"
+    sentDate: timestamp("sent_date").notNull(),
+    reviewDate: timestamp("review_date"),
+    notes: text("notes"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    index("consign_header_org_idx").on(t.organizationId),
+    index("consign_header_agent_idx").on(t.agentOrgId),
+    index("consign_header_location_idx").on(t.organizationId, t.locationLabel),
+    uniqueIndex("consign_header_no_uidx").on(t.organizationId, t.consignmentNo),
+  ],
+);
+
+// Balance per product (+ lot, or a single serial unit) per consignment.
+export const consignLine = pgTable(
+  "consign_line",
+  {
+    id: text("id").primaryKey(),
+    consignmentId: text("consignment_id").notNull().references(() => consignHeader.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull(), // owner
+    productId: text("product_id").notNull().references(() => product.id),
+    productCode: text("product_code").notNull(),
+    description: text("description"),
+    uom: text("uom"),
+    lotNo: text("lot_no"),
+    expiryDate: timestamp("expiry_date"),
+    unitId: text("unit_id").references(() => assetUnit.id), // serial-tracked: one line per unit
+    serialNo: text("serial_no"),
+    unitCost: text("unit_cost"), // owner's cost at send time (for cost-plus transfer pricing)
+    qtySent: text("qty_sent").notNull().default("0"),
+    qtyConsumed: text("qty_consumed").notNull().default("0"),
+    qtyReturned: text("qty_returned").notNull().default("0"),
+    qtyAdjusted: text("qty_adjusted").notNull().default("0"),
+    // Moved out by the agent to another of its locations (warehouse ⇄
+    // specialist) — onto a linked consignment, still the owner's stock
+    qtyMoved: text("qty_moved").notNull().default("0"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("consign_line_consignment_idx").on(t.consignmentId),
+    index("consign_line_product_idx").on(t.organizationId, t.productId),
+  ],
+);
+
+// Every Send / Consume / Return / Adjust — the audit trail and the source of settlement.
+export const consignEvent = pgTable(
+  "consign_event",
+  {
+    id: text("id").primaryKey(),
+    consignmentId: text("consignment_id").notNull().references(() => consignHeader.id, { onDelete: "cascade" }),
+    lineId: text("line_id").notNull().references(() => consignLine.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull(), // owner
+    type: text("type").notNull(), // "send" | "consume" | "return" | "adjust" | "reverse" | "machine_use" | "rental"
+    qty: text("qty").notNull(),
+    eventDate: timestamp("event_date").notNull(),
+    sourceType: text("source_type"), // consume: "CASE_DO" | "USAGE_REPORT"
+    sourceId: text("source_id"),
+    sourceNo: text("source_no"),
+    reason: text("reason"), // adjust: lost | damaged | expired | count
+    // Partner usage reports: the hospital it was used at (sales-agent model
+    // invoices it) and the price actually charged, when reported
+    endCustomerOrgId: text("end_customer_org_id").references(() => customerOrganization.id),
+    endCustomerId: text("end_customer_id").references(() => customer.id),
+    unitPrice: text("unit_price"),
+    // machine_use / rental: what the owner charges for it, fixed when it is
+    // recorded (later setting changes only affect later uses)
+    chargePrice: text("charge_price"),
+    purpose: text("purpose"), // machine_use: RENTAL | LOAN | DEMO
+    billable: boolean("billable").notNull().default(false), // consume = true; adjust when charged to consignee
+    settlementId: text("settlement_id"), // set once billed
+    stockMovementId: text("stock_movement_id"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("consign_event_consignment_idx").on(t.consignmentId),
+    index("consign_event_unsettled_idx").on(t.organizationId, t.billable, t.settlementId),
+    index("consign_event_source_idx").on(t.sourceType, t.sourceId),
+  ],
+);
+
+// Per-company settings (the company whose users decide).
+export const consignSetting = pgTable("consign_setting", {
+  organizationId: text("organization_id").primaryKey().references(() => organization.id, { onDelete: "cascade" }),
+  // As an agent: which stock a Case DO uses first
+  consumeOrder: text("consume_order").notNull().default("consigned_first"), // "consigned_first" | "own_first"
+  // As an owner: how often consignment locations are counted
+  countFrequency: text("count_frequency").notNull().default("monthly"), // "monthly" | "quarterly" | "none"
+  updatedBy: text("updated_by").references(() => user.id),
+  updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+});
+
+// Per owner → agent pair settings (set by the owner company).
+export const consignPairSetting = pgTable(
+  "consign_pair_setting",
+  {
+    id: text("id").primaryKey(),
+    ownerOrgId: text("owner_org_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    agentOrgId: text("agent_org_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    allowPassOn: boolean("allow_pass_on").notNull().default(false), // agent may place owner's stock at its customers
+    settlementMode: text("settlement_mode").notNull().default("manual"), // "manual" | "auto"
+    settlementFrequency: text("settlement_frequency").notNull().default("monthly"), // "monthly" | "per_use"
+    priceMethod: text("price_method").notNull().default("cost_plus"), // "cost_plus" | "price_list" | "pct_of_sale"
+    markupPct: text("markup_pct").notNull().default("0"),
+    sharePct: text("share_pct").notNull().default("0"),
+    fallbackMethod: text("fallback_method").notNull().default("cost_plus"), // for products not on the price list
+    // Consigned machines (rental units) used on the agent's cases
+    machineMethod: text("machine_method").notNull().default("free"), // "free" | "per_case" | "share_of_fee" | "monthly_rental"
+    machineFee: text("machine_fee").notNull().default("0"),          // per case, or per month for monthly_rental
+    machineSharePct: text("machine_share_pct").notNull().default("0"), // of the usage fee the agent charged
+    updatedBy: text("updated_by").references(() => user.id),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [uniqueIndex("consign_pair_uidx").on(t.ownerOrgId, t.agentOrgId)],
+);
+
+// Fixed intercompany price list (price_method = "price_list").
+export const consignPriceItem = pgTable(
+  "consign_price_item",
+  {
+    id: text("id").primaryKey(),
+    pairSettingId: text("pair_setting_id").notNull().references(() => consignPairSetting.id, { onDelete: "cascade" }),
+    productId: text("product_id").notNull().references(() => product.id, { onDelete: "cascade" }),
+    price: text("price").notNull(),
+  },
+  (t) => [uniqueIndex("consign_price_item_uidx").on(t.pairSettingId, t.productId)],
+);
+
+// External agents (not one of the owner's companies). Each is either a
+// DEALER (sell-through: the owner invoices the dealer at a dealer price when
+// it reports usage) or a SALES AGENT (the owner invoices the hospital at the
+// selling price and owes the agent a commission). Settings are per partner.
+export const consignPartner = pgTable(
+  "consign_partner",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }), // owner company
+    name: text("name").notNull(),
+    model: text("model").notNull(), // "dealer" | "sales_agent"
+    contactPerson: text("contact_person"),
+    phone: text("phone"),
+    email: text("email"),
+    address: text("address"),
+    // Dealer pricing
+    priceMethod: text("price_method").notNull().default("discount"), // "discount" | "price_list" | "cost_plus"
+    discountPct: text("discount_pct").notNull().default("0"), // off the selling price
+    markupPct: text("markup_pct").notNull().default("0"),     // on cost
+    // Sales-agent commission
+    commissionPct: text("commission_pct").notNull().default("0"), // of the hospital invoice amount
+    // Consigned machines (rental units). Dealer: "free" | "per_case" |
+    // "share_of_fee" | "monthly_rental". Sales agent: "free" | "hospital_fee"
+    // (owner invoices the hospital the per-case fee; commission optional)
+    machineMethod: text("machine_method").notNull().default("free"),
+    machineFee: text("machine_fee").notNull().default("0"),
+    machineSharePct: text("machine_share_pct").notNull().default("0"),
+    machineCommission: boolean("machine_commission").notNull().default(true),
+    settlementMode: text("settlement_mode").notNull().default("manual"), // "manual" | "auto"
+    settlementFrequency: text("settlement_frequency").notNull().default("monthly"), // "monthly" | "per_use"
+    customerId: text("customer_id").references(() => customer.id), // dealer is invoiced as this customer
+    supplierId: text("supplier_id").references(() => supplier.id),  // sales agent is owed commission as this supplier
+    active: boolean("active").notNull().default(true),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    index("consign_partner_org_idx").on(t.organizationId),
+    uniqueIndex("consign_partner_name_uidx").on(t.organizationId, t.name),
+  ],
+);
+
+// Dealer price list (partner price_method = "price_list").
+export const consignPartnerPriceItem = pgTable(
+  "consign_partner_price_item",
+  {
+    id: text("id").primaryKey(),
+    partnerId: text("partner_id").notNull().references(() => consignPartner.id, { onDelete: "cascade" }),
+    productId: text("product_id").notNull().references(() => product.id, { onDelete: "cascade" }),
+    price: text("price").notNull(),
+  },
+  (t) => [uniqueIndex("consign_partner_price_uidx").on(t.partnerId, t.productId)],
+);
+
+export const consignCounter = pgTable("consign_counter", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+});
+
+// A billing run: intercompany invoice + PO (agent) or customer invoice.
+export const consignSettlement = pgTable(
+  "consign_settlement",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }), // owner
+    consigneeType: text("consignee_type").notNull(),
+    agentOrgId: text("agent_org_id").references(() => organization.id),
+    customerId: text("customer_id").references(() => customer.id),
+    partnerId: text("partner_id").references((): AnyPgColumn => consignPartner.id),
+    commissionTotal: text("commission_total"), // sales-agent model
+    invoiceIds: json("invoice_ids").$type<string[]>(), // sales-agent model: one invoice per hospital
+    periodFrom: timestamp("period_from"),
+    periodTo: timestamp("period_to"),
+    invoiceId: text("invoice_id"),
+    purchaseOrderId: text("purchase_order_id"),
+    total: text("total").notNull().default("0"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("consign_settlement_org_idx").on(t.organizationId)],
+);
+
+/* ============================================================================================================================================================================================================================================
    PURCHASE ORDER TABLE
 =============================================================================================================================================================================================================================================== */
 
@@ -2749,6 +3000,27 @@ export const deliveryOrder = pgTable(
     caseType: text("case_type"),
     caseDate: timestamp("case_date"),
     mrnNo: text("mrn_no"),
+    caseDescription: text("case_description"),
+    // Case DO selling price (from the doctor's template, changeable per case):
+    // "itemized" = delivery_order_item.unit_price per line, "total" = case_price
+    // for the whole case; the invoice made from the DO is prefilled with it
+    priceMode: text("price_mode"),
+    casePrice: text("case_price"),
+    // Case DO in two steps: customer items (delivery_order_customer_item, from
+    // the doctor's template — the customer copy and the invoice) are set when
+    // the DO is made; the actual items (delivery_order_item) are recorded after
+    // the case, and only then is stock deducted. "pending" | "recorded";
+    // null = a DO made before this (its items were deducted when created)
+    actualStatus: text("actual_status"),
+    actualRecordedAt: timestamp("actual_recorded_at"),
+    actualRecordedBy: text("actual_recorded_by"),
+    // Cancelled (voided) Case DO: status "cancelled" — kept on record with
+    // who, when and why; its stock was returned by reversing movements
+    cancelledAt: timestamp("cancelled_at"),
+    cancelledBy: text("cancelled_by"),
+    cancelledByName: text("cancelled_by_name"),
+    cancelReason: text("cancel_reason"), // what was done, printed on both Case DO copies
+    caseTemplateId: text("case_template_id"),  // the doctor's template it started from, if any
 
     categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
 
@@ -2783,6 +3055,26 @@ export const deliveryOrderItem = pgTable(
     setGroupLabel: text("set_group_label"),
     setQty: text("set_qty"),
     unitId: text("unit_id"), // which specific asset_unit this line represents (serial-tracked products only)
+    // Case DO machines (loan-out lines): back with the specialist the same
+    // day, or left at the hospital until returned from the DO page — and the
+    // per-case usage fee charged to the hospital, if any (prefills the invoice)
+    loanReturnMode: text("loan_return_mode"), // "same_day" | "stays" | "sold" (kept by the hospital)
+    usageFee: text("usage_fee"),
+    loanPurpose: text("loan_purpose"), // why the asset went out this time: RENTAL | LOAN | DEMO
+    salePrice: text("sale_price"), // a lent machine the hospital decided to buy
+    unitPrice: text("unit_price"), // Case DO itemized selling price per unit
+    // Customer copy (Case DO PDF) — how this line is printed for the hospital;
+    // stock is always deducted for the actual item above, and the internal copy
+    // shows both. custShow: null = as is | "product" (another catalogue
+    // product, with its MDA) | "text" (renamed: hospital's own code / name) |
+    // "hide" | "kit" (lines with the same kit name print as one line)
+    custShow: text("cust_show"),
+    custProductId: text("cust_product_id"),
+    custCode: text("cust_code"),
+    custDescription: text("cust_description"),
+    custQty: text("cust_qty"),
+    custUom: text("cust_uom"),
+    custReason: text("cust_reason"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
@@ -4481,3 +4773,129 @@ export const schema = {
   warrant2026Row,
   warrant2026RowRelations,
 };
+
+
+// ── Case templates: a doctor's usual cases ───────────────────────────────────
+// One doctor (customer) has many templates — e.g. Mr Atiki: "MILH standard",
+// "MILH + PLDD" — each with the case category, description and the items
+// usually used, so a Case DO for that doctor starts pre-filled.
+export const caseTemplate = pgTable(
+  "case_template",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    customerId: text("customer_id").notNull().references(() => customer.id, { onDelete: "cascade" }),
+    // the hospital this template is for (a doctor working at several keeps one
+    // per hospital); null = any of the doctor's hospitals
+    customerOrgId: text("customer_org_id").references(() => customerOrganization.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
+    description: text("description"),
+    isDefault: boolean("is_default").notNull().default(false), // filled in automatically when the doctor is picked
+    // Selling price: "itemized" (a price per item) or "total" (one price for the whole case)
+    priceMode: text("price_mode").notNull().default("itemized"),
+    totalPrice: text("total_price"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [index("case_template_customer_idx").on(t.customerId), index("case_template_org_idx").on(t.organizationId)],
+);
+
+export const caseTemplateItem = pgTable(
+  "case_template_item",
+  {
+    id: text("id").primaryKey(),
+    templateId: text("template_id").notNull().references(() => caseTemplate.id, { onDelete: "cascade" }),
+    rowNo: integer("row_no").notNull(),
+    productId: text("product_id").references(() => product.id, { onDelete: "set null" }),
+    productCode: text("product_code"),
+    description: text("description"),
+    qty: text("qty").notNull().default("1"),
+    uom: text("uom"),
+    unitPrice: text("unit_price"), // selling price per unit (itemized pricing)
+    // Machines: which kind of unit to pick from the specialist's holding
+    // (SALE | ASSET, null = any) and, for a company asset, how it goes out
+    machineUse: text("machine_use"),
+    loanPurpose: text("loan_purpose"), // RENTAL | LOAN | DEMO
+    loanReturnMode: text("loan_return_mode"), // same_day | stays
+    usageFee: text("usage_fee"), // charged to the hospital per case; null = no charge
+    // Customer copy (Case DO PDF) — how this line is printed for the hospital;
+    // stock is always deducted for the actual item above, and the internal copy
+    // shows both. custShow: null = as is | "product" (another catalogue
+    // product, with its MDA) | "text" (renamed: hospital's own code / name) |
+    // "hide" | "kit" (lines with the same kit name print as one line)
+    custShow: text("cust_show"),
+    custProductId: text("cust_product_id"),
+    custCode: text("cust_code"),
+    custDescription: text("cust_description"),
+    custQty: text("cust_qty"),
+    custUom: text("cust_uom"),
+    custReason: text("cust_reason"),
+  },
+  (t) => [index("case_template_item_template_idx").on(t.templateId)],
+);
+
+
+// ── Case DO customer items ───────────────────────────────────────────────────
+// What a Case DO shows the hospital (customer copy) and bills (invoice): from
+// the doctor's template, editable until invoiced. A catalogue product (its MDA
+// number and certificate print) or a free-text line (e.g. a package name).
+// The stock actually used is recorded separately (delivery_order_item).
+export const deliveryOrderCustomerItem = pgTable(
+  "delivery_order_customer_item",
+  {
+    id: text("id").primaryKey(),
+    deliveryOrderId: text("delivery_order_id").notNull().references(() => deliveryOrder.id, { onDelete: "cascade" }),
+    rowNo: integer("row_no").notNull(),
+    productId: text("product_id").references(() => product.id, { onDelete: "set null" }),
+    productCode: text("product_code"),
+    description: text("description"),
+    qty: text("qty").notNull().default("1"),
+    uom: text("uom"),
+    unitPrice: text("unit_price"), // itemized selling price per unit
+  },
+  (t) => [index("do_customer_item_do_idx").on(t.deliveryOrderId)],
+);
+
+// ── Item groups ──────────────────────────────────────────────────────────────
+// User-defined groups of products ("Laser fibres", "Haemostatic", "Machines")
+// so long stock lists read in sections. Shared across the owner's companies
+// (like the product catalogue). A product can be in several groups
+// (item_group_product) and is then listed under each. Ordered by sort_order.
+export const itemGroup = pgTable(
+  "item_group",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("item_group_org_idx").on(t.organizationId)],
+);
+
+export const itemGroupProduct = pgTable(
+  "item_group_product",
+  {
+    groupId: text("group_id").notNull().references(() => itemGroup.id, { onDelete: "cascade" }),
+    productId: text("product_id").notNull().references(() => product.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.productId] }), index("item_group_product_product_idx").on(t.productId)],
+);
+
+// ── Live refresh ─────────────────────────────────────────────────────────────
+// One counter per company and area, bumped by database triggers whenever that
+// area's tables change (see scripts/live-triggers.sql). Open pages poll these
+// (cheap) and re-fetch only when a counter moved — app/api/live/route.ts.
+export const changeCounter = pgTable(
+  "change_counter",
+  {
+    organizationId: text("organization_id").notNull(),
+    scope: text("scope").notNull(),
+    version: bigint("version", { mode: "number" }).notNull().default(0),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.organizationId, t.scope] })],
+);

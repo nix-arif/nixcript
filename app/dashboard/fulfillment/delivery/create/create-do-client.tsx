@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { INTENDED_USE_LABELS, isLendable, unitUseLabel, LOAN_PURPOSE_LABELS } from "@/lib/inventory/constants";
+import { getCaseTemplatesForCustomer, getProductsMda, saveCaseTemplate, type CaseTemplateRow } from "@/server/case-template";
+import type { CustomerView } from "@/lib/delivery/customer-view";
+import { Fragment, useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createDeliveryOrder, getSoRemainingItems, type DeliveryOrderItemInput, type SoItemRemaining } from "@/server/delivery-order";
@@ -8,6 +11,11 @@ import { searchConfirmedSalesOrders, getSalesOrderDetail, type CpoCustomer } fro
 import { searchProducts } from "@/server/inventory";
 import { getCustomers, getCustomer } from "@/server/customer";
 import { getFieldReps, getRepFieldStock, type OrgMember, type RepStockItem } from "@/server/field-stock";
+import { getItemGroups, type ItemGroupRow } from "@/server/item-group";
+import { recordCaseActuals } from "@/server/delivery-order";
+import { pricedWithoutMdaMessage } from "@/lib/mda/priced-message";
+import { ItemizedMdaWarning } from "@/components/itemized-mda-warning";
+import { groupSections } from "@/lib/inventory/group-sections";
 import { type DocumentCategoryRow } from "@/server/document-category";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +28,7 @@ import { uid } from "@/lib/uid";
 import {
   ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon,
   BuildingIcon, LinkIcon, CheckCircle2Icon, Loader2Icon,
-  StethoscopeIcon, ShoppingCartIcon, PhoneIcon, MailIcon,
+  StethoscopeIcon, ShoppingCartIcon, PhoneIcon, MailIcon, ChevronDownIcon, ChevronRightIcon,
 } from "lucide-react";
 
 type Customer = Awaited<ReturnType<typeof getCustomer>>;
@@ -871,7 +879,7 @@ function buildCustomerOptions(rows: CustomerSearchRow[], query: string): Custome
   }));
 }
 
-function CaseCustomerPicker({
+export function CaseCustomerPicker({
   onPick,
 }: {
   onPick: (customer: CustomerSearchRow, preselectOrg: CustomerOrg | null) => void;
@@ -1046,7 +1054,7 @@ function CaseCustomerPicker({
 
 // ── Case DO form ────────────────────────────────────────────────────────────
 
-interface CaseLineItem {
+export interface CaseLineItem {
   _key: string;
   productId?: string;
   productCode: string;
@@ -1067,6 +1075,70 @@ interface CaseLineItem {
   // by a per-unit checklist — the user just picks which units were used.
   units?: { id: string; serialNo: string; intendedUse: string }[];
   selectedUnitIds?: string[];
+  // Machines (loan-out): per selected rental unit, or for the bulk rental
+  // qty — back the same day or left at the hospital, and the usage fee
+  unitLoan?: Record<string, MachineLoan>;
+  loan?: MachineLoan;
+  // Part of fieldAvailable that is another company's stock on consignment
+  // (used first or last per this company's consignment setting)
+  consigned?: { sourceOrgName: string; qty: number }[];
+  // How the customer copy prints this item (stock deducted stays this item)
+  cust?: CustomerView;
+  // User-defined item groups (picker headings; a product can be in several)
+  itemGroupIds?: string[];
+  // Selling price per unit (itemized pricing): set here or from the template;
+  // undefined = the product's selling price
+  unitPrice?: string;
+  sellingPrice?: string | null;
+}
+
+// The price a line is charged per unit: what was entered, else the product's selling price
+const priceOf = (i: CaseLineItem) => (i.unitPrice !== undefined ? i.unitPrice : i.sellingPrice ? String(Number(i.sellingPrice)) : "");
+
+interface MachineLoan { purpose: "RENTAL" | "LOAN" | "DEMO"; mode: "same_day" | "stays"; charge: boolean; fee: string }
+const defaultLoan = (): MachineLoan => ({ purpose: "RENTAL", mode: "same_day", charge: true, fee: "" });
+
+
+// Per company asset, decided for this case: why it goes out (rental is
+// usually charged, loan / demo usually free), whether it comes back with the
+// specialist the same day, and the usage fee charged to the hospital, if any
+function MachineLoanOptions({ value, onChange }: { value: MachineLoan; onChange: (v: MachineLoan) => void }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-amber-200 dark:border-amber-800/60 bg-amber-50/50 dark:bg-amber-900/10 p-2">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+        <span className="text-muted-foreground">Purpose</span>
+        <div className="inline-flex rounded-md border border-border bg-background p-0.5">
+          {(Object.keys(LOAN_PURPOSE_LABELS) as MachineLoan["purpose"][]).map((pp) => (
+            <button key={pp} type="button"
+              // rental is normally charged; a loan or demo normally isn't (either can be changed below)
+              onClick={() => onChange({ ...value, purpose: pp, charge: pp === "RENTAL" })}
+              className={cn("px-2.5 h-6 rounded", value.purpose === pp ? "bg-amber-100 dark:bg-amber-900/40 font-semibold text-amber-800 dark:text-amber-300" : "text-muted-foreground")}>
+              {LOAN_PURPOSE_LABELS[pp]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="inline-flex rounded-md border border-border bg-background p-0.5 text-[11px] w-fit">
+        {(["same_day", "stays"] as const).map((m) => (
+          <button key={m} type="button" onClick={() => onChange({ ...value, mode: m })}
+            className={cn("px-2.5 h-6 rounded", value.mode === m ? "bg-amber-100 dark:bg-amber-900/40 font-semibold text-amber-800 dark:text-amber-300" : "text-muted-foreground")}>
+            {m === "same_day" ? "Returned same day" : "Stays at hospital"}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" checked={value.charge} onChange={(e) => onChange({ ...value, charge: e.target.checked })} /> Charge usage fee
+        </label>
+        {value.charge && (
+          <span className="flex items-center gap-1">RM
+            <Input type="number" min="0" step="0.01" placeholder="0.00" value={value.fee} onChange={(e) => onChange({ ...value, fee: e.target.value })} className="h-7 w-24 text-xs text-right" />
+            <span className="text-muted-foreground">per case</span>
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 const newCaseLine = (): CaseLineItem => ({
@@ -1081,7 +1153,7 @@ interface CaseExtraProductCellProps {
   onUpdate: (key: string, patch: Partial<CaseLineItem>) => void;
 }
 
-function CaseExtraProductCell({ item, onUpdate }: CaseExtraProductCellProps) {
+export function CaseExtraProductCell({ item, onUpdate }: CaseExtraProductCellProps) {
   const [q, setQ] = useState(item.productCode);
   const [results, setResults] = useState<{ id: string; productCode: string; description: string | null; uom: string | null }[]>([]);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1121,10 +1193,28 @@ function CaseExtraProductCell({ item, onUpdate }: CaseExtraProductCellProps) {
   );
 }
 
-function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" }: { categories?: DocumentCategoryRow[]; currentUserId?: string; currentUserName?: string }) {
-  const router = useRouter();
+// Recording a two-step Case DO's actual items after the case: the same item
+// picker as a new Case DO, for the DO's specialist, prefilled from its
+// customer items and the doctor's template (machine choices)
+export interface RecordCaseFor {
+  doId: string; doNo: string;
+  specialistId: string; specialistName: string;
+  customerName: string | null; caseDate: string | null; caseDescription: string | null;
+  items: { productId: string | null; productCode: string | null; description: string | null; qty: string; uom: string | null }[];
+  template: CaseTemplateRow | null;
+}
 
-  const sessionTag = currentUserId && currentUserName
+export function RecordCaseActualsForm(props: { recordFor: RecordCaseFor; categories?: DocumentCategoryRow[] }) {
+  return <CaseDoForm categories={props.categories} recordFor={props.recordFor} />;
+}
+
+function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "", recordFor }: { categories?: DocumentCategoryRow[]; currentUserId?: string; currentUserName?: string; recordFor?: RecordCaseFor }) {
+  const router = useRouter();
+  const isRecord = !!recordFor;
+
+  const sessionTag = recordFor
+    ? [{ id: recordFor.specialistId, name: recordFor.specialistName, isExt: false }]
+    : currentUserId && currentUserName
     ? [{ id: currentUserId, name: currentUserName, isExt: false }]
     : [];
 
@@ -1169,6 +1259,182 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
   const [fieldPool, setFieldPool] = useState<CaseLineItem[]>([]);   // full stock list (read-only reference)
   const [fieldItems, setFieldItems] = useState<CaseLineItem[]>([]);  // user-selected items with qty
   const [extraItems, setExtraItems] = useState<CaseLineItem[]>([newCaseLine()]);
+  // Customer items: what the customer copy shows and the invoice bills (from the
+  // template). The actual items (field stock above, extras) are what was really
+  // used — recorded after the case, or now if the case is already done.
+  const [custItems, setCustItems] = useState<CaseLineItem[]>([newCaseLine()]);
+  const [recordNow, setRecordNow] = useState(false);
+  const showActual = isRecord || recordNow;
+  const updateCustItem = (key: string, patch: Partial<CaseLineItem>) => setCustItems((prev) => prev.map((i) => (i._key === key ? { ...i, ...patch } : i)));
+  // MDA of the customer items' products: one without a valid registration won't print on the customer copy
+  const [mdaOf, setMdaOf] = useState<Record<string, { regNo: string | null; valid: boolean }>>({});
+  const custProductKey = [...new Set(custItems.map((i) => i.productId).filter(Boolean))].sort().join(",");
+  useEffect(() => {
+    if (!custProductKey) return;
+    let cancelled = false;
+    getProductsMda(custProductKey.split(",")).then((m) => { if (!cancelled) setMdaOf((prev) => ({ ...prev, ...m })); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [custProductKey]);
+  const noMda = (i: CaseLineItem) => !!i.productId && mdaOf[i.productId]?.valid === false;
+
+  // The doctor's case templates: category + description + usual items
+  const [caseDescription, setCaseDescription] = useState("");
+  // Selling price: itemized (a price per item) or one total for the case — from the template, changeable
+  const [priceMode, setPriceMode] = useState<"itemized" | "total">("itemized");
+  const [casePrice, setCasePrice] = useState("");
+  // Itemized total: sold / used qty × price (lent machines are charged their usage fee)
+  const caseItemsTotal = () => custItems.reduce((sum, i) => sum + (parseFloat(i.qty || "0") || 0) * (parseFloat(priceOf(i)) || 0), 0);
+  const caseFeesTotal = () => fieldItems.filter((i) => !custItems.some((c) => c.productId && c.productId === i.productId)).reduce((sum, i) => sum
+    + Object.entries(i.unitLoan ?? {}).filter(([id, l]) => (i.selectedUnitIds ?? []).includes(id) && l.charge).reduce((a, [, l]) => a + (parseFloat(l.fee) || 0), 0)
+    + ((parseFloat(i.rentalQty || "0") || 0) > 0 && i.loan?.charge ? parseFloat(i.loan.fee) || 0 : 0), 0);
+  const [templates, setTemplates] = useState<CaseTemplateRow[]>([]);
+  const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
+  const [tplSaving, setTplSaving] = useState<null | { name: string; overwrite: boolean }>(null);
+  const [tplBusy, setTplBusy] = useState(false);
+
+  // The doctor's default template fills the case in as soon as they're picked;
+  // if the specialist's stock isn't loaded yet, it's applied once it is
+  const pendingTemplate = useRef<CaseTemplateRow | null>(recordFor ? recordTemplateOf(recordFor) : null);
+  const appliedTemplate = useRef<CaseTemplateRow | null>(null);
+  // A doctor's templates can be per hospital: the hospital this DO is for
+  // (customer organisation) decides which are offered and which default fills in
+  function loadTemplates(customerId: string | null, hospitalId?: string | null, hospitalCount = 1) {
+    setTemplates([]); setAppliedTemplateId(null); pendingTemplate.current = null; appliedTemplate.current = null;
+    if (!customerId) return;
+    getCaseTemplatesForCustomer(customerId).then((list) => {
+      setTemplates(list);
+      // several hospitals and none chosen yet: wait until one is
+      if (!hospitalId && hospitalCount > 1 && list.some((t) => t.customerOrgId)) return;
+      applyHospitalDefault(list, hospitalId ?? null);
+    }).catch(() => setTemplates([]));
+  }
+  function applyHospitalDefault(list: CaseTemplateRow[], hospitalId: string | null) {
+    const usable = list.filter((t) => !t.customerOrgId || t.customerOrgId === hospitalId);
+    const def = usable.find((t) => t.isDefault && t.customerOrgId && t.customerOrgId === hospitalId)
+      ?? usable.find((t) => t.isDefault && !t.customerOrgId)
+      ?? (usable.length === 1 ? usable[0] : null);
+    if (!def) return;
+    if (repId && !loadingStock && fieldPool.length) applyTemplate(def, fieldPool, true);
+    else {
+      pendingTemplate.current = def; setAppliedTemplateId(def.id); setCategoryIds(matchCategories(def)); setCaseDescription(def.description ?? "");
+      // the customer copy doesn't need the specialist's stock — fill it now
+      applyTemplate(def, fieldPool, true);
+    }
+  }
+  // membership (doctor at a hospital) → the hospital's id
+  const hospitalOf = (cust: Customer | null, membershipId: string | undefined) =>
+    ((cust as unknown as CustomerSearchRow | null)?.memberships ?? []).find((m) => m.id === membershipId)?.customerOrganizationId ?? null;
+  const hospitalsOf = (cust: Customer | null) => ((cust as unknown as CustomerSearchRow | null)?.memberships ?? []);
+  function clearCustomer() {
+    setSelectedCustomer(null); setCustCompanyId(undefined); setDeliveryAddress(""); loadTemplates(null);
+  }
+  const onPickHospital = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const id = e.currentTarget.dataset.membership;
+    if (id) pickHospital(id);
+  };
+  // switching hospital: its address, and its template default
+  function pickHospital(membershipId: string) {
+    setCustCompanyId(membershipId); setDeliveryAddress(custAddress(selectedCustomer, membershipId));
+    if (membershipId !== custCompanyId) applyHospitalDefault(templates, hospitalOf(selectedCustomer, membershipId));
+  }
+  // the hospital this DO is for: the chosen membership's, or the doctor's only one
+  const currentHospitalId = custCompanyId ? hospitalOf(selectedCustomer, custCompanyId)
+    : hospitalsOf(selectedCustomer).length === 1 ? hospitalsOf(selectedCustomer)[0].customerOrganizationId : null;
+
+  const matchCategories = (t: CaseTemplateRow) =>
+    // matched by name: each company has its own categories
+    categories.filter((c) => t.categoryNames.some((n) => n.toLowerCase() === c.name.toLowerCase())).map((c) => c.id);
+
+  function applyTemplate(t: CaseTemplateRow, pool: CaseLineItem[] = fieldPool, auto = false) {
+    appliedTemplate.current = t;
+    if (!isRecord) {
+      setAppliedTemplateId(t.id);
+      setCategoryIds(matchCategories(t));
+      setCaseDescription(t.description ?? "");
+      setPriceMode(t.priceMode === "total" ? "total" : "itemized");
+      setCasePrice(t.priceMode === "total" && t.totalPrice ? String(Number(t.totalPrice)) : "");
+      // the customer copy: the template's items, as they are
+      setCustItems(t.items.length ? t.items.map((it) => ({
+        ...newCaseLine(), productId: it.productId ?? undefined, productCode: it.productCode ?? "", description: it.description ?? "",
+        qty: it.qty, uom: it.uom ?? "",
+        // its own price; a machine lent on the case is charged its usage fee (e.g. rental)
+        unitPrice: it.unitPrice !== null && it.unitPrice !== undefined && it.unitPrice !== "" ? String(Number(it.unitPrice))
+          : it.machineUse === "ASSET" && it.usageFee ? String(Number(it.usageFee)) : undefined,
+      })) : [newCaseLine()]);
+    }
+    const picked: CaseLineItem[] = [];
+    const notHeld: CaseLineItem[] = [];
+    const short: string[] = []; // machines the specialist doesn't hold enough of, of the kind asked for
+    for (const it of t.items) {
+      const held = pool.find((p) => (it.productId && p.productId === it.productId) || (it.productCode && p.productCode === it.productCode));
+      const unitPrice = it.unitPrice !== null && it.unitPrice !== undefined && it.unitPrice !== "" ? String(Number(it.unitPrice)) : undefined;
+      const cust: CustomerView | undefined = it.custShow ? {
+        custShow: it.custShow as CustomerView["custShow"], custProductId: it.custProductId, custCode: it.custCode, custDescription: it.custDescription,
+        custQty: it.custQty, custUom: it.custUom, custReason: it.custReason,
+      } : undefined;
+      // the template's choices for a company asset going out
+      const tplLoan = (): MachineLoan => ({
+        purpose: (it.loanPurpose as MachineLoan["purpose"]) ?? "RENTAL", mode: it.loanReturnMode === "stays" ? "stays" : "same_day",
+        charge: parseFloat(it.usageFee ?? "") > 0, fee: parseFloat(it.usageFee ?? "") > 0 ? String(it.usageFee) : "",
+      });
+      if (held) {
+        if (held.units && held.units.length > 0) {
+          // Pick this many units of the kind the template asks for (none asked: choose on the DO)
+          const want = Math.max(1, Math.round(parseFloat(it.qty) || 1));
+          const fits = it.machineUse === "ASSET" ? held.units.filter((u) => isLendable(u.intendedUse))
+            : it.machineUse === "SALE" ? held.units.filter((u) => !isLendable(u.intendedUse)) : [];
+          const chosen = fits.slice(0, want).map((u) => u.id);
+          if (it.machineUse && chosen.length < want) short.push(`${held.productCode}: ${chosen.length} of ${want} ${it.machineUse === "ASSET" ? "company-asset" : "for-sale"} unit${want > 1 ? "s" : ""} held`);
+          const unitLoan = Object.fromEntries(chosen.filter((id) => isLendable(held.units!.find((u) => u.id === id)?.intendedUse)).map((id) => [id, tplLoan()]));
+          picked.push({ ...held, qty: "0", rentalQty: "0", selectedUnitIds: chosen, unitLoan, cust, unitPrice });
+        } else {
+          picked.push(held.isRental ? { ...held, qty: "0", rentalQty: it.qty, loan: it.machineUse === "ASSET" ? tplLoan() : defaultLoan(), cust, unitPrice } : { ...held, qty: it.qty, rentalQty: "0", cust, unitPrice });
+        }
+      } else {
+        notHeld.push({ ...newCaseLine(), productId: it.productId ?? undefined, productCode: it.productCode ?? "", description: it.description ?? "", qty: it.qty, uom: it.uom ?? "", cust, unitPrice });
+      }
+    }
+    if (short.length) toast.warning(`Not enough machines of the kind in the template — ${short.join("; ")}. Pick them on the DO.`, { duration: 9000 });
+    setFieldItems(picked);
+    setExtraItems(notHeld.length ? notHeld : [newCaseLine()]);
+    const label = isRecord ? "Filled in from the customer items" : auto ? `Filled in from ${t.doctorName}'s default "${t.name}"` : `Applied "${t.name}"`;
+    if (!isRecord && !recordNow) { toast.success(label); return; }
+    if (notHeld.length) toast.info(`${label} — ${notHeld.map((n) => n.productCode || n.description).join(", ")} not in ${selectedRep?.name ?? "the specialist"}'s holding, added under Additional items`);
+    else toast.success(`${label}${picked.some((p) => p.units?.length && !p.selectedUnitIds?.length) ? " — pick the serial number(s) for machines" : ""}`);
+  }
+
+  async function saveTemplate() {
+    if (!selectedCustomer || !tplSaving) return;
+    // Machines: the kind of unit picked (when all picked are the same kind) and how a company asset went out
+    const machineOf = (i: CaseLineItem) => {
+      const sel = (i.selectedUnitIds ?? []).map((id) => i.units?.find((u) => u.id === id)).filter(Boolean) as NonNullable<CaseLineItem["units"]>[number][];
+      const kinds = new Set(sel.map((u) => (isLendable(u.intendedUse) ? "ASSET" : "SALE")));
+      const machineUse = kinds.size === 1 ? ([...kinds][0] as "ASSET" | "SALE") : null;
+      const l = machineUse === "ASSET" ? i.unitLoan?.[sel[0].id] : (parseFloat(i.rentalQty || "0") || 0) > 0 ? i.loan : undefined;
+      return {
+        machineUse: machineUse ?? (l ? "ASSET" as const : null),
+        loanPurpose: l?.purpose ?? null, loanReturnMode: l?.mode ?? null, usageFee: l?.charge && parseFloat(l.fee) > 0 ? l.fee : null,
+      };
+    };
+    // the customer items, with the machine choices of the matching actual picks
+    const items = custItems.filter((i) => i.description || i.productCode).map((i) => {
+      const used = fieldItems.find((f) => f.productId && f.productId === i.productId);
+      return { productId: i.productId, productCode: i.productCode, description: i.description, uom: i.uom, qty: i.qty || "1", unitPrice: priceOf(i) || null, ...(used ? machineOf(used) : {}) };
+    });
+    setTplBusy(true);
+    try {
+      const res = await saveCaseTemplate({
+        id: tplSaving.overwrite && appliedTemplateId ? appliedTemplateId : undefined,
+        customerId: selectedCustomer.id, customerOrgId: currentHospitalId, name: tplSaving.name, categoryIds, description: caseDescription, items,
+        priceMode, totalPrice: priceMode === "total" ? casePrice : null,
+      });
+      if (!res.ok) { toast.error(res.title); return; }
+      toast.success(`Template "${tplSaving.name}" saved`);
+      setTplSaving(null);
+      setAppliedTemplateId(res.id);
+      setTemplates(await getCaseTemplatesForCustomer(selectedCustomer.id));
+    } finally { setTplBusy(false); }
+  }
 
   // Other
   const [customerPoNo, setCustomerPoNo] = useState("");
@@ -1179,9 +1445,27 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
   );
   const [saving, setSaving] = useState(false);
 
+  // Field stock picker under the user's item groups. A group named like the
+  // chosen case type (e.g. "milh" for a MILH case) comes first and open; the
+  // other groups start folded, so the eye goes to what this case usually uses.
+  const [itemGroups, setItemGroups] = useState<ItemGroupRow[]>([]);
+  const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
     getFieldReps().then((r) => { setReps(r); setLoadingReps(false); }).catch(() => setLoadingReps(false));
+    getItemGroups().then(setItemGroups).catch(() => setItemGroups([]));
   }, []);
+  const caseNames = categories.filter((c) => categoryIds.includes(c.id)).map((c) => c.name.trim().toLowerCase());
+  const caseKey = caseNames.join(",");
+  // Each item once: under the case-type group when it's in one, else its first group
+  const matchIds = itemGroups.filter((g) => caseNames.includes(g.name.trim().toLowerCase())).map((g) => g.id);
+  const poolSections = groupSections(fieldPool, (i) => i.itemGroupIds, itemGroups, { prefer: matchIds })
+    .map((x) => ({ ...x, match: matchIds.includes(x.key) }))
+    // matching the case type first, then the users' order
+    .sort((a, b) => Number(b.match) - Number(a.match));
+  const anyMatch = poolSections.some((x) => x.match);
+  const isGroupOpen = (sec: { key: string; match: boolean }) => groupOpen[`${caseKey}|${sec.key}`] ?? (!anyMatch || sec.match);
+  const toggleGroup = (sec: { key: string; match: boolean }) => setGroupOpen((o) => ({ ...o, [`${caseKey}|${sec.key}`]: !isGroupOpen(sec) }));
 
   const repId = appSpecs.find((s) => !s.isExt)?.id ?? "";
 
@@ -1189,7 +1473,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
     if (!repId) { setFieldPool([]); setFieldItems([]); return; }
     setLoadingStock(true);
     getRepFieldStock(repId).then((stock) => {
-      setFieldPool(stock.map((s) => ({
+      const pool: CaseLineItem[] = stock.map((s) => ({
         _key: uid(),
         productId: s.productId,
         productCode: s.productCode,
@@ -1202,9 +1486,20 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
         isRental: s.isRental,
         units: s.units,
         selectedUnitIds: [],
-      })));
+        consigned: s.consignedBreakdown?.map((c) => ({ sourceOrgName: c.sourceOrgName, qty: c.qty })),
+        itemGroupIds: s.itemGroupIds ?? [],
+        sellingPrice: s.sellingPrice ?? null,
+      }));
+      setFieldPool(pool);
       setFieldItems([]);
+      // A doctor's default template picked before the specialist: fill the items now
+      // (or the specialist changed after a template was applied: re-fill from the new holding)
+      const pending = pendingTemplate.current ?? appliedTemplate.current;
+      // (waits for a specialist who actually holds stock — an empty holding would push every item to "Additional items")
+      if (pending && pool.length) { pendingTemplate.current = null; applyTemplate(pending, pool, true); }
+      else if (pending) pendingTemplate.current = pending;
     }).catch(() => { setFieldPool([]); setFieldItems([]); }).finally(() => setLoadingStock(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repId]);
 
   function toggleFieldItem(poolItem: CaseLineItem) {
@@ -1219,7 +1514,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
           ? { ...poolItem, qty: "0", rentalQty: "0", selectedUnitIds: [] }
           // Rental-capable (bulk): defaults to fully on loan (matches prior
           // behavior); the user can move some qty into "Sell" afterwards.
-          : poolItem.isRental ? { ...poolItem, qty: "0", rentalQty: "1" } : { ...poolItem, qty: "1", rentalQty: "0" },
+          : poolItem.isRental ? { ...poolItem, qty: "0", rentalQty: "1", loan: defaultLoan() } : { ...poolItem, qty: "1", rentalQty: "0" },
       ]);
     }
   }
@@ -1229,7 +1524,9 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
       if (i._key !== itemKey) return i;
       const selected = i.selectedUnitIds ?? [];
       const nextSelected = selected.includes(unitId) ? selected.filter((id) => id !== unitId) : [...selected, unitId];
-      return { ...i, selectedUnitIds: nextSelected };
+      const unitLoan = { ...(i.unitLoan ?? {}) };
+      if (!unitLoan[unitId]) unitLoan[unitId] = defaultLoan();
+      return { ...i, selectedUnitIds: nextSelected, unitLoan };
     }));
   }
 
@@ -1246,18 +1543,33 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
 
   async function handleSave() {
     if (appSpecs.length === 0) { toast.error("Select the application specialist"); return; }
-    if (selectedCustomer && ((selectedCustomer as unknown as CustomerSearchRow).companies?.length ?? 0) > 1 && !custCompanyId) {
+    if (!isRecord && selectedCustomer && ((selectedCustomer as unknown as CustomerSearchRow).companies?.length ?? 0) > 1 && !custCompanyId) {
       toast.error("Select which organisation this DO is for"); return;
     }
-    const usedFieldItems = fieldItems.filter((i) =>
+    const customerItems = custItems.filter((i) => i.description || i.productCode).map((i) => ({
+      productId: i.productId ?? null, productCode: i.productCode || null, description: i.description || null, qty: i.qty || "1", uom: i.uom || null,
+      unitPrice: priceMode === "itemized" ? priceOf(i) || null : null,
+    }));
+    if (!isRecord && customerItems.length === 0) { toast.error("Add the items for the customer copy (or pick the doctor's template)"); return; }
+    if (!isRecord && priceMode === "itemized" && custItems.some(noMda)) { toast.error(pricedWithoutMdaMessage(custItems.filter(noMda).map((i) => i.productCode)), { duration: 12000 }); return; }
+    const usedFieldItems = (showActual ? fieldItems : []).filter((i) =>
       i.units && i.units.length > 0
         ? (i.selectedUnitIds ?? []).length > 0
         : (parseFloat(i.qty || "0") || 0) + (parseFloat(i.rentalQty || "0") || 0) > 0
     );
-    const validExtras = extraItems.filter((i) => i.description || i.productCode);
-    if (usedFieldItems.length === 0 && validExtras.length === 0) {
-      toast.error("Add at least one item"); return;
+    const validExtras = showActual ? extraItems.filter((i) => i.description || i.productCode) : [];
+    if (showActual && usedFieldItems.length === 0 && validExtras.length === 0) {
+      toast.error("Select at least one item actually used"); return;
     }
+
+    // A machine charged a usage fee needs the amount
+    const loans = usedFieldItems.flatMap((i) => i.units && i.units.length > 0
+      ? (i.selectedUnitIds ?? []).filter((u) => isLendable(i.units!.find((x) => x.id === u)?.intendedUse)).map((u) => ({ code: i.productCode, l: i.unitLoan?.[u] }))
+      : (parseFloat(i.rentalQty || "0") || 0) > 0 ? [{ code: i.productCode, l: i.loan }] : []);
+    const noFee = loans.find((x) => x.l?.charge && !(parseFloat(x.l.fee) > 0));
+    if (noFee) { toast.error(`Enter the usage fee for ${noFee.code}, or untick "Charge usage fee"`); return; }
+    if (priceMode === "total" && !(parseFloat(casePrice) >= 0)) { toast.error("Enter the total price for the case, or choose itemized pricing"); return; }
+    const loanFields = (l?: MachineLoan) => ({ loanPurpose: l?.purpose ?? "RENTAL", loanReturnMode: l?.mode ?? "same_day", usageFee: l?.charge ? l.fee : undefined });
 
     // A rental-capable item can be split across one case: part sold/consumed
     // and part loaned out. Each portion becomes its own DO line so the
@@ -1270,17 +1582,18 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
       if (i.units && i.units.length > 0) {
         for (const unitId of i.selectedUnitIds ?? []) {
           const unit = i.units.find((u) => u.id === unitId);
-          fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: "1", uom: i.uom, loanOut: unit?.intendedUse === "RENTAL", unitId });
+          const isLoan = isLendable(unit?.intendedUse);
+          fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: "1", uom: i.uom, loanOut: isLoan, unitId, ...(isLoan ? loanFields(i.unitLoan?.[unitId]) : {}), ...(i.cust ?? {}), ...(isLoan ? {} : { unitPrice: priceOf(i) }) });
         }
         continue;
       }
       const sellQty = parseFloat(i.qty || "0") || 0;
       const rentalQty = parseFloat(i.rentalQty || "0") || 0;
       if (sellQty > 0) {
-        fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: String(sellQty), uom: i.uom, loanOut: false });
+        fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: String(sellQty), uom: i.uom, loanOut: false, ...(i.cust ?? {}), unitPrice: priceOf(i) });
       }
       if (rentalQty > 0) {
-        fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: String(rentalQty), uom: i.uom, loanOut: true });
+        fieldOrderItems.push({ productId: i.productId, productCode: i.productCode, description: i.description, qty: String(rentalQty), uom: i.uom, loanOut: true, ...loanFields(i.loan), ...(i.cust ?? {}) });
       }
     }
 
@@ -1289,9 +1602,20 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
       ...validExtras.map((i, idx) => ({
         rowNo: fieldOrderItems.length + idx + 1, productId: i.productId, productCode: i.productCode,
         description: i.description, qty: i.qty || "1", uom: i.uom,
-        loanOut: i.loanOut,
+        loanOut: i.loanOut, ...(i.cust ?? {}), unitPrice: priceOf(i),
       })),
     ];
+
+    if (isRecord) {
+      setSaving(true);
+      try {
+        const res = await recordCaseActuals(recordFor!.doId, allItems);
+        if (!res.ok) { toast.error(res.title, { duration: 10000 }); return; }
+        toast.success("Actual items recorded — stock deducted; the internal copy is ready");
+        router.push(`/dashboard/fulfillment/delivery/${recordFor!.doId}`);
+      } finally { setSaving(false); }
+      return;
+    }
 
     setSaving(true);
     try {
@@ -1306,15 +1630,19 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
         notes: notes || undefined,
         categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
         items: allItems,
+        customerItems,
         isCaseDo: true,
+        priceMode, casePrice: priceMode === "total" ? casePrice : undefined,
         salesPersonId: primarySp?.isExt ? undefined : primarySp?.id,
         salesPersonName: primarySp?.name,
         applicationSpecialistId: primaryAs?.isExt ? undefined : primaryAs?.id,
         applicationSpecialistName: primaryAs?.name,
         caseDate: caseDate ? new Date(caseDate) : undefined,
         mrnNo: mrnNo || undefined,
+        caseDescription: caseDescription.trim() || undefined,
+        caseTemplateId: appliedTemplateId ?? undefined,
       });
-      toast.success("Case DO created");
+      toast.success(recordNow ? "Case DO created — actual items recorded" : "Case DO created — record the actual items on the DO page after the case");
       router.push("/dashboard/fulfillment/delivery");
     } catch (e: any) {
       toast.error(e.message);
@@ -1326,8 +1654,10 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
   return (
     <div className="p-4 sm:p-6 space-y-4">
       <PageHeader
-        title="New Case DO"
-        description="Case-based delivery order — deducts from rep's field stock automatically."
+        title={isRecord ? `Record actual items — ${recordFor!.doNo}` : "New Case DO"}
+        description={isRecord
+          ? "After the case: tick what was actually used from the specialist's field stock. Stock is deducted when you record."
+          : "Customer items (from the doctor's template) go on the customer copy and the invoice; the items actually used are recorded after the case."}
         action={
           <Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
@@ -1335,6 +1665,15 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
         }
       />
 
+      {isRecord && (
+        <section className="border border-border rounded-xl p-4 text-sm grid gap-1 sm:grid-cols-2">
+          <div><span className="text-muted-foreground">Doctor:</span> {recordFor!.customerName ?? "—"}</div>
+          <div><span className="text-muted-foreground">Case date:</span> {recordFor!.caseDate ? new Date(recordFor!.caseDate).toLocaleDateString("en-GB") : "—"}</div>
+          <div><span className="text-muted-foreground">Specialist:</span> {recordFor!.specialistName}</div>
+          <div className="sm:col-span-2"><span className="text-muted-foreground">Customer copy items:</span> {recordFor!.items.map((i) => `${i.productCode || i.description} × ${Number(i.qty)}`).join(", ") || "—"}</div>
+        </section>
+      )}
+      {!isRecord && (<>
       {/* Case details */}
       <section className="border border-border rounded-xl p-4">
         <h2 className="text-sm font-semibold mb-3">Case details</h2>
@@ -1605,7 +1944,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                 </div>
                 <Button
                   type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0"
-                  onClick={() => { setSelectedCustomer(null); setCustCompanyId(undefined); setDeliveryAddress(""); }}
+                  onClick={clearCustomer}
                 >
                   Change
                 </Button>
@@ -1626,7 +1965,8 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                         <button
                           key={c.id}
                           type="button"
-                          onClick={() => { setCustCompanyId(c.id); setDeliveryAddress(custAddress(selectedCustomer, c.id)); }}
+                          data-membership={c.id}
+                          onClick={onPickHospital}
                           className={cn(
                             "text-left rounded-md border px-2.5 py-2 text-xs transition-colors",
                             isSel ? "border-primary bg-background ring-1 ring-primary/30" : "border-border bg-background/60 hover:bg-background",
@@ -1652,11 +1992,60 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
             onPick={(c, org) => {
               setSelectedCustomer(c as unknown as Customer);
               setCustCompanyId(org?.id);
+              {
+                const cust = c as unknown as Customer | null;
+                const hs = hospitalsOf(cust);
+                loadTemplates(cust?.id ?? null, org ? hospitalOf(cust, org.id) : hs.length === 1 ? hs[0].customerOrganizationId : null, hs.length);
+              }
               // Fill the address only once the organisation is known
               setDeliveryAddress(org ? custAddress(c as unknown as Customer, org.id) : "");
             }}
           />
         )}
+        {selectedCustomer && (
+          <div className="mt-3 rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-medium">Case templates for {[(selectedCustomer as any).title, (selectedCustomer as any).name].filter(Boolean).join(" ")}</span>
+              {!tplSaving && (
+                <button type="button" className="text-[11px] underline text-muted-foreground hover:text-foreground"
+                  onClick={() => setTplSaving({ name: templates.find((t) => t.id === appliedTemplateId)?.name ?? "", overwrite: !!appliedTemplateId })}>
+                  Save this case as a template
+                </button>
+              )}
+            </div>
+            {templates.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">No templates yet — fill in the case below and save it as a template for next time.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {templates.filter((t) => !t.customerOrgId || t.customerOrgId === currentHospitalId).map((t) => (
+                  <button key={t.id} type="button" onClick={() => applyTemplate(t)} title={t.description ?? undefined}
+                    className={cn("text-xs rounded-md border px-2.5 py-1 transition-colors",
+                      appliedTemplateId === t.id ? "border-primary bg-primary/10 font-medium" : "border-border bg-background hover:bg-muted")}>
+                    {t.name}<span className="ml-1.5 text-muted-foreground">{t.items.length} item{t.items.length === 1 ? "" : "s"}{t.hospitalName ? ` · ${t.hospitalName}` : ""}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {tplSaving && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Input value={tplSaving.name} onChange={(e) => setTplSaving({ ...tplSaving, name: e.target.value })} placeholder='Template name, e.g. "MILH standard"' className="h-8 text-xs w-56" autoFocus />
+                {appliedTemplateId && (
+                  <label className="flex items-center gap-1.5 text-[11px]">
+                    <input type="checkbox" checked={tplSaving.overwrite} onChange={(e) => setTplSaving({ ...tplSaving, overwrite: e.target.checked })} />
+                    update &ldquo;{templates.find((t) => t.id === appliedTemplateId)?.name}&rdquo;
+                  </label>
+                )}
+                <Button type="button" size="sm" className="h-8 text-xs" disabled={tplBusy} onClick={saveTemplate}>{tplBusy ? "Saving…" : "Save template"}</Button>
+                <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setTplSaving(null)}>Cancel</Button>
+                <span className="w-full text-[10px] text-muted-foreground">Saves the categories, case description and the items currently selected below.</span>
+              </div>
+            )}
+          </div>
+        )}
+        <div className="mt-3 space-y-1.5">
+          <Label className="text-xs">Case description <span className="text-muted-foreground font-normal">(printed on the DO)</span></Label>
+          <Textarea value={caseDescription} onChange={(e) => setCaseDescription(e.target.value)} rows={2} placeholder="e.g. Laser haemorrhoidoplasty (MILH), grade III" className="text-sm" />
+        </div>
         <div className="mt-3 space-y-1.5">
           <Label className="text-xs">Customer PO no. (optional — can fill later)</Label>
           <Input value={customerPoNo} onChange={(e) => setCustomerPoNo(e.target.value)}
@@ -1683,11 +2072,95 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
         </div>
       </section>
 
-      {/* Field stock items */}
-      {repId && (
+
+      {/* Customer copy items */}
+      <section className="border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold">Customer copy items</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">What the hospital sees on the customer copy (with MDA certificates) and is billed for — from the doctor&apos;s template; change as needed. A line without a product code (e.g. a package name) prints as written.</p>
+          </div>
+          <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => setCustItems((p) => [...p, newCaseLine()])}>
+            <PlusIcon className="w-3 h-3" /> Add row
+          </Button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs min-w-[520px]">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground">
+                <th className="text-left pb-2 pr-2 w-32">Code</th>
+                <th className="text-left pb-2 pr-2">Description</th>
+                <th className="text-right pb-2 pr-2 w-16">Qty</th>
+                <th className="text-left pb-2 pr-2 w-16">UOM</th>
+                {priceMode === "itemized" && <th className="text-right pb-2 pr-2 w-24">Price (RM)</th>}
+                <th className="w-6" />
+              </tr>
+            </thead>
+            <tbody>
+              {custItems.map((item) => (
+                <tr key={item._key} className={cn("border-b border-border/50 last:border-0", noMda(item) && "bg-red-50 dark:bg-red-950/30 outline outline-1 outline-red-400")}
+                  title={noMda(item) ? "No valid MDA registration — won't print on the customer copy" : undefined}>
+                  <td className="py-1.5 pr-2"><CaseExtraProductCell item={item} onUpdate={updateCustItem} /></td>
+                  <td className="py-1.5 pr-2"><Input value={item.description} onChange={(e) => updateCustItem(item._key, { description: e.target.value })} className="h-7 text-xs" placeholder="e.g. MILH procedure kit" /></td>
+                  <td className="py-1.5 pr-2"><Input type="number" min="0" step="any" value={item.qty} onChange={(e) => updateCustItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" /></td>
+                  <td className="py-1.5 pr-2"><Input value={item.uom} onChange={(e) => updateCustItem(item._key, { uom: e.target.value })} className="h-7 text-xs" placeholder="pc / set" /></td>
+                  {priceMode === "itemized" && (
+                    <td className="py-1.5 pr-2"><Input type="number" min="0" step="0.01" value={priceOf(item)} onChange={(e) => updateCustItem(item._key, { unitPrice: e.target.value })} className="h-7 text-xs text-right" placeholder="0.00" /></td>
+                  )}
+                  <td className="py-1.5">
+                    <button onClick={() => setCustItems((p) => p.filter((i) => i._key !== item._key))} disabled={custItems.length === 1}
+                      className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30"><TrashIcon className="w-3.5 h-3.5" /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {custItems.some(noMda) && (
+          <p className="mt-2 text-xs font-medium text-red-700 dark:text-red-400">
+            {custItems.filter(noMda).map((i) => i.productCode).join(", ")}: no valid MDA registration — won&apos;t print on the customer copy.
+          </p>
+        )}
+      </section>
+
+      {/* Selling price */}
+      <section className="border border-border rounded-xl p-4 flex flex-col gap-2">
+        <div>
+          <h2 className="text-sm font-semibold">Selling price</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">For the customer items, from the doctor&apos;s template; the invoice made from this DO starts with it.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          {([["itemized", "Itemized — a price per item"], ["total", "Total — one price for the case"]] as const).map(([m, label]) => (
+            <button key={m} type="button" onClick={() => setPriceMode(m)}
+              className={cn("rounded-full border px-2.5 py-1", priceMode === m ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background hover:bg-muted/40")}>{label}</button>
+          ))}
+        </div>
+        {priceMode === "itemized" && <ItemizedMdaWarning codes={custItems.filter(noMda).map((i) => i.productCode)} />}
+        {priceMode === "total" ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span>Case price RM</span>
+            <Input type="number" min="0" step="0.01" value={casePrice} onChange={(e) => setCasePrice(e.target.value)} placeholder="0.00" className="h-9 w-36 text-right" />
+            <span className="text-xs text-muted-foreground">covers all items; machine usage fees are charged on top</span>
+          </div>
+        ) : (
+          <p className="text-sm">Items total: <b className="tabular-nums">RM {caseItemsTotal().toFixed(2)}</b>
+            {showActual && caseFeesTotal() > 0 && <span className="text-xs text-muted-foreground"> + usage fees of machines not on the customer copy RM {caseFeesTotal().toFixed(2)}</span>}</p>
+        )}
+      </section>
+
+      {/* Actual items: after the case (DO page), or now */}
+      <label className="flex items-start gap-2 rounded-xl border border-dashed border-border p-4 text-sm cursor-pointer">
+        <input type="checkbox" checked={recordNow} onChange={(e) => setRecordNow(e.target.checked)} className="mt-0.5" />
+        <span><span className="font-medium">The case is done — record the items actually used now</span>
+          <span className="block text-xs text-muted-foreground">Otherwise record them on the DO page after the case. Stock is deducted only when the actual items are recorded.</span></span>
+      </label>
+      </>)}
+
+      {/* Field stock items (actual) */}
+      {showActual && repId && (
         <section className="border border-teal-200 dark:border-teal-800/50 rounded-xl p-4 bg-teal-50/40 dark:bg-teal-900/10">
           <div className="mb-3">
-            <h2 className="text-sm font-semibold">Items from field stock</h2>
+            <h2 className="text-sm font-semibold">Items actually used — from field stock</h2>
             <p className="text-xs text-muted-foreground mt-0.5">Select items used from {selectedRep?.name}'s holding.</p>
           </div>
 
@@ -1698,7 +2171,23 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
             <p className="text-sm text-muted-foreground py-2">No field stock found for this rep.</p>
           ) : (
             <div className="flex flex-col gap-0.5 rounded-md border border-teal-200 dark:border-teal-800/50 overflow-hidden mb-4">
-              {fieldPool.map((item) => {
+              {poolSections.map((sec) => {
+                const open = isGroupOpen(sec);
+                const picked = sec.items.filter((it) => fieldItems.some((f) => f.productId === it.productId)).length;
+                return (
+                <Fragment key={sec.key}>
+                {sec.name && (
+                  <button type="button" onClick={() => toggleGroup(sec)}
+                    className={cn("flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-left w-full",
+                      sec.match ? "bg-teal-100/80 dark:bg-teal-900/40" : "bg-muted/40 hover:bg-muted/60")}>
+                    {open ? <ChevronDownIcon className="w-3.5 h-3.5" /> : <ChevronRightIcon className="w-3.5 h-3.5" />}
+                    <span className="w-2 h-2 rounded-full" style={{ background: sec.color ?? "var(--muted-foreground)" }} />
+                    {sec.name}
+                    <span className="font-normal text-muted-foreground">{sec.items.length} item{sec.items.length !== 1 ? "s" : ""}{picked ? ` · ${picked} selected` : ""}</span>
+                    {sec.match && <span className="ml-auto text-[10px] font-medium rounded px-1.5 py-0.5 bg-teal-600 text-white">matches case type</span>}
+                  </button>
+                )}
+                {open && sec.items.map((item) => {
                 const selected = fieldItems.some((i) => i.productId === item.productId);
                 return (
                   <button key={item._key} type="button" onClick={() => toggleFieldItem(item)}
@@ -1720,7 +2209,15 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                       )}
                       <span className={cn("tabular-nums", selected ? "text-white/80" : "text-muted-foreground")}>{item.fieldAvailable?.toFixed(0)} {item.uom}</span>
                     </span>
+                    {item.consigned?.length ? (
+                      <span className={cn("w-full pl-6 text-[10px]", selected ? "text-white/80" : "text-violet-700 dark:text-violet-400")}>
+                        incl. {item.consigned.map((c) => `${c.qty} from ${c.sourceOrgName}`).join(", ")} (consigned)
+                      </span>
+                    ) : null}
                   </button>
+                );
+              })}
+                </Fragment>
                 );
               })}
             </div>
@@ -1748,12 +2245,13 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                     {hasUnits ? (
                       <div className="flex flex-col gap-1.5">
                         <Label className="text-[11px]">Pick unit(s) used <span className="text-destructive">*</span></Label>
-                        <p className="text-[11px] text-muted-foreground -mt-1">Sale/Rental is fixed per unit in inventory — just select which ones were used.</p>
+                        <p className="text-[11px] text-muted-foreground -mt-1">Sale/Rental is fixed per unit in inventory — just select which ones were used. Company assets (machines) are lent for the case, not used up — choose why below.</p>
                         <div className="flex flex-col gap-1">
                           {item.units!.map((u) => {
                             const selected = (item.selectedUnitIds ?? []).includes(u.id);
                             return (
-                              <button key={u.id} type="button"
+                              <div key={u.id} className="flex flex-col gap-1">
+                              <button type="button"
                                 onClick={() => toggleUnitSelection(item._key, u.id)}
                                 className={cn("flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md border text-xs transition-colors",
                                   selected ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40")}
@@ -1766,12 +2264,17 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                                   <span className="font-mono">{u.serialNo}</span>
                                 </span>
                                 <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-semibold border",
-                                  u.intendedUse === "RENTAL"
+                                  isLendable(u.intendedUse)
                                     ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700"
                                     : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700")}>
-                                  {u.intendedUse === "RENTAL" ? "Rental" : "Sale"}
+                                  {unitUseLabel(u.intendedUse)}
                                 </span>
                               </button>
+                              {selected && isLendable(u.intendedUse) && (
+                                <MachineLoanOptions value={item.unitLoan?.[u.id] ?? defaultLoan()}
+                                  onChange={(v) => updateFieldItem(item._key, { unitLoan: { ...(item.unitLoan ?? {}), [u.id]: v } })} />
+                              )}
+                              </div>
                             );
                           })}
                         </div>
@@ -1808,6 +2311,9 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
                         className={cn("h-8 text-xs text-right", over ? "border-destructive" : "border-teal-400 dark:border-teal-600")}
                       />
                     )}
+                    {item.isRental && rentalQty > 0 && (
+                      <MachineLoanOptions value={item.loan ?? defaultLoan()} onChange={(v) => updateFieldItem(item._key, { loan: v })} />
+                    )}
                     {over && <p className="text-[11px] text-destructive">{item.isRental ? "Sell + rental qty exceeds available quantity" : "Exceeds available quantity"}</p>}
                     </>
                     )}
@@ -1819,12 +2325,13 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
         </section>
       )}
 
-      {/* Additional items (rental, services) */}
+      {/* Other items actually used (not from field stock) */}
+      {showActual && (
       <section className="border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className="text-sm font-semibold">Additional items</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Machine rental, service fees, or items not in field stock.</p>
+            <h2 className="text-sm font-semibold">Other items used</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Items used that aren&apos;t in the specialist&apos;s field stock.</p>
           </div>
           <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => setExtraItems((p) => [...p, newCaseLine()])}>
             <PlusIcon className="w-3 h-3" /> Add row
@@ -1899,13 +2406,36 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "" 
           </table>
         </div>
       </section>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-3 pb-8">
         <Button onClick={handleSave} disabled={saving} className="w-full sm:w-auto">
-          {saving ? "Creating…" : "Create Case DO"}
+          {isRecord ? (saving ? "Recording…" : "Record actual items") : saving ? "Creating…" : "Create Case DO"}
         </Button>
         <Button variant="outline" onClick={() => router.back()} className="w-full sm:w-auto">Cancel</Button>
       </div>
     </div>
   );
+}
+
+// The DO's customer items as a template for prefilling the actual items, with
+// the doctor's template's machine choices (which kind of unit, loan, fee)
+function recordTemplateOf(r: RecordCaseFor): CaseTemplateRow {
+  const t = r.template;
+  const base = (t ?? { id: "record", name: "customer items", doctorName: r.customerName ?? "", items: [] }) as CaseTemplateRow;
+  return {
+    ...base,
+    // only catalogue products can have been used from stock — a free-text
+    // customer line (e.g. a package name) isn't an item to record
+    items: r.items.filter((ci) => ci.productId || ci.productCode).map((ci, idx) => {
+      const ti = t?.items.find((x) => (x.productId && x.productId === ci.productId) || (x.productCode && x.productCode === ci.productCode));
+      return {
+        ...(ti ?? {}), id: ti?.id ?? `r${idx}`, templateId: base.id, rowNo: idx + 1,
+        productId: ci.productId, productCode: ci.productCode, description: ci.description, qty: ci.qty, uom: ci.uom,
+        unitPrice: null, custShow: null, custProductId: null, custCode: null, custDescription: null, custQty: null, custUom: null, custReason: null,
+        machineUse: ti?.machineUse ?? null, loanPurpose: ti?.loanPurpose ?? null, loanReturnMode: ti?.loanReturnMode ?? null, usageFee: ti?.usageFee ?? null,
+        isMachine: ti?.isMachine ?? false,
+      };
+    }),
+  } as CaseTemplateRow;
 }

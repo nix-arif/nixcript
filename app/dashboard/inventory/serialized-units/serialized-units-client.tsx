@@ -24,12 +24,12 @@ import {
 import { searchProducts } from "@/server/products";
 import { getFieldReps, type OrgMember } from "@/server/field-stock";
 import { getCustomers } from "@/server/customer";
-import { ASSET_UNIT_STATUS_LABELS, INTENDED_USE_LABELS } from "@/lib/inventory/constants";
+import { ASSET_UNIT_STATUS_LABELS, INTENDED_USE_LABELS, isLendable } from "@/lib/inventory/constants";
 import { MOVEMENT_LABELS } from "@/lib/inventory/constants";
 
 const INTENDED_USE_STYLE: Record<string, string> = {
   SALE:   "text-blue-700 border-blue-300 bg-blue-50 dark:text-blue-400 dark:border-blue-700 dark:bg-blue-900/20",
-  RENTAL: "text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:bg-amber-900/20",
+  ASSET:  "text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:bg-amber-900/20",
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -41,13 +41,18 @@ const STATUS_STYLE: Record<string, string> = {
   DISPOSED:  "text-red-700 border-red-300 bg-red-50 dark:text-red-400 dark:border-red-700 dark:bg-red-900/20",
 };
 
-function resolveLocation(u: AssetUnitListRow): string {
+function resolveLocation(u: AssetUnitListRow, names: Record<string, string> = {}): string {
+  // Consigned units: where they are, by name (with the agent's specialist / at a hospital / with a dealer)
+  if (u.currentWarehouseLabel?.startsWith("CS:")) {
+    const where = names[u.currentWarehouseLabel] ?? "Consigned";
+    return u.status === "ON_LOAN" && u.customerName ? `${where} · on loan to ${u.customerName}` : where;
+  }
   if (u.status === "WITH_REP" || u.status === "ON_LOAN") {
     const base = u.holderName ? `With ${u.holderName}` : "With rep";
     return u.status === "ON_LOAN" && u.customerName ? `${base} · on loan to ${u.customerName}` : base;
   }
   if (u.status === "SOLD") return u.customerName ? `Sold to ${u.customerName}` : "Sold";
-  return u.currentWarehouseLabel ?? "Warehouse";
+  return (u.currentWarehouseLabel && names[u.currentWarehouseLabel]) ?? u.currentWarehouseLabel ?? "Warehouse";
 }
 
 function ProductPicker({ onPick }: { onPick: (p: { id: string; productCode: string; description: string | null }) => void }) {
@@ -276,8 +281,11 @@ function HistorySheetContent({ unit }: { unit: AssetUnitListRow }) {
   );
 }
 
-export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUnitListRow[] }) {
+export function SerializedUnitsClient({ initialUnits, locationNames = {} }: { initialUnits: AssetUnitListRow[]; locationNames?: Record<string, string> }) {
   const [units, setUnits] = useState(initialUnits);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialUnits, setSeenInitialUnits] = useState(initialUnits);
+  if (initialUnits !== seenInitialUnits) { setSeenInitialUnits(initialUnits); setUnits(initialUnits); }
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -314,8 +322,8 @@ export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUni
     }
   }
 
-  async function handleToggleIntendedUse(unit: AssetUnitListRow) {
-    const next = unit.intendedUse === "SALE" ? "RENTAL" : "SALE";
+  async function handleChangeIntendedUse(unit: AssetUnitListRow, next: string) {
+    if (next === unit.intendedUse) return;
     setChangingUseId(unit.id);
     try {
       await updateAssetUnitIntendedUse(unit.id, next);
@@ -378,23 +386,23 @@ export function SerializedUnitsClient({ initialUnits }: { initialUnits: AssetUni
                 </TableCell>
                 <TableCell className="font-mono text-xs">{u.serialNo}</TableCell>
                 <TableCell>
-                  <button
-                    type="button"
+                  <select
+                    value={isLendable(u.intendedUse) ? "ASSET" : "SALE"}
                     disabled={isTerminal || changingUseId === u.id}
-                    onClick={() => handleToggleIntendedUse(u)}
-                    title={isTerminal ? "Locked — unit already sold/disposed" : "Click to switch"}
-                    className={cn("px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors",
-                      INTENDED_USE_STYLE[u.intendedUse] ?? "", isTerminal ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:opacity-80")}
+                    onChange={(e) => handleChangeIntendedUse(u, e.target.value)}
+                    title={isTerminal ? "Locked — unit already sold/disposed" : "For sale, or a company asset (lent out for cases — rental / loan / demo chosen each time)"}
+                    className={cn("px-1.5 py-0.5 rounded text-[11px] font-semibold border transition-colors",
+                      INTENDED_USE_STYLE[isLendable(u.intendedUse) ? "ASSET" : "SALE"], isTerminal ? "opacity-60 cursor-not-allowed" : "cursor-pointer")}
                   >
-                    {changingUseId === u.id ? "…" : (INTENDED_USE_LABELS[u.intendedUse] ?? u.intendedUse)}
-                  </button>
+                    {Object.entries(INTENDED_USE_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                  </select>
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={cn("text-[11px]", STATUS_STYLE[u.status])}>
                     {ASSET_UNIT_STATUS_LABELS[u.status] ?? u.status}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-sm">{resolveLocation(u)}</TableCell>
+                <TableCell className="text-sm">{resolveLocation(u, locationNames)}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{new Date(u.updatedAt).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" })}</TableCell>
                 <TableCell className="text-right space-x-2 whitespace-nowrap">
                   <button className="text-xs text-primary hover:underline" onClick={() => setHistoryUnit(u)}>History</button>

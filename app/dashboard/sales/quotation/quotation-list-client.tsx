@@ -204,6 +204,9 @@ export function QuotationListClient({
   });
   const [restored] = useState(() => readSavedFilters(isReturn, batchFilter));
   const [groups, setGroups] = useState(initialGroups);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialGroups, setSeenInitialGroups] = useState(initialGroups);
+  if (initialGroups !== seenInitialGroups) { setSeenInitialGroups(initialGroups); setGroups(initialGroups); }
   const [search, setSearch] = useState(restored?.search ?? "");
   const [dateFrom, setDateFrom] = useState(restored?.dateFrom ?? "");
   const [dateTo, setDateTo] = useState(restored?.dateTo ?? "");

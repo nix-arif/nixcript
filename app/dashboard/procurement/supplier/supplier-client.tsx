@@ -56,6 +56,9 @@ const EMPTY_FORM = {
 
 export function SupplierClient({ initialSuppliers, ownerOrganizations }: Props) {
   const [suppliers, setSuppliers] = useState(initialSuppliers);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialSuppliers, setSeenInitialSuppliers] = useState(initialSuppliers);
+  if (initialSuppliers !== seenInitialSuppliers) { setSeenInitialSuppliers(initialSuppliers); setSuppliers(initialSuppliers); }
   const orgName = (id: string | null) => ownerOrganizations.find((o) => o.id === id)?.name ?? null;
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);

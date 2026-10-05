@@ -57,7 +57,11 @@ export function LoginForm({
     }
 
     setIsRedirecting(true);
-    router.replace("/dashboard");
+    // e.g. a manual opened while signed out — internal paths only
+    const next = new URLSearchParams(window.location.search).get("next");
+    const safe = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+    if (safe?.startsWith("/manuals/")) window.location.replace(safe); // served as a plain page, not an app route
+    else router.replace(safe ?? "/dashboard");
   };
 
   if (isRedirecting) {

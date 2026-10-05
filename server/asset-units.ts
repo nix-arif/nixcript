@@ -5,7 +5,7 @@ import { assetUnit, member, product, stockMovement, user, customer } from "@/db/
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { ASSET_UNIT_STATUS } from "@/lib/inventory/constants";
+import { ASSET_UNIT_STATUS, INTENDED_USE } from "@/lib/inventory/constants";
 import { nanoid } from "nanoid";
 import { eq, and, desc, inArray, isNull, ilike, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -118,6 +118,8 @@ export async function updateAssetUnitIntendedUse(unitId: string, intendedUse: st
   if (unitRow.status === ASSET_UNIT_STATUS.SOLD || unitRow.status === ASSET_UNIT_STATUS.DISPOSED) {
     throw new Error("Can't change the designation of a unit that's already sold or disposed");
   }
+  if (!Object.values(INTENDED_USE).includes(intendedUse as (typeof INTENDED_USE)[keyof typeof INTENDED_USE])) throw new Error("Choose for sale, rental, loan or demo");
+  if (unitRow.status === ASSET_UNIT_STATUS.ON_LOAN) throw new Error("This machine is out on a case — return it first");
   await db.update(assetUnit).set({ intendedUse }).where(eq(assetUnit.id, unitId));
   revalidatePath("/dashboard/inventory/serialized-units");
 }

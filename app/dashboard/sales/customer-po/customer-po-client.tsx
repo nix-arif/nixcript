@@ -48,6 +48,9 @@ function StatusBadge({ status }: { status: string }) {
 export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialPos: CustomerPoListRow[]; canCreateSo?: boolean }) {
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialPos, setSeenInitialPos] = useState(initialPos);
+  if (initialPos !== seenInitialPos) { setSeenInitialPos(initialPos); setPos(initialPos); }
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
 

@@ -534,7 +534,7 @@ export function DashboardClient({ summary, userName }: Props) {
             label="Consignments"
             value={kpi.activeConsignmentCount}
             icon={PackageIcon}
-            href="/dashboard/sales/consignment"
+            href="/dashboard/consignment"
             stripe="bg-indigo-400"
             accent="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400"
           />

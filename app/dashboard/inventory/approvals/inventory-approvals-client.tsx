@@ -30,11 +30,13 @@ function fmtDate(d: Date | string) {
   return new Date(d).toLocaleString("en-MY", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export function InventoryApprovalsClient({ pending, warehouses }: {
+export function InventoryApprovalsClient({ pending, warehouses, locationNames = {} }: {
   pending: MovementWithMeta[];
   warehouses: { label: string; address?: string | null }[];
+  locationNames?: Record<string, string>;
 }) {
   function formatWarehouse(label: string) {
+    if (locationNames[label]) return locationNames[label];
     if (!label.startsWith("Field:")) return label;
     const name = warehouses.find(w => w.label === label)?.address;
     return name ? `Field: ${name.toLowerCase()}` : label;

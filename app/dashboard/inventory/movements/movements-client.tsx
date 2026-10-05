@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -16,8 +17,21 @@ import {
 } from "@/components/ui/table";
 import { ArrowLeftIcon, ArrowRightIcon, ArrowLeftRightIcon, TrendingUpIcon, TrendingDownIcon, PencilIcon, Trash2Icon, PlusIcon } from "lucide-react";
 import type { MovementWithMeta, Warehouse } from "@/server/inventory";
-import { adjustStock, transferStock, searchProducts, editStockMovement, deleteStockMovement, getTransferStockInfo, getWarehouseStock } from "@/server/inventory";
-import { MOVEMENT_LABELS, MOVEMENT_TYPE } from "@/lib/inventory/constants";
+import type { ConsignedInMovement } from "@/server/consign";
+
+// A row of this company's own ledger, or (consignedIn set) a sister company's
+// movement of stock consigned to us — read-only, quantity seen from our side.
+type Movement = MovementWithMeta & { consignedIn?: ConsignedInMovement["consignedIn"] };
+const CONSIGNED_IN = "CONSIGNED_IN"; // type filter value
+const CONSIGNED_IN_LABELS: Record<string, string> = {
+  CONSIGN_SEND: "Consigned in",
+  CONSIGN_USE: "Consigned used",
+  CONSIGN_BACK: "Returned to owner",
+  CONSIGN_ADJUST: "Consigned count adj.",
+  CONSIGN_REVERSE: "Consigned use reversed",
+};
+import { adjustStock, transferStock, searchProducts, editStockMovement, deleteStockMovement, getTransferStockInfo, getWarehouseStock, getProductSerialInfo, getUnitsAt } from "@/server/inventory";
+import { MOVEMENT_LABELS, MOVEMENT_TYPE, INTENDED_USE_LABELS, isLendable, unitUseLabel } from "@/lib/inventory/constants";
 import { getRepFieldStock, type RepStockItem } from "@/server/field-stock";
 import { cn } from "@/lib/utils";
 
@@ -89,11 +103,12 @@ function fmtDate(d: Date | string) {
   return new Date(d).toLocaleString("en-MY", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export function MovementsClient({ movements, warehouses, permissions, isOwner }: { movements: MovementWithMeta[]; warehouses: Warehouse[]; permissions: string[]; isOwner: boolean }) {
+export function MovementsClient({ movements, warehouses, permissions, isOwner, locationNames = {} }: { movements: Movement[]; warehouses: Warehouse[]; permissions: string[]; isOwner: boolean; locationNames?: Record<string, string> }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
   function formatWarehouse(label: string) {
+    if (locationNames[label]) return locationNames[label];
     if (!label.startsWith("Field:")) return label;
     const name = warehouses.find((w) => w.label === label)?.address;
     return name ? `Field: ${name.toLowerCase()}` : label;
@@ -118,6 +133,12 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
   const [adjRef, setAdjRef] = useState("");
   const [adjNotes, setAdjNotes] = useState("");
   const [adjSerialNo, setAdjSerialNo] = useState("");
+  // Machines / serial-numbered items: one row per unit, each with its own use
+  const [adjMachine, setAdjMachine] = useState(false);
+  const [adjUnits, setAdjUnits] = useState<{ serialNo: string; use: string }[]>([]);
+  // Stock out of machines: which serial numbers leave
+  const [outUnits, setOutUnits] = useState<{ id: string; serialNo: string; intendedUse: string }[]>([]);
+  const [outPicked, setOutPicked] = useState<string[]>([]);
   const [adjLotNo, setAdjLotNo] = useState("");
   const [adjExpiry, setAdjExpiry] = useState("");
   const [saving, setSaving] = useState(false);
@@ -197,17 +218,51 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
     setTxSelected(prev => prev.map(p => p.productId === productId ? { ...p, qty } : p));
   }
 
+  const serialIncoming = adjType !== MOVEMENT_TYPE.STOCK_OUT;
+  const unitMode = adjMachine && serialIncoming;
+  const unitQty = Math.max(0, Math.min(200, Math.floor(parseFloat(adjQty) || 0)));
+  // Rows follow the quantity — one per machine; entries already typed are kept
+  const unitRows = Array.from({ length: unitMode ? unitQty : 0 }, (_, i) => adjUnits[i] ?? { serialNo: "", use: adjUnits[i - 1]?.use ?? adjUnits.at(-1)?.use ?? "SALE" });
+  function setUnitRow(i: number, patch: Partial<{ serialNo: string; use: string }>) {
+    setAdjUnits(() => unitRows.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+  }
+  async function pickAdjProduct(id: string, label: string) {
+    setAdjProductId(id); setAdjProductLabel(label);
+    setAdjMachine(false); setAdjUnits([]); setOutUnits([]); setOutPicked([]);
+    if (!id) return;
+    try {
+      const [info, here] = await Promise.all([getProductSerialInfo(id), getUnitsAt(id, adjWarehouse)]);
+      setAdjMachine(info.serial); setOutUnits(here);
+    } catch { /* optional */ }
+  }
+  const pickOut = outUnits.length > 0 && adjType === MOVEMENT_TYPE.STOCK_OUT;
+
   async function handleAdjust(e: React.FormEvent) {
     e.preventDefault();
     if (!adjProductId) { toast.error("Select a product"); return; }
-    const qty = parseFloat(adjQty);
+    const qty = pickOut && outPicked.length ? outPicked.length : parseFloat(adjQty);
     if (isNaN(qty) || qty <= 0) { toast.error("Enter a valid quantity"); return; }
+    if (unitMode) {
+      if (!Number.isInteger(qty)) { toast.error("Machines are counted in whole units"); return; }
+      const missing = unitRows.findIndex((u) => !u.serialNo.trim());
+      if (missing >= 0) { toast.error(`Enter the serial number for unit ${missing + 1} — one per machine`); return; }
+      const seen = new Set<string>();
+      const dup = unitRows.find((u) => { const k = u.serialNo.trim().toLowerCase(); if (seen.has(k)) return true; seen.add(k); return false; });
+      if (dup) { toast.error(`Serial number ${dup.serialNo.trim()} is entered twice`); return; }
+    }
     setSaving(true);
     try {
-      await adjustStock({ productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined, referenceNo: adjRef || undefined, notes: adjNotes || undefined, serialNo: adjSerialNo || undefined, lotNo: adjLotNo || undefined, expiryDate: adjExpiry ? new Date(adjExpiry) : undefined });
-      toast.success("Movement recorded");
+      await adjustStock({
+        productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined,
+        referenceNo: adjRef || undefined, notes: adjNotes || undefined,
+        ...(unitMode ? { units: unitRows.map((u) => ({ serialNo: u.serialNo.trim(), intendedUse: u.use })) }
+          : pickOut && outPicked.length ? { outUnitIds: outPicked }
+          : { serialNo: adjSerialNo.trim() || undefined }),
+        lotNo: adjLotNo || undefined, expiryDate: adjExpiry ? new Date(adjExpiry) : undefined,
+      });
+      toast.success(unitMode && qty > 1 ? `${qty} units recorded` : "Movement recorded");
       setAdjOpen(false);
-      setAdjProductId(""); setAdjProductLabel(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry("");
+      setAdjProductId(""); setAdjProductLabel(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry(""); setAdjSerialNo(""); setAdjMachine(false); setAdjUnits([]); setOutUnits([]); setOutPicked([]);
       startTransition(() => router.refresh());
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
     finally { setSaving(false); }
@@ -329,7 +384,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
       (m.referenceNo ?? "").toLowerCase().includes(search.toLowerCase()) ||
       (m.notes ?? "").toLowerCase().includes(search.toLowerCase()) ||
       (m.lotNo ?? "").toLowerCase().includes(search.toLowerCase());
-    const matchType = typeFilter === "ALL" || m.movementType === typeFilter;
+    const matchType = typeFilter === "ALL" || (typeFilter === CONSIGNED_IN ? !!m.consignedIn : !m.consignedIn && m.movementType === typeFilter);
     return matchSearch && matchType;
   });
 
@@ -366,6 +421,9 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
               {t === "ALL" ? "All" : MOVEMENT_LABELS[t] ?? t}
             </Button>
           ))}
+          {movements.some((m) => m.consignedIn) && (
+            <Button size="sm" variant={typeFilter === CONSIGNED_IN ? "default" : "outline"} className="h-7 text-xs border-dashed" onClick={() => setTypeFilter(CONSIGNED_IN)}>Consigned in</Button>
+          )}
         </div>
       </div>
 
@@ -397,26 +455,29 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
                 </TableCell>
               </TableRow>
             ) : filtered.map(m => {
-              const qty = parseFloat(m.quantity);
+              const ci = m.consignedIn;
+              const qty = ci ? ci.delta : parseFloat(m.quantity);
+              const balance = ci ? ci.balance : m.balanceAfter;
               return (
-                <TableRow key={m.id}>
+                <TableRow key={m.id} className={ci ? "bg-violet-50/30 dark:bg-violet-900/5" : undefined}>
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(m.createdAt)}</TableCell>
                   <TableCell className="font-mono text-xs font-medium">{m.productCode}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    {formatWarehouse(m.warehouseLabel)}
-                    {m.warehouseTo && <span className="text-muted-foreground"> → {formatWarehouse(m.warehouseTo)}</span>}
+                    {ci ? ci.fromName : formatWarehouse(m.warehouseLabel)}
+                    {(ci ? ci.toName : m.warehouseTo) && <span className="text-muted-foreground"> → {ci ? ci.toName : formatWarehouse(m.warehouseTo!)}</span>}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={`text-xs gap-1 ${TYPE_STYLE[m.movementType] ?? ""}`}>
                       {qty > 0 ? <TrendingUpIcon className="h-3 w-3"/> : <TrendingDownIcon className="h-3 w-3"/>}
-                      {MOVEMENT_LABELS[m.movementType] ?? m.movementType}
+                      {ci ? (ci.internal ? "Consigned moved" : CONSIGNED_IN_LABELS[m.movementType] ?? MOVEMENT_LABELS[m.movementType] ?? m.movementType) : MOVEMENT_LABELS[m.movementType] ?? m.movementType}
                     </Badge>
+                    {ci && <div className="mt-1 text-[10px] font-medium text-violet-700 dark:text-violet-300 whitespace-nowrap">Owner: {ci.ownerName}</div>}
                   </TableCell>
                   <TableCell className={`text-right font-semibold tabular-nums text-sm ${qty >= 0 ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}>
-                    {fmt(m.quantity)}
+                    {ci ? fmt(qty) : fmt(m.quantity)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
-                    {m.balanceAfter ? parseFloat(m.balanceAfter).toLocaleString("en-MY", { maximumFractionDigits: 4 }) : "—"}
+                    {balance ? parseFloat(balance).toLocaleString("en-MY", { maximumFractionDigits: 4 }) : "—"}
                   </TableCell>
                   <TableCell className="text-xs font-mono text-muted-foreground">{m.serialNo ?? "—"}</TableCell>
                   <TableCell className="text-xs font-mono text-muted-foreground">{m.lotNo ?? "—"}</TableCell>
@@ -428,7 +489,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{m.createdByName ?? "—"}</TableCell>
-                  {(canManage || isOwner) && (
+                  {(canManage || isOwner) && (ci ? <TableCell/> :
                     <TableCell>
                       <div className="flex items-center gap-1">
                         {canManage && (
@@ -585,7 +646,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
                     const fl = `${item.productCode}${item.description ? ` — ${item.description}` : ""}`;
                     return (
                       <button key={item.productId} type="button"
-                        onClick={() => { setAdjProductId(item.productId); setAdjProductLabel(fl); }}
+                        onClick={() => pickAdjProduct(item.productId, fl)}
                         className={cn(
                           "text-xs px-2.5 py-1 rounded-full border transition-colors",
                           adjProductId === item.productId
@@ -600,7 +661,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
                   })}
                 </div>
               )}
-              <ProductSearch key={adjProductId} value={adjProductId} initialLabel={adjProductLabel} onChange={(id, _code, fullLabel) => { setAdjProductId(id); setAdjProductLabel(fullLabel); }}/>
+              <ProductSearch key={adjProductId} value={adjProductId} initialLabel={adjProductLabel} onChange={(id, _code, fullLabel) => pickAdjProduct(id, fullLabel)}/>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Movement Type <span className="text-destructive">*</span></Label>
@@ -621,7 +682,9 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Quantity <span className="text-destructive">*</span></Label>
-                <Input type="number" min="0.0001" step="0.0001" placeholder="0" value={adjQty} onChange={e => setAdjQty(e.target.value)}/>
+                {pickOut && outPicked.length > 0
+                  ? <Input value={outPicked.length} readOnly className="bg-muted/40" title="One per serial number picked"/>
+                  : <Input type="number" min={unitMode ? "1" : "0.0001"} step={unitMode ? "1" : "0.0001"} placeholder="0" value={adjQty} onChange={e => setAdjQty(e.target.value)}/>}
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Unit Cost (RM) <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
@@ -632,10 +695,59 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner }:
               <Label>Reference No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
               <Input placeholder="e.g. PO-2025-0001" value={adjRef} onChange={e => setAdjRef(e.target.value)}/>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label>Serial No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
-              <Input placeholder="e.g. SN-2024-001" value={adjSerialNo} onChange={e => setAdjSerialNo(e.target.value)}/>
-            </div>
+            {pickOut && (
+              <div className="flex flex-col gap-1.5 rounded-md border border-border bg-muted/20 p-3">
+                <Label>Which machine(s) are going out?</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {outUnits.map((u) => {
+                    const on = outPicked.includes(u.id);
+                    return (
+                      <button key={u.id} type="button" onClick={() => setOutPicked((prev) => on ? prev.filter((x) => x !== u.id) : [...prev, u.id])}
+                        className={cn("text-xs font-mono px-2 py-1 rounded-md border", on ? "bg-primary text-primary-foreground border-primary" : "border-border bg-background hover:bg-muted")}>
+                        {on ? "✓ " : ""}{u.serialNo}<span className="ml-1.5 font-sans opacity-70">{unitUseLabel(u.intendedUse).toLowerCase()}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground">The picked machines leave inventory. Leave none picked only for units here that have no serial number.</p>
+              </div>
+            )}
+            {serialIncoming && (
+              <label className="flex items-start gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={adjMachine} onChange={(e) => setAdjMachine(e.target.checked)} className="mt-1"/>
+                <span><span className="font-medium">Each unit has its own serial number</span>
+                  <span className="block text-xs text-muted-foreground">Machines and serial-tracked items — one serial number per unit, so each one can be picked on transfers, Case DOs and consignments.</span></span>
+              </label>
+            )}
+            {unitMode ? (
+              <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Serial numbers <span className="text-destructive">*</span> <span className="text-muted-foreground font-normal text-xs">— {unitQty} unit{unitQty === 1 ? "" : "s"}, one per machine</span></Label>
+                  {unitRows.length > 1 && (
+                    <select className="h-7 rounded-md border border-input bg-background px-1.5 text-xs" value="" onChange={(e) => e.target.value && setAdjUnits(unitRows.map((u) => ({ ...u, use: e.target.value })))}>
+                      <option value="">Set all to…</option>
+                      {Object.entries(INTENDED_USE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  )}
+                </div>
+                {unitRows.length === 0 ? <p className="text-xs text-muted-foreground">Enter the quantity above — a row appears for each machine.</p> : unitRows.map((u, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground w-5 text-right tabular-nums">{i + 1}</span>
+                    <Input value={u.serialNo} onChange={(e) => setUnitRow(i, { serialNo: e.target.value })} placeholder="Serial no." className="h-8 font-mono text-sm flex-1"/>
+                    <select value={u.use} onChange={(e) => setUnitRow(i, { use: e.target.value })}
+                      className={cn("h-8 rounded-md border px-2 text-xs w-28", isLendable(u.use) ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20" : "border-input bg-background")}>
+                      {Object.entries(INTENDED_USE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  </div>
+                ))}
+                <p className="text-[11px] text-muted-foreground"><strong>For sale</strong> — sold / used up on a case. <strong>Rental, Loan, Demo</strong> — never sold: lent for a case and comes back.</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <Label>Serial No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input placeholder="e.g. SN-2024-001" value={adjSerialNo} onChange={e => setAdjSerialNo(e.target.value)}/>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Lot No. <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>

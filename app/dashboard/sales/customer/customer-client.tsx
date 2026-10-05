@@ -237,6 +237,9 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
 
   // ── Customer state ──────────────────────────────────────────────────────
   const [customers, setCustomers] = useState(initialCustomers);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialCustomers, setSeenInitialCustomers] = useState(initialCustomers);
+  if (initialCustomers !== seenInitialCustomers) { setSeenInitialCustomers(initialCustomers); setCustomers(initialCustomers); }
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [customerSheet, setCustomerSheet] = useState<"create" | "edit" | "view" | null>(null);
@@ -269,6 +272,9 @@ export function CustomerClient({ initialCustomers, initialOrganizations, canEdit
 
   // ── Organization state ──────────────────────────────────────────────────
   const [organizations, setOrganizations] = useState(initialOrganizations);
+  // Server data re-sent (live refresh / router.refresh): show it
+  const [seenInitialOrganizations, setSeenInitialOrganizations] = useState(initialOrganizations);
+  if (initialOrganizations !== seenInitialOrganizations) { setSeenInitialOrganizations(initialOrganizations); setOrganizations(initialOrganizations); }
   const [orgSearch, setOrgSearch] = useState("");
   const [orgPage, setOrgPage] = useState(1);
 
