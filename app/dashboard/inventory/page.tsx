@@ -4,7 +4,7 @@ import { getActiveConsignmentItems } from "@/server/consignment";
 import { getConsignedInStock, getConsignMoveTargets } from "@/server/consign";
 import { getItemGroups } from "@/server/item-group";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
-import { getFieldReps } from "@/server/field-stock";
+import { getFieldLocations } from "@/server/field-stock";
 import { InventoryClient } from "./inventory-client";
 import { db } from "@/db";
 import { member } from "@/db/schema";
@@ -18,7 +18,7 @@ export default async function InventoryPage() {
   const [inventory, warehouses, fieldReps, permissions, activeConsignments, expiringLots, ownerCheck, locationNames, consignedIn, consignMove, itemGroups] = await Promise.all([
     getInventory(),
     getWarehouses(),
-    getFieldReps().catch(() => []),
+    getFieldLocations().catch(() => []),
     getUserPermissions(userId, orgId),
     getActiveConsignmentItems().catch(() => []),
     getExpiringLots().catch(() => []),
@@ -35,9 +35,8 @@ export default async function InventoryPage() {
   const isOwner = ownerCheck.length > 0;
   const allWarehouses = [
     ...warehouses,
-    ...fieldReps
-      .filter((r) => !warehouses.find((w) => w.label === `Field:${r.id}`))
-      .map((r) => ({ label: `Field:${r.id}`, address: r.name })),
+    // this company's own people only (plus any leftover balance to clear)
+    ...fieldReps.filter((r) => !warehouses.find((w) => w.label === r.label)),
   ];
 
   return <InventoryClient inventory={inventory} warehouses={allWarehouses} permissions={permissions} isOwner={isOwner} activeConsignments={activeConsignments} expiringLots={expiringLots} locationNames={locationNames} consignedIn={consignedIn} consignMove={consignMove} itemGroups={itemGroups} />;

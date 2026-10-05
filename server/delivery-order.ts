@@ -43,6 +43,7 @@ import { bumpLevel, consignedLineForUnit, consumeConsigned, consignedHeldByRep, 
 import { isConsignmentLocation } from "@/lib/consignment/labels";
 import { autoSettlePerUse } from "@/lib/consignment/settle";
 import { draftDoNo, isDraftDoNo } from "@/lib/delivery/draft-no";
+import { isOrgMember } from "@/lib/inventory/field-holder";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -1294,6 +1295,10 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
   if (input.isCaseDo && input.customerItems?.length && input.priceMode !== "total") {
     const bad = await pricedWithoutMda(input.customerItems);
     if (bad.length) throw new Error(pricedWithoutMdaMessage(bad));
+  }
+  // The specialist whose field stock a Case DO uses is one of this company's own people
+  if (input.isCaseDo && input.applicationSpecialistId && !(await isOrgMember(orgId, input.applicationSpecialistId))) {
+    throw new Error(`${input.applicationSpecialistName ?? "The application specialist"} isn't a member of this company — choose one of your own people`);
   }
   // No number yet: a draft carries a temporary reference until it is delivered
   const newId = nanoid();

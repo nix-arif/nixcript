@@ -1758,8 +1758,9 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
                   }}
                   className="h-6 text-xs bg-transparent border-0 outline-none text-muted-foreground cursor-pointer">
                   <option value="">+ member</option>
-                  {reps.filter((r) => !appSpecs.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())).map((r) => (
-                    <option key={r.id} value={r.id}>{r.name.toLowerCase()}{r.otherOrgName ? ` — ${r.otherOrgName}` : ""}</option>
+                  {/* the company's own people only — their field stock is what the DO uses */}
+                  {reps.filter((r) => !r.otherOrgName && !appSpecs.some((s) => s.id === r.id || s.name.toLowerCase() === r.name.toLowerCase())).map((r) => (
+                    <option key={r.id} value={r.id}>{r.name.toLowerCase()}</option>
                   ))}
                 </select>
                 <input ref={asInputRef} type="text" value={asInput}

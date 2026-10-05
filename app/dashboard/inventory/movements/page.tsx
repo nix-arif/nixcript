@@ -1,6 +1,6 @@
 import { requirePermission } from "@/lib/auth/require-permission";
 import { getStockMovements, getWarehouses, getInventoryLocationNames } from "@/server/inventory";
-import { getFieldReps } from "@/server/field-stock";
+import { getFieldLocations } from "@/server/field-stock";
 import { getConsignedInMovements } from "@/server/consign";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { MovementsClient } from "./movements-client";
@@ -16,7 +16,7 @@ export default async function MovementsPage() {
   const [movements, warehouses, fieldReps, permissions, ownerCheck, locationNames, consignedIn] = await Promise.all([
     getStockMovements(),
     getWarehouses(),
-    getFieldReps().catch(() => []),
+    getFieldLocations().catch(() => []),
     getUserPermissions(userId, orgId),
     db.select({ id: member.id })
       .from(member)
@@ -28,8 +28,9 @@ export default async function MovementsPage() {
 
   const isOwner = ownerCheck.length > 0;
 
-  // Merge configured warehouses with virtual field warehouses (Field:{repId})
-  const fieldWarehouses = fieldReps.map(rep => ({ label: `Field:${rep.id}`, address: rep.name }));
+  // Merge configured warehouses with virtual field warehouses (Field:{repId}) —
+  // this company's own people only (plus any leftover balance to clear)
+  const fieldWarehouses = fieldReps;
   const allWarehouses = [
     ...warehouses,
     ...fieldWarehouses.filter(fw => !warehouses.find(w => w.label === fw.label)),

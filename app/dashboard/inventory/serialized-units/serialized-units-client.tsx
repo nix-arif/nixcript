@@ -105,7 +105,8 @@ function RegisterUnitDialog({ open, onOpenChange, onRegistered }: { open: boolea
   const custTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (open) getFieldReps().then(setReps).catch(() => setReps([]));
+    // this company's own people only
+    if (open) getFieldReps().then((r) => setReps(r.filter((x) => !x.otherOrgName))).catch(() => setReps([]));
   }, [open]);
 
   const needsRep = status === "WITH_REP" || status === "ON_LOAN";

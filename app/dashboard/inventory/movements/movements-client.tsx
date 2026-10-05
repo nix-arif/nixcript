@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -126,8 +126,12 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjProductId, setAdjProductId] = useState("");
   const [adjProductLabel, setAdjProductLabel] = useState("");
-  const [adjWarehouse, setAdjWarehouse] = useState(warehouses[0]?.label ?? "Default");
+  // No location preselected: the user says where the stock is
+  const [adjWarehouse, setAdjWarehouse] = useState("");
   const [adjType, setAdjType] = useState<string>(MOVEMENT_TYPE.STOCK_IN);
+  // Adjustment (stock-count correction) goes either way
+  const [adjDir, setAdjDir] = useState<"increase" | "decrease">("increase");
+  const adjDecrease = adjType === MOVEMENT_TYPE.ADJUSTMENT && adjDir === "decrease";
   const [adjQty, setAdjQty] = useState("");
   const [adjCost, setAdjCost] = useState("");
   const [adjRef, setAdjRef] = useState("");
@@ -218,7 +222,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
     setTxSelected(prev => prev.map(p => p.productId === productId ? { ...p, qty } : p));
   }
 
-  const serialIncoming = adjType !== MOVEMENT_TYPE.STOCK_OUT;
+  const serialIncoming = adjType !== MOVEMENT_TYPE.STOCK_OUT && !adjDecrease;
   const unitMode = adjMachine && serialIncoming;
   const unitQty = Math.max(0, Math.min(200, Math.floor(parseFloat(adjQty) || 0)));
   // Rows follow the quantity — one per machine; entries already typed are kept
@@ -235,10 +239,11 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
       setAdjMachine(info.serial); setOutUnits(here);
     } catch { /* optional */ }
   }
-  const pickOut = outUnits.length > 0 && adjType === MOVEMENT_TYPE.STOCK_OUT;
+  const pickOut = outUnits.length > 0 && (adjType === MOVEMENT_TYPE.STOCK_OUT || adjDecrease);
 
   async function handleAdjust(e: React.FormEvent) {
     e.preventDefault();
+    if (!adjWarehouse) { toast.error("Choose the location"); return; }
     if (!adjProductId) { toast.error("Select a product"); return; }
     const qty = pickOut && outPicked.length ? outPicked.length : parseFloat(adjQty);
     if (isNaN(qty) || qty <= 0) { toast.error("Enter a valid quantity"); return; }
@@ -253,7 +258,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
     setSaving(true);
     try {
       await adjustStock({
-        productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: qty, unitCost: adjCost || undefined,
+        productId: adjProductId, warehouseLabel: adjWarehouse, movementType: adjType, quantity: adjDecrease ? -qty : qty, unitCost: adjCost || undefined,
         referenceNo: adjRef || undefined, notes: adjNotes || undefined,
         ...(unitMode ? { units: unitRows.map((u) => ({ serialNo: u.serialNo.trim(), intendedUse: u.use })) }
           : pickOut && outPicked.length ? { outUnitIds: outPicked }
@@ -262,6 +267,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
       });
       toast.success(unitMode && qty > 1 ? `${qty} units recorded` : "Movement recorded");
       setAdjOpen(false);
+      setAdjDir("increase");
       setAdjProductId(""); setAdjProductLabel(""); setAdjQty(""); setAdjCost(""); setAdjRef(""); setAdjNotes(""); setAdjLotNo(""); setAdjExpiry(""); setAdjSerialNo(""); setAdjMachine(false); setAdjUnits([]); setOutUnits([]); setOutPicked([]);
       startTransition(() => router.refresh());
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
@@ -307,6 +313,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
   const [editWarehouse, setEditWarehouse] = useState("");
   const [editType, setEditType] = useState("");
   const [editQty, setEditQty] = useState("");
+  const [editDir, setEditDir] = useState<"increase" | "decrease">("increase");
   const [editCost, setEditCost] = useState("");
   const [editRef, setEditRef] = useState("");
   const [editSerialNo, setEditSerialNo] = useState("");
@@ -326,6 +333,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
     setEditWarehouse(m.warehouseLabel);
     setEditType(m.movementType);
     setEditQty(String(Math.abs(parseFloat(m.quantity))));
+    setEditDir(parseFloat(m.quantity) < 0 ? "decrease" : "increase");
     setEditCost(m.unitCost ?? "");
     setEditRef(m.referenceNo ?? "");
     setEditSerialNo(m.serialNo ?? "");
@@ -353,7 +361,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
           productId: editProductId,
           warehouseLabel: editWarehouse,
           movementType: editType,
-          quantity: qty,
+          quantity: editType === MOVEMENT_TYPE.ADJUSTMENT && editDir === "decrease" ? -qty : qty,
           unitCost: editCost || null,
         }),
       });
@@ -405,7 +413,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
             </Button>
           )}
           {canAdjust && (
-            <Button size="sm" onClick={() => setAdjOpen(true)} className="gap-1.5">
+            <Button size="sm" onClick={() => { setAdjWarehouse(""); setAdjOpen(true); }} className="gap-1.5">
               <PlusIcon className="h-4 w-4"/>New Movement
             </Button>
           )}
@@ -530,12 +538,10 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
             {editItem?.status === "PENDING" ? (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <Label>Warehouse <span className="text-destructive">*</span></Label>
+                  <Label>Location <span className="text-destructive">*</span></Label>
                   <Select value={editWarehouse} onValueChange={setEditWarehouse}>
-                    <SelectTrigger><SelectValue/></SelectTrigger>
-                    <SelectContent>
-                      {warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : `${w.label}${w.address ? ` — ${w.address}` : ""}`}</SelectItem>)}
-                    </SelectContent>
+                    <SelectTrigger className="w-full"><SelectValue/></SelectTrigger>
+                    <LocationOptions warehouses={warehouses}/>
                   </Select>
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -550,10 +556,11 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
                       <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>
                       {!editWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.STOCK_IN}>Stock In ↑</SelectItem>}
                       <SelectItem value={MOVEMENT_TYPE.STOCK_OUT}>Stock Out ↓</SelectItem>
-                      <SelectItem value={MOVEMENT_TYPE.ADJUSTMENT}>Adjustment</SelectItem>
+                      <SelectItem value={MOVEMENT_TYPE.ADJUSTMENT}>Adjustment ↕</SelectItem>
                       <SelectItem value={MOVEMENT_TYPE.RETURN}>Return</SelectItem>
                     </SelectContent>
                   </Select>
+                  {editType === MOVEMENT_TYPE.ADJUSTMENT && <DirectionToggle value={editDir} onChange={setEditDir}/>}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
@@ -629,13 +636,12 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
           <SheetHeader className="mb-5"><SheetTitle>New Movement</SheetTitle></SheetHeader>
           <form onSubmit={handleAdjust} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label>Warehouse <span className="text-destructive">*</span></Label>
+              <Label>Location <span className="text-destructive">*</span></Label>
               <Select value={adjWarehouse} onValueChange={v => { setAdjWarehouse(v); setAdjProductId(""); setAdjProductLabel(""); if (v.startsWith("Field:") && FIELD_RESTRICTED.includes(adjType)) setAdjType(MOVEMENT_TYPE.STOCK_OUT); }}>
-                <SelectTrigger><SelectValue/></SelectTrigger>
-                <SelectContent>
-                  {warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : `${w.label}${w.address ? ` — ${w.address}` : ""}`}</SelectItem>)}
-                </SelectContent>
+                <SelectTrigger className="w-full"><SelectValue placeholder="Where is the stock? — a warehouse or a specialist's field stock"/></SelectTrigger>
+                <LocationOptions warehouses={warehouses}/>
               </Select>
+              {adjWarehouse && <p className="text-xs text-muted-foreground">{locationHint(warehouses, adjWarehouse)}</p>}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Product <span className="text-destructive">*</span></Label>
@@ -671,10 +677,12 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
                   <SelectItem value={MOVEMENT_TYPE.OPENING}>Opening Balance</SelectItem>
                   {!adjWarehouse.startsWith("Field:") && <SelectItem value={MOVEMENT_TYPE.STOCK_IN}>Stock In ↑</SelectItem>}
                   <SelectItem value={MOVEMENT_TYPE.STOCK_OUT}>Stock Out ↓</SelectItem>
-                  <SelectItem value={MOVEMENT_TYPE.ADJUSTMENT}>Adjustment</SelectItem>
+                  <SelectItem value={MOVEMENT_TYPE.ADJUSTMENT}>Adjustment ↕</SelectItem>
                   <SelectItem value={MOVEMENT_TYPE.RETURN}>Return</SelectItem>
                 </SelectContent>
               </Select>
+              {adjType === MOVEMENT_TYPE.ADJUSTMENT && <DirectionToggle value={adjDir} onChange={setAdjDir}/>}
+              <p className="text-xs text-muted-foreground">{MOVEMENT_HINT[adjType]}</p>
               {adjWarehouse.startsWith("Field:") && (
                 <p className="text-xs text-muted-foreground">Field stock is replenished via Transfer from a warehouse, not Stock In.</p>
               )}
@@ -780,7 +788,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
                 <Label>From</Label>
                 <Select value={txFrom} onValueChange={setTxFrom}>
                   <SelectTrigger><SelectValue/></SelectTrigger>
-                  <SelectContent>{warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : w.label}</SelectItem>)}</SelectContent>
+                  <LocationOptions warehouses={warehouses}/>
                 </Select>
               </div>
               <ArrowRightIcon className="h-4 w-4 text-muted-foreground mb-2 shrink-0"/>
@@ -788,7 +796,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
                 <Label>To</Label>
                 <Select value={txTo} onValueChange={setTxTo}>
                   <SelectTrigger><SelectValue/></SelectTrigger>
-                  <SelectContent>{warehouses.map(w => <SelectItem key={w.label} value={w.label}>{w.label.startsWith("Field:") ? `Field stock — ${w.address || w.label.slice(6)}` : w.label}</SelectItem>)}</SelectContent>
+                  <LocationOptions warehouses={warehouses}/>
                 </Select>
               </div>
             </div>
@@ -921,6 +929,76 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
           </form>
         </SheetContent>
       </Sheet>
+    </div>
+  );
+}
+
+// ── Location picker ──────────────────────────────────────────────────────────
+// Warehouses and the company's specialists (field stock) in two labelled
+// groups. A company with no warehouse set up keeps its stock under the
+// placeholder label "Default" — shown as "Main warehouse" with a nudge to name it.
+type LocationRow = { label: string; address: string; notMember?: boolean };
+
+function warehouseName(w: LocationRow) {
+  return w.label === "Default" ? "Main warehouse" : w.label;
+}
+
+function locationHint(warehouses: LocationRow[], label: string) {
+  const w = warehouses.find((x) => x.label === label);
+  if (!w) return "";
+  if (label.startsWith("Field:")) return w.notMember ? "Not a member of this company — this balance can only be taken out." : `Stock held by ${w.address} (field stock).`;
+  if (label === "Default") return "No warehouse is set up for this company yet — name it (with its address) in Organization → Organization Profile → Warehouses.";
+  return w.address || "No address set for this warehouse.";
+}
+
+function LocationOptions({ warehouses }: { warehouses: LocationRow[] }) {
+  const stores = warehouses.filter((w) => !w.label.startsWith("Field:"));
+  const field = warehouses.filter((w) => w.label.startsWith("Field:"));
+  return (
+    <SelectContent>
+      {stores.length > 0 && (
+        <SelectGroup>
+          <SelectLabel>Warehouses</SelectLabel>
+          {stores.map((w) => (
+            <SelectItem key={w.label} value={w.label}>
+              {warehouseName(w)}{w.label === "Default" && <span className="text-muted-foreground text-xs"> (not set up)</span>}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      )}
+      {stores.length > 0 && field.length > 0 && <SelectSeparator/>}
+      {field.length > 0 && (
+        <SelectGroup>
+          <SelectLabel>Field stock — specialists</SelectLabel>
+          {field.map((w) => (
+            <SelectItem key={w.label} value={w.label}>
+              {w.notMember ? <span className="text-amber-700 dark:text-amber-400">{w.address}</span> : w.address || w.label.slice(6)}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      )}
+    </SelectContent>
+  );
+}
+
+// What each manual movement type is for — shown under the Movement Type picker
+const MOVEMENT_HINT: Record<string, string> = {
+  [MOVEMENT_TYPE.OPENING]: "The starting quantity of this product here when you begin using the system. Not for later corrections — use Adjustment.",
+  [MOVEMENT_TYPE.STOCK_IN]: "Goods received without a purchase order (supplier samples, stock found). Goods bought on a PO come in through Goods Receipt — don't enter them here as well.",
+  [MOVEMENT_TYPE.STOCK_OUT]: "Goods leaving without a delivery order: damaged, expired, lost, internal use, samples given. Say why in Notes. To sell use a DO, for a case a Case DO, to move stock a Transfer.",
+  [MOVEMENT_TYPE.ADJUSTMENT]: "Stock-count correction: Increase when you counted more than the system shows, Decrease when you counted less. Note which count it was.",
+  [MOVEMENT_TYPE.RETURN]: "Goods coming back that aren't on any document (e.g. back from repair). A customer return goes on its DO (Record Return), a specialist's stock through Return from Rep, consigned stock through Consignment → Return.",
+};
+
+function DirectionToggle({ value, onChange }: { value: "increase" | "decrease"; onChange: (v: "increase" | "decrease") => void }) {
+  return (
+    <div className="inline-flex rounded-md border border-border overflow-hidden text-xs w-fit">
+      {(["increase", "decrease"] as const).map((d) => (
+        <button key={d} type="button" onClick={() => onChange(d)}
+          className={cn("px-3 h-7", value === d ? (d === "increase" ? "bg-green-600 text-white" : "bg-red-600 text-white") : "hover:bg-muted")}>
+          {d === "increase" ? "Increase (+)" : "Decrease (−)"}
+        </button>
+      ))}
     </div>
   );
 }

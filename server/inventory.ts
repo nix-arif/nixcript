@@ -1,6 +1,7 @@
 "use server";
 
 import { db } from "@/db";
+import { fieldHolderProblem } from "@/lib/inventory/field-holder";
 import { stockLevel, stockMovement, stockLot, product, user, organizationProfile, member, organization } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -273,8 +274,14 @@ export async function adjustStock(data: {
   const { orgId, userId } = await requireAccess("inventory:adjust");
 
   if (data.quantity === 0) throw new Error("Quantity cannot be zero");
+  // Stock leaving: a Stock Out, or an Adjustment entered as a decrease (negative
+  // quantity). Every other type only adds, whatever sign it is given.
+  const outgoing = data.movementType === MOVEMENT_TYPE.STOCK_OUT || (data.movementType === MOVEMENT_TYPE.ADJUSTMENT && data.quantity < 0);
+  // Field stock only with the company's own people (a leftover elsewhere can still go out)
+  const holderProblem = await fieldHolderProblem(orgId, data.warehouseLabel, !outgoing);
+  if (holderProblem) throw new Error(holderProblem);
 
-  const incoming = data.movementType !== MOVEMENT_TYPE.STOCK_OUT && data.quantity > 0;
+  const incoming = !outgoing;
   if (data.units?.length) {
     if (!incoming) throw new Error("Serial numbers are entered on stock coming in");
     const units = data.units.map((u) => ({ serialNo: u.serialNo.trim(), intendedUse: u.intendedUse }));
@@ -288,7 +295,7 @@ export async function adjustStock(data: {
     for (const u of units) await adjustStock({ ...data, quantity: 1, units: undefined, serialNo: u.serialNo, intendedUse: u.intendedUse });
     return;
   }
-  if (data.movementType === MOVEMENT_TYPE.STOCK_OUT) {
+  if (outgoing) {
     const { assetUnit } = await import("@/db/schema");
     const here = await db.select({ id: assetUnit.id, serialNo: assetUnit.serialNo }).from(assetUnit).where(and(
       eq(assetUnit.productId, data.productId), eq(assetUnit.currentWarehouseLabel, data.warehouseLabel),
@@ -308,7 +315,8 @@ export async function adjustStock(data: {
       const bad = picked.filter((id) => !here.some((u) => u.id === id));
       if (bad.length) throw new Error("A picked serial number is no longer here");
       for (const id of picked) {
-        await adjustStock({ ...data, quantity: 1, outUnitIds: undefined, units: undefined, serialNo: here.find((u) => u.id === id)!.serialNo, unitId: id });
+        // one unit each, keeping the direction (an Adjustment decrease stays negative)
+        await adjustStock({ ...data, quantity: data.movementType === MOVEMENT_TYPE.ADJUSTMENT ? -1 : 1, outUnitIds: undefined, units: undefined, serialNo: here.find((u) => u.id === id)!.serialNo, unitId: id });
       }
       return;
     }
@@ -322,8 +330,7 @@ export async function adjustStock(data: {
     .limit(1);
   if (!prod) throw new Error("Product not found");
 
-  const isOut = data.movementType === MOVEMENT_TYPE.STOCK_OUT;
-  const signed = isOut ? -Math.abs(data.quantity) : Math.abs(data.quantity);
+  const signed = outgoing ? -Math.abs(data.quantity) : Math.abs(data.quantity);
 
   // Auto-approve if the creator also has approve rights — no extra step needed
   // — unless the org has explicitly disabled self-approval for this key, in
@@ -425,6 +432,8 @@ export async function transferStock(data: {
 
   if (data.quantity <= 0) throw new Error("Quantity must be greater than zero");
   if (data.fromWarehouse === data.toWarehouse) throw new Error("Source and destination warehouses must differ");
+  const holderProblem = await fieldHolderProblem(orgId, data.toWarehouse, true);
+  if (holderProblem) throw new Error(holderProblem);
 
   const [prod] = await db
     .select({ productCode: product.productCode })
@@ -549,6 +558,10 @@ export async function editStockLevel(data: {
 
   const currentQty = parseFloat(sl.quantity);
   const delta = data.targetQty - currentQty;
+  if (delta > 0) {
+    const holderProblem = await fieldHolderProblem(orgId, sl.warehouseLabel, true);
+    if (holderProblem) throw new Error(holderProblem);
+  }
   if (delta < 0) {
     const { assetUnit } = await import("@/db/schema");
     const serials = await db.select({ id: assetUnit.id }).from(assetUnit).where(and(
@@ -1052,7 +1065,8 @@ export async function editStockMovement(id: string, data: {
   const qty = data.quantity !== undefined ? data.quantity : parseFloat(mv.quantity);
   const movementType = data.movementType ?? mv.movementType;
   const isOut = ["STOCK_OUT", "TRANSFER_OUT"].includes(movementType);
-  const signed = isOut ? -Math.abs(qty) : Math.abs(qty);
+  // An Adjustment keeps the sign it is given (+ increase, − decrease)
+  const signed = isOut ? -Math.abs(qty) : movementType === "ADJUSTMENT" ? qty : Math.abs(qty);
 
   // A pending movement's core fields (what/where/how much) can be
   // corrected by anyone holding inventory:manage before an inventory:approve

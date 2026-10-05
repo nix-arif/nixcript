@@ -7,6 +7,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { ASSET_UNIT_STATUS, INTENDED_USE } from "@/lib/inventory/constants";
 import { nanoid } from "nanoid";
+import { isOrgMember } from "@/lib/inventory/field-holder";
 import { eq, and, desc, inArray, isNull, ilike, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -64,6 +65,8 @@ export async function registerAssetUnit(input: RegisterAssetUnitInput): Promise<
 
   const serialNo = input.serialNo.trim();
   if (!serialNo) throw new Error("Serial number is required");
+  // A unit held in the field is with one of this company's own people
+  if (input.repId && !(await isOrgMember(orgId, input.repId))) throw new Error("That person isn't a member of this company — field stock can only be with your own people");
 
   const [existing] = await db
     .select({ id: assetUnit.id })

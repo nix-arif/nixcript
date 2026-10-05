@@ -9,6 +9,7 @@ import { eq, and, inArray, sql, desc, isNull, asc, ne } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { MOVEMENT_TYPE, REF_TYPE, fieldWarehouseLabel, consignedWarehouseLabel, consignedFieldWarehouseLabel } from "@/lib/inventory/constants";
 import { agentRepLocation } from "@/lib/consignment/labels";
+import { nonMemberFieldHolders } from "@/lib/inventory/field-holder";
 import { applyToLot } from "@/lib/inventory/apply-to-lot";
 import { revalidatePath } from "next/cache";
 
@@ -176,6 +177,24 @@ export async function getFieldReps(): Promise<OrgMember[]> {
     });
   }
   return [...byUser.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Field stock locations of the active company for stock movements: its own
+ * members only, plus anyone outside it who still holds a balance on its
+ * books (flagged, so that balance can be cleared — nothing new can go to them).
+ */
+export async function getFieldLocations(): Promise<{ label: string; address: string; notMember?: boolean }[]> {
+  const { orgId } = await requireAccess("inventory:read");
+  const [own, leftover] = await Promise.all([
+    db.select({ id: member.userId, name: user.name }).from(member).innerJoin(user, eq(user.id, member.userId))
+      .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt))).orderBy(user.name),
+    nonMemberFieldHolders(orgId),
+  ]);
+  return [
+    ...own.map((m) => ({ label: `Field:${m.id}`, address: m.name ?? m.id })),
+    ...leftover.map((m) => ({ label: `Field:${m.id}`, address: `${m.name} (not a member — clear this balance)`, notMember: true })),
+  ];
 }
 
 // A rep's field stock for a given product can live under whichever sibling
