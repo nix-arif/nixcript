@@ -25,6 +25,9 @@ export type NavSubItem = {
   title: string;
   url: string;
   permission?: string;
+  // Shown greyed out and not clickable, with `hint` as its tooltip
+  disabled?: boolean;
+  hint?: string;
 };
 
 export type NavGroup = {
@@ -235,6 +238,19 @@ export const navConfig: NavGroup[] = [
     ],
   },
 ];
+
+/** Inventory is locked until the company has a named warehouse: one "Set up warehouse" entry, the rest greyed out. */
+export function lockInventoryNav(nav: NavGroup[], warehouseReady: boolean, permissions: string[]): NavGroup[] {
+  if (warehouseReady) return nav;
+  const hint = "Set up a warehouse first (Organization Profile → Warehouses)";
+  // Straight to the Warehouses section for whoever can edit the profile; anyone else gets the explanation
+  const canSetUp = permissions.includes("*") || permissions.includes("organization-profile:update");
+  const url = canSetUp ? "/dashboard/organization/organization-profile#warehouses" : "/dashboard/inventory";
+  return nav.map((g) => g.title !== "Inventory" ? g : {
+    ...g,
+    items: [{ title: "⚠ Set up warehouse", url }, ...g.items.map((i) => ({ ...i, disabled: true, hint }))],
+  });
+}
 
 export function filterNav(nav: NavGroup[], userPermissions: string[]): NavGroup[] {
   if (userPermissions.includes("*")) return nav;

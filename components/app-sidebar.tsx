@@ -14,7 +14,7 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { FrameIcon, PieChartIcon, MapIcon } from "lucide-react";
-import { filterNav, navConfig } from "@/lib/nav";
+import { filterNav, lockInventoryNav, navConfig } from "@/lib/nav";
 import { useAppStore } from "@/lib/store/use-app-store";
 
 // const projects = [
@@ -24,8 +24,8 @@ import { useAppStore } from "@/lib/store/use-app-store";
 // ];
 
 export function AppSidebar({ navSections = {}, ...props }: React.ComponentProps<typeof Sidebar> & { navSections?: Record<string, boolean> }) {
-  const { permissions, permissionsLoading } = useAppStore();
-  const filteredNav = filterNav(navConfig, permissions);
+  const { permissions, permissionsLoading, warehouseReady } = useAppStore();
+  const filteredNav = lockInventoryNav(filterNav(navConfig, permissions), warehouseReady, permissions);
 
   // console.log("app-sidebar.tsx line 30", permissions);
   // console.log("app-sidebar.tsx line 31", filteredNav);

@@ -53,6 +53,8 @@ export function NavMain({
     items?: {
       title: string;
       url: string;
+      disabled?: boolean;
+      hint?: string;
     }[];
   }[];
 }) {
@@ -169,9 +171,9 @@ export function NavMain({
                                 : "text-sidebar-foreground/80 focus:bg-sidebar-accent/60 focus:text-sidebar-foreground"
                               }`}
                           >
-                            <Link href={subItem.url} onClick={closeMobile}>
-                              {subItem.title}
-                            </Link>
+                            {subItem.disabled
+                              ? <span title={subItem.hint} className="opacity-40 cursor-not-allowed">{subItem.title}</span>
+                              : <Link href={subItem.url} onClick={closeMobile}>{subItem.title}</Link>}
                           </DropdownMenuItem>
                         );
                       })}
@@ -225,9 +227,9 @@ export function NavMain({
                                 : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/40"
                               }`}
                           >
-                            <Link href={subItem.url} onClick={closeMobile}>
-                              {subItem.title}
-                            </Link>
+                            {subItem.disabled
+                              ? <span title={subItem.hint} aria-disabled className="opacity-40 cursor-not-allowed">{subItem.title}</span>
+                              : <Link href={subItem.url} onClick={closeMobile}>{subItem.title}</Link>}
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                       );

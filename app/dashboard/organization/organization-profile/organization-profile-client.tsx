@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/lib/store/use-app-store";
 
 type CertField =
   | "ssmCertUrl"
@@ -309,6 +310,11 @@ export function OrganizationProfileClient({ data }: Props) {
   };
 
   const handleSave = async () => {
+    // A warehouse is picked by its name everywhere (stock, transfers, DOs) — one without a name is ignored
+    if (warehouseAddresses.some((w) => !w.label.trim() && w.address.trim())) {
+      toast.error("Give each warehouse a name (e.g. Main Warehouse) — a warehouse without a name can't be used for stock");
+      return;
+    }
     setSaving(true);
     try {
       await upsertOrganizationProfile({
@@ -330,6 +336,8 @@ export function OrganizationProfileClient({ data }: Props) {
         bankingInfo,
       });
       toast.success("Organization profile saved");
+      // The inventory menu unlocks (or locks) with the warehouse list
+      useAppStore.setState({ warehouseReady: warehouseAddresses.some((w) => w.label.trim()) });
       router.refresh();
     } catch (err: any) {
       toast.error(err.message);
@@ -337,6 +345,19 @@ export function OrganizationProfileClient({ data }: Props) {
       setSaving(false);
     }
   };
+
+  // Arriving from inventory's "Set up warehouse" (#warehouses): bring the
+  // section into view, highlight it, and open a blank row if there is none
+  const [highlightWh, setHighlightWh] = useState(false);
+  useEffect(() => {
+    if (window.location.hash !== "#warehouses") return;
+    const t = setTimeout(() => {
+      document.getElementById("warehouses")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setHighlightWh(true);
+      setWarehouseAddresses((p) => (p.length ? p : [{ label: "", address: "" }]));
+    }, 150);
+    return () => clearTimeout(t);
+  }, []);
 
   // ── Warehouse handlers ───────────────────────────────────────────────────
   const addWarehouse = () =>
@@ -681,7 +702,8 @@ export function OrganizationProfileClient({ data }: Props) {
         </div>
 
         {/* ── Warehouse addresses ──────────────────────────────────────── */}
-        <div className="bg-background border border-border rounded-xl overflow-hidden">
+        {/* #warehouses: where "Set up warehouse" (inventory) lands — highlighted on arrival */}
+        <div id="warehouses" className={cn("bg-background border border-border rounded-xl overflow-hidden scroll-mt-20", highlightWh && "ring-2 ring-amber-400")}>
           <SectionHeader
             icon={BuildingIcon}
             title="Warehouse addresses"
@@ -720,7 +742,7 @@ export function OrganizationProfileClient({ data }: Props) {
                         onChange={(e) =>
                           updateWarehouse(i, "label", e.target.value)
                         }
-                        placeholder="Label e.g. Main warehouse"
+                        placeholder="Warehouse name (required) e.g. Main Warehouse"
                         className="flex-1 bg-transparent text-xs font-medium outline-none placeholder:text-muted-foreground"
                       />
                       <button

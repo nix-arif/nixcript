@@ -1,5 +1,6 @@
 // app/api/permissions/route.ts
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasNamedWarehouse } from "@/lib/inventory/warehouse-ready";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
@@ -23,5 +24,7 @@ export async function GET(req: NextRequest) {
 
   // Always use session.user.id — never trust client-passed userId
   const permissions = await getUserPermissions(session.user.id, organizationId);
-  return NextResponse.json({ permissions });
+  // Inventory menu is locked until the company has a named warehouse
+  const warehouseReady = permissions.length ? await hasNamedWarehouse(organizationId) : true;
+  return NextResponse.json({ permissions, warehouseReady });
 }

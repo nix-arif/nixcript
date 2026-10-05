@@ -66,6 +66,8 @@ type AppState = {
   permissionsFetched: boolean;
   currentOrgId: string | null;
   isSwitchingOrg: boolean;
+  // false = the active company has no named warehouse yet (inventory menu locked)
+  warehouseReady: boolean;
 
   fetchPermissions: (organizationId: string) => Promise<void>;
   clearPermissions: () => void;
@@ -78,6 +80,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   permissionsFetched: false,
   currentOrgId: null,
   isSwitchingOrg: false,
+  warehouseReady: true,
 
   fetchPermissions: async (organizationId: string) => {
     const s = get();
@@ -91,7 +94,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch(`/api/permissions?organizationId=${organizationId}`);
       if (!res.ok) throw new Error("Failed to fetch permissions");
       const data = await res.json();
-      set({ permissions: data.permissions ?? [], permissionsLoading: false, permissionsFetched: true });
+      set({ permissions: data.permissions ?? [], warehouseReady: data.warehouseReady !== false, permissionsLoading: false, permissionsFetched: true });
     } catch (err) {
       console.error("Failed to load permissions:", err);
       set({ permissions: [], permissionsLoading: false, permissionsFetched: false });
