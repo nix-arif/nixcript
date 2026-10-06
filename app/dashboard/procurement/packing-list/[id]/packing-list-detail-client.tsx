@@ -13,7 +13,7 @@ import {
   ArrowLeftIcon, BuildingIcon, CalendarIcon, ClipboardCheckIcon,
   XIcon, TruckIcon, LinkIcon, DatabaseIcon, PencilIcon, ClipboardListIcon, PlusIcon, TagIcon, Trash2Icon,
   AlertTriangleIcon, CheckIcon, UserIcon, FileWarningIcon, ShieldCheckIcon, ShieldXIcon, ShieldQuestionIcon,
-  ChevronDownIcon, FileTextIcon, FileSpreadsheetIcon,
+  ChevronDownIcon, FileTextIcon, FileSpreadsheetIcon, DownloadIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -175,6 +175,7 @@ export function PackingListDetailClient({
   const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState<"pdf" | "xlsx" | null>(null);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = permissions.includes("*");
   const showSourcing = businessType !== "trading";
@@ -307,6 +308,31 @@ export function PackingListDetailClient({
     }
   }
 
+  // The packing list itself, with each item's picture — same fetch-then-save
+  // pattern as the report, so an error shows as a toast, not a broken file.
+  async function handleDownloadPdf() {
+    setDownloadingPdf(true);
+    try {
+      const res = await fetch(`/api/packing-list/${pl.id}/pdf`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `Couldn't generate the PDF (HTTP ${res.status})`);
+      }
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `${pl.packingListNo}.pdf`;
+      const objectUrl = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't download the PDF");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
   return (
     <div className="p-4 sm:p-6 space-y-6">
       <PageHeader
@@ -316,6 +342,9 @@ export function PackingListDetailClient({
           <div className="flex items-center gap-2 flex-wrap justify-end">
             <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={downloadingPdf} onClick={handleDownloadPdf}>
+              <DownloadIcon className="w-3.5 h-3.5" /> {downloadingPdf ? "Generating…" : "Download PDF"}
             </Button>
             {isPending && can("packing-list:inspect") && (
               <Button size="sm" className="gap-1.5" onClick={() => router.push(inspectHref ?? `/dashboard/procurement/packing-list/${pl.id}/inspect`)}>
