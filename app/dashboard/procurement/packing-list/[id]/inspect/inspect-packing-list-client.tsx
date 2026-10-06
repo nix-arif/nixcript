@@ -30,6 +30,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
+import { INSPECTION_MEDIA_ACCEPT, inspectionMediaProblem, mediaKindOf } from "@/lib/inspection-media";
+import { InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 const POLL_INTERVAL_MS = 5000;
@@ -133,17 +135,26 @@ function ItemImageThumb({ imageUrl, productCode, designBrandCode }: { imageUrl: 
   );
 }
 
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
+// Records when this browser last changed a line (see touchedAt below).
+function nowMs(): number {
+  return Date.now();
+}
+function touch(map: Record<string, number>, id: string) {
+  map[id] = nowMs();
+}
 
-function validateImageFile(file: File): string | null {
-  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-    return "Unsupported format — please use JPG, PNG, WebP, or GIF.";
-  }
-  if (file.size > MAX_IMAGE_BYTES) {
-    return `File too large — maximum is 5 MB (this file is ${(file.size / 1024 / 1024).toFixed(1)} MB).`;
-  }
-  return null;
+// PUT straight to storage with progress — a phone video can take a while,
+// so the person sees it moving rather than a spinner that looks stuck.
+function putWithProgress(url: string, file: File, onProgress: (pct: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    if (file.type) xhr.setRequestHeader("Content-Type", file.type);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`HTTP ${xhr.status}`)));
+    xhr.onerror = () => reject(new Error("Failed to fetch"));
+    xhr.send(file);
+  });
 }
 
 function uploadErrorMessage(err: unknown): string {
@@ -152,7 +163,7 @@ function uploadErrorMessage(err: unknown): string {
     return "Could not reach the upload server — check your internet connection, or the upload link may have expired. Try again.";
   }
   if (/HTTP 403/i.test(msg)) return "Upload rejected — the upload link has expired. Refresh the page and try again.";
-  if (/HTTP 413/i.test(msg)) return "File too large for the server — please use an image under 5 MB.";
+  if (/HTTP 413/i.test(msg)) return "File too large for the server — use a photo under 5 MB or a shorter video.";
   if (/HTTP 4/.test(msg))    return `Upload rejected by server (${msg}) — try a different file.`;
   return msg;
 }
@@ -176,10 +187,9 @@ function InspectionPhotoStrip({
           type="button"
           onClick={() => setLightbox(p)}
           className="block w-9 h-9 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
-          title="View photo"
+          title={p.kind === "video" ? "Play video" : "View photo"}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={p.url} className="w-full h-full object-cover" alt="" />
+          <InspectionMediaThumb media={p} />
         </button>
       ))}
       <button
@@ -187,14 +197,14 @@ function InspectionPhotoStrip({
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
         className="flex items-center justify-center w-9 h-9 rounded border border-dashed border-border text-muted-foreground hover:border-foreground/50 hover:text-foreground transition-colors disabled:opacity-40 shrink-0"
-        title="Add photo"
+        title="Add photo or video"
       >
         {uploading ? <LoaderIcon className="w-3.5 h-3.5 animate-spin" /> : <CameraIcon className="w-3.5 h-3.5" />}
       </button>
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept={INSPECTION_MEDIA_ACCEPT}
         multiple
         className="hidden"
         onChange={(e) => {
@@ -205,12 +215,11 @@ function InspectionPhotoStrip({
       />
       <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
         <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
-          <DialogTitle className="sr-only">Inspection photo</DialogTitle>
+          <DialogTitle className="sr-only">Inspection {lightbox?.kind === "video" ? "video" : "photo"}</DialogTitle>
           {lightbox && (
             <>
               <div className="relative bg-muted/30">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={lightbox.url} className="w-full object-contain max-h-[65vh]" alt="" />
+                <InspectionMediaView media={lightbox} />
                 <button
                   type="button"
                   onClick={() => setLightbox(null)}
@@ -363,6 +372,7 @@ type Row = {
   inspectedAt: string | null; // ISO — compared against poll results to avoid clobbering newer local saves
   saving: boolean;
   dirty: boolean; // has local edits not yet persisted
+  saveError: string | null; // why the last save didn't go through — shown on the line
   photos: InspectionPhoto[];
   uploadingReturnPhotos: boolean;
   uploadingRepairPhotos: boolean;
@@ -386,6 +396,7 @@ function initialRow(item: PackingListWithItems["items"][number]): Row {
     inspectedAt: item.draftInspectedAt ? new Date(item.draftInspectedAt).toISOString() : null,
     saving: false,
     dirty: false,
+    saveError: null,
     photos: item.photos,
     uploadingReturnPhotos: false,
     uploadingRepairPhotos: false,
@@ -418,6 +429,13 @@ export function InspectPackingListClient({
   useEffect(() => { rowsRef.current = rows; }, [rows]);
   const focusedItemIdRef = useRef<string | null>(null);
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Bumped on every local edit: a save only marks the line clean if nothing
+  // changed while it was on its way, otherwise it saves again.
+  const versions = useRef<Record<string, number>>({});
+  const inFlight = useRef<Record<string, Promise<boolean>>>({});
+  // When this browser last changed a line (edit, save, approve) — a poll
+  // that was already on its way by then carries older data for that line.
+  const touchedAt = useRef<Record<string, number>>({});
 
   // Powers the "Review next pending item" jump — turns the yellow row color
   // from passive status into something an approver can act on directly,
@@ -452,54 +470,127 @@ export function InspectPackingListClient({
   };
 
   function updateRow(itemId: string, patch: Partial<Row>) {
-    setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], ...patch, dirty: true } }));
+    versions.current[itemId] = (versions.current[itemId] ?? 0) + 1;
+    touch(touchedAt.current, itemId);
+    setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], ...patch, dirty: true, saveError: null } }));
     if (debounceTimers.current[itemId]) clearTimeout(debounceTimers.current[itemId]);
     debounceTimers.current[itemId] = setTimeout(() => saveRow(itemId), AUTOSAVE_DEBOUNCE_MS);
   }
 
-  async function saveRow(itemId: string) {
-    const row = rowsRef.current[itemId];
-    if (!row || !row.dirty || row.saving) return;
+  // Saves one line. Resolves true once what's on screen is saved, false if
+  // it couldn't be (the reason shows on the line). force = save even with no
+  // edits — "Mark inspected" on a line that arrived exactly as expected.
+  async function saveRow(itemId: string, force = false): Promise<boolean> {
     if (debounceTimers.current[itemId]) { clearTimeout(debounceTimers.current[itemId]); delete debounceTimers.current[itemId]; }
+    const running = inFlight.current[itemId];
+    if (running) {
+      // One save at a time per line; edits made meanwhile are picked up by
+      // the re-save at the end of the running one.
+      return running;
+    }
+    const row = rowsRef.current[itemId];
+    if (!row || (!row.dirty && !force)) return true;
 
     const received = parseFloat(row.qtyReceived) || 0;
     const ret = parseFloat(row.qtyReturn) || 0;
     const repair = parseFloat(row.qtyRepair) || 0;
-    if (ret + repair > received + 1e-9) {
-      toast.error("Return + repair quantity can't exceed received quantity");
-      return;
+    if (received < 0 || ret + repair > received + 1e-9) {
+      const msg = received < 0 ? "Received can't be negative" : "Return + repair can't be more than received";
+      toast.error(msg);
+      setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], saveError: msg } }));
+      return false;
     }
 
-    setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], saving: true } }));
-    try {
-      const result = await saveInspectionLineDraft(itemId, {
-        qtyReceived: row.qtyReceived || "0",
-        qtyReturn: row.qtyReturn || "0",
-        qtyRepair: row.qtyRepair || "0",
-        returnNotes: row.returnNotes || undefined,
-        repairNotes: row.repairNotes || undefined,
-      });
-      setRows((prev) => ({
-        ...prev,
-        [itemId]: {
-          ...prev[itemId],
-          saving: false,
-          dirty: false,
-          inspectedByName: result.inspectedByName,
-          inspectedById: result.inspectedById,
-          inspectedAt: new Date(result.inspectedAt).toISOString(),
-          // The server always resets approval to "pending" on any edit —
-          // mirror that locally instead of waiting for the next poll.
-          approvalStatus: "pending",
-          approvalNotes: null,
-          approvedByName: null,
-          approvedAt: null,
-        },
-      }));
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't save this line");
-      setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], saving: false } }));
+    const version = versions.current[itemId] ?? 0;
+    const run = (async (): Promise<boolean> => {
+      setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], saving: true } }));
+      try {
+        const result = await saveInspectionLineDraft(itemId, {
+          qtyReceived: row.qtyReceived || "0",
+          qtyReturn: row.qtyReturn || "0",
+          qtyRepair: row.qtyRepair || "0",
+          returnNotes: row.returnNotes || undefined,
+          repairNotes: row.repairNotes || undefined,
+        });
+        const changedMeanwhile = (versions.current[itemId] ?? 0) !== version;
+        touch(touchedAt.current, itemId);
+        setRows((prev) => ({
+          ...prev,
+          [itemId]: {
+            ...prev[itemId],
+            saving: false,
+            dirty: changedMeanwhile,
+            saveError: null,
+            inspectedByName: result.inspectedByName,
+            inspectedById: result.inspectedById,
+            inspectedAt: new Date(result.inspectedAt).toISOString(),
+            // The server always resets approval to "pending" on any edit —
+            // mirror that locally instead of waiting for the next poll.
+            approvalStatus: "pending",
+            approvalNotes: null,
+            approvedByName: null,
+            approvedAt: null,
+          },
+        }));
+        return !changedMeanwhile;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Couldn't save this line";
+        toast.error(msg);
+        setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], saving: false, saveError: msg } }));
+        return false;
+      }
+    })();
+    inFlight.current[itemId] = run;
+    const ok = await run;
+    delete inFlight.current[itemId];
+    // Edited while saving: save again so the newest values are what's stored
+    if ((versions.current[itemId] ?? 0) !== version) return saveRow(itemId);
+    return ok;
+  }
+
+  // Inspector confirms a line as it stands — typically everything arrived as
+  // expected, so there's no number to change that would otherwise save it.
+  function markInspected(itemId: string) {
+    touch(touchedAt.current, itemId);
+    void saveRow(itemId, true);
+  }
+
+  const untouchedIds = pl.items.map((i) => i.id).filter((id) => {
+    const r = rows[id];
+    return r && !r.inspectedByName && !r.dirty && !r.saving;
+  });
+  const [markingAll, setMarkingAll] = useState(false);
+  async function markAllUntouched() {
+    setMarkingAll(true);
+    let failed = 0;
+    for (const id of untouchedIds) {
+      touch(touchedAt.current, id);
+      if (!(await saveRow(id, true))) failed++;
     }
+    setMarkingAll(false);
+    if (failed) toast.error(`${failed} line${failed > 1 ? "s" : ""} couldn't be saved — see the lines marked "Not saved"`);
+    else toast.success("Lines marked as received in full");
+  }
+
+  // Saves whatever is still pending; false if any line couldn't be saved.
+  async function flushSaves(): Promise<boolean> {
+    const ids = Object.keys(rowsRef.current).filter((id) => rowsRef.current[id].dirty || inFlight.current[id]);
+    const results = await Promise.all(ids.map((id) => saveRow(id)));
+    return results.every(Boolean);
+  }
+
+  // Leaving with edits that haven't reached the server yet
+  const hasUnsaved = Object.values(rows).some((r) => r.dirty || r.saving);
+  useEffect(() => {
+    if (!hasUnsaved) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsaved]);
+
+  async function goBack() {
+    if (!(await flushSaves()) && !confirm("Some lines aren't saved. Leave anyway?")) return;
+    router.push(backUrl);
   }
 
   function handleFocusRow(itemId: string) {
@@ -521,12 +612,16 @@ export function InspectPackingListClient({
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
+        const startedAt = nowMs();
         const states = await getInspectionLineStates(pl.id);
         setRows((prev) => {
           const next = { ...prev };
           for (const s of states) {
             const local = next[s.packingListItemId];
             if (!local) continue;
+            // Changed here after this poll was sent — its data for the line
+            // is older than what's on screen; the next poll catches up.
+            if ((touchedAt.current[s.packingListItemId] ?? 0) >= startedAt) continue;
             let updated = local;
 
             if (!local.uploadingReturnPhotos && !local.uploadingRepairPhotos) {
@@ -579,6 +674,7 @@ export function InspectPackingListClient({
     setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], approving: true } }));
     try {
       const result = await approveInspectionLine(itemId, decision, notes);
+      touch(touchedAt.current, itemId);
       setRows((prev) => ({
         ...prev,
         [itemId]: {
@@ -602,7 +698,7 @@ export function InspectPackingListClient({
     const files = Array.from(fileList);
     const validFiles: File[] = [];
     for (const file of files) {
-      const err = validateImageFile(file);
+      const err = inspectionMediaProblem(file);
       if (err) toast.error(`${file.name}: ${err}`);
       else validFiles.push(file);
     }
@@ -614,8 +710,13 @@ export function InspectPackingListClient({
     for (const file of validFiles) {
       try {
         const { key, uploadUrl } = await getInspectionPhotoUploadUrl(itemId, file.name, category);
-        const res = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const isVideo = mediaKindOf(file.name) === "video";
+        const toastId = isVideo ? toast.loading(`Uploading ${file.name}… 0%`) : undefined;
+        try {
+          await putWithProgress(uploadUrl, file, (pct) => { if (toastId !== undefined) toast.loading(`Uploading ${file.name}… ${pct}%`, { id: toastId }); });
+        } finally {
+          if (toastId !== undefined) toast.dismiss(toastId);
+        }
         const photo = await addInspectionPhoto(itemId, key, category);
         setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], photos: [...prev[itemId].photos, photo] } }));
       } catch (e) {
@@ -624,7 +725,12 @@ export function InspectPackingListClient({
       }
     }
     setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [uploadingKey]: false } }));
-    if (failCount === 0) toast.success(`${validFiles.length} photo${validFiles.length > 1 ? "s" : ""} added`);
+    if (failCount === 0) {
+      const videos = validFiles.filter((f) => mediaKindOf(f.name) === "video").length;
+      const photos = validFiles.length - videos;
+      const parts = [photos ? `${photos} photo${photos > 1 ? "s" : ""}` : "", videos ? `${videos} video${videos > 1 ? "s" : ""}` : ""].filter(Boolean);
+      toast.success(`${parts.join(" and ")} added`);
+    }
   }
 
   async function handlePhotoDelete(itemId: string, photoId: string) {
@@ -632,7 +738,7 @@ export function InspectPackingListClient({
     try {
       await deleteInspectionPhoto(photoId);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't delete photo");
+      toast.error(e instanceof Error ? e.message : "Couldn't delete it");
     }
   }
 
@@ -644,8 +750,11 @@ export function InspectPackingListClient({
     try {
       // Flush any edits still pending debounce so completion reflects the
       // very latest keystrokes, not a stale autosave from a few hundred ms ago.
-      const dirtyIds = Object.entries(rowsRef.current).filter(([, r]) => r.dirty).map(([id]) => id);
-      await Promise.all(dirtyIds.map((id) => saveRow(id)));
+      if (!(await flushSaves())) {
+        toast.error("Some lines couldn't be saved — fix the lines marked \"Not saved\" first");
+        setCompleting(false);
+        return;
+      }
 
       await submitFn(pl.id, {
         receivedDate: new Date(receivedDate),
@@ -678,7 +787,7 @@ export function InspectPackingListClient({
         title={`Inspect ${pl.packingListNo}`}
         description={`Mark what actually arrived, in what condition, and where any damaged units go next${organizationName ? ` · ${organizationName}` : ""}`}
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push(backUrl)} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={goBack} className="gap-1.5">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }
@@ -723,6 +832,19 @@ export function InspectPackingListClient({
             Rejected
           </span>
         </div>
+
+        {untouchedIds.length > 0 && (
+          <div className="flex items-center justify-between gap-3 border border-border bg-muted/30 rounded-lg px-3 py-2">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+              <ClipboardCheckIcon className="w-3.5 h-3.5 shrink-0" />
+              {untouchedIds.length} line{untouchedIds.length !== 1 ? "s" : ""} not inspected yet. If they arrived exactly as expected, mark them in one go.
+            </span>
+            <Button type="button" size="sm" variant="outline" className="h-7 text-xs gap-1.5 shrink-0" disabled={markingAll} onClick={markAllUntouched}>
+              {markingAll ? <LoaderIcon className="w-3 h-3 animate-spin" /> : <CheckIcon className="w-3 h-3" />}
+              Mark all as received in full
+            </Button>
+          </div>
+        )}
 
         {canApprove && pendingApprovableIds.length > 0 && (
           <div className="flex items-center justify-between gap-3 border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/15 rounded-lg px-3 py-2">
@@ -1007,11 +1129,28 @@ export function InspectPackingListClient({
                               <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
                                 <LoaderIcon className="w-2.5 h-2.5 shrink-0 animate-spin" />Saving…
                               </span>
+                            ) : row.saveError ? (
+                              <span className="flex flex-col gap-1 text-red-600 dark:text-red-400">
+                                <span className="font-medium">Not saved — {row.saveError}</span>
+                                <button type="button" onClick={() => saveRow(item.id, true)} className="w-fit px-1.5 py-0.5 rounded-md border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20">
+                                  Try again
+                                </button>
+                              </span>
                             ) : row.dirty ? (
                               <span className="text-amber-600 dark:text-amber-400">Unsaved…</span>
                             ) : !row.inspectedByName ? (
-                              <span className="inline-flex items-center gap-1 w-fit px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                                Not yet inspected
+                              <span className="flex flex-col gap-1">
+                                <span className="inline-flex items-center gap-1 w-fit px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                                  Not yet inspected
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => markInspected(item.id)}
+                                  className="inline-flex items-center gap-1 w-fit px-1.5 py-0.5 rounded-md border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                                  title="Save this line as it stands — e.g. everything arrived as expected"
+                                >
+                                  <CheckIcon className="w-3 h-3 shrink-0" /> Mark inspected
+                                </button>
                               </span>
                             ) : (
                               <>

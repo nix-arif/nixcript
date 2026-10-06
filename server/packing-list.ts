@@ -1,5 +1,6 @@
 "use server";
 
+import { extOf, mediaKindOf, IMAGE_EXTS, VIDEO_EXTS, type InspectionMediaKind } from "@/lib/inspection-media";
 import { db } from "@/db";
 import {
   packingList,
@@ -933,9 +934,19 @@ export type InspectionPhoto = {
   imageKey: string;
   url: string;
   category: InspectionPhotoCategory;
+  // photo or video — follows from the file's extension (lib/inspection-media)
+  kind: InspectionMediaKind;
   uploadedByName: string | null;
   createdAt: Date;
 };
+
+// A presigned link to a photo or video. A .mov from an iPhone is H.264 inside
+// a QuickTime box: served as video/mp4 it plays in Chrome and Edge too, not
+// only Safari.
+function inspectionMediaUrl(key: string): Promise<string> {
+  const mov = extOf(key) === "mov";
+  return getSignedUrl(s3, new GetObjectCommand({ Bucket: ITEM_INSPECTIONS_BUCKET, Key: key, ...(mov && { ResponseContentType: "video/mp4" }) }), { expiresIn: 7200 });
+}
 
 // Shared by every read path that shows inspection photos (own-org detail,
 // centralized detail, the inspect page's poll) — one batched query + one
@@ -957,9 +968,9 @@ async function getPhotosForItems(itemIds: string[]): Promise<Map<string, Inspect
 
   await Promise.all(
     rows.map(async (r) => {
-      const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: ITEM_INSPECTIONS_BUCKET, Key: r.imageKey }), { expiresIn: 7200 });
+      const url = await inspectionMediaUrl(r.imageKey);
       const arr = map.get(r.packingListItemId) ?? [];
-      arr.push({ id: r.id, imageKey: r.imageKey, url, category: r.category as InspectionPhotoCategory, uploadedByName: nameOf(r.uploadedBy), createdAt: r.createdAt });
+      arr.push({ id: r.id, imageKey: r.imageKey, url, category: r.category as InspectionPhotoCategory, kind: mediaKindOf(r.imageKey), uploadedByName: nameOf(r.uploadedBy), createdAt: r.createdAt });
       map.set(r.packingListItemId, arr);
     }),
   );
@@ -981,8 +992,11 @@ export async function getInspectionPhotoUploadUrl(packingListItemId: string, fil
   if (!row) throw new Error("Item not found");
   if (row.pl.status !== "pending") throw new Error("This packing list has already been inspected or cancelled");
   await assertCanInspectPackingList(row.pl.organizationId, orgId, userId);
+  const ext = extOf(filename);
+  if (![...IMAGE_EXTS, ...VIDEO_EXTS].includes(ext)) throw new Error("Only photos (JPG, PNG, WebP, GIF) and videos (MP4, MOV, WebM, 3GP) can be attached");
 
-  const key = `item-inspections/${packingListItemId}/${category}/${nanoid()}-${filename}`;
+  const safeName = filename.replace(/[^\w.-]+/g, "_").slice(-80);
+  const key = `item-inspections/${packingListItemId}/${category}/${nanoid()}-${safeName}`;
   const cmd = new PutObjectCommand({ Bucket: ITEM_INSPECTIONS_BUCKET, Key: key });
   const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
   return { key, uploadUrl };
@@ -999,11 +1013,12 @@ export async function addInspectionPhoto(packingListItemId: string, imageKey: st
   if (!row) throw new Error("Item not found");
   if (row.pl.status !== "pending") throw new Error("This packing list has already been inspected or cancelled");
   await assertCanInspectPackingList(row.pl.organizationId, orgId, userId);
+  if (!imageKey.startsWith(`item-inspections/${packingListItemId}/`)) throw new Error("That file doesn't belong to this item");
 
   const [photo] = await db.insert(inspectionPhoto).values({ id: nanoid(), packingListItemId, imageKey, category, uploadedBy: userId }).returning();
   const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
-  const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: ITEM_INSPECTIONS_BUCKET, Key: imageKey }), { expiresIn: 7200 });
-  return { id: photo.id, imageKey: photo.imageKey, url, category: photo.category as InspectionPhotoCategory, uploadedByName: u?.name ?? null, createdAt: photo.createdAt };
+  const url = await inspectionMediaUrl(imageKey);
+  return { id: photo.id, imageKey: photo.imageKey, url, category: photo.category as InspectionPhotoCategory, kind: mediaKindOf(imageKey), uploadedByName: u?.name ?? null, createdAt: photo.createdAt };
 }
 
 // Anyone who can inspect this packing list can remove any photo on it, not

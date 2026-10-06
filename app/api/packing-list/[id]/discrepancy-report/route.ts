@@ -236,7 +236,10 @@ function buildIssueItems(
       const include = kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0;
       if (!include) return null;
 
-      const evidencePhotos = item.photos.filter((p) => p.category === kind);
+      // Videos can't go into a PDF or spreadsheet — only photos are embedded;
+      // the notes say how many videos to watch in the system.
+      const evidencePhotos = item.photos.filter((p) => p.category === kind && p.kind !== "video");
+      const videoCount = item.photos.filter((p) => p.category === kind && p.kind === "video").length;
       const catalogImageUrl = item.productCode ? getProductImageUrl(item.productCode) || null : null;
       return {
         poLabel: poLabelById.get(item.purchaseOrderId) ?? item.purchaseOrderId,
@@ -250,7 +253,9 @@ function buildIssueItems(
         received,
         shortfall,
         returned: flagQty,
-        returnNotes: flagNotes,
+        returnNotes: videoCount
+          ? `${flagNotes}${flagNotes ? " " : ""}(${videoCount} video${videoCount > 1 ? "s" : ""} attached — watch on the packing list in the system)`
+          : flagNotes,
         identityImageUrl: item.imageUrl ?? catalogImageUrl,
         evidenceImageUrls: evidencePhotos.map((p) => p.url),
         inspectedByName: item.draftInspectedByName,

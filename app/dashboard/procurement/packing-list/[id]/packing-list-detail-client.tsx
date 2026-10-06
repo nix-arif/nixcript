@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
+import { InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
 
 const PO_COLORS = [
   { bg: "bg-blue-50/50 dark:bg-blue-950/15", header: "bg-blue-100/70 dark:bg-blue-900/30", border: "border-blue-200 dark:border-blue-800/50", stripe: "bg-blue-100/60 dark:bg-blue-900/25" },
@@ -102,20 +103,18 @@ function PhotoThumbnails({ photos }: { photos: PackingListWithItems["items"][num
           type="button"
           onClick={() => setLightbox(p)}
           className="block w-8 h-8 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
-          title="View photo"
+          title={p.kind === "video" ? "Play video" : "View photo"}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={p.url} className="w-full h-full object-cover" alt="" />
+          <InspectionMediaThumb media={p} />
         </button>
       ))}
       <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
         <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
-          <DialogTitle className="sr-only">Inspection photo</DialogTitle>
+          <DialogTitle className="sr-only">Inspection {lightbox?.kind === "video" ? "video" : "photo"}</DialogTitle>
           {lightbox && (
             <>
               <div className="relative bg-muted/30">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={lightbox.url} className="w-full object-contain max-h-[65vh]" alt="" />
+                <InspectionMediaView media={lightbox} />
                 <button
                   type="button"
                   onClick={() => setLightbox(null)}
