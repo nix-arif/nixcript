@@ -19,7 +19,8 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import { notifyUsersWithPermission } from "@/server/notifications";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, inArray, sql, ne, isNull, gte, lte } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, sql, ne, isNull, isNotNull, gte, lte } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
 
 /* =========================
    TYPES
@@ -1089,36 +1090,34 @@ export async function getPendingApprovals(): Promise<LeaveApplicationWithDetails
    REPORT
 ========================= */
 
-// Matches the existing "Medical/Sick Leave" naming convention — one shared
-// trailing "Leave", not "Annual Leave/Emergency Leave".
-function withEmergencyLabel(name: string, hasThreshold: boolean): string {
-  if (!hasThreshold) return name;
-  return `${name.replace(/\s*Leave$/i, "")}/Emergency Leave`;
-}
 
 export type LeaveReportColumn = {
   code: string;
   name: string;
-  // Set when this column is a subset label drawn from another column's
-  // pool (e.g. "Emergency Leave" under "Annual Leave") — lets the UI show
-  // it as a sub-column of its parent rather than an unrelated type.
+  // Kept for the PDF export's signature; always unset now — emergency leave is
+  // counted inside its own type (see LeaveReportRow.emergency), not a column.
   parentCode?: string;
 };
 export type LeaveReportRow = {
   userId: string;
   memberName: string;
-  // code -> total days taken (APPROVED only) for the report year
+  // type code -> approved days taken in the year (emergency leave included in its type)
   totals: Record<string, string>;
+  // type code -> of which recorded as emergency leave (short-notice label)
+  emergency: Record<string, string>;
+  // type code -> days the member had for the year (entitlement + carry-forward + opening balance)
+  entitled: Record<string, string>;
+  // approved days per month, by the month the leave starts
+  byMonth: number[];
   grandTotal: string;
 };
 
-// One row per org member, one column per leave-type LABEL actually used
-// (leaveApplication.leaveTypeCode/Name as recorded at apply time). This is
-// deliberately keyed by label rather than leaveTypeId — a type like Annual
-// Leave that auto-splits short applications into an "Emergency Leave" label
-// (see leaveType.emergencyThresholdDays) shares one entitlement pool but
-// should still show as two separate columns here, since that split is
-// exactly what a leave-taken report needs to answer.
+// Leave taken in a year: one row per current member, one column per leave
+// type, counting APPROVED applications only. Emergency Leave is a
+// short-notice label on another type (normally Annual Leave) drawing on the
+// same balance, so it is counted inside that type and shown as "of which
+// emergency" — not as a separate column. Each cell can be read against what
+// the member had for that type, and the same data is given per month.
 export async function getLeaveReport(year?: number): Promise<{
   year: number;
   columns: LeaveReportColumn[];
@@ -1127,9 +1126,9 @@ export async function getLeaveReport(year?: number): Promise<{
   const { orgId } = await requireAccess("leave:read:all");
   const y = year ?? new Date().getFullYear();
 
-  const [types, apps, members] = await Promise.all([
+  const [types, apps, members, ents] = await Promise.all([
     db
-      .select({ id: leaveType.id, code: leaveType.code, name: leaveType.name, emergencyThresholdDays: leaveType.emergencyThresholdDays })
+      .select({ id: leaveType.id, code: leaveType.code, name: leaveType.name })
       .from(leaveType)
       .where(and(eq(leaveType.organizationId, orgId), eq(leaveType.isActive, true)))
       .orderBy(asc(leaveType.sortOrder)),
@@ -1139,6 +1138,7 @@ export async function getLeaveReport(year?: number): Promise<{
         leaveTypeId: leaveApplication.leaveTypeId,
         code: leaveApplication.leaveTypeCode,
         name: leaveApplication.leaveTypeName,
+        startDate: leaveApplication.startDate,
         totalDays: leaveApplication.totalDays,
       })
       .from(leaveApplication)
@@ -1155,50 +1155,47 @@ export async function getLeaveReport(year?: number): Promise<{
       .from(member)
       .innerJoin(user, eq(user.id, member.userId))
       .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt))),
+    db
+      .select({
+        userId: leaveEntitlement.userId, leaveTypeId: leaveEntitlement.leaveTypeId,
+        entitledDays: leaveEntitlement.entitledDays, carryForwardDays: leaveEntitlement.carryForwardDays, openingBalance: leaveEntitlement.openingBalance,
+      })
+      .from(leaveEntitlement)
+      .where(and(eq(leaveEntitlement.organizationId, orgId), eq(leaveEntitlement.year, y))),
   ]);
 
-  // Columns: one per active leave type, immediately followed by any subset
-  // label drawn from that same type's pool (e.g. Emergency Leave applications
-  // carry leaveTypeId = Annual Leave's id but a different recorded code) —
-  // keeps the subset visually attached to its parent instead of trailing at
-  // the end of the table next to unrelated types. Any application whose
-  // leaveTypeId doesn't match an active type (e.g. the type was since
-  // deactivated) falls back to its own trailing column.
-  const columns: LeaveReportColumn[] = [];
-  const seenCodes = new Set<string>();
-  for (const type of types) {
-    columns.push({ code: type.code, name: withEmergencyLabel(type.name, type.emergencyThresholdDays != null) });
-    seenCodes.add(type.code);
-    const subsetCodes = new Set(
-      apps.filter((a) => a.leaveTypeId === type.id && a.code !== type.code).map((a) => a.code),
-    );
-    for (const code of subsetCodes) {
-      if (seenCodes.has(code)) continue;
-      const sample = apps.find((a) => a.code === code)!;
-      columns.push({ code, name: sample.name, parentCode: type.code });
-      seenCodes.add(code);
-    }
-  }
+  // One column per active type; an application whose type has since been
+  // deactivated gets a trailing column of its own
+  const columns: LeaveReportColumn[] = types.map((t) => ({ code: t.code, name: t.name }));
+  const codeOfType = new Map(types.map((t) => [t.id, t.code]));
   for (const a of apps) {
-    if (seenCodes.has(a.code)) continue;
-    columns.push({ code: a.code, name: a.name });
-    seenCodes.add(a.code);
+    if (codeOfType.has(a.leaveTypeId)) continue;
+    codeOfType.set(a.leaveTypeId, a.code);
+    if (!columns.some((c) => c.code === a.code)) columns.push({ code: a.code, name: a.name });
   }
 
-  // Rows: every current member, so people who took zero leave still appear.
   const rowMap = new Map<string, LeaveReportRow>();
   for (const m of members) {
-    rowMap.set(m.userId, { userId: m.userId, memberName: m.name ?? "—", totals: {}, grandTotal: "0" });
+    rowMap.set(m.userId, { userId: m.userId, memberName: m.name ?? "—", totals: {}, emergency: {}, entitled: {}, byMonth: Array(12).fill(0), grandTotal: "0" });
   }
+  const add = (rec: Record<string, string>, k: string, v: number) => { rec[k] = (parseFloat(rec[k] ?? "0") + v).toFixed(2); };
   for (const a of apps) {
-    if (!rowMap.has(a.userId)) continue; // application from a member who has since left the org
-    const row = rowMap.get(a.userId)!;
-    const cur = parseFloat(row.totals[a.code] ?? "0");
-    row.totals[a.code] = (cur + parseFloat(a.totalDays)).toFixed(2);
+    const row = rowMap.get(a.userId);
+    if (!row) continue; // a member who has since left
+    const code = codeOfType.get(a.leaveTypeId)!;
+    const d = parseFloat(a.totalDays);
+    add(row.totals, code, d);
+    if (a.code !== code) add(row.emergency, code, d); // recorded under a short-notice label of this type
+    row.byMonth[parseInt(a.startDate.slice(5, 7), 10) - 1] += d;
+  }
+  for (const e of ents) {
+    const row = rowMap.get(e.userId);
+    const code = codeOfType.get(e.leaveTypeId);
+    if (!row || !code) continue;
+    row.entitled[code] = (parseFloat(e.entitledDays) + parseFloat(e.carryForwardDays) + parseFloat(e.openingBalance)).toFixed(2);
   }
   for (const row of rowMap.values()) {
-    const sum = Object.values(row.totals).reduce((s, v) => s + parseFloat(v), 0);
-    row.grandTotal = sum.toFixed(2);
+    row.grandTotal = Object.values(row.totals).reduce((s, v) => s + parseFloat(v), 0).toFixed(2);
   }
 
   const rows = [...rowMap.values()].sort((a, b) => a.memberName.localeCompare(b.memberName));
@@ -1250,7 +1247,24 @@ export async function getAllLeaveApplications(filters?: {
 
 export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
   const { orgId, userId, userName } = await requireAccess("leave:apply");
-  const year = new Date().getFullYear();
+  return createLeaveApplication({ orgId, applicantId: userId, applicantName: userName, data, year: new Date().getFullYear() });
+}
+
+/**
+ * The one way a leave application comes into being — applied for by the
+ * member (PENDING, approvers notified) or recorded for them by an approver
+ * (APPROVED on the spot, `recordedBy` set, the member notified). Same rules
+ * either way: probation / notice-period / half-day limits, no overlap, and
+ * enough balance (leave beyond it is recorded as Unpaid Leave instead).
+ */
+async function createLeaveApplication(p: {
+  orgId: string; applicantId: string; applicantName: string; data: ApplyLeaveInput; year: number;
+  recordedBy?: { userId: string; name: string };
+}): Promise<string> {
+  const { orgId, data, year } = p;
+  const userId = p.applicantId;
+  const own = !p.recordedBy;
+  const who = own ? "you" : p.applicantName;
 
   const type = await db
     .select()
@@ -1267,7 +1281,7 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
       .where(eq(profile.userId, userId))
       .limit(1);
     if (profileRow?.employmentStatus === "probation") {
-      throw new Error(`${lt.name} cannot be applied for while still on probation`);
+      throw new Error(`${lt.name} cannot be ${own ? "applied for" : "recorded"} while ${own ? "still" : `${who} is`} on probation`);
     }
   }
 
@@ -1278,7 +1292,7 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
       .where(and(eq(member.organizationId, orgId), eq(member.userId, userId), isNull(member.deletedAt)))
       .limit(1);
     if (memberRow?.noticeDate && memberRow.leaveBlockedOnNotice) {
-      throw new Error(`${lt.name} cannot be applied for during your notice period`);
+      throw new Error(`${lt.name} cannot be ${own ? "applied for during your" : `recorded during ${who}'s`} notice period`);
     }
   }
 
@@ -1309,7 +1323,7 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
     )
     .limit(1);
   if (overlapping.length > 0)
-    throw new Error("You have an existing leave application overlapping these dates");
+    throw new Error(own ? "You have an existing leave application overlapping these dates" : `${who} already has leave overlapping these dates`);
 
   const ent = await ensureEntitlement(orgId, userId, lt, year);
   const entitled = parseFloat(ent.entitledDays);
@@ -1325,7 +1339,7 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
 
   if (totalDays > available) {
     throw new Error(
-      `Insufficient ${lt.name} balance. Available: ${available.toFixed(1)} days, Requested: ${totalDays} days`,
+      `Insufficient ${lt.name} balance. Available: ${available.toFixed(1)} days, Requested: ${totalDays} days${own ? "" : " — record the rest as Unpaid Leave"}`,
     );
   }
 
@@ -1342,6 +1356,7 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
 
   const applicationNo = await generateApplicationNo(orgId);
   const appId = nanoid();
+  const now = new Date();
 
   // neon-http driver has no transaction support — insert then update
   // sequentially, matching the pattern already used in ledger.ts.
@@ -1359,26 +1374,72 @@ export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
     isHalfDay: data.isHalfDay,
     halfDayPeriod: data.halfDayPeriod ?? null,
     reason: data.reason?.trim() ?? null,
-    status: "PENDING",
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    // Recorded by an approver: approved on the spot, by them
+    status: own ? "PENDING" : "APPROVED",
+    ...(own ? {} : { recordedBy: p.recordedBy!.userId, reviewedBy: p.recordedBy!.userId, reviewedAt: now, reviewComment: "Recorded by HR for the member" }),
+    createdAt: now,
+    updatedAt: now,
   });
   await db
     .update(leaveEntitlement)
-    .set({
-      pendingDays: (pending + totalDays).toFixed(2),
-      updatedAt: new Date(),
-    })
+    .set(own
+      ? { pendingDays: (pending + totalDays).toFixed(2), updatedAt: now }
+      : { usedDays: (used + totalDays).toFixed(2), updatedAt: now })
     .where(eq(leaveEntitlement.id, ent.id));
 
-  await notifyUsersWithPermission(orgId, "leave:approve", {
-    type: "leave:submitted",
-    title: `Leave Application: ${appliedName}`,
-    body: `${userName} applied for ${appliedName} from ${data.startDate} to ${data.endDate} (${totalDays} day${totalDays !== 1 ? "s" : ""})`,
-    link: `/dashboard/human-resources/leave/approvals`,
-  });
+  const span = `${data.startDate} to ${data.endDate} (${totalDays} day${totalDays !== 1 ? "s" : ""})`;
+  if (own) {
+    await notifyUsersWithPermission(orgId, "leave:approve", {
+      type: "leave:submitted",
+      title: `Leave Application: ${appliedName}`,
+      body: `${p.applicantName} applied for ${appliedName} from ${span}`,
+      link: `/dashboard/human-resources/leave/approvals`,
+    });
+  } else {
+    await notifyUser(orgId, userId, {
+      type: "leave:recorded",
+      title: `Leave recorded for you: ${appliedName}`,
+      body: `${p.recordedBy!.name} recorded ${appliedName} for you from ${span}. Reason: ${data.reason?.trim() ?? "—"}. Contact HR if this is not right.`,
+      link: `/dashboard/human-resources/leave`,
+    });
+  }
 
   return appId;
+}
+
+/**
+ * Leave a member took but never applied for in the system (e.g. an MC sent
+ * by email) — recorded for them by someone who can approve leave, with the
+ * reason. Approved on recording; shows as "Recorded by HR"; the member is
+ * notified. Nobody records leave for themselves this way.
+ */
+export async function recordLeaveForMember(input: ApplyLeaveInput & { userId: string }): Promise<string> {
+  const { orgId, userId: actorId, userName } = await requireAccess("leave:approve");
+  if (input.userId === actorId) throw new Error("You can't record leave for yourself — apply for it in My Leave");
+  if (!input.reason?.trim() || input.reason.trim().length < 5) throw new Error("Give the reason for recording this leave (e.g. MC sent by email, member did not apply)");
+  const [m] = await db.select({ name: user.name }).from(member).innerJoin(user, eq(user.id, member.userId))
+    .where(and(eq(member.organizationId, orgId), eq(member.userId, input.userId), isNull(member.deletedAt))).limit(1);
+  if (!m) throw new Error("That person isn't a member of this company");
+  return createLeaveApplication({
+    orgId, applicantId: input.userId, applicantName: m.name ?? "The member", data: input,
+    year: parseInt(input.startDate.slice(0, 4), 10),
+    recordedBy: { userId: actorId, name: userName ?? "HR" },
+  });
+}
+
+/** Members leave can be recorded for, and their balances — for the Record leave form. */
+export async function getRecordLeaveOptions(memberId?: string) {
+  const { orgId, userId } = await requireAccess("leave:approve");
+  const [members, types] = await Promise.all([
+    db.select({ id: member.userId, name: user.name }).from(member).innerJoin(user, eq(user.id, member.userId))
+      .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt), ne(member.userId, userId))).orderBy(asc(user.name)),
+    db.select({ id: leaveType.id, name: leaveType.name, allowHalfDay: leaveType.allowHalfDay, requiresDocument: leaveType.requiresDocument })
+      .from(leaveType).where(and(eq(leaveType.organizationId, orgId), eq(leaveType.isActive, true))).orderBy(asc(leaveType.sortOrder)),
+  ]);
+  const balances = memberId && memberId !== userId && members.some((x) => x.id === memberId)
+    ? (await computeBalances(orgId, memberId)).map((b) => ({ leaveTypeId: b.leaveTypeId, remaining: parseFloat(b.remainingDays) }))
+    : [];
+  return { members: members.map((x) => ({ id: x.id, name: x.name ?? x.id })), types, balances };
 }
 
 export async function approveLeave(appId: string, comment?: string): Promise<void> {
@@ -1837,7 +1898,10 @@ export async function createLeaveDocumentRecord(data: {
   fileSize: number;
   mimeType: string;
 }): Promise<LeaveDocumentRow> {
-  const { orgId, userId } = await requireAccess("leave:apply");
+  const { orgId, userId } = await getSession();
+  const perms = await getUserPermissions(userId, orgId);
+  // the member's own documents, or an approver attaching one (e.g. the MC for leave they recorded)
+  if (!hasAccess(perms, "leave:apply") && !hasAccess(perms, "leave:approve")) throw new Error("You don't have permission to do this");
   const app = await db
     .select()
     .from(leaveApplication)
@@ -1882,4 +1946,130 @@ export async function calculateLeaveDays(
   isHalfDay: boolean,
 ): Promise<number> {
   return calculateWorkingDays(startDate, endDate, isHalfDay);
+}
+
+/* =========================
+   LEAVE SUMMARY (all members)
+========================= */
+
+// One page to review everyone's leave for the current year: each member's
+// balance per type (same computation as their own My Leave cards), what
+// they took / have pending, their applications, and a few patterns worth a
+// look (days per month, leave next to a weekend, emergency leave, short
+// notice). Leave reasons stay on the applications themselves.
+
+export type LeaveSummaryApp = {
+  id: string; applicationNo: string; leaveTypeName: string; leaveTypeCode: string;
+  startDate: string; endDate: string; totalDays: string; isHalfDay: boolean; status: string;
+  appliedOn: string; noticeDays: number;
+  recordedByHr: boolean; // recorded for the member by an approver, not applied for by them
+  acknowledgedAt: string | null; // when the member acknowledged it (recorded leave only)
+};
+
+export type LeaveSummaryMember = {
+  userId: string;
+  name: string;
+  balances: { leaveTypeId: string; code: string; name: string; entitled: number; carryForward: number; earned: number; opening: number; used: number; pending: number; remaining: number }[];
+  takenDays: number;
+  pendingDays: number;
+  applications: LeaveSummaryApp[];
+  nextLeave: { startDate: string; endDate: string; leaveTypeName: string } | null;
+  byMonth: number[];          // approved days per month (by start date)
+  nextToWeekend: number;      // approved applications starting on a Monday or ending on a Friday
+  emergency: number;          // approved applications recorded as emergency leave
+  shortNotice: number;        // applications made less than 3 days before the leave starts
+};
+
+// A moment as its calendar date in Malaysia (YYYY-MM-DD), whatever the server's timezone
+const myDate = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur" }).format(d);
+
+export async function getLeaveSummary(): Promise<{ year: number; types: { code: string; name: string }[]; members: LeaveSummaryMember[] }> {
+  const { orgId } = await requireAccess("leave:summary");
+  const year = new Date().getFullYear();
+  const today = todayLocalDate();
+
+  const [members, types, apps] = await Promise.all([
+    db.select({ userId: member.userId, name: user.name }).from(member).innerJoin(user, eq(user.id, member.userId))
+      .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt))).orderBy(asc(user.name)),
+    db.select({ code: leaveType.code, name: leaveType.name }).from(leaveType)
+      .where(and(eq(leaveType.organizationId, orgId), eq(leaveType.isActive, true))).orderBy(asc(leaveType.sortOrder)),
+    db.select().from(leaveApplication).where(and(
+      eq(leaveApplication.organizationId, orgId),
+      gte(leaveApplication.startDate, `${year}-01-01`), lte(leaveApplication.startDate, `${year}-12-31`),
+    )).orderBy(asc(leaveApplication.startDate)),
+  ]);
+
+  const dayOf = (ymd: string) => new Date(`${ymd}T00:00:00`).getDay();
+  const out: LeaveSummaryMember[] = [];
+  for (const m of members) {
+    const bal = await computeBalances(orgId, m.userId);
+    const mine = apps.filter((a) => a.userId === m.userId);
+    const approved = mine.filter((a) => a.status === "APPROVED");
+    const byMonth = Array.from({ length: 12 }, () => 0);
+    for (const a of approved) byMonth[parseInt(a.startDate.slice(5, 7), 10) - 1] += parseFloat(a.totalDays);
+    const next = approved.find((a) => a.endDate >= today);
+    const applications: LeaveSummaryApp[] = mine.map((a) => {
+      const applied = myDate(a.createdAt);
+      const notice = Math.round((new Date(`${a.startDate}T00:00:00`).getTime() - new Date(`${applied}T00:00:00`).getTime()) / 86_400_000);
+      return {
+        id: a.id, applicationNo: a.applicationNo, leaveTypeName: a.leaveTypeName, leaveTypeCode: a.leaveTypeCode,
+        startDate: a.startDate, endDate: a.endDate, totalDays: a.totalDays, isHalfDay: a.isHalfDay, status: a.status,
+        appliedOn: applied, noticeDays: notice, recordedByHr: !!a.recordedBy,
+        acknowledgedAt: a.recordedAcknowledgedAt ? myDate(a.recordedAcknowledgedAt) : null,
+      };
+    });
+    out.push({
+      userId: m.userId,
+      name: m.name ?? m.userId,
+      balances: bal.map((b) => ({
+        leaveTypeId: b.leaveTypeId, code: b.leaveTypeCode, name: b.leaveTypeName,
+        entitled: parseFloat(b.entitledDays), carryForward: b.carryForwardExpired ? 0 : parseFloat(b.carryForwardDays),
+        earned: parseFloat((b as { earnedDays?: string }).earnedDays ?? "0"), opening: parseFloat(b.openingBalance) - parseFloat(b.openingUsedDays),
+        used: parseFloat(b.usedDays), pending: parseFloat(b.pendingDays), remaining: parseFloat(b.remainingDays),
+      })),
+      takenDays: approved.reduce((s, a) => s + parseFloat(a.totalDays), 0),
+      pendingDays: mine.filter((a) => a.status === "PENDING").reduce((s, a) => s + parseFloat(a.totalDays), 0),
+      applications,
+      nextLeave: next ? { startDate: next.startDate, endDate: next.endDate, leaveTypeName: next.leaveTypeName } : null,
+      byMonth,
+      nextToWeekend: approved.filter((a) => dayOf(a.startDate) === 1 || dayOf(a.endDate) === 5).length,
+      emergency: approved.filter((a) => /emergency/i.test(a.leaveTypeName)).length,
+      shortNotice: applications.filter((a) => a.status !== "CANCELLED" && !a.recordedByHr && a.noticeDays < 3).length,
+    });
+  }
+  return { year, types, members: out };
+}
+
+/* =========================
+   RECORDED LEAVE — member acknowledgement
+========================= */
+
+export type RecordedLeaveNotice = {
+  id: string; applicationNo: string; leaveTypeName: string; startDate: string; endDate: string;
+  totalDays: string; isHalfDay: boolean; reason: string | null; recordedByName: string | null; recordedAt: Date;
+};
+
+/** Leave HR recorded for the signed-in member that they haven't acknowledged yet — shown on their dashboard. */
+export async function getMyRecordedLeaveNotices(): Promise<RecordedLeaveNotice[]> {
+  const { orgId, userId } = await getSession();
+  const rows = await db.select({ a: leaveApplication, recorder: user.name }).from(leaveApplication)
+    .leftJoin(user, eq(user.id, leaveApplication.recordedBy))
+    .where(and(eq(leaveApplication.organizationId, orgId), eq(leaveApplication.userId, userId), eq(leaveApplication.status, "APPROVED"),
+      isNotNull(leaveApplication.recordedBy), isNull(leaveApplication.recordedAcknowledgedAt)))
+    .orderBy(desc(leaveApplication.createdAt));
+  return rows.map(({ a, recorder }) => ({
+    id: a.id, applicationNo: a.applicationNo, leaveTypeName: a.leaveTypeName, startDate: a.startDate, endDate: a.endDate,
+    totalDays: a.totalDays, isHalfDay: a.isHalfDay, reason: a.reason, recordedByName: recorder, recordedAt: a.createdAt,
+  }));
+}
+
+/** The member confirms they've seen leave recorded for them ("OK, noted") — HR sees when. */
+export async function acknowledgeRecordedLeave(appId: string): Promise<{ ok: true } | { ok: false; title: string }> {
+  const { orgId, userId } = await getSession();
+  const [a] = await db.select({ userId: leaveApplication.userId, recordedBy: leaveApplication.recordedBy, ack: leaveApplication.recordedAcknowledgedAt })
+    .from(leaveApplication).where(and(eq(leaveApplication.id, appId), eq(leaveApplication.organizationId, orgId))).limit(1);
+  if (!a || a.userId !== userId || !a.recordedBy) return { ok: false, title: "This isn't leave recorded for you" };
+  if (!a.ack) await db.update(leaveApplication).set({ recordedAcknowledgedAt: new Date() }).where(eq(leaveApplication.id, appId));
+  revalidatePath("/dashboard");
+  return { ok: true };
 }

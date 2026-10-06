@@ -22,7 +22,7 @@ export const KEY_GROUP: Record<string, string> = {
 
   "delivery-order:read": "fulfillment", "delivery-order:create": "fulfillment",
   "delivery-order:update": "fulfillment", "delivery-order:delete": "fulfillment",
-  "delivery-order:internal-copy": "fulfillment", "delivery-order:cancel": "fulfillment",
+  "delivery-order:internal-copy": "fulfillment", "delivery-order:cancel": "fulfillment", "delivery-order:stock-override": "fulfillment",
   "invoice:read": "fulfillment", "invoice:create": "fulfillment",
   "invoice:update": "fulfillment", "invoice:delete": "fulfillment",
   "account:read": "fulfillment", "account:create": "fulfillment",
@@ -38,9 +38,10 @@ export const KEY_GROUP: Record<string, string> = {
   "consignment:read": "inventory", "consignment:manage": "inventory",
   "consignment:adjust": "inventory", "consignment:settle": "inventory",
 
-  "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr",
+  "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr", "leave:summary": "hr",
   "claim:read:own": "hr", "claim:apply": "hr", "claim:manage": "hr", "claim:read:all": "hr",
   "travel:read:own": "hr", "travel:apply": "hr", "travel:manage": "hr", "travel:read:all": "hr",
+  "allowance:read:own": "hr", "allowance:read:all": "hr", "allowance:manage": "hr",
   "payslip:read:own": "hr", "payslip:read:all": "hr", "payslip:create": "hr",
   "profile:read": "hr", "profile:update": "hr", "profile:read:all": "hr", "profile:update:all": "hr", "profile:delete:all": "hr",
 

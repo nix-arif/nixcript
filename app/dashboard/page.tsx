@@ -3,6 +3,9 @@ import { ShieldOffIcon } from "lucide-react";
 import { ensureProfileExists } from "@/server/profile";
 import { getCurrentUser } from "@/server/users";
 import { getDashboardSummary } from "@/server/dashboard";
+import { getMyApprovalTasks } from "@/server/my-tasks";
+import { getTeamLeave } from "@/server/team-leave";
+import { getMyRecordedLeaveNotices } from "@/server/leave";
 import { DashboardClient } from "./dashboard-client";
 
 const DashboardPage = async ({
@@ -12,9 +15,12 @@ const DashboardPage = async ({
 }) => {
   const params = await searchParams;
 
-  const [session, summary] = await Promise.all([
+  const [session, summary, myTasks, teamLeave, recordedLeave] = await Promise.all([
     getCurrentUser(),
     ensureProfileExists().then(() => getDashboardSummary()).catch(() => null),
+    getMyApprovalTasks().catch(() => []),
+    getTeamLeave().catch(() => null),
+    getMyRecordedLeaveNotices().catch(() => []),
   ]);
 
   return (
@@ -27,7 +33,7 @@ const DashboardPage = async ({
       )}
 
       {summary ? (
-        <DashboardClient summary={summary} userName={session?.user?.name ?? null} />
+        <DashboardClient summary={summary} myTasks={myTasks} teamLeave={teamLeave} recordedLeave={recordedLeave} userName={session?.user?.name ?? null} />
       ) : (
         <div className="p-6">
           <h1 className="text-xl font-semibold tracking-tight">

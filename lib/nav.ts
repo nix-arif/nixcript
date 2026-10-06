@@ -132,8 +132,9 @@ export const navConfig: NavGroup[] = [
       { title: "Transfer to Rep",   url: "/dashboard/inventory/field-stock/transfer", permission: "inventory:create"  },
       { title: "Pending Approvals", url: "/dashboard/inventory/approvals",            permission: "inventory:approve" },
       { title: "Movement History",  url: "/dashboard/inventory/movements",            permission: "inventory:read"    },
-      { title: "Serialized Units",  url: "/dashboard/inventory/serialized-units",     permission: "inventory:read"    },
+      { title: "Lots & Serial Numbers", url: "/dashboard/inventory/serialized-units", permission: "inventory:read"    },
       { title: "Item Groups",       url: "/dashboard/inventory/item-groups",          permission: "inventory:read"    },
+      { title: "Stock Rules",       url: "/dashboard/inventory/stock-rules",          permission: "inventory:read"    },
     ],
   },
   {
@@ -186,6 +187,7 @@ export const navConfig: NavGroup[] = [
       { title: "Leave Balances", url: "/dashboard/human-resources/leave/balances",       permission: "leave:manage"     },
       { title: "Leave Policy", url: "/dashboard/human-resources/leave/policy", permission: "leave:manage" },
       { title: "Leave Report",   url: "/dashboard/human-resources/leave/report",         permission: "leave:read:all"   },
+      { title: "Leave Summary",  url: "/dashboard/human-resources/leave/summary",        permission: "leave:summary"    },
       { title: "My Claims",      url: "/dashboard/human-resources/claim",               permission: "claim:read:own"   },
       { title: "Claim Checker",  url: "/dashboard/human-resources/claim/checker",        permission: "claim:check"      },
       { title: "Claim Approvals",url: "/dashboard/human-resources/claim/approvals",      permission: "claim:approve"    },

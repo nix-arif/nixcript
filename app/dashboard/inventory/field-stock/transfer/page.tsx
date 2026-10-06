@@ -3,7 +3,8 @@ import { getFieldReps, getMainWarehouseLabel } from "@/server/field-stock";
 import { listPartners } from "@/server/consign";
 import { TransferClient } from "./transfer-client";
 
-export default async function FieldStockTransferPage() {
+export default async function FieldStockTransferPage({ searchParams }: { searchParams: Promise<{ rep?: string }> }) {
+  const sp = await searchParams;
   await requirePermission("inventory:create");
   const [reps, mainWarehouseLabel, partners] = await Promise.all([
     getFieldReps(),
@@ -12,7 +13,7 @@ export default async function FieldStockTransferPage() {
     listPartners().then((r) => (r.canEdit ? r.partners.filter((p) => p.active) : [])).catch(() => []),
   ]);
   return (
-    <TransferClient reps={reps} mainWarehouseLabel={mainWarehouseLabel}
+    <TransferClient reps={reps} mainWarehouseLabel={mainWarehouseLabel} initialRepId={sp.rep}
       partners={partners.map((p) => ({ id: p.id, name: p.name, model: p.model as "dealer" | "sales_agent" }))} />
   );
 }

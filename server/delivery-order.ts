@@ -23,6 +23,7 @@ import {
   assetUnit,
   consignEvent,
   deliveryOrderReturn,
+  stockShortfall,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getOrganizationProfile } from "@/server/organization-profile";
@@ -44,6 +45,7 @@ import { isConsignmentLocation } from "@/lib/consignment/labels";
 import { autoSettlePerUse } from "@/lib/consignment/settle";
 import { draftDoNo, isDraftDoNo } from "@/lib/delivery/draft-no";
 import { isOrgMember } from "@/lib/inventory/field-holder";
+import { exemptProducts, getStockRules, modeNow, type StockRuleMode } from "@/lib/inventory/stock-rules";
 
 async function getSession() {
   const session = await getCachedSession();
@@ -388,6 +390,9 @@ export interface DeliveryOrderItemInput extends CustomerView {
   usageFee?: string;
   loanPurpose?: "RENTAL" | "LOAN" | "DEMO";
   unitPrice?: string; // Case DO itemized selling price per unit
+  // Case DO: taken from a warehouse or another specialist instead of the
+  // specialist's own field stock (Stock Rules → "Taken from")
+  takenFromLabel?: string;
 }
 
 export interface CaseCustomerItemInput {
@@ -396,6 +401,8 @@ export interface CaseCustomerItemInput {
 }
 
 export interface CreateDeliveryOrderInput {
+  // Case DO: reason for recording usage beyond what's held (Stock Rules: warn, or an override)
+  stockNote?: string;
   // Case DO (two-step): the customer items (customer copy + invoice). The
   // actual items (`items`) may be empty — recorded after the case.
   customerItems?: CaseCustomerItemInput[];
@@ -1012,15 +1019,145 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
  * settlement. Used when the DO is created with its actual items, and when they
  * are recorded after the case (recordCaseActuals). restoreDoStock undoes it.
  */
+// ── Stock Rules (Inventory → Stock Rules) ─────────────────────────────────────
+
+type CaseShortfall = { productId: string; productCode: string; source: string; sourceName: string; need: number; held: number; short: number };
+
+/** A Case DO may take stock from one of the company's warehouses or its own people's field stock. */
+async function isValidTakeFrom(orgId: string, label: string): Promise<boolean> {
+  if (label.startsWith("Field:")) return isOrgMember(orgId, label.slice("Field:".length));
+  const [profile] = await db.select({ w: organizationProfile.warehouseAddresses }).from(organizationProfile).where(eq(organizationProfile.organizationId, orgId)).limit(1);
+  return ((profile?.w as { label?: string }[] | null) ?? []).some((w) => w.label?.trim() === label);
+}
+
+async function locationName(label: string): Promise<string> {
+  if (!label.startsWith("Field:")) return label === "Default" ? "Main warehouse" : label;
+  const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, label.slice("Field:".length).split(":")[0])).limit(1);
+  return u?.name ?? "the specialist";
+}
+
+/** Lines whose location (the specialist, or where it's taken from) holds less than is used. Machines (units) aren't counted here. */
+async function caseStockShortfalls(orgId: string, specialistId: string, lines: { productId?: string; qty?: string; unitId?: string; takenFromLabel?: string }[]): Promise<CaseShortfall[]> {
+  const { consignedFieldWarehouseLabel } = await import("@/lib/inventory/constants");
+  const fieldLabel = `Field:${specialistId}`;
+  const need = new Map<string, { productId: string; source: string; qty: number }>();
+  for (const l of lines) {
+    const q = parseFloat(l.qty ?? "1");
+    if (!l.productId || l.unitId || !(q > 0)) continue;
+    const source = l.takenFromLabel && l.takenFromLabel !== fieldLabel ? l.takenFromLabel : fieldLabel;
+    const k = `${l.productId}|${source}`;
+    const e = need.get(k) ?? { productId: l.productId, source, qty: 0 };
+    e.qty += q;
+    need.set(k, e);
+  }
+  const out: CaseShortfall[] = [];
+  for (const e of need.values()) {
+    let held = 0;
+    if (e.source === fieldLabel) {
+      const stockOrgId = await resolveFieldStockOrg(orgId, e.productId, fieldLabel);
+      const labels = [fieldLabel, ...(await getOwnerOrgIdsInternal(stockOrgId)).map((x) => consignedFieldWarehouseLabel(specialistId, x))];
+      const lv = await db.select({ q: stockLevel.quantity }).from(stockLevel)
+        .where(and(eq(stockLevel.organizationId, stockOrgId), eq(stockLevel.productId, e.productId), inArray(stockLevel.warehouseLabel, labels)));
+      held += lv.reduce((s, x) => s + Math.max(0, parseFloat(x.q) || 0), 0);
+      // consigned stock from owners with terms for this company
+      const cons = await consignedHeldByRep(orgId, specialistId, e.productId);
+      for (const o of cons.owners) if (!(await missingPairTerms(o.ownerOrgId, orgId))) held += o.qty;
+    } else {
+      const [lv] = await db.select({ q: stockLevel.quantity }).from(stockLevel)
+        .where(and(eq(stockLevel.organizationId, orgId), eq(stockLevel.productId, e.productId), eq(stockLevel.warehouseLabel, e.source))).limit(1);
+      held = Math.max(0, parseFloat(lv?.q ?? "0") || 0);
+    }
+    if (e.qty > held + 1e-9) {
+      const [pr] = await db.select({ code: productTable.productCode }).from(productTable).where(eq(productTable.id, e.productId)).limit(1);
+      out.push({ productId: e.productId, productCode: pr?.code ?? "", source: e.source, sourceName: await locationName(e.source), need: e.qty, held, short: e.qty - held });
+    }
+  }
+  return out;
+}
+
+const fmtQ = (v: number) => String(+v.toFixed(4));
+const shortfallText = (list: CaseShortfall[]) =>
+  list.map((x) => `${x.productCode}: ${fmtQ(x.need)} used, ${x.sourceName} holds ${fmtQ(x.held)}`).join("; ");
+
+/**
+ * What the company's Stock Rules say about these shortfalls: refused
+ * (enforce, unless the user may override and gives a reason), a reason
+ * required (warn), or just recorded (record & flag; exempt items always).
+ */
+async function decideShortfalls(orgId: string, userId: string, shortfalls: CaseShortfall[], stockNote: string | undefined, stage: "record" | "create") {
+  const rules = await getStockRules(orgId);
+  const applies = stage === "record" ? rules.checkOnRecord : rules.checkOnCreate;
+  const mode: StockRuleMode = applies ? modeNow(rules) : "record_flag";
+  const exempt = await exemptProducts(rules, shortfalls.map((x) => x.productId));
+  const strict = shortfalls.filter((x) => !exempt.has(x.productId));
+  const note = stockNote?.trim();
+  let override = false;
+  if (strict.length && mode === "enforce") {
+    const canOverride = hasAccess(await getUserPermissions(userId, orgId), "delivery-order:stock-override");
+    if (!canOverride || !note) {
+      throw new Error(`Not enough stock — ${shortfallText(strict)}. Transfer it to them, take it from another location, or correct the count${canOverride ? " — or give a reason to record it anyway (override)" : ""}.`);
+    }
+    override = true;
+  }
+  if (strict.length && mode === "warn" && !note) {
+    throw new Error(`Not enough stock — ${shortfallText(strict)}. Give a reason to record it anyway.`);
+  }
+  return { mode, exempt, override, rules };
+}
+
+export type CaseStockCheck = {
+  mode: StockRuleMode; checkOnRecord: boolean; checkOnCreate: boolean; allowTakenFrom: boolean; canOverride: boolean;
+  shortfalls: (CaseShortfall & { exempt: boolean })[];
+};
+
+/** For the Case DO form: what the stock rules will say about these lines, before saving. */
+export async function checkCaseStock(input: { specialistId: string; lines: { productId?: string; qty?: string; unitId?: string; takenFromLabel?: string }[] }): Promise<CaseStockCheck> {
+  const { orgId, userId } = await requireAccess("delivery-order:create");
+  const rules = await getStockRules(orgId);
+  const shortfalls = await caseStockShortfalls(orgId, input.specialistId, input.lines);
+  const exempt = await exemptProducts(rules, shortfalls.map((x) => x.productId));
+  return {
+    mode: modeNow(rules), checkOnRecord: rules.checkOnRecord, checkOnCreate: rules.checkOnCreate, allowTakenFrom: rules.allowTakenFrom,
+    canOverride: hasAccess(await getUserPermissions(userId, orgId), "delivery-order:stock-override"),
+    shortfalls: shortfalls.map((x) => ({ ...x, exempt: exempt.has(x.productId) })),
+  };
+}
+
+/** Where a Case DO line may be taken from: the company's warehouses and its own people. */
+export async function getTakeFromLocations(): Promise<{ allowTakenFrom: boolean; locations: { label: string; name: string; field: boolean }[] }> {
+  const { orgId } = await requireAccess("delivery-order:create");
+  const rules = await getStockRules(orgId);
+  const [profile] = await db.select({ w: organizationProfile.warehouseAddresses }).from(organizationProfile).where(eq(organizationProfile.organizationId, orgId)).limit(1);
+  const stores = ((profile?.w as { label?: string }[] | null) ?? []).filter((w) => w.label?.trim()).map((w) => ({ label: w.label!.trim(), name: w.label!.trim(), field: false }));
+  const people = await db.select({ id: member.userId, name: user.name }).from(member).innerJoin(user, eq(user.id, member.userId))
+    .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt))).orderBy(asc(user.name));
+  return { allowTakenFrom: rules.allowTakenFrom, locations: [...stores, ...people.map((m) => ({ label: `Field:${m.id}`, name: m.name ?? m.id, field: true }))] };
+}
+
 async function deductCaseItems(p: {
   orgId: string; userId: string; doId: string; doNo: string;
   specialistId: string; customerId: string | null | undefined;
   items: DeliveryOrderItemInput[];
+  stockNote?: string;
 }) {
   const { orgId, userId } = p;
   const { fieldWarehouseLabel, consignedFieldWarehouseLabel, MOVEMENT_TYPE: MT, REF_TYPE: RT } = await import("@/lib/inventory/constants");
   const fieldLabel = fieldWarehouseLabel(p.specialistId);
   const now = new Date();
+
+  // Stock Rules: before anything moves, check every line is covered by what
+  // its location holds — refused (enforce), needs a reason (warn) or just
+  // flagged (record & flag). Lines taken from elsewhere must be allowed.
+  const rules = await getStockRules(orgId);
+  for (const it of p.items) {
+    if (!it.takenFromLabel || it.takenFromLabel === fieldLabel) { it.takenFromLabel = undefined; continue; }
+    if (it.unitId) throw new Error(`${it.productCode ?? "A machine"}: a machine is used from where its unit is — transfer it to the specialist first`);
+    if (!rules.allowTakenFrom) throw new Error("Taking stock from another location is switched off in Stock Rules — transfer it to the specialist first");
+    if (!(await isValidTakeFrom(orgId, it.takenFromLabel))) throw new Error(`${it.productCode ?? "An item"}: "taken from" must be one of your warehouses or your own people`);
+  }
+  const shortfalls = await caseStockShortfalls(orgId, p.specialistId, p.items);
+  const decision = await decideShortfalls(orgId, userId, shortfalls, p.stockNote, "record");
+
   // Consignment module: which stock this (agent) company uses first
   const consumeOrder = await getConsumeOrder(orgId);
   const consumeSource = { type: "CASE_DO" as const, id: p.doId, no: p.doNo };
@@ -1100,6 +1237,30 @@ async function deductCaseItems(p: {
       continue;
     }
     let ownQty = qty;
+    // Taken from a warehouse or another specialist: deducted there, nothing consigned
+    if (item.takenFromLabel && !item.unitId) {
+      const label = item.takenFromLabel;
+      const [level] = await db.select().from(stockLevel)
+        .where(and(eq(stockLevel.organizationId, orgId), eq(stockLevel.productId, item.productId), eq(stockLevel.warehouseLabel, label))).limit(1);
+      const available = parseFloat(level?.quantity ?? "0") || 0;
+      const take = rules.allowNegative ? qty : Math.max(0, Math.min(available, qty));
+      const newQty = available - take;
+      if (level) await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now }).where(eq(stockLevel.id, level.id));
+      else if (take > 0) await db.insert(stockLevel).values({ id: nanoid(), organizationId: orgId, productId: item.productId, warehouseLabel: label, quantity: newQty.toFixed(4), reservedQty: "0", updatedAt: now });
+      if (take > 0) {
+        const mvId = nanoid();
+        if (sameDay) sameDayReturns.push(mvId);
+        const short = qty - take;
+        await db.insert(stockMovement).values({
+          id: mvId, organizationId: orgId, productId: item.productId, productCode: prod.productCode, warehouseLabel: label, warehouseTo: null,
+          movementType: loanOut ? MT.LOAN_OUT : MT.CASE_USE, quantity: (-take).toFixed(4), balanceAfter: newQty.toFixed(4),
+          referenceType: RT.CASE, referenceId: p.doId, referenceNo: p.doNo,
+          notes: `${loanOut ? "Loan out" : "Case usage"} — ${p.doNo} (taken for ${await locationName(fieldLabel)})${short > 1e-9 ? ` — short by ${+short.toFixed(4)}, see Stock Rules` : ""}`,
+          unitId: null, status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
+        });
+      }
+      continue;
+    }
     if (!item.unitId && !loanOut) {
       const held = await consignedHeldByRep(orgId, p.specialistId, item.productId);
       // Only owners that set consignment terms for this company can have their stock used
@@ -1206,16 +1367,19 @@ async function deductCaseItems(p: {
 
         const available = parseFloat(level?.quantity ?? "0");
         if (available <= 0 && !isLast) continue; // nothing in this bucket, try the next
-        // On the final (owned) bucket, take whatever remains even if it
-        // exceeds what's on hand — matches the original behavior of never
-        // blocking a Case DO for insufficient stock, just clamping at 0.
-        const take = isLast ? remaining : Math.min(available, remaining);
-        const newQty = Math.max(0, available - take);
+        // The final (own) bucket: only what's really held — the rest is a
+        // shortfall (Stock Rules), unless negative balances are allowed
+        const take = isLast ? (rules.allowNegative ? remaining : Math.max(0, Math.min(available, remaining))) : Math.min(available, remaining);
+        const newQty = available - take;
+        if (isLast && take <= 1e-9) { remaining = 0; break; }
 
         if (level) {
           await db.update(stockLevel).set({ quantity: newQty.toFixed(4), updatedAt: now })
             .where(eq(stockLevel.id, level.id));
+        } else if (take > 0) {
+          await db.insert(stockLevel).values({ id: nanoid(), organizationId: stockOrgId, productId: item.productId, warehouseLabel: label, quantity: newQty.toFixed(4), reservedQty: "0", updatedAt: now });
         }
+        const shortHere = isLast ? remaining - take : 0;
 
         const mvId = nanoid();
         if (sameDay) sameDayReturns.push(mvId);
@@ -1225,7 +1389,7 @@ async function deductCaseItems(p: {
           movementType,
           quantity: (-take).toFixed(4), balanceAfter: newQty.toFixed(4),
           referenceType: RT.CASE, referenceId: p.doId, referenceNo: p.doNo,
-          notes: isLast ? baseNotes : `${baseNotes} (consigned stock)`,
+          notes: (isLast ? baseNotes : `${baseNotes} (consigned stock)`) + (shortHere > 1e-9 ? ` — short by ${+shortHere.toFixed(4)}, see Stock Rules` : ""),
           unitId: null,
           status: "APPROVED", reviewedBy: userId, reviewedAt: now, createdBy: userId, createdAt: now,
         });
@@ -1246,6 +1410,16 @@ async function deductCaseItems(p: {
   // the case while the machine stays with the specialist
   for (const mvId of sameDayReturns) {
     await applyLoanReturn({ movementId: mvId, qty: Infinity, doId: p.doId, doNo: p.doNo, userId, note: `Returned same day — ${p.doNo}` });
+  }
+
+  // Usage beyond what was held: listed in Stock Rules → Shortfalls to reconcile
+  if (shortfalls.length) {
+    await db.insert(stockShortfall).values(shortfalls.map((x) => ({
+      id: nanoid(), organizationId: orgId, deliveryOrderId: p.doId, doNo: p.doNo, locationLabel: x.source,
+      productId: x.productId, productCode: x.productCode, usedQty: x.need.toFixed(4), heldQty: x.held.toFixed(4), shortQty: x.short.toFixed(4),
+      mode: decision.exempt.has(x.productId) ? "record_flag" : decision.mode, reason: p.stockNote?.trim() || null,
+      override: decision.override && !decision.exempt.has(x.productId), recordedBy: userId,
+    })));
   }
 
   revalidatePath("/dashboard/inventory/field-stock");
@@ -1300,7 +1474,16 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
   if (input.isCaseDo && input.applicationSpecialistId && !(await isOrgMember(orgId, input.applicationSpecialistId))) {
     throw new Error(`${input.applicationSpecialistName ?? "The application specialist"} isn't a member of this company — choose one of your own people`);
   }
-  // No number yet: a draft carries a temporary reference until it is delivered
+  // Stock Rules "check when creating": the template's items must be held by the specialist
+  if (input.isCaseDo && input.applicationSpecialistId && input.items.length === 0 && input.customerItems?.length) {
+    const rules = await getStockRules(orgId);
+    if (rules.checkOnCreate) {
+      const shortfalls = await caseStockShortfalls(orgId, input.applicationSpecialistId,
+        input.customerItems.filter((c) => c.productId).map((c) => ({ productId: c.productId!, qty: c.qty })));
+      await decideShortfalls(orgId, userId, shortfalls, input.stockNote, "create");
+    }
+  }
+
   const newId = nanoid();
   const doNo = draftDoNo(newId);
   const [row] = await db
@@ -1360,6 +1543,7 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
         loanPurpose: input.isCaseDo && i.loanOut !== false && i.loanPurpose && i.loanPurpose in LOAN_PURPOSE ? i.loanPurpose : null,
         ...(custViews.get(i.rowNo) ?? {}),
         unitPrice: input.isCaseDo && input.priceMode !== "total" && i.unitPrice !== undefined && i.unitPrice !== "" && parseFloat(i.unitPrice) >= 0 ? parseFloat(i.unitPrice).toFixed(2) : null,
+        takenFromLabel: input.isCaseDo ? (i.takenFromLabel || null) : null,
       })),
     );
   }
@@ -1371,7 +1555,7 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
   // Case DO with its actual items: take them out of the specialist's field stock
   if (input.isCaseDo && input.applicationSpecialistId && input.items.length > 0) {
     try {
-      await deductCaseItems({ orgId, userId, doId: row.id, doNo, specialistId: input.applicationSpecialistId, customerId: input.customerId, items: input.items });
+      await deductCaseItems({ orgId, userId, doId: row.id, doNo, specialistId: input.applicationSpecialistId, customerId: input.customerId, items: input.items, stockNote: input.stockNote });
     } catch (e) {
       // Nothing half-done: put back what was taken and drop the DO
       await restoreDoStock({ doId: row.id, doNo, activeOrgId: orgId, userId, notes: (code) => `Case DO not created — stock put back: ${code}` }).catch(() => {});
@@ -1546,7 +1730,7 @@ export async function saveCaseCustomerItems(doId: string, input: { items: CaseCu
  * stock (own / consigned items, the machine units with their loan choices).
  * Stock is deducted now, and the internal copy becomes available.
  */
-export async function recordCaseActuals(doId: string, items: Omit<DeliveryOrderItemInput, "rowNo">[]): Promise<{ ok: true } | { ok: false; title: string }> {
+export async function recordCaseActuals(doId: string, items: Omit<DeliveryOrderItemInput, "rowNo">[], opts?: { stockNote?: string }): Promise<{ ok: true } | { ok: false; title: string }> {
   try {
     const { orgId, userId } = await requireAccess("delivery-order:update");
     const r = await loadCaseDo(doId, orgId);
@@ -1563,9 +1747,10 @@ export async function recordCaseActuals(doId: string, items: Omit<DeliveryOrderI
       loanReturnMode: i.loanOut !== false && i.loanReturnMode ? i.loanReturnMode : null,
       usageFee: parseFloat(i.usageFee ?? "") > 0 ? parseFloat(i.usageFee!).toFixed(2) : null,
       loanPurpose: i.loanOut !== false && i.loanPurpose && i.loanPurpose in LOAN_PURPOSE ? i.loanPurpose : null,
+      takenFromLabel: i.takenFromLabel || null,
     })));
     try {
-      await deductCaseItems({ orgId, userId, doId, doNo: d.doNo, specialistId: d.applicationSpecialistId, customerId: d.customerId, items: rows });
+      await deductCaseItems({ orgId, userId, doId, doNo: d.doNo, specialistId: d.applicationSpecialistId, customerId: d.customerId, items: rows, stockNote: opts?.stockNote });
     } catch (e) {
       // Put back whatever was taken before the problem, and drop the lines
       await restoreDoStock({ doId, doNo: d.doNo, activeOrgId: orgId, userId, notes: (code) => `Actual items not recorded — stock put back: ${code}` }).catch(() => {});
@@ -1750,6 +1935,8 @@ async function restoreDoStock(opts: {
   // uses on consigned machines are undone the same way (checked first, so a
   // refusal leaves everything untouched).
   const reason = opts.notes("").replace(/[:\s]+$/, "");
+  // the usage is undone — its open shortfalls no longer stand
+  await db.delete(stockShortfall).where(and(eq(stockShortfall.deliveryOrderId, opts.doId), eq(stockShortfall.status, "open")));
   await reverseMachineUse({ sourceType: "CASE_DO", sourceId: opts.doId, reason });
   await reverseConsumption({ sourceType: "CASE_DO", sourceId: opts.doId, userId: opts.userId, reason });
   const groupOrgIds = await getOwnerOrgIdsInternal(opts.activeOrgId);

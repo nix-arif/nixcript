@@ -60,11 +60,12 @@ export async function GET(req: NextRequest) {
     if (yearParam && !Number.isFinite(yearArg)) return new Response("Invalid year", { status: 400 });
 
     // Delegates to the same function the on-screen report and Excel export
-    // use, so the PDF always matches — same columns (including subset
-    // labels like Emergency Leave placed right after their parent type),
-    // same totals, no separately-maintained query logic to drift out of sync.
+    // use, so the PDF always matches — same totals (emergency leave counted
+    // inside its own type), no separately-maintained query logic to drift out
+    // of sync. Like the page, only leave types someone actually took.
     const [{ name: orgName }] = await db.select({ name: organization.name }).from(organization).where(eq(organization.id, orgId)).limit(1);
-    const { year: y, columns, rows: reportRows } = await getLeaveReport(yearArg);
+    const { year: y, columns: allColumns, rows: reportRows } = await getLeaveReport(yearArg);
+    const columns = allColumns.filter((c) => reportRows.some((r) => parseFloat(r.totals[c.code] ?? "0") > 0));
     const rows = reportRows.map((r) => ({ name: r.memberName, totals: r.totals, grandTotal: r.grandTotal }));
 
     // ── Layout ────────────────────────────────────────────────────────────

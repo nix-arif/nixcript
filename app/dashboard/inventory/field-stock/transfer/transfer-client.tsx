@@ -202,13 +202,14 @@ interface Props {
   partners: { id: string; name: string; model: "dealer" | "sales_agent" }[];
 }
 
-export function TransferClient({ reps, mainWarehouseLabel, partners }: Props) {
+export function TransferClient({ reps, mainWarehouseLabel, partners, initialRepId }: Props & { initialRepId?: string }) {
   const router = useRouter();
   const [direction, setDirection] = useState<Direction>("to_rep");
   // Transfers go to this company's own specialists only; a sister company's
   // specialist can still return field stock they hold from this company
   const ownReps = reps.filter((r) => !r.otherOrgName);
-  const [repId, setRepId] = useState(ownReps[0]?.id ?? "");
+  // e.g. from Stock Rules → a shortfall: "Transfer to <specialist>"
+  const [repId, setRepId] = useState(ownReps.find((r) => r.id === initialRepId)?.id ?? ownReps[0]?.id ?? "");
   const [partnerId, setPartnerId] = useState(partners[0]?.id ?? "");
   const [items, setItems] = useState<LineItem[]>([newLine()]);
   const [notes, setNotes] = useState("");

@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { DashboardSummary } from "@/server/dashboard";
+import type { MyTask } from "@/server/my-tasks";
+import type { TeamLeave, TeamLeaveRow } from "@/server/team-leave";
+import { acknowledgeRecordedLeave, type RecordedLeaveNotice } from "@/server/leave";
+import { useState } from "react";
+import { toast } from "sonner";
 import {
   FileTextIcon,
   ShoppingCartIcon,
@@ -20,6 +25,8 @@ import {
   WalletIcon,
   BanknoteIcon,
   AlertTriangleIcon,
+  InboxIcon,
+  PalmtreeIcon,
 } from "lucide-react";
 
 const fmtDate = (d: Date | string) =>
@@ -452,14 +459,132 @@ function StakeholderPanel({ stats }: { stats: DashboardSummary["invoiceStats"] }
 
 interface Props {
   summary: DashboardSummary;
+  myTasks?: MyTask[];
+  teamLeave?: TeamLeave | null;
+  recordedLeave?: RecordedLeaveNotice[];
   userName: string | null;
 }
 
-export function DashboardClient({ summary, userName }: Props) {
+// Leave HR recorded for this member (e.g. an MC they never applied for) —
+// shown until they acknowledge it ("OK, noted"); HR sees when they did
+function RecordedLeavePanel({ notices }: { notices: RecordedLeaveNotice[] }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<string[]>([]);
+  const left = notices.filter((n) => !done.includes(n.id));
+  if (!left.length) return null;
+  async function ack(id: string) {
+    setBusy(id);
+    const res = await acknowledgeRecordedLeave(id);
+    setBusy(null);
+    if (!res.ok) { toast.error(res.title); return; }
+    setDone((d) => [...d, id]);
+    router.refresh();
+  }
+  return (
+    <div className="rounded-xl border border-blue-300 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-900/10 p-4 space-y-3">
+      <div>
+        <h2 className="text-[13px] font-semibold text-blue-800 dark:text-blue-300">Leave recorded for you by HR</h2>
+        <p className="text-xs text-muted-foreground">HR recorded this leave on your behalf and it has been deducted from your balance. Please check it — if it isn&apos;t right, contact HR.</p>
+      </div>
+      {left.map((n) => (
+        <div key={n.id} className="flex flex-wrap items-center gap-3 rounded-lg border bg-background px-3 py-2">
+          <div className="flex-1 min-w-48 text-sm">
+            <b>{n.leaveTypeName}</b> · {dShort(n.startDate)}{n.endDate !== n.startDate ? ` – ${dShort(n.endDate)}` : ""}{n.isHalfDay ? " (half day)" : ""} · {Number(n.totalDays)} day{Number(n.totalDays) !== 1 ? "s" : ""}
+            <span className="block text-[11px] text-muted-foreground">Recorded by {n.recordedByName ?? "HR"} on {fmtDate(n.recordedAt)}{n.reason ? ` — ${n.reason}` : ""} · {n.applicationNo}</span>
+          </div>
+          <button type="button" onClick={() => router.push("/dashboard/human-resources/leave")} className="text-xs text-muted-foreground hover:text-foreground">View in My Leave</button>
+          <button type="button" disabled={busy === n.id} onClick={() => ack(n.id)}
+            className="h-7 px-3 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium disabled:opacity-50">{busy === n.id ? "Saving…" : "OK, noted"}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Who is away: approved leave today and this week, across the owner's companies
+const dShort = (ymd: string) => new Date(`${ymd}T00:00:00`).toLocaleDateString("en-MY", { weekday: "short", day: "numeric", month: "short" });
+function leaveWhen(r: TeamLeaveRow) {
+  const half = r.isHalfDay ? ` (half day${r.halfDayPeriod ? `, ${r.halfDayPeriod.toLowerCase()}` : ""})` : "";
+  return (r.startDate === r.endDate ? dShort(r.startDate) : `${dShort(r.startDate)} – ${dShort(r.endDate)}`) + half;
+}
+function TeamLeavePanel({ data }: { data: TeamLeave }) {
+  const later = data.thisWeek.filter((r) => !data.onLeaveToday.some((t) => t.id === r.id));
+  const Row = ({ r }: { r: TeamLeaveRow }) => (
+    <div className="flex items-center gap-3 px-4 py-2">
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-medium truncate">{r.name}</span>
+        <span className="block text-[11px] text-muted-foreground truncate">{r.orgName}</span>
+      </span>
+      <span className="text-right shrink-0">
+        <span className="block text-xs">{r.leaveType}</span>
+        <span className="block text-[11px] text-muted-foreground">{leaveWhen(r)}</span>
+      </span>
+    </div>
+  );
+  return (
+    <div className="border rounded-xl overflow-hidden bg-card">
+      <div className="px-4 pt-4 pb-3">
+        <SectionHeader icon={PalmtreeIcon} title="Team on leave" count={data.onLeaveToday.length} variant={data.onLeaveToday.length ? "info" : "default"} />
+        <p className="text-xs text-muted-foreground mt-1">Approved leave across all our companies — today ({dShort(data.today)}) and this week ({dShort(data.weekStart)} – {dShort(data.weekEnd)}).</p>
+      </div>
+      <div className="border-t border-border/60">
+        <div className="px-4 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">On leave today</div>
+        {data.onLeaveToday.length === 0
+          ? <EmptyState message="Everyone is in today." />
+          : <div className="divide-y divide-border/60">{data.onLeaveToday.map((r) => <Row key={r.id} r={r} />)}</div>}
+        <div className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground border-t border-border/60">Later this week</div>
+        {later.length === 0
+          ? <EmptyState message="No other approved leave this week." />
+          : <div className="divide-y divide-border/60">{later.map((r) => <Row key={r.id} r={r} />)}</div>}
+      </div>
+    </div>
+  );
+}
+
+// What this user must check or approve — longest-waiting first
+function MyTasksPanel({ tasks }: { tasks: MyTask[] }) {
+  const router = useRouter();
+  const total = tasks.reduce((s, t) => s + t.count, 0);
+  return (
+    <div className="border rounded-xl overflow-hidden bg-card">
+      <div className="px-4 pt-4 pb-3">
+        <SectionHeader icon={InboxIcon} title="Waiting for you" count={total} variant={total ? "warning" : "default"} />
+        <p className="text-xs text-muted-foreground mt-1">Things you can check or approve in this company.</p>
+      </div>
+      {tasks.length === 0 ? (
+        <EmptyState message="Nothing waiting for your check or approval." />
+      ) : (
+        <div className="divide-y divide-border/60 border-t border-border/60">
+          {tasks.map((t) => (
+            <button key={t.key} type="button" onClick={() => router.push(t.href)}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/40 transition-colors">
+              <span className="min-w-8 text-center text-sm font-semibold tabular-nums rounded-md px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">{t.count}</span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-medium truncate">{t.title}</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  as {t.role.toLowerCase()}
+                  {t.waitingDays !== null && <> · oldest waiting {t.waitingDays === 0 ? "since today" : `${t.waitingDays} day${t.waitingDays !== 1 ? "s" : ""}`}</>}
+                </span>
+              </span>
+              {t.waitingDays !== null && t.waitingDays >= 3 && <AlertCircleIcon className="h-4 w-4 text-amber-500 shrink-0" />}
+              <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">Open <ArrowRightIcon className="h-3 w-3" /></span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function DashboardClient({ summary, myTasks = [], teamLeave = null, recordedLeave = [], userName }: Props) {
   const router = useRouter();
   const { kpi, can, openCpos, pendingSoApprovals, pendingQtApprovals, recentCpos, recentSos, isStakeholder, invoiceStats } = summary;
 
-  const totalOpenTasks = openCpos.length + pendingSoApprovals.length + kpi.pendingDoCount + kpi.pendingInvoiceDoCount;
+  // Approvals come from "Waiting for you" (only what this user can act on), so the
+  // company-wide SO approval count isn't added on top
+  const myApprovals = myTasks.reduce((n, t) => n + t.count, 0);
+  const totalOpenTasks = openCpos.length + myApprovals + kpi.pendingDoCount + kpi.pendingInvoiceDoCount;
   const firstName = userName?.split(" ")[0]?.toLowerCase() ?? null;
 
   return (
@@ -482,6 +607,15 @@ export function DashboardClient({ summary, userName }: Props) {
             {totalOpenTasks} open task{totalOpenTasks !== 1 ? "s" : ""}
           </div>
         )}
+      </div>
+
+      {/* Leave HR recorded for this member, until acknowledged */}
+      <RecordedLeavePanel notices={recordedLeave} />
+
+      {/* Checks and approvals waiting for this user, and who is away */}
+      <div className="grid md:grid-cols-2 gap-4">
+        <MyTasksPanel tasks={myTasks} />
+        {teamLeave && <TeamLeavePanel data={teamLeave} />}
       </div>
 
       {/* Stakeholder financial overview */}

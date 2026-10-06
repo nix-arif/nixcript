@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { INTENDED_USE_LABELS, isLendable, unitUseLabel } from "@/lib/inventory/constants";
+import { isLendable, unitUseLabel } from "@/lib/inventory/constants";
 import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -14,10 +14,10 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Label } from "@/components/ui/label";
 import {
-  PackageIcon, AlertTriangleIcon, ArrowRightIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, XIcon, Trash2Icon,
+  PackageIcon, AlertTriangleIcon, ArrowRightIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, XIcon, Trash2Icon, ArrowUpDownIcon, HashIcon, Settings2Icon, TagIcon,
 } from "lucide-react";
 import type { StockWithProduct, Warehouse, StockLotRow, ExpiringLot } from "@/server/inventory";
-import { searchProducts, getProductLots, editStockLot, assignLotToStock, deleteStockLevel, editStockLevel, saveStockUnits, getProductSerialInfo } from "@/server/inventory";
+import { searchProducts, getProductLots, editStockLot, assignLotToStock, deleteStockLevel, updateStockSettings } from "@/server/inventory";
 import type { ConsignmentItemRow } from "@/server/consignment";
 import type { ConsignedInRow } from "@/server/consign";
 import { ConsignedInStock } from "@/components/consigned-in-stock";
@@ -297,20 +297,30 @@ function LotSubTable({ lots, canManage, productId, warehouseLabel, currentBalanc
 
   function cancelNew() { setAdding(false); setNewLotNo(""); setNewExpiry(""); setNewQty(""); }
 
+  // Stock here not under any lot yet — can be given a lot no. / expiry (quantity unchanged)
+  const withoutLot = Math.max(0, currentBalance - lots.reduce((s, l) => s + (parseFloat(l.quantity) || 0), 0));
+  const assignButton = canManage && withoutLot > 1e-9 && !adding && (
+    <button onClick={() => { setNewQty(String(+withoutLot.toFixed(4))); setAdding(true); }} className="text-xs text-primary hover:underline">
+      + Assign lot no. &amp; expiry
+    </button>
+  );
   if (lots.length === 0 && !adding) {
     return (
       <div className="flex items-center gap-3">
         <p className="text-xs text-muted-foreground italic">No lot records — stock was added without a lot number.</p>
-        {canManage && (
-          <button onClick={() => { setNewQty(String(currentBalance)); setAdding(true); }} className="text-xs text-primary hover:underline">
-            + Assign lot
-          </button>
-        )}
+        {assignButton}
       </div>
     );
   }
 
   return (
+    <>
+    {withoutLot > 1e-9 && !adding && (
+      <div className="flex items-center gap-3 mb-1.5">
+        <p className="text-xs text-amber-700 dark:text-amber-400">{+withoutLot.toFixed(4)} of {currentBalance} here have no lot number.</p>
+        {assignButton}
+      </div>
+    )}
     <table className="w-full text-xs">
       <thead>
         <tr className="text-muted-foreground">
@@ -357,6 +367,7 @@ function LotSubTable({ lots, canManage, productId, warehouseLabel, currentBalanc
         )}
       </tbody>
     </table>
+    </>
   );
 }
 
@@ -444,72 +455,41 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
   const [search, setSearch] = useState("");
   const [warehouseFilter, setWarehouseFilter] = useState("ALL");
 
-  // Edit stock level
-  const [editTarget, setEditTarget] = useState<StockWithProduct | null>(null);
-  const [editQty, setEditQty] = useState("");
-  const [editReorder, setEditReorder] = useState("");
-  const [editMaxStock, setEditMaxStock] = useState("");
-  const [editUnitCost, setEditUnitCost] = useState("");
-  const [editNotes, setEditNotes] = useState("");
+  // Who can do what on a stock row — one job, one place:
+  // quantity → New Movement, serial numbers → Serialized Units, settings here
+  const has = (p: string) => permissions.includes("*") || permissions.includes(p);
+  const canAdjust = has("inventory:adjust");
+  const canManage = has("inventory:manage");
+  const showActions = canAdjust || canManage || isOwner;
+  const adjustHref = (item: StockWithProduct) =>
+    `/dashboard/inventory/movements?new=1&location=${encodeURIComponent(item.warehouseLabel)}&product=${encodeURIComponent(item.productId)}`;
+  const lotsHref = (item: StockWithProduct) =>
+    `/dashboard/inventory/serialized-units?tab=lots&location=${encodeURIComponent(item.warehouseLabel)}&product=${encodeURIComponent(item.productId)}`;
+  const serialsHref = (item: StockWithProduct) =>
+    `/dashboard/inventory/serialized-units?location=${encodeURIComponent(item.warehouseLabel)}&product=${encodeURIComponent(item.productId)}`;
+
+  // Stock settings: reorder point, max stock, unit cost (owner) — never the quantity
+  const [settingsTarget, setSettingsTarget] = useState<StockWithProduct | null>(null);
+  const [setReorder, setSetReorder] = useState("");
+  const [setMax, setSetMax] = useState("");
+  const [setCost, setSetCost] = useState("");
   const [saving, setSaving] = useState(false);
-  // Machines at this location: fix serial no. / use, remove a wrong entry, add missing ones
-  const [editUnits, setEditUnits] = useState<{ id: string; serialNo: string; intendedUse: string; status: string; remove: boolean }[]>([]);
-  const [addUnits, setAddUnits] = useState<{ serialNo: string; intendedUse: string }[]>([]);
-  const [editIsMachine, setEditIsMachine] = useState(false);
-
-  function openEdit(item: StockWithProduct) {
-    setEditTarget(item);
-    setEditQty(parseFloat(item.quantity).toString());
-    setEditReorder(item.reorderPoint ? parseFloat(item.reorderPoint).toString() : "");
-    setEditMaxStock(item.maxStock ? parseFloat(item.maxStock).toString() : "");
-    setEditUnitCost(item.unitCost ?? "");
-    setEditNotes("");
-    setEditUnits(item.units.map((u) => ({ ...u, remove: false })));
-    setAddUnits([]);
-    setEditIsMachine(item.units.length > 0);
-    if (!item.units.length) getProductSerialInfo(item.productId).then((r) => setEditIsMachine(r.serial)).catch(() => {});
+  function openSettings(item: StockWithProduct) {
+    setSettingsTarget(item);
+    setSetReorder(item.reorderPoint ? String(parseFloat(item.reorderPoint)) : "");
+    setSetMax(item.maxStock ? String(parseFloat(item.maxStock)) : "");
+    setSetCost(item.unitCost ?? "");
   }
-
-  async function handleEdit(e: React.FormEvent) {
+  async function saveSettings(e: React.FormEvent) {
     e.preventDefault();
-    if (!editTarget) return;
-    const targetQty = parseFloat(editQty);
-    if (isNaN(targetQty) || targetQty < 0) { toast.error("Enter a valid quantity"); return; }
-    const keptUnits = editUnits.filter((u) => !u.remove).length + addUnits.length;
-    if (keptUnits > targetQty) { toast.error(`${keptUnits} serial numbers but quantity ${targetQty} — remove serial numbers or raise the quantity`); return; }
-    const unitEdits = editUnits.filter((u) => !u.remove).filter((u) => {
-      const o = editTarget.units.find((x) => x.id === u.id);
-      return o && (o.serialNo !== u.serialNo.trim() || o.intendedUse !== u.intendedUse);
-    });
-    const removeIds = editUnits.filter((u) => u.remove).map((u) => u.id);
-    const adds = addUnits;
+    if (!settingsTarget) return;
     setSaving(true);
-    try {
-      if (unitEdits.length || removeIds.length || adds.length) {
-        if (removeIds.length && !confirm(`Remove ${removeIds.length} serial number(s) from this stock? The quantity stays; only the serial record is taken off.`)) return;
-        const res = await saveStockUnits({
-          stockLevelId: editTarget.id,
-          edits: unitEdits.map((u) => ({ unitId: u.id, serialNo: u.serialNo, intendedUse: u.intendedUse })),
-          removeUnitIds: removeIds, add: adds,
-        });
-        if (!res.ok) { toast.error(res.title); return; }
-      }
-      await editStockLevel({
-        stockLevelId: editTarget.id,
-        targetQty,
-        reorderPoint: editReorder.trim() || null,
-        maxStock: editMaxStock.trim() || null,
-        unitCost: editUnitCost.trim() || null,
-        correctionNotes: editNotes.trim() || undefined,
-      });
-      toast.success("Stock record updated");
-      setEditTarget(null);
-      startTransition(() => router.refresh());
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update");
-    } finally {
-      setSaving(false);
-    }
+    const res = await updateStockSettings({ stockLevelId: settingsTarget.id, reorderPoint: setReorder, maxStock: setMax, unitCost: setCost });
+    setSaving(false);
+    if (!res.ok) { toast.error(res.title); return; }
+    toast.success("Stock settings saved");
+    setSettingsTarget(null);
+    startTransition(() => router.refresh());
   }
 
   // Delete stock level
@@ -570,7 +550,7 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
     groupSections(rows, (r) => r.itemGroupIds, itemGroups, { only: groupFilter === "ALL" ? null : groupFilter })
       .map((x) => ({ ...x, rows: x.items }));
   const toggleSection = (k: string) => setCollapsed((c) => { const n = new Set(c); if (n.has(k)) n.delete(k); else n.add(k); return n; });
-  const colCount = 8 + (isOwner ? 1 : 0);
+  const colCount = 8 + (showActions ? 1 : 0);
 
   const filtered = inventory.filter(i => {
     if (groupFilter !== "ALL" && (groupFilter === "other" ? inAnyGroup(i.itemGroupIds) : !i.itemGroupIds.includes(groupFilter))) return false;
@@ -663,7 +643,7 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
                 <TableHead className="w-28 text-right">Available</TableHead>
                 <TableHead className="w-28 text-right">Reorder Pt.</TableHead>
                 <TableHead className="w-20 text-center">Status</TableHead>
-                {isOwner && <TableHead className="w-12"/>}
+                {showActions && <TableHead className="w-28"/>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -741,27 +721,34 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
                           <Badge variant="outline" className="text-xs text-green-700 border-green-300 bg-green-50 dark:text-green-400">OK</Badge>
                         )}
                       </TableCell>
-                      {isOwner && (
+                      {showActions && (
                         <TableCell>
-                          <div className="flex items-center gap-1 justify-center">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={() => openEdit(item)}
-                              title="Edit stock record"
-                            >
-                              <PencilIcon className="h-3.5 w-3.5"/>
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={() => setDeleteTarget(item)}
-                              title="Delete stock record"
-                            >
-                              <Trash2Icon className="h-3.5 w-3.5"/>
-                            </Button>
+                          <div className="flex items-center gap-0.5 justify-end">
+                            {canAdjust && !item.warehouseLabel.startsWith("CS:") && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Adjust quantity (New Movement)" onClick={() => router.push(adjustHref(item))}>
+                                <ArrowUpDownIcon className="h-3.5 w-3.5"/>
+                              </Button>
+                            )}
+                            {!item.warehouseLabel.startsWith("CS:") && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Lot numbers & expiry (Lots & Serial Numbers)" onClick={() => router.push(lotsHref(item))}>
+                                <TagIcon className="h-3.5 w-3.5"/>
+                              </Button>
+                            )}
+                            {item.machine && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Serial numbers (Lots & Serial Numbers)" onClick={() => router.push(serialsHref(item))}>
+                                <HashIcon className="h-3.5 w-3.5"/>
+                              </Button>
+                            )}
+                            {canManage && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Stock settings — reorder point, max stock, unit cost" onClick={() => openSettings(item)}>
+                                <Settings2Icon className="h-3.5 w-3.5"/>
+                              </Button>
+                            )}
+                            {isOwner && Math.abs(parseFloat(item.quantity)) < 1e-9 && item.units.length === 0 && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="Remove this empty row" onClick={() => setDeleteTarget(item)}>
+                                <Trash2Icon className="h-3.5 w-3.5"/>
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       )}
@@ -769,10 +756,11 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
                     {isExpanded && (
                       <TableRow className="bg-muted/20 hover:bg-muted/20">
                         <TableCell/>
-                        <TableCell colSpan={isOwner ? 8 : 7} className="py-2 pb-3">
+                        <TableCell colSpan={showActions ? 8 : 7} className="py-2 pb-3">
+                          {/* Shown here; assigned and corrected in Lots & Serial Numbers */}
                           <LotSubTable
                             lots={lots}
-                            canManage={isOwner}
+                            canManage={false}
                             productId={item.productId}
                             warehouseLabel={item.warehouseLabel}
                             currentBalance={parseFloat(item.quantity)}
@@ -785,6 +773,11 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
                               [item.id]: [...(prev[item.id] ?? []), newLot],
                             }))}
                           />
+                          {!item.warehouseLabel.startsWith("CS:") && (
+                            <button type="button" className="mt-1.5 text-xs text-primary hover:underline" onClick={() => router.push(lotsHref(item))}>
+                              {canManage ? "Assign or correct lot numbers & expiry →" : "Open in Lots & Serial Numbers →"}
+                            </button>
+                          )}
                         </TableCell>
                       </TableRow>
                     )}
@@ -854,118 +847,39 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
         </div>
       )}
 
-      {/* ── Edit Sheet ─────────────────────────────────────────────────────── */}
-      <Sheet open={!!editTarget} onOpenChange={o => { if (!saving) setEditTarget(o ? editTarget : null); }}>
-        <SheetContent className="w-full data-[side=right]:sm:max-w-lg overflow-y-auto px-6">
+      {/* ── Stock settings ─────────────────────────────────────────────────── */}
+      <Sheet open={!!settingsTarget} onOpenChange={o => { if (!saving && !o) setSettingsTarget(null); }}>
+        <SheetContent className="w-full data-[side=right]:sm:max-w-md overflow-y-auto px-6">
           <SheetHeader className="mb-5">
-            <SheetTitle>Edit Stock Record</SheetTitle>
-            {editTarget && (
-              <p className="text-xs text-muted-foreground font-mono">
-                {editTarget.productCode} · {formatWarehouse(editTarget.warehouseLabel)}
-                {editTarget.description && ` — ${editTarget.description}`}
+            <SheetTitle>Stock settings</SheetTitle>
+            {settingsTarget && (
+              <p className="text-xs text-muted-foreground">
+                <span className="font-mono">{settingsTarget.productCode}</span> · {formatWarehouse(settingsTarget.warehouseLabel)} · {fmt(settingsTarget.quantity)} on hand
               </p>
             )}
           </SheetHeader>
-          <form onSubmit={handleEdit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label>On-hand Quantity <span className="text-destructive">*</span></Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.0001"
-                value={editQty}
-                onChange={e => setEditQty(e.target.value)}
-                placeholder="0"
-              />
-              <p className="text-xs text-muted-foreground">Setting a different quantity creates an auto-approved adjustment movement.</p>
-            </div>
+          <form onSubmit={saveSettings} className="flex flex-col gap-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
-                <Label>Reorder Point <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.0001"
-                  value={editReorder}
-                  onChange={e => setEditReorder(e.target.value)}
-                  placeholder="—"
-                />
+                <Label>Reorder point <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input type="number" min="0" step="0.0001" value={setReorder} onChange={e => setSetReorder(e.target.value)} placeholder="—"/>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label>Max Stock <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.0001"
-                  value={editMaxStock}
-                  onChange={e => setEditMaxStock(e.target.value)}
-                  placeholder="—"
-                />
+                <Label>Max stock <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
+                <Input type="number" min="0" step="0.0001" value={setMax} onChange={e => setSetMax(e.target.value)} placeholder="—"/>
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label>Unit Cost (RM) <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={editUnitCost}
-                onChange={e => setEditUnitCost(e.target.value)}
-                placeholder="0.00"
-              />
+              <Label>Unit cost (RM) {!isOwner && <span className="text-muted-foreground font-normal text-xs">— owner only</span>}</Label>
+              <Input type="number" min="0" step="0.01" value={setCost} onChange={e => setSetCost(e.target.value)} placeholder="0.00" disabled={!isOwner}/>
             </div>
-            {editTarget && editIsMachine && (
-              <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
-                <div>
-                  <Label>Machines (serial numbers)</Label>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">Fix a mistyped serial number or use, remove a serial entered by mistake, or add serial numbers for units that have none. Quantity is not changed here.</p>
-                </div>
-                {editUnits.map((u, i) => (
-                  <div key={u.id} className={cn("flex items-center gap-2", u.remove && "opacity-50")}>
-                    <Input value={u.serialNo} disabled={u.remove} onChange={(e) => setEditUnits((prev) => prev.map((x, j) => (j === i ? { ...x, serialNo: e.target.value } : x)))} className="h-8 font-mono text-sm flex-1" />
-                    <select value={u.intendedUse} disabled={u.remove} onChange={(e) => setEditUnits((prev) => prev.map((x, j) => (j === i ? { ...x, intendedUse: e.target.value } : x)))}
-                      className={cn("h-8 rounded-md border px-2 text-xs w-24", isLendable(u.intendedUse) ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20" : "border-input bg-background")}>
-                      {Object.entries(INTENDED_USE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                    </select>
-                    <button type="button" title={u.remove ? "Keep" : "Remove this serial number (entered by mistake)"}
-                      onClick={() => setEditUnits((prev) => prev.map((x, j) => (j === i ? { ...x, remove: !x.remove } : x)))}
-                      className={cn("text-xs px-1.5", u.remove ? "text-primary underline" : "text-muted-foreground hover:text-destructive")}>
-                      {u.remove ? "undo" : <Trash2Icon className="h-3.5 w-3.5" />}
-                    </button>
-                  </div>
-                ))}
-                {addUnits.map((a, i) => (
-                  <div key={`add-${i}`} className="flex items-center gap-2">
-                    <Input value={a.serialNo} placeholder="New serial no." autoFocus={i === addUnits.length - 1} onChange={(e) => setAddUnits((prev) => prev.map((x, j) => (j === i ? { ...x, serialNo: e.target.value } : x)))} className="h-8 font-mono text-sm flex-1 border-primary/40" />
-                    <select value={a.intendedUse} onChange={(e) => setAddUnits((prev) => prev.map((x, j) => (j === i ? { ...x, intendedUse: e.target.value } : x)))}
-                      className="h-8 rounded-md border border-input bg-background px-2 text-xs w-24">
-                      {Object.entries(INTENDED_USE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                    </select>
-                    <button type="button" onClick={() => setAddUnits((prev) => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive px-1.5"><Trash2Icon className="h-3.5 w-3.5" /></button>
-                  </div>
-                ))}
-                {(() => {
-                  const without = Math.max(0, Math.floor(parseFloat(editQty) || 0) - editUnits.filter((u) => !u.remove).length - addUnits.length);
-                  return without > 0 && !editTarget.warehouseLabel.startsWith("CS:") ? (
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-amber-700 dark:text-amber-400">{without} unit{without > 1 ? "s" : ""} without a serial number</span>
-                      <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAddUnits((prev) => [...prev, { serialNo: "", intendedUse: prev.at(-1)?.intendedUse ?? "SALE" }])}>+ Add serial no.</Button>
-                    </div>
-                  ) : null;
-                })()}
-              </div>
-            )}
-            <div className="flex flex-col gap-1.5">
-              <Label>Correction Notes <span className="text-muted-foreground font-normal text-xs">(opt)</span></Label>
-              <Input
-                value={editNotes}
-                onChange={e => setEditNotes(e.target.value)}
-                placeholder="Reason for quantity change…"
-              />
+            <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
+              <p>To change <b className="text-foreground">how many</b> there are, use <button type="button" className="text-primary underline" onClick={() => settingsTarget && router.push(adjustHref(settingsTarget))}>Adjust quantity</button> (New Movement — with a reason, in Movement History).</p>
+              <p>Lot numbers &amp; expiry{settingsTarget?.machine ? " and serial numbers" : ""} are in <button type="button" className="text-primary underline" onClick={() => settingsTarget && router.push(lotsHref(settingsTarget))}>Lots &amp; Serial Numbers</button>.</p>
             </div>
             <div className="flex gap-2 pt-2">
               <Button type="submit" disabled={saving} className="flex-1">{saving ? "Saving…" : "Save"}</Button>
-              <Button type="button" variant="outline" onClick={() => setEditTarget(null)} disabled={saving}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setSettingsTarget(null)} disabled={saving}>Cancel</Button>
             </div>
           </form>
         </SheetContent>
@@ -983,7 +897,7 @@ export function InventoryClient({ inventory, warehouses, permissions, isOwner, a
               <span className="text-xs">{formatWarehouse(deleteTarget.warehouseLabel)} · {fmt(deleteTarget.quantity)} on hand</span>
             </p>
             <p className="text-xs text-destructive font-medium">
-              This also deletes all lot records for this product in this warehouse. Movement history is kept.
+              Only an empty row (nothing on hand) can be removed. Its lot records go with it; Movement History is kept.
             </p>
             <div className="flex gap-2">
               <Button variant="destructive" className="flex-1" disabled={deleting} onClick={handleDelete}>

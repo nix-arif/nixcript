@@ -103,7 +103,7 @@ function fmtDate(d: Date | string) {
   return new Date(d).toLocaleString("en-MY", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export function MovementsClient({ movements, warehouses, permissions, isOwner, locationNames = {} }: { movements: Movement[]; warehouses: Warehouse[]; permissions: string[]; isOwner: boolean; locationNames?: Record<string, string> }) {
+export function MovementsClient({ movements, warehouses, permissions, isOwner, locationNames = {}, prefill }: { movements: Movement[]; warehouses: Warehouse[]; permissions: string[]; isOwner: boolean; locationNames?: Record<string, string>; prefill?: { location: string; productId: string; productLabel: string } }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -123,12 +123,13 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
   // this list once that transition is done, so field stock goes back to
   // being replenished only via Transfer (an auditable warehouse origin).
   const FIELD_RESTRICTED = [MOVEMENT_TYPE.STOCK_IN];
-  const [adjOpen, setAdjOpen] = useState(false);
-  const [adjProductId, setAdjProductId] = useState("");
-  const [adjProductLabel, setAdjProductLabel] = useState("");
+  // Opened from Stock Overview's "Adjust quantity": that location and item, as an Adjustment
+  const [adjOpen, setAdjOpen] = useState(!!prefill);
+  const [adjProductId, setAdjProductId] = useState(prefill?.productId ?? "");
+  const [adjProductLabel, setAdjProductLabel] = useState(prefill?.productLabel ?? "");
   // No location preselected: the user says where the stock is
-  const [adjWarehouse, setAdjWarehouse] = useState("");
-  const [adjType, setAdjType] = useState<string>(MOVEMENT_TYPE.STOCK_IN);
+  const [adjWarehouse, setAdjWarehouse] = useState(prefill?.location ?? "");
+  const [adjType, setAdjType] = useState<string>(prefill ? MOVEMENT_TYPE.ADJUSTMENT : MOVEMENT_TYPE.STOCK_IN);
   // Adjustment (stock-count correction) goes either way
   const [adjDir, setAdjDir] = useState<"increase" | "decrease">("increase");
   const adjDecrease = adjType === MOVEMENT_TYPE.ADJUSTMENT && adjDir === "decrease";
@@ -239,6 +240,15 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
       setAdjMachine(info.serial); setOutUnits(here);
     } catch { /* optional */ }
   }
+  // Prefilled item: whether it has serial numbers here (for a decrease, pick which machines)
+  useEffect(() => {
+    if (!prefill) return;
+    let off = false;
+    Promise.all([getProductSerialInfo(prefill.productId), getUnitsAt(prefill.productId, prefill.location)])
+      .then(([info, here]) => { if (!off) { setAdjMachine(info.serial); setOutUnits(here); } })
+      .catch(() => {});
+    return () => { off = true; };
+  }, [prefill]);
   const pickOut = outUnits.length > 0 && (adjType === MOVEMENT_TYPE.STOCK_OUT || adjDecrease);
 
   async function handleAdjust(e: React.FormEvent) {

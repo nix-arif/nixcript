@@ -160,11 +160,17 @@ export function ApprovalsClient({ applications, creditRequests, permissions: _pe
             Review and action pending leave applications.
           </p>
         </div>
-        {applications.length > 0 && (
-          <Badge className="bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700">
-            {applications.length} pending
-          </Badge>
-        )}
+        <div className="flex items-center gap-2">
+          {applications.length > 0 && (
+            <Badge className="bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700">
+              {applications.length} pending
+            </Badge>
+          )}
+          {/* Leave a member took but never applied for (e.g. MC sent by email) */}
+          <Button size="sm" variant="outline" onClick={() => router.push("/dashboard/human-resources/leave/approvals/record")}>
+            Record leave for a member
+          </Button>
+        </div>
       </div>
 
       {applications.length === 0 ? (

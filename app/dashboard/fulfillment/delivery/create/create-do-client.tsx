@@ -12,7 +12,7 @@ import { searchProducts } from "@/server/inventory";
 import { getCustomers, getCustomer } from "@/server/customer";
 import { getFieldReps, getRepFieldStock, type OrgMember, type RepStockItem } from "@/server/field-stock";
 import { getItemGroups, type ItemGroupRow } from "@/server/item-group";
-import { recordCaseActuals } from "@/server/delivery-order";
+import { checkCaseStock, getTakeFromLocations, recordCaseActuals, type CaseStockCheck } from "@/server/delivery-order";
 import { pricedWithoutMdaMessage } from "@/lib/mda/priced-message";
 import { ItemizedMdaWarning } from "@/components/itemized-mda-warning";
 import { groupSections } from "@/lib/inventory/group-sections";
@@ -30,6 +30,7 @@ import {
   BuildingIcon, LinkIcon, CheckCircle2Icon, Loader2Icon,
   StethoscopeIcon, ShoppingCartIcon, PhoneIcon, MailIcon, ChevronDownIcon, ChevronRightIcon,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type Customer = Awaited<ReturnType<typeof getCustomer>>;
 interface LineItem extends DeliveryOrderItemInput { _key: string; originalQty?: string; }
@@ -1056,6 +1057,8 @@ export function CaseCustomerPicker({
 
 export interface CaseLineItem {
   _key: string;
+  // "Other items used": taken from a warehouse or another specialist (Stock Rules)
+  takenFromLabel?: string;
   productId?: string;
   productCode: string;
   description: string;
@@ -1259,6 +1262,16 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
   const [fieldPool, setFieldPool] = useState<CaseLineItem[]>([]);   // full stock list (read-only reference)
   const [fieldItems, setFieldItems] = useState<CaseLineItem[]>([]);  // user-selected items with qty
   const [extraItems, setExtraItems] = useState<CaseLineItem[]>([newCaseLine()]);
+  // Stock Rules: the shortfalls that need a reason (warn / override) or block (enforce) before saving
+  const [stockGate, setStockGate] = useState<null | { check: CaseStockCheck; strict: CaseStockCheck["shortfalls"]; items: DeliveryOrderItemInput[] }>(null);
+  const [stockNote, setStockNote] = useState("");
+  // Where an "other item" may be taken from, when Stock Rules allow it
+  const [takeFrom, setTakeFrom] = useState<{ allowTakenFrom: boolean; locations: { label: string; name: string; field: boolean }[] }>({ allowTakenFrom: false, locations: [] });
+  useEffect(() => {
+    let off = false;
+    getTakeFromLocations().then((r) => { if (!off) setTakeFrom(r); }).catch(() => {});
+    return () => { off = true; };
+  }, []);
   // Customer items: what the customer copy shows and the invoice bills (from the
   // template). The actual items (field stock above, extras) are what was really
   // used — recorded after the case, or now if the case is already done.
@@ -1609,15 +1622,48 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
         rowNo: fieldOrderItems.length + idx + 1, productId: i.productId, productCode: i.productCode,
         description: i.description, qty: i.qty || "1", uom: i.uom,
         loanOut: i.loanOut, ...(i.cust ?? {}), unitPrice: priceOf(i),
+        ...(i.productId && i.takenFromLabel ? { takenFromLabel: i.takenFromLabel } : {}),
       })),
     ];
+
+    // Stock Rules: what the company's rules say before anything is saved
+    const specialistId = isRecord ? recordFor!.specialistId : appSpecs.find((x) => !x.isExt)?.id;
+    const stage: "record" | "create" = showActual ? "record" : "create";
+    const gateLines = stage === "record" ? allItems : customerItems.filter((c) => c.productId).map((c) => ({ productId: c.productId!, qty: c.qty }));
+    let flagged = 0;
+    let headsUp: string | undefined;
+    if (specialistId && gateLines.some((l) => l.productId)) {
+      try {
+        const chk = await checkCaseStock({ specialistId, lines: gateLines });
+        if (chk.shortfalls.length) {
+          const applies = stage === "record" ? chk.checkOnRecord : chk.checkOnCreate;
+          const strict = chk.shortfalls.filter((x) => !x.exempt);
+          if (applies && strict.length && chk.mode !== "record_flag") {
+            setStockGate({ check: chk, strict, items: allItems });
+            return;
+          }
+          if (stage === "record") flagged = chk.shortfalls.length;
+          else headsUp = `Heads-up: ${chk.shortfalls.map((x) => `${x.productCode} (${x.sourceName} holds ${+x.held.toFixed(4)})`).join(", ")} — transfer the stock before recording the actual items.`;
+        }
+      } catch { /* the server checks again when saving */ }
+    }
+    await finishSave(allItems, undefined, flagged, headsUp);
+  }
+
+  // Saving after the stock check (a reason given when the rules ask for one)
+  async function finishSave(allItems: DeliveryOrderItemInput[], stockNote?: string, flagged = 0, headsUp?: string) {
+    const customerItems = custItems.filter((i) => i.description || i.productCode).map((i) => ({
+      productId: i.productId ?? null, productCode: i.productCode || null, description: i.description || null, qty: i.qty || "1", uom: i.uom || null,
+      unitPrice: priceMode === "itemized" ? priceOf(i) || null : null,
+    }));
+    const flagNote = flagged ? ` · ${flagged} shortfall${flagged > 1 ? "s" : ""} flagged in Stock Rules` : "";
 
     if (isRecord) {
       setSaving(true);
       try {
-        const res = await recordCaseActuals(recordFor!.doId, allItems);
-        if (!res.ok) { toast.error(res.title, { duration: 10000 }); return; }
-        toast.success("Actual items recorded — stock deducted; the internal copy is ready");
+        const res = await recordCaseActuals(recordFor!.doId, allItems, { stockNote });
+        if (!res.ok) { toast.error(res.title, { duration: 12000 }); return; }
+        toast.success(`Actual items recorded — stock deducted; the internal copy is ready${flagNote}`);
         router.push(`/dashboard/fulfillment/delivery/${recordFor!.doId}`);
       } finally { setSaving(false); }
       return;
@@ -1647,8 +1693,10 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
         mrnNo: mrnNo || undefined,
         caseDescription: caseDescription.trim() || undefined,
         caseTemplateId: appliedTemplateId ?? undefined,
+        stockNote,
       });
-      toast.success(recordNow ? "Case DO created — actual items recorded" : "Case DO created — record the actual items on the DO page after the case");
+      toast.success(recordNow ? `Case DO created — actual items recorded${flagNote}` : "Case DO created — record the actual items on the DO page after the case");
+      if (headsUp) toast.warning(headsUp, { duration: 12000 });
       router.push("/dashboard/fulfillment/delivery");
     } catch (e: any) {
       toast.error(e.message);
@@ -2383,6 +2431,13 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
                   <Input value={item.uom} onChange={(e) => updateExtraItem(item._key, { uom: e.target.value })} className="h-8 text-xs" placeholder="case/set/unit" />
                 </div>
               </div>
+              {item.productId && takeFrom.allowTakenFrom && (
+                <div className="space-y-1">
+                  <Label className="text-[11px]">Taken from</Label>
+                  <TakenFromSelect value={item.takenFromLabel} locations={takeFrom.locations} specialistId={recordFor?.specialistId ?? appSpecs.find((x) => !x.isExt)?.id}
+                    onChange={(v) => updateExtraItem(item._key, { takenFromLabel: v })} />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -2405,6 +2460,13 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
                   <td className="py-1.5 pr-2"><CaseExtraProductCell item={item} onUpdate={updateExtraItem} /></td>
                   <td className="py-1.5 pr-2">
                     <Input value={item.description} onChange={(e) => updateExtraItem(item._key, { description: e.target.value })} className="h-7 text-xs" placeholder="e.g. Machine rental — TKR set" />
+                    {item.productId && takeFrom.allowTakenFrom && (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground shrink-0">Taken from</span>
+                        <TakenFromSelect value={item.takenFromLabel} locations={takeFrom.locations} specialistId={recordFor?.specialistId ?? appSpecs.find((x) => !x.isExt)?.id}
+                          onChange={(v) => updateExtraItem(item._key, { takenFromLabel: v })} />
+                      </div>
+                    )}
                   </td>
                   <td className="py-1.5 pr-2">
                     <Input type="number" min="1" value={item.qty} onChange={(e) => updateExtraItem(item._key, { qty: e.target.value })} className="h-7 text-xs text-right" />
@@ -2431,6 +2493,54 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
           {isRecord ? (saving ? "Recording…" : "Record actual items") : saving ? "Creating…" : "Create Case DO"}
         </Button>
         <Button variant="outline" onClick={() => router.back()} className="w-full sm:w-auto">Cancel</Button>
+        {/* Stock Rules: not enough stock — a reason (warn / override), or blocked (enforce) */}
+        <Dialog open={!!stockGate} onOpenChange={(v) => { if (!v && !saving) { setStockGate(null); setStockNote(""); } }}>
+          <DialogContent className="sm:max-w-lg">
+            {stockGate && (() => {
+              const blocked = stockGate.check.mode === "enforce" && !stockGate.check.canOverride;
+              const override = stockGate.check.mode === "enforce" && stockGate.check.canOverride;
+              return (
+                <>
+                  <DialogHeader><DialogTitle>{blocked ? "Not enough stock — can't record this" : "Not enough stock"}</DialogTitle></DialogHeader>
+                  <div className="space-y-3 text-sm">
+                    <ul className="rounded-lg border divide-y">
+                      {stockGate.strict.map((x) => (
+                        <li key={`${x.productId}|${x.source}`} className="flex items-center gap-2 px-3 py-2 text-xs">
+                          <span className="font-mono font-semibold">{x.productCode}</span>
+                          <span className="min-w-0 flex-1 truncate text-muted-foreground">{x.sourceName}</span>
+                          <span className="tabular-nums">used {+x.need.toFixed(4)} · holds {+x.held.toFixed(4)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="rounded-lg bg-muted/40 p-3 text-xs space-y-1">
+                      <p className="font-medium">To fix the records:</p>
+                      <p>• The stock was with them but never transferred → <a className="text-primary underline" href={`/dashboard/inventory/field-stock/transfer${stockGate.strict[0]?.source.startsWith("Field:") ? `?rep=${stockGate.strict[0].source.slice(6)}` : ""}`} target="_blank" rel="noreferrer">Transfer to Rep</a>, then record again.</p>
+                      {takeFrom.allowTakenFrom && <p>• It came from a warehouse or a colleague → add it under <b>Other items used</b> with <b>Taken from</b>.</p>}
+                      <p>• Their count is wrong → an inventory manager corrects it (New Movement → Adjustment ↕).</p>
+                    </div>
+                    {!blocked && (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">{override ? "Reason to record it anyway (override) *" : "Reason to record it anyway *"}</Label>
+                        <Input value={stockNote} onChange={(e) => setStockNote(e.target.value)} placeholder="e.g. used from Ali's bag; transfer to follow" autoFocus />
+                        <p className="text-[11px] text-muted-foreground">It is recorded as a shortfall to reconcile{override ? ", marked as an override" : ""}.</p>
+                      </div>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => { setStockGate(null); setStockNote(""); }} disabled={saving}>{blocked ? "Close" : "Cancel"}</Button>
+                    {!blocked && (
+                      <Button disabled={saving || stockNote.trim().length < 3} onClick={async () => {
+                        const g = stockGate; const note = stockNote.trim();
+                        setStockGate(null); setStockNote("");
+                        await finishSave(g.items, note, g.check.shortfalls.length);
+                      }}>{saving ? "Saving…" : "Record anyway"}</Button>
+                    )}
+                  </DialogFooter>
+                </>
+              );
+            })()}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
@@ -2456,4 +2566,20 @@ function recordTemplateOf(r: RecordCaseFor): CaseTemplateRow {
       };
     }),
   } as CaseTemplateRow;
+}
+
+// Where an "other item" came from: the specialist's own stock (default), one
+// of the company's warehouses, or another of its people (Stock Rules)
+function TakenFromSelect({ value, locations, specialistId, onChange }: {
+  value?: string; locations: { label: string; name: string; field: boolean }[]; specialistId?: string; onChange: (v: string | undefined) => void;
+}) {
+  const others = locations.filter((l) => l.label !== `Field:${specialistId}`);
+  return (
+    <select value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)}
+      className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs">
+      <option value="">The specialist&apos;s own stock</option>
+      {others.some((l) => !l.field) && <optgroup label="Warehouses">{others.filter((l) => !l.field).map((l) => <option key={l.label} value={l.label}>{l.name}</option>)}</optgroup>}
+      {others.some((l) => l.field) && <optgroup label="Another specialist">{others.filter((l) => l.field).map((l) => <option key={l.label} value={l.label}>{l.name}</option>)}</optgroup>}
+    </select>
+  );
 }

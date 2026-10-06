@@ -27,15 +27,16 @@ export const ALL_PERMISSIONS = [
 
   // Delivery Order
   { key: "delivery-order:read",   label: "View Delivery Orders" },
-  { key: "delivery-order:create", label: "Create Delivery Order" },
-  { key: "delivery-order:update", label: "Update Delivery Order" },
-  { key: "delivery-order:delete", label: "Delete Delivery Order" },
+  { key: "delivery-order:create", label: "Create Delivery Order (incl. Case DO & case templates)" },
+  { key: "delivery-order:update", label: "Update Delivery Order (record actual items, deliver, returns)" },
+  { key: "delivery-order:delete", label: "Delete Draft Delivery Order" },
   // Case DO internal copy: every item actually deducted, MDA problems and what
   // the customer copy shows instead — an internal stock record, not for customers
   { key: "delivery-order:internal-copy", label: "Download Case DO Internal Copy" },
   // Cancel (void) a Case DO: it stays on record as Cancelled with the reason,
   // and its stock comes back through reversing movements
   { key: "delivery-order:cancel", label: "Cancel Delivery Order" },
+  { key: "delivery-order:stock-override", label: "Record Case DO usage without enough stock (Stock Rules override)" },
 
   // Invoice
   { key: "invoice:read",   label: "View Invoices" },
@@ -138,11 +139,11 @@ export const ALL_PERMISSIONS = [
   { key: "permission:delete", label: "Delete Permission" },
 
   // Inventory
-  { key: "inventory:read",    label: "View Inventory" },
-  { key: "inventory:adjust",  label: "Submit Stock Movement" },
-  { key: "inventory:manage",  label: "Manage Inventory Settings" },
+  { key: "inventory:read",    label: "View Inventory (stock, field stock, movements, lots & serial numbers)" },
+  { key: "inventory:adjust",  label: "Submit Stock Movement (New Movement / Adjust quantity)" },
+  { key: "inventory:manage",  label: "Manage Inventory (lots & serial numbers, item groups, stock settings, Stock Rules)" },
   { key: "inventory:request", label: "Request Stock Allocation" },
-  { key: "inventory:create",  label: "Transfer Stock to Rep" },
+  { key: "inventory:create",  label: "Transfer Stock to Rep (Field Stock)" },
 
   // Consignment (agent + customer, one module)
   { key: "consignment:read",   label: "View Consignments" },
@@ -155,6 +156,7 @@ export const ALL_PERMISSIONS = [
   { key: "leave:read:all", label: "View All Employees' Leave Applications" },
   { key: "leave:apply",    label: "Submit Leave Application" },
   { key: "leave:manage",   label: "Manage Leave Types & Entitlements" },
+  { key: "leave:summary",  label: "View Leave Summary (all members)" },
 
   // Claim management
   { key: "claim:read:own", label: "View Own Claims" },
@@ -227,6 +229,8 @@ export const STAKEHOLDER_PERMISSIONS: PermissionKey[] = [
   "profile:read",
   "payslip:read:own",
   "organization-profile:read",
+  "inventory:read",
+  "consignment:read",
 ];
 
 // ── Department-based role permissions ──────────────────────────────────────
@@ -251,6 +255,8 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "goods-receipt:create",
       "packing-list:create", "packing-list:inspect",
       "consignment:read", "consignment:manage", "consignment:adjust", "consignment:settle",
+      "inventory:read", "inventory:adjust", "inventory:create", "inventory:manage",
+      "accounts-receivable:read",
       "customer:read", "customer:create", "customer:update", "customer:delete",
       "product:read", "product:update-price", "product:upload-image",
       "member:read", "member:invite", "member:remove",
@@ -262,7 +268,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "organization-role:create", "organization-role:update", "organization-role:delete",
       "account:read", "account:create", "account:update", "account:delete",
       "claim:read:own", "claim:apply", "claim:approve",
-      "leave:read:own", "leave:apply",
+      "leave:read:own", "leave:apply", "leave:read:all", "leave:summary",
       "travel:read:own", "travel:apply",
     ],
     member: [
@@ -274,6 +280,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "supplier:read",
       "purchase-order:read",
       "purchase-requisition:read",
+      "inventory:read",
       "account:read",
       "customer:read",
       "product:read",
@@ -327,6 +334,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
   accounting: {
     manager: [
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
+      "accounts-receivable:read", "accounts-receivable:create",
       "consignment:read", "consignment:settle",
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
       "account:read", "account:create", "account:update", "account:delete",
@@ -346,6 +354,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
     ],
     member: [
       "invoice:read", "invoice:create",
+      "accounts-receivable:read", "accounts-receivable:create",
       "payslip:read:own",
       "account:read", "account:create",
       "sales-order:read",
@@ -368,7 +377,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
       "organization-profile:read",
       "claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage", "claim:read:all",
-      "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all",
+      "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all", "leave:summary",
       "travel:read:own", "travel:apply", "travel:approve", "travel:manage", "travel:read:all",
       "allowance:read:own", "allowance:read:all", "allowance:manage",
     ],
@@ -423,8 +432,10 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "goods-receipt:create",
       "packing-list:create",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
-      "inventory:read", "inventory:adjust", "inventory:manage", "inventory:create",
+      "inventory:read", "inventory:adjust", "inventory:manage", "inventory:create", "inventory:request",
       "consignment:read", "consignment:manage", "consignment:adjust",
+      "customer:read",
+      "product:read",
       "sales-order:read",
       "invoice:read",
       "member:read",
@@ -436,13 +447,16 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "travel:read:own", "travel:apply",
     ],
     member: [
-      "delivery-order:read", "delivery-order:create", "delivery-order:update",
+      "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:internal-copy",
       "purchase-order:read",
       "purchase-requisition:read",
       "goods-receipt:create",
       "packing-list:create",
       "supplier:read",
-      "inventory:read", "inventory:adjust", "inventory:create",
+      "inventory:read", "inventory:adjust", "inventory:create", "inventory:request",
+      "consignment:read",
+      "customer:read",
+      "product:read",
       "sales-order:read",
       "invoice:read",
       "member:read",
@@ -590,8 +604,24 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
   {
     id: "delivery-order-handler",
     label: "Delivery Order Handler",
-    description: "Create and manage delivery orders. Requires sales order and customer read.",
-    permissions: ["delivery-order:read", "delivery-order:create", "delivery-order:update", "sales-order:read", "customer:read"],
+    description: "Create delivery orders (incl. Case DOs from case templates), record the actual items used, deliver and record returns. Requires sales order, customer, product and stock read.",
+    permissions: ["delivery-order:read", "delivery-order:create", "delivery-order:update", "sales-order:read", "customer:read", "product:read", "inventory:read"],
+  },
+  {
+    id: "delivery-order-manager",
+    label: "Delivery Order Manager",
+    description: "Everything a DO handler does, plus the Case DO internal copy, cancelling a delivered or Case DO, and deleting drafts. The Stock Rules override is granted separately.",
+    permissions: [
+      "delivery-order:read", "delivery-order:create", "delivery-order:update", "delivery-order:delete",
+      "delivery-order:internal-copy", "delivery-order:cancel",
+      "sales-order:read", "invoice:read", "customer:read", "product:read", "inventory:read",
+    ],
+  },
+  {
+    id: "application-specialist",
+    label: "Application Specialist (Case DO)",
+    description: "For specialists who carry field stock: create Case DOs from the doctor's template, record what was used after the case, see their field stock and request stock. Add “Download Case DO Internal Copy” if they keep the internal record.",
+    permissions: ["delivery-order:read", "delivery-order:create", "delivery-order:update", "inventory:read", "inventory:request", "customer:read", "product:read"],
   },
   {
     id: "invoice-creator",
@@ -629,8 +659,26 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
   {
     id: "inventory-staff",
     label: "Inventory Staff",
-    description: "View inventory, submit stock movements, and transfer stock to field reps. Requires product read.",
-    permissions: ["inventory:read", "inventory:adjust", "inventory:create", "product:read"],
+    description: "View inventory, submit stock movements (approved by an inventory approver), transfer stock to field reps and request stock. Requires product read.",
+    permissions: ["inventory:read", "inventory:adjust", "inventory:create", "inventory:request", "product:read"],
+  },
+  {
+    id: "inventory-manager",
+    label: "Inventory Manager",
+    description: "Inventory staff plus: lot numbers & expiry, serial numbers, item groups, stock settings and Stock Rules (incl. reconciling shortfalls). Approving stock movements is granted in Admin → Approvals.",
+    permissions: ["inventory:read", "inventory:adjust", "inventory:create", "inventory:request", "inventory:manage", "product:read", "delivery-order:read"],
+  },
+  {
+    id: "consignment-officer",
+    label: "Consignment Officer",
+    description: "Send and return consignment stock, record count adjustments and set consignment terms. Requires inventory, product and customer read.",
+    permissions: ["consignment:read", "consignment:manage", "consignment:adjust", "inventory:read", "product:read", "customer:read"],
+  },
+  {
+    id: "consignment-settlement",
+    label: "Consignment Settlement (Finance)",
+    description: "Settle consignment usage: intercompany invoice + PO, dealer / sales-agent and hospital invoices.",
+    permissions: ["consignment:read", "consignment:settle", "invoice:read", "invoice:create", "purchase-order:read", "customer:read"],
   },
   {
     id: "sales-staff",
@@ -687,6 +735,18 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Claim Manager",
     description: "Submit claims and manage claim types. Checker/approver access is granted separately via Admin → Approvals.",
     permissions: ["claim:read:own", "claim:apply", "claim:manage"],
+  },
+  {
+    id: "leave-administrator",
+    label: "Leave Administrator",
+    description: "Set up leave types, entitlements and policy, see every member's leave (report and summary). Approving leave is granted in Admin → Approvals.",
+    permissions: ["leave:read:own", "leave:apply", "leave:manage", "leave:read:all", "leave:summary"],
+  },
+  {
+    id: "document-settings-admin",
+    label: "Document & Organization Settings",
+    description: "Maintain the organization profile (incl. warehouses and banking) and document settings (PDF layout, numbering, DO notes).",
+    permissions: ["organization-profile:read", "organization-profile:update", "document-settings:update"],
   },
   {
     id: "allowance-manager",

@@ -5,10 +5,11 @@ import { getConsignedInMovements } from "@/server/consign";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { MovementsClient } from "./movements-client";
 import { db } from "@/db";
-import { member } from "@/db/schema";
+import { member, product } from "@/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 
-export default async function MovementsPage() {
+export default async function MovementsPage({ searchParams }: { searchParams: Promise<{ new?: string; location?: string; product?: string }> }) {
+  const sp = await searchParams;
   const session = await requirePermission("inventory:read");
   const orgId = session.session.activeOrganizationId!;
   const userId = session.user.id;
@@ -40,5 +41,12 @@ export default async function MovementsPage() {
   // alongside ours (read-only, tagged with the owner), newest first.
   const allMovements = [...movements, ...consignedIn].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
 
-  return <MovementsClient movements={allMovements} warehouses={allWarehouses} permissions={permissions} isOwner={isOwner} locationNames={locationNames} />;
+  // "Adjust quantity" from Stock Overview: open New Movement on that location and item
+  let prefill: { location: string; productId: string; productLabel: string } | undefined;
+  if (sp.new && sp.location && sp.product && allWarehouses.some((w) => w.label === sp.location)) {
+    const [p] = await db.select({ code: product.productCode, description: product.description }).from(product).where(eq(product.id, sp.product)).limit(1);
+    if (p) prefill = { location: sp.location, productId: sp.product, productLabel: `${p.code}${p.description ? ` — ${p.description}` : ""}` };
+  }
+
+  return <MovementsClient movements={allMovements} warehouses={allWarehouses} permissions={permissions} isOwner={isOwner} locationNames={locationNames} prefill={prefill} />;
 }

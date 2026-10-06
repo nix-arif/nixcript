@@ -3077,6 +3077,9 @@ export const deliveryOrderItem = pgTable(
     custReason: text("cust_reason"),
     // Normal DO: quantity the customer sent back so far (partial returns) — see delivery_order_return
     returnedQty: text("returned_qty"),
+    // Case DO: where this line's stock was taken from when not the specialist's
+    // own field stock (a warehouse or another specialist) — Stock Rules
+    takenFromLabel: text("taken_from_label"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
@@ -3786,6 +3789,13 @@ export const leaveApplication = pgTable(
     halfDayPeriod: text("half_day_period"),
     reason: text("reason"),
     status: text("status").notNull().default("PENDING"),
+    // Set when someone else (an approver / HR) recorded this leave for the
+    // member — e.g. an MC the member never applied for in the system. Such
+    // leave is approved on recording; null = applied for by the member.
+    recordedBy: text("recorded_by"),
+    // When the member acknowledged the leave recorded for them (dashboard
+    // notice "OK, noted"); null = not yet seen / acknowledged
+    recordedAcknowledgedAt: timestamp("recorded_acknowledged_at"),
     reviewedBy: text("reviewed_by").references(() => user.id),
     reviewedAt: timestamp("reviewed_at"),
     reviewComment: text("review_comment"),
@@ -4859,6 +4869,60 @@ export const deliveryOrderCustomerItem = pgTable(
   },
   (t) => [index("do_customer_item_do_idx").on(t.deliveryOrderId)],
 );
+
+// ── Stock rules ──────────────────────────────────────────────────────────────
+// Per company: how strictly a Case DO must be covered by stock someone holds.
+// record_flag (pilot): usage beyond what's held is saved and listed as a
+// shortfall · warn: same, with a reason from the person recording · enforce:
+// blocked (an override permission can still record it, with a reason).
+export const stockRuleSetting = pgTable("stock_rule_setting", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().unique().references(() => organization.id, { onDelete: "cascade" }),
+  mode: text("mode").notNull().default("record_flag"), // record_flag | warn | enforce
+  enforceFrom: timestamp("enforce_from"),               // enforce scheduled: warn until this date
+  checkOnCreate: boolean("check_on_create").notNull().default(false),
+  checkOnRecord: boolean("check_on_record").notNull().default(true),
+  allowTakenFrom: boolean("allow_taken_from").notNull().default(true),
+  allowNegative: boolean("allow_negative").notNull().default(false),
+  exemptGroupIds: json("exempt_group_ids").$type<string[]>().notNull().default([]),
+  exemptProductIds: json("exempt_product_ids").$type<string[]>().notNull().default([]),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const stockRuleLog = pgTable("stock_rule_log", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  changedBy: text("changed_by"),
+  changedByName: text("changed_by_name"),
+  summary: text("summary").notNull(), // what changed, readable
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [index("stock_rule_log_org_idx").on(t.organizationId)]);
+
+// Usage recorded beyond what the location held — to reconcile (transfer the
+// stock that was really there, correct the count, or explain it)
+export const stockShortfall = pgTable("stock_shortfall", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  deliveryOrderId: text("delivery_order_id").references(() => deliveryOrder.id, { onDelete: "cascade" }),
+  doNo: text("do_no"),
+  locationLabel: text("location_label").notNull(), // Field:<user> or a warehouse
+  productId: text("product_id").notNull(),
+  productCode: text("product_code"),
+  usedQty: text("used_qty").notNull(),
+  heldQty: text("held_qty").notNull(),
+  shortQty: text("short_qty").notNull(),
+  mode: text("mode").notNull(),        // the rule in force when recorded
+  reason: text("reason"),              // warn: why it was recorded anyway / override reason
+  override: boolean("override").notNull().default(false),
+  recordedBy: text("recorded_by"),
+  status: text("status").notNull().default("open"), // open | resolved
+  resolution: text("resolution"),      // transfer | adjustment | explained
+  resolutionNote: text("resolution_note"),
+  resolvedBy: text("resolved_by"),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [index("stock_shortfall_org_idx").on(t.organizationId, t.status), index("stock_shortfall_do_idx").on(t.deliveryOrderId)]);
 
 // ── DO returns ───────────────────────────────────────────────────────────────
 // Goods a customer sent back after a (normal) DO was delivered — all or part

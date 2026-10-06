@@ -974,7 +974,7 @@ export function SalesOrderDetailClient({
                 </Button>
               )}
               {/* Manager: reject submitted → back to draft */}
-              {status === "submitted" && can("sales-order:reject") && (
+              {status === "submitted" && can("sales-order:approve") && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -987,7 +987,7 @@ export function SalesOrderDetailClient({
                 </Button>
               )}
               {/* Manager: recall confirmed → back to draft */}
-              {status === "confirmed" && can("sales-order:recall") && (
+              {status === "confirmed" && can("sales-order:approve") && (
                 <Button
                   size="sm"
                   variant="outline"

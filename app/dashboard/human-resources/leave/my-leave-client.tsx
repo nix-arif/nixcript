@@ -605,6 +605,7 @@ export function MyLeaveClient({ balances, applications, leaveTypes, creditReques
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={app.status} />
+                      {app.recordedBy && <span className="block mt-1 text-[10px] text-muted-foreground" title={app.reason ?? undefined}>Recorded by HR</span>}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
