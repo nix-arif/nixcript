@@ -2,9 +2,9 @@
 
 import { db } from "@/db";
 import {
-  claimApplication, leaveApplication, leaveCreditRequest, member, packingList, packingListItem, payrollPeriod,
-  pendingDepartmentAssignment, pendingInvitation, purchaseOrder, purchaseRequisition, salesOrder, stockMovement,
-  stockRequest, travelForm,
+  assetUnit, claimApplication, deliveryOrder, leaveApplication, leaveCreditRequest, member, packingList, packingListItem, payrollPeriod,
+  pendingDepartmentAssignment, pendingInvitation, product, purchaseOrder, purchaseRequisition, salesOrder, stockLevel, stockLot, stockMovement,
+  stockRequest, stockShortfall, travelForm,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -22,11 +22,12 @@ import type { AnyPgColumn, PgTable } from "drizzle-orm/pg-core";
 export interface MyTask {
   key: string;
   title: string;          // e.g. "Leave applications to approve"
-  role: "Checker" | "Approver" | "Owner";
+  role: "Checker" | "Approver" | "Owner" | "Inventory" | "Specialist";
   count: number;
   oldest: Date | null;    // the longest-waiting one
   waitingDays: number | null; // whole days the oldest has waited
   href: string;           // where it is actioned
+  detail?: string;        // shown instead of the waiting time (e.g. "earliest expires 12 Oct")
 }
 
 async function tally(table: PgTable, createdAt: AnyPgColumn, where: SQL | undefined) {
@@ -45,7 +46,7 @@ export async function getMyApprovalTasks(): Promise<MyTask[]> {
   const notMine = async (key: string, col: AnyPgColumn) =>
     (await isSelfActionAllowed(orgId, key)) ? undefined : or(isNull(col), ne(col, userId));
 
-  type Spec = Omit<MyTask, "count" | "oldest" | "waitingDays"> & { run: () => Promise<{ count: number; oldest: Date | null }> };
+  type Spec = Omit<MyTask, "count" | "oldest" | "waitingDays" | "detail"> & { run: () => Promise<{ count: number; oldest: Date | null; detail?: string }> };
   const specs: Spec[] = [];
   const add = (perm: string | null, spec: Spec) => { if (perm === null || can(perm)) specs.push(spec); };
 
@@ -88,6 +89,34 @@ export async function getMyApprovalTasks(): Promise<MyTask[]> {
     run: async () => tally(payrollPeriod, payrollPeriod.createdAt, and(eq(payrollPeriod.organizationId, orgId), eq(payrollPeriod.status, "draft"), await notMine("payslip:approve", payrollPeriod.createdBy))) });
   add("payslip:publish", { key: "payroll-publish", title: "Approved payroll to publish", role: "Approver", href: "/dashboard/human-resources/payroll",
     run: async () => tally(payrollPeriod, payrollPeriod.createdAt, and(eq(payrollPeriod.organizationId, orgId), eq(payrollPeriod.status, "approved"))) });
+
+  // Inventory housekeeping for whoever manages inventory
+  add("inventory:manage", { key: "shortfall", title: "Stock shortfalls to reconcile", role: "Inventory", href: "/dashboard/inventory/stock-rules",
+    run: () => tally(stockShortfall, stockShortfall.createdAt, and(eq(stockShortfall.organizationId, orgId), eq(stockShortfall.status, "open"))) });
+  add("inventory:manage", { key: "expiring", title: "Lots expired or expiring within 30 days", role: "Inventory", href: "/dashboard/inventory/serialized-units?tab=lots",
+    run: async () => {
+      const [r] = await db.select({ n: sql<number>`count(*)::int`, first: sql<string | null>`min(${stockLot.expiryDate})` }).from(stockLot)
+        .where(and(eq(stockLot.organizationId, orgId), sql`${stockLot.quantity}::numeric > 0`, sql`${stockLot.expiryDate} <= now() + interval '30 days'`));
+      const first = r?.first ? new Date(r.first) : null;
+      return { count: r?.n ?? 0, oldest: null, detail: first ? `earliest ${first < new Date() ? "expired" : "expires"} ${first.toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" })}` : undefined };
+    } });
+  add("inventory:manage", { key: "no-serial", title: "Machines held without a serial number", role: "Inventory", href: "/dashboard/inventory/serialized-units",
+    run: async () => {
+      // serial-tracked / rental items where the quantity held is more than the serial numbers recorded there
+      const rows = await db.select({ productId: stockLevel.productId, label: stockLevel.warehouseLabel, qty: stockLevel.quantity }).from(stockLevel)
+        .innerJoin(product, eq(product.id, stockLevel.productId))
+        .where(and(eq(stockLevel.organizationId, orgId), sql`${stockLevel.quantity}::numeric > 0`, or(eq(product.requiresSerialTracking, true), eq(product.isRental, true)), sql`${stockLevel.warehouseLabel} not like 'CS:%'`));
+      if (!rows.length) return { count: 0, oldest: null };
+      const units = await db.select({ productId: assetUnit.productId, label: assetUnit.currentWarehouseLabel, n: sql<number>`count(*)::int` }).from(assetUnit)
+        .where(and(eq(assetUnit.currentOrgId, orgId), inArray(assetUnit.status, ["IN_STOCK", "WITH_REP"])))
+        .groupBy(assetUnit.productId, assetUnit.currentWarehouseLabel);
+      const missing = rows.reduce((s, r) => s + Math.max(0, Math.floor(parseFloat(r.qty)) - (units.find((u) => u.productId === r.productId && u.label === r.label)?.n ?? 0)), 0);
+      return { count: missing, oldest: null, detail: missing ? "give them serial numbers in Lots & Serial Numbers" : undefined };
+    } });
+  // The specialist's own Case DOs where the items used aren't recorded yet
+  add(null, { key: "case-actuals", title: "Your Case DOs: record the items used", role: "Specialist", href: "/dashboard/fulfillment/delivery",
+    run: () => tally(deliveryOrder, deliveryOrder.createdAt, and(eq(deliveryOrder.organizationId, orgId), eq(deliveryOrder.isCaseDo, true),
+      eq(deliveryOrder.actualStatus, "pending"), eq(deliveryOrder.applicationSpecialistId, userId), ne(deliveryOrder.status, "cancelled"))) });
 
   // Owner-only reviews: new member invitations and department assignments
   const [me] = await db.select({ role: member.role }).from(member)

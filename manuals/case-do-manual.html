@@ -182,6 +182,7 @@ ul.plain strong{color:var(--text)}
       <a href="#create">Step 1 — Create the Case DO</a>
       <a href="#record">Step 2 — Record Actual Items</a>
       <a href="#groups" class="sub">Item Groups in the Picker</a>
+      <a href="#stock" class="sub">Not Enough Stock (Stock Rules)</a>
       <a href="#dopage">The DO Page</a>
       <a href="#copies">Customer &amp; Internal Copy</a>
       <a href="#invoice">Invoice</a>
@@ -236,9 +237,11 @@ ul.plain strong{color:var(--text)}
             <tr><td><strong>Cancel Delivery Order</strong></td><td class="td-m">Cancel (void) a Case DO with a reason — see section 10. Managers have it by default in new companies; grant it in Organization → Roles.</td></tr>
             <tr><td>Delete Delivery Order</td><td class="td-m">Delete a Case DO <em>you created</em>, only while nothing has happened (no actual items recorded, no invoice)</td></tr>
             <tr><td>Create Invoice</td><td class="td-m">Create the invoice from the Case DO</td></tr>
+            <tr><td><strong>Record Case DO usage without enough stock</strong></td><td class="td-m">When Stock Rules are on <em>Enforce</em>, record anyway with a reason (flagged as a shortfall). Sensitive — give only to managers</td></tr>
           </tbody>
         </table>
       </div>
+      <p>Quick setup bundles (Admin → Access Control): <strong>Application Specialist</strong> (create, record, deliver own Case DOs), <strong>Delivery Order Handler</strong>, <strong>Delivery Order Manager</strong> (adds cancel and the stock override).</p>
     </section>
 
     <section class="sec" id="templates">
@@ -275,7 +278,7 @@ ul.plain strong{color:var(--text)}
       <div class="sec-hd"><span class="sec-n">05</span><h2>Step 1 — Create the Case DO</h2></div>
       <div class="steps">
         <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Delivery Orders → New → Case DO</h3><p>Case date, MRN no., case category.</p></div></div>
-        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Application specialist</h3><p>Whose field stock the items come from (the sales person is the same person unless you untick it).</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Application specialist</h3><p>Whose field stock the items come from (the sales person is the same person unless you untick it). Only your company's own people are listed. If Stock Rules check on creation, the customer items are checked against what they hold now (see <a href="#stock">Not enough stock</a>).</p></div></div>
         <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Customer (doctor) and hospital</h3><p>Once the hospital is known (chosen, or the doctor's only one), that hospital's default template — else the “any hospital” default — fills in everything: case category, description, <strong>Customer copy items</strong>, <strong>Selling price</strong> and the machine choices. Only templates for that hospital (and “any hospital”) show as buttons. Switching hospital switches to its template.</p></div></div>
         <div class="step"><div class="step-n">4</div><div class="step-b"><h3>Check the customer copy items and price</h3><p>Add, change or remove lines for this case. These are what the hospital sees and pays for.</p></div></div>
         <div class="step"><div class="step-n">5</div><div class="step-b"><h3>Create Case DO</h3><p>Leave <em>The case is done — record now</em> unticked unless the case is already over. Nothing is taken from stock yet.</p></div></div>
@@ -287,13 +290,27 @@ ul.plain strong{color:var(--text)}
       <p>After the case, open the DO and click <strong>Record actual items</strong> (the amber box <em>Actual items used — not recorded yet</em>).</p>
       <div class="steps">
         <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Check the prefilled items</h3><p>The specialist's field stock is listed (under your item groups); the customer copy items they hold are ticked with their quantities. Free-text lines (e.g. a kit name) are not stock and are skipped.</p></div></div>
-        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Adjust to what was really used</h3><p>Change quantities, tick or untick items, pick the lot if asked. For machines, tick the unit (serial no.) used and check its purpose, return mode and usage fee. <em>Other items used</em> is for anything not from field stock.</p></div></div>
-        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Record actual items</h3><p>Stock is taken out of the specialist's field stock now — consigned stock first or last as set in Consignment Settings — and machines are lent or sold.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Adjust to what was really used</h3><p>Change quantities, tick or untick items, pick the lot if asked. For machines, tick the unit (serial no.) used and check its purpose, return mode and usage fee. <em>Other items used</em> is for anything not from the specialist's field stock — for a catalogue item, choose <strong>Taken from</strong> (a warehouse or another of your people) and it is deducted there.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Record actual items</h3><p>Stock is checked against the Stock Rules, then taken out of the specialist's field stock — consigned stock first or last as set in Consignment Settings — and machines are lent or sold. The specialist sees <em>“Your Case DOs: record the items used”</em> on their dashboard until this is done.</p></div></div>
       </div>
       <div class="warn">Recorded the wrong items? On the DO page click <strong>undo recording</strong>: all stock (machines and consigned stock included) goes back to the specialist and you can record again. Undo is refused if consigned stock it used is already settled.</div>
 
       <h3 id="groups" style="margin-top:24px">Item groups in the picker</h3>
-      <p>The specialist's stock is listed under your item groups (Inventory → Item Groups). When the case category matches a group name — e.g. category <em>milh</em> and group <em>milh</em> — that group is first, open and marked <strong>matches case type</strong>; other groups are folded. A product in several groups (e.g. SWING 15 in milh, evlt and pldd) appears once, under the group matching the case.</p>
+      <p>The specialist's stock is listed under your item groups (Inventory → Item Groups). When the case category matches a group name — e.g. category <em>milh</em> and group <em>milh</em> — that group is first, open and marked <strong>matches case type</strong>; other groups are folded. A product in several groups (e.g. SWING 15 in milh, evlt and pldd) appears once, under the group matching the case. After recording, the DO page shows the picked items under the same groups.</p>
+
+      <h3 id="stock" style="margin-top:24px">Not enough stock (Stock Rules)</h3>
+      <p>If the items recorded are more than the specialist (or the <em>Taken from</em> location) holds, a coloured box opens before anything is saved. What it allows depends on <strong>Inventory → Stock Rules</strong>:</p>
+      <div class="lt-wrap">
+        <table class="cmp">
+          <thead><tr><th>Mode</th><th>Box</th><th>You can</th></tr></thead>
+          <tbody>
+            <tr><td>Record &amp; flag</td><td class="td-m">— (no box)</td><td class="td-m">Saved; the difference is listed as a shortfall for the inventory team</td></tr>
+            <tr><td>Warn</td><td class="td-m" style="color:var(--pe)">Amber — “Not enough stock”</td><td class="td-m"><strong>Record anyway</strong> with a reason, or go back and fix</td></tr>
+            <tr><td>Enforce</td><td class="td-m" style="color:var(--rj)">Red — “Not enough stock — can't record this” (or “… override needed” if you may override)</td><td class="td-m">Go back: transfer the stock to the specialist, use <em>Taken from</em>, or ask for the count to be corrected. With the override permission: <strong>Override and record</strong> with a reason</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The box lists each item: needed, held, short. Only what is really held is deducted — the rest is a <strong>shortfall</strong> (Inventory → Stock Rules → Shortfalls) to reconcile; cancelling the DO clears it. Items in an exception group are only flagged. See the <a href="/manuals/inventory">Inventory Manual</a>.</p>
     </section>
 
     <section class="sec" id="dopage">
@@ -350,14 +367,14 @@ ul.plain strong{color:var(--text)}
         <table class="cmp">
           <thead><tr><th>What happens</th><th></th></tr></thead>
           <tbody>
-            <tr><td>Stock</td><td class="td-m">Everything the DO took — own stock, consigned stock, machines — goes back to the specialist</td></tr>
+            <tr><td>Stock</td><td class="td-m">Everything the DO took — own stock, consigned stock, machines, items <em>Taken from</em> elsewhere — goes back where it came from; open shortfalls are cleared</td></tr>
             <tr><td>Movement History</td><td class="td-m">Kept; reversing entries are added (“DO cancelled — stock returned”) next to the original ones</td></tr>
             <tr><td>The DO</td><td class="td-m">Status <strong>Cancelled</strong> with the reason, date and person; locked — no recording, editing, invoicing or machine actions; PDFs stamped <strong>CANCELLED</strong></td></tr>
             <tr><td>Refused when</td><td class="td-m">An invoice is linked (cancel or credit the invoice first), or consigned stock it used is already settled</td></tr>
           </tbody>
         </table>
       </div>
-      <div class="info"><strong>Delete vs Cancel vs Undo.</strong> <em>Delete</em> is only for a DO made by mistake — before any actual items are recorded. <em>Undo recording</em> corrects the actual items but keeps the DO. <em>Cancel</em> voids the whole case.</div>
+      <div class="info"><strong>Delete vs Cancel vs Undo.</strong> <em>Delete</em> is only for a <strong>draft</strong> made by mistake — before any actual items are recorded. <em>Undo recording</em> corrects the actual items but keeps the DO. <em>Cancel</em> voids the whole case.</div>
     </section>
 
     <section class="sec" id="machines">
@@ -393,6 +410,8 @@ ul.plain strong{color:var(--text)}
         <div class="ac"><h3>Mark as Delivered is greyed out</h3><p>Record the actual items used first — a Case DO is delivered once the case is done.</p></div>
         <div class="ac"><h3>Stock didn't go down after creating the DO</h3><p>That's expected: stock moves when the actual items are recorded (step 2).</p></div>
         <div class="ac"><h3>Why is there no Delete button?</h3><p>The DO has already taken stock (or is invoiced). Cancel it instead — it needs the <em>Cancel Delivery Order</em> permission.</p></div>
+        <div class="ac"><h3>“Not enough stock” — but the specialist has it</h3><p>The system's record is behind. Transfer the stock to the specialist (Inventory → Transfer to Rep) or have their count corrected, then record again. On <em>Record &amp; flag</em> or <em>Warn</em> you can save now and reconcile later.</p></div>
+        <div class="ac"><h3>The specialist isn't in the list</h3><p>Only your company's own members are listed. A person from a sister company uses stock through consignment.</p></div>
         <div class="ac"><h3>How do I change the notes or bank on the DO?</h3><p>Organization → Document Settings → Table → <em>Delivery order — below the table</em>. The bank is your primary account in Organization Profile → Banking.</p></div>
         <div class="ac"><h3>What about Case DOs made before this change?</h3><p>They keep working as before: their items were deducted when created, and their customer copy is made from those items.</p></div>
       </div>

@@ -6,6 +6,8 @@ import { Toaster } from "sonner";
 import { Providers } from "./providers";
 import NextTopLoader from "nextjs-toploader";
 import Script from "next/script";
+import { TESTING_MODE } from "@/lib/testing-mode";
+import { TestingBanner } from "@/components/testing-banner";
 
 const GA_ID = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
 
@@ -20,8 +22,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "niXcriP",
+  title: TESTING_MODE ? "[TESTING] niXcriP" : "niXcriP",
   description: "Comprehensive CRM System",
+  ...(TESTING_MODE && { robots: { index: false, follow: false } }),
 };
 
 export default function RootLayout({
@@ -30,9 +33,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.className} ${geistMono.variable} h-full antialiased`}>
+    <html lang="en" className={`${geistSans.className} ${geistMono.variable} h-full antialiased${TESTING_MODE ? " testing-mode" : ""}`}>
       <body className="font-sans min-h-full flex flex-col">
-        {GA_ID && (
+        {TESTING_MODE && <TestingBanner />}
+        {GA_ID && !TESTING_MODE && (
           <>
             <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} strategy="afterInteractive" />
             <Script id="ga-init" strategy="afterInteractive">{`

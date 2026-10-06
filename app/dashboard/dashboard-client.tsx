@@ -550,10 +550,10 @@ function MyTasksPanel({ tasks }: { tasks: MyTask[] }) {
     <div className="border rounded-xl overflow-hidden bg-card">
       <div className="px-4 pt-4 pb-3">
         <SectionHeader icon={InboxIcon} title="Waiting for you" count={total} variant={total ? "warning" : "default"} />
-        <p className="text-xs text-muted-foreground mt-1">Things you can check or approve in this company.</p>
+        <p className="text-xs text-muted-foreground mt-1">Things to check, approve or follow up in this company.</p>
       </div>
       {tasks.length === 0 ? (
-        <EmptyState message="Nothing waiting for your check or approval." />
+        <EmptyState message="Nothing waiting for you." />
       ) : (
         <div className="divide-y divide-border/60 border-t border-border/60">
           {tasks.map((t) => (
@@ -563,8 +563,8 @@ function MyTasksPanel({ tasks }: { tasks: MyTask[] }) {
               <span className="flex-1 min-w-0">
                 <span className="block text-sm font-medium truncate">{t.title}</span>
                 <span className="block text-[11px] text-muted-foreground">
-                  as {t.role.toLowerCase()}
-                  {t.waitingDays !== null && <> · oldest waiting {t.waitingDays === 0 ? "since today" : `${t.waitingDays} day${t.waitingDays !== 1 ? "s" : ""}`}</>}
+                  {t.role === "Inventory" ? "inventory" : `as ${t.role.toLowerCase()}`}
+                  {t.detail ? <> · {t.detail}</> : t.waitingDays !== null && <> · oldest waiting {t.waitingDays === 0 ? "since today" : `${t.waitingDays} day${t.waitingDays !== 1 ? "s" : ""}`}</>}
                 </span>
               </span>
               {t.waitingDays !== null && t.waitingDays >= 3 && <AlertCircleIcon className="h-4 w-4 text-amber-500 shrink-0" />}

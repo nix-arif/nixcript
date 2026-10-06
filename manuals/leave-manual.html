@@ -175,6 +175,10 @@ tbody tr:hover{background:var(--surface-2)}
       <a href="#flow">Status &amp; Workflow</a>
       <a href="#roles">Roles</a>
       <a href="#cancel">Cancelling Leave</a>
+      <a href="#record">Recording Leave for a Member</a>
+      <a href="#dashboard">Dashboard</a>
+      <a href="#summary">Leave Summary</a>
+      <a href="#report">Leave Report</a>
       <a href="#ref">Quick Reference</a>
     </nav>
   </aside>
@@ -437,7 +441,7 @@ tbody tr:hover{background:var(--surface-2)}
 
     <section class="sec" id="roles">
       <div class="sec-hd"><span class="sec-n">06</span><h2>Roles &amp; Responsibilities</h2></div>
-      <p>Two roles participate in the leave process.</p>
+      <p>Three roles take part in the leave process.</p>
       <div class="roles-grid">
         <div class="rc">
           <p class="rc-perm">leave:apply</p>
@@ -459,9 +463,19 @@ tbody tr:hover{background:var(--surface-2)}
             <div class="rc-act">Reject with reason → <span class="badge b-rj">Rejected</span></div>
             <div class="rc-act">Cancel any application on behalf of applicant</div>
             <div class="rc-act"><strong>Cannot approve their own application</strong></div>
+            <div class="rc-act">Record leave for a member who didn't apply (see 08)</div>
+          </div>
+        </div>
+        <div class="rc">
+          <p class="rc-perm">leave:summary</p>
+          <h3>Leave Analyst (HR / Management)</h3>
+          <div class="rc-acts">
+            <div class="rc-act">Open <strong>Leave Summary</strong> — every member's balance, taken, pending and patterns</div>
+            <div class="rc-act">Export the summary to Excel</div>
           </div>
         </div>
       </div>
+      <p style="margin-top:12px">Quick setup bundle <strong>Leave Administrator</strong> (Admin → Access Control) gives approve, summary, report and leave settings together.</p>
     </section>
 
     <section class="sec" id="cancel">
@@ -493,8 +507,51 @@ tbody tr:hover{background:var(--surface-2)}
       <div class="warn">Cancelled applications cannot be reopened. Submit a new application if you still need the leave.</div>
     </section>
 
+    <section class="sec" id="record">
+      <div class="sec-hd"><span class="sec-n">08</span><h2>Recording Leave for a Member</h2></div>
+      <p>For leave a member <strong>took but never applied for</strong> in the system — e.g. they were on MC and sent the slip by WhatsApp or email. Only someone who can approve leave can record it, and never for themselves.</p>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Leave Approvals → Record leave for a member</h3><p>Choose the member — their remaining balance per type is shown.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Type, dates, reason</h3><p>The reason is required (at least 5 characters), e.g. <em>“MC sent by WhatsApp on 3 Oct, did not apply”</em>. Upload the MC if the type needs a document.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Save</h3><p>It is <span class="badge b-ap">Approved</span> at once and deducted from the member's balance. It shows <strong>“Recorded by HR”</strong> with who recorded it.</p></div></div>
+        <div class="step"><div class="step-n">4</div><div class="step-b"><h3>The member is told</h3><p>They get a notification and a card on their dashboard — <em>“Leave recorded for you”</em> — until they click <strong>OK, noted</strong>. The approver sees whether and when they acknowledged.</p></div></div>
+      </div>
+      <div class="warn">If the member says the recorded leave is wrong, cancel it (approver) and record it again correctly — the balance is restored on cancel.</div>
+    </section>
+
+    <section class="sec" id="dashboard">
+      <div class="sec-hd"><span class="sec-n">09</span><h2>Leave on the Dashboard</h2></div>
+      <div class="act-grid">
+        <div class="ac"><h3>Waiting for you</h3><p>Approvers see <em>“Leave to approve”</em> (and leave credits) with how many and how long the oldest has waited. Your own applications are not counted — you can't approve them.</p></div>
+        <div class="ac"><h3>Team on leave</h3><p>Everyone in the companies under the same owner sees who is on approved leave <strong>today</strong> and <strong>this week</strong> (half days marked AM/PM). Only approved leave is shown, without reasons.</p></div>
+        <div class="ac"><h3>Leave recorded for you</h3><p>When HR recorded leave for you (08), it stays on your dashboard until you click <strong>OK, noted</strong>.</p></div>
+      </div>
+    </section>
+
+    <section class="sec" id="summary">
+      <div class="sec-hd"><span class="sec-n">10</span><h2>Leave Summary</h2></div>
+      <p>Human Resources → Leave → <strong>Leave Summary</strong> (needs <code>leave:summary</code>). One row per member for the year:</p>
+      <ul class="plain" style="display:flex;flex-direction:column;gap:6px;font-size:13.5px;padding-left:18px;list-style:disc">
+        <li><strong>Left · used</strong> per leave type — left = entitlement + carry-forward + earned credits − taken − pending.</li>
+        <li><strong>Taken</strong> and <strong>Pending</strong> days, and the <strong>Next leave</strong> date.</li>
+        <li><strong>Patterns</strong> (approved leave this year): next to a weekend (starting Monday / ending Friday), emergency leave, applied less than 3 days ahead.</li>
+        <li>Click a member for every application and their <em>days taken by month</em>. Search, and export to <strong>Excel</strong>.</li>
+      </ul>
+      <div class="info">Patterns are prompts for a conversation, not a judgement — check the dates before drawing conclusions.</div>
+    </section>
+
+    <section class="sec" id="report">
+      <div class="sec-hd"><span class="sec-n">11</span><h2>Leave Report</h2></div>
+      <p>Human Resources → Leave → <strong>Leave Report</strong> — days of approved leave in a year.</p>
+      <div class="act-grid">
+        <div class="ac"><h3>By leave type</h3><p>Each member's days per type against their entitlement. Emergency leave is counted under the type it was taken as.</p></div>
+        <div class="ac"><h3>By month</h3><p>Each member's days per month, Jan–Dec, with totals.</p></div>
+      </div>
+      <p style="margin-top:12px">Options: <em>Only members who took leave</em>, sort by name or most leave first, filter one member, export to Excel or PDF (the PDF shows only the columns used).</p>
+    </section>
+
     <section class="sec" id="ref">
-      <div class="sec-hd"><span class="sec-n">08</span><h2>Quick Reference</h2></div>
+      <div class="sec-hd"><span class="sec-n">12</span><h2>Quick Reference</h2></div>
       <h3 style="margin-bottom:10px">Application Number Format</h3>
       <div class="ref-row">
         <div>
@@ -515,6 +572,7 @@ tbody tr:hover{background:var(--surface-2)}
           <tr><td style="font-weight:600;padding:10px 14px">Half-day value</td><td style="color:var(--muted);padding:10px 14px">0.5 days deducted from balance.</td></tr>
           <tr><td style="font-weight:600;padding:10px 14px">Overlap rule</td><td style="color:var(--muted);padding:10px 14px">No two active applications may share a date.</td></tr>
           <tr><td style="font-weight:600;padding:10px 14px">Self-approval</td><td style="color:var(--muted);padding:10px 14px">Approvers cannot approve their own leave.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Recorded leave</td><td style="color:var(--muted);padding:10px 14px">Approved on recording, reason required, member acknowledges on the dashboard.</td></tr>
           <tr><td style="font-weight:600;padding:10px 14px">Carry forward</td><td style="color:var(--muted);padding:10px 14px">Annual Leave only — unused days roll over (max 8 days).</td></tr>
           <tr><td style="font-weight:600;padding:10px 14px">Balance year</td><td style="color:var(--muted);padding:10px 14px">Balances reset every January 1st.</td></tr>
         </tbody>
@@ -554,6 +612,7 @@ tbody tr:hover{background:var(--surface-2)}
     '    APV -->|Reject with reason| REJECTED([REJECTED])',
     '    PENDING -->|Cancel| CANCELLED([CANCELLED])',
     '    APPROVED -->|Cancel| CANCELLED',
+    '    HR[Recorded for a member\\nby an approver] -->|reason required| APPROVED',
     '    APPROVED --> DONE([Done])',
     '    REJECTED --> DONE',
     '    CANCELLED --> DONE'

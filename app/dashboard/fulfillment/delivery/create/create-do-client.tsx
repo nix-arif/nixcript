@@ -29,6 +29,7 @@ import {
   ArrowLeftIcon, PlusIcon, TrashIcon, SearchIcon, XIcon,
   BuildingIcon, LinkIcon, CheckCircle2Icon, Loader2Icon,
   StethoscopeIcon, ShoppingCartIcon, PhoneIcon, MailIcon, ChevronDownIcon, ChevronRightIcon,
+  AlertTriangleIcon, BanIcon, ShieldAlertIcon, InfoIcon,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -2499,21 +2500,38 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
             {stockGate && (() => {
               const blocked = stockGate.check.mode === "enforce" && !stockGate.check.canOverride;
               const override = stockGate.check.mode === "enforce" && stockGate.check.canOverride;
+              // amber = a warning (record with a reason) · red = refused, or an override of a refusal
+              const red = blocked || override;
+              const tone = red
+                ? { ring: "border-red-200 dark:border-red-900", head: "bg-red-50 dark:bg-red-950/40", icon: "bg-red-100 text-red-600 dark:bg-red-900/50 dark:text-red-400", text: "text-red-700 dark:text-red-400", chip: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300" }
+                : { ring: "border-amber-200 dark:border-amber-900", head: "bg-amber-50 dark:bg-amber-950/40", icon: "bg-amber-100 text-amber-600 dark:bg-amber-900/50 dark:text-amber-400", text: "text-amber-800 dark:text-amber-400", chip: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300" };
+              const Icon = blocked ? BanIcon : override ? ShieldAlertIcon : AlertTriangleIcon;
               return (
                 <>
-                  <DialogHeader><DialogTitle>{blocked ? "Not enough stock — can't record this" : "Not enough stock"}</DialogTitle></DialogHeader>
+                  <div className={cn("-mx-6 -mt-6 mb-1 flex items-start gap-3 rounded-t-lg border-b px-6 py-4", tone.head, tone.ring)}>
+                    <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full", tone.icon)}><Icon className="h-5 w-5" /></span>
+                    <DialogHeader className="space-y-0.5 text-left">
+                      <DialogTitle className={tone.text}>{blocked ? "Not enough stock — can't record this" : override ? "Not enough stock — override needed" : "Not enough stock"}</DialogTitle>
+                      <p className="text-xs text-muted-foreground">
+                        {blocked ? "Stock Rules are enforced: fix the records first, then record again."
+                          : override ? "Stock Rules are enforced. You may override, with a reason — it is flagged as an override."
+                          : "Stock Rules are on Warn: you can record it with a reason; it is listed as a shortfall to reconcile."}
+                      </p>
+                    </DialogHeader>
+                  </div>
                   <div className="space-y-3 text-sm">
-                    <ul className="rounded-lg border divide-y">
+                    <ul className={cn("rounded-lg border divide-y", tone.ring)}>
                       {stockGate.strict.map((x) => (
-                        <li key={`${x.productId}|${x.source}`} className="flex items-center gap-2 px-3 py-2 text-xs">
+                        <li key={`${x.productId}|${x.source}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-xs">
                           <span className="font-mono font-semibold">{x.productCode}</span>
                           <span className="min-w-0 flex-1 truncate text-muted-foreground">{x.sourceName}</span>
-                          <span className="tabular-nums">used {+x.need.toFixed(4)} · holds {+x.held.toFixed(4)}</span>
+                          <span className="tabular-nums text-muted-foreground">used <b className="text-foreground">{+x.need.toFixed(4)}</b> · holds <b className="text-foreground">{+x.held.toFixed(4)}</b></span>
+                          <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums", tone.chip)}>short {+x.short.toFixed(4)}</span>
                         </li>
                       ))}
                     </ul>
-                    <div className="rounded-lg bg-muted/40 p-3 text-xs space-y-1">
-                      <p className="font-medium">To fix the records:</p>
+                    <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3 text-xs space-y-1 dark:border-blue-900 dark:bg-blue-950/30">
+                      <p className="flex items-center gap-1.5 font-medium text-blue-800 dark:text-blue-300"><InfoIcon className="h-3.5 w-3.5" />To fix the records:</p>
                       <p>• The stock was with them but never transferred → <a className="text-primary underline" href={`/dashboard/inventory/field-stock/transfer${stockGate.strict[0]?.source.startsWith("Field:") ? `?rep=${stockGate.strict[0].source.slice(6)}` : ""}`} target="_blank" rel="noreferrer">Transfer to Rep</a>, then record again.</p>
                       {takeFrom.allowTakenFrom && <p>• It came from a warehouse or a colleague → add it under <b>Other items used</b> with <b>Taken from</b>.</p>}
                       <p>• Their count is wrong → an inventory manager corrects it (New Movement → Adjustment ↕).</p>
@@ -2521,7 +2539,8 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
                     {!blocked && (
                       <div className="space-y-1.5">
                         <Label className="text-xs">{override ? "Reason to record it anyway (override) *" : "Reason to record it anyway *"}</Label>
-                        <Input value={stockNote} onChange={(e) => setStockNote(e.target.value)} placeholder="e.g. used from Ali's bag; transfer to follow" autoFocus />
+                        <Input value={stockNote} onChange={(e) => setStockNote(e.target.value)} placeholder="e.g. used from Ali's bag; transfer to follow" autoFocus
+                          className={cn("focus-visible:ring-2", red ? "focus-visible:ring-red-300" : "focus-visible:ring-amber-300")} />
                         <p className="text-[11px] text-muted-foreground">It is recorded as a shortfall to reconcile{override ? ", marked as an override" : ""}.</p>
                       </div>
                     )}
@@ -2529,11 +2548,13 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
                   <DialogFooter>
                     <Button variant="outline" onClick={() => { setStockGate(null); setStockNote(""); }} disabled={saving}>{blocked ? "Close" : "Cancel"}</Button>
                     {!blocked && (
-                      <Button disabled={saving || stockNote.trim().length < 3} onClick={async () => {
-                        const g = stockGate; const note = stockNote.trim();
-                        setStockGate(null); setStockNote("");
-                        await finishSave(g.items, note, g.check.shortfalls.length);
-                      }}>{saving ? "Saving…" : "Record anyway"}</Button>
+                      <Button disabled={saving || stockNote.trim().length < 3}
+                        className={red ? "bg-red-600 text-white hover:bg-red-700" : "bg-amber-500 text-white hover:bg-amber-600"}
+                        onClick={async () => {
+                          const g = stockGate; const note = stockNote.trim();
+                          setStockGate(null); setStockNote("");
+                          await finishSave(g.items, note, g.check.shortfalls.length);
+                        }}>{saving ? "Saving…" : override ? "Override and record" : "Record anyway"}</Button>
                     )}
                   </DialogFooter>
                 </>

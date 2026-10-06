@@ -35,6 +35,7 @@ import { adjustReservation } from "@/lib/inventory/create-movement";
 import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
 import { performStockCheckAndReserve, getSoStockStatus } from "@/server/stock-reservation";
 import { Resend } from "resend";
+import { testingSubject } from "@/lib/testing-mode";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import SoNotificationEmail from "@/components/emails/so-notification";
@@ -1168,7 +1169,7 @@ async function notifyAndEmail(params: {
       resend.emails.send({
         from: `${process.env.EMAIL_SENDER_NAME} <${process.env.EMAIL_SENDER_ADDRESS}>`,
         to: r.email,
-        subject: params.title,
+        subject: testingSubject(params.title),
         react: SoNotificationEmail({
           type: params.emailType,
           soNo: params.soNo,

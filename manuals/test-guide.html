@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Test Guide — Consignment, Machines &amp; Case DO</title>
+<title>Test Guide — Inventory, Case DO, Consignment, Leave &amp; Claims</title>
 <style>
 :root {
   --bg:#F3F7F4;--surface:#FFF;--surface-2:#EAF2EC;
@@ -180,7 +180,7 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
     <div class="phi-meta">
-      <h1>Test Guide — Consignment, Machines &amp; Case DO</h1>
+      <h1>Test Guide — Inventory, Case DO, Consignment, Leave &amp; Claims</h1>
       <p>Step-by-step use cases to retest on the dev system · ticks are saved in this browser</p>
     </div>
     <div class="phi-tag">Testing</div>
@@ -195,7 +195,7 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
       <a href="#before">Before you start</a>
       <a href="#uc-01" class="sub">UC-01 Documentation is for signed-in users only</a>
       <a href="#uc-02" class="sub">UC-02 Register machines with serial numbers</a>
-      <a href="#uc-03" class="sub">UC-03 Correct machine details (owner)</a>
+      <a href="#uc-03" class="sub">UC-03 Correct machine details — Lots &amp; Serial Numbers</a>
       <a href="#uc-04" class="sub">UC-04 Stock out a machine — pick which one</a>
       <a href="#uc-05" class="sub">UC-05 Transfer a machine to a specialist by serial</a>
       <a href="#uc-06" class="sub">UC-06 Consignment set-up</a>
@@ -204,7 +204,7 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
       <a href="#uc-09" class="sub">UC-09 Case DO — auto-filled from the template</a>
       <a href="#uc-10" class="sub">UC-10 Case DO — customer copy & internal copy</a>
       <a href="#uc-11" class="sub">UC-11 Machine left at the hospital — return or sell</a>
-      <a href="#uc-12" class="sub">UC-12 Deleting a Case DO puts everything back</a>
+      <a href="#uc-12" class="sub">UC-12 Cancelling a Case DO puts everything back</a>
       <a href="#uc-13" class="sub">UC-13 Settle with the sister company</a>
       <a href="#uc-14" class="sub">UC-14 External agents — dealer and sales agent</a>
       <a href="#uc-15" class="sub">UC-15 Readable locations everywhere</a>
@@ -214,6 +214,16 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
       <a href="#uc-18" class="sub">UC-18 Agent moves consigned stock</a>
       <a href="#uc-19" class="sub">UC-19 Case DO in two steps</a>
       <a href="#uc-20" class="sub">UC-20 Your own item groups</a>
+      <a href="#uc-21" class="sub">UC-21 DO and invoice numbering</a>
+      <a href="#uc-22" class="sub">UC-22 No consignment terms, no consignment</a>
+      <a href="#uc-23" class="sub">UC-23 Warehouse set-up gate</a>
+      <a href="#uc-24" class="sub">UC-24 New Movement</a>
+      <a href="#uc-25" class="sub">UC-25 Lots &amp; expiry</a>
+      <a href="#uc-26" class="sub">UC-26 Stock Rules</a>
+      <a href="#uc-27" class="sub">UC-27 Dashboard tasks &amp; team leave</a>
+      <a href="#uc-28" class="sub">UC-28 Record leave for a member</a>
+      <a href="#uc-29" class="sub">UC-29 Leave Summary &amp; Report</a>
+      <a href="#uc-30" class="sub">UC-30 Access control bundles</a>
     </nav>
   </aside>
 
@@ -221,9 +231,9 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
     <section class="sec" id="before">
       <div class="sec-hd"><span class="sec-n">00</span><h2>Before you start</h2></div>
       <ul class="plain">
-        <li>Test on the <strong>dev</strong> system only. It is a fresh copy of production (02 Oct 2026) — real customers and stock, nothing you do touches production.</li>
+        <li>Test on the <strong>dev</strong> system only. It is a fresh copy of production (06 Oct 2026) — real customers and stock, nothing you do touches production.</li>
         <li>Switch company with the workspace switcher (top-left). Stock owner = <strong>Smart Innosys</strong>; sister company / agent = <strong>Affirma</strong> (specialist <strong>Zilarahim</strong>).</li>
-        <li>No machines are registered yet — <a href="#uc-02">UC-02</a> sets one up. Do the use cases in order; later ones use what earlier ones create.</li>
+        <li>Do the use cases in order; later ones use what earlier ones create. UC-21 onwards cover the latest changes (numbering, consignment terms, inventory, Stock Rules, dashboard, leave).</li>
         <li>Products have <strong>no unit cost</strong> in this data, so anything priced “cost-plus” shows <em>pending</em> — use the price lists as described.</li>
         <li>Good test items: <code>SFCS000345</code>, <code>SSP-8030</code> (have MDA certificates) and <code>A.4086.1</code>, <code>STRC1406C</code> (no MDA).</li>
         <li>Something not as expected? Note the use-case number, step and a screenshot.</li>
@@ -244,7 +254,7 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
           <label class="chk"><input type="checkbox" data-k="UC-01-1"><span>Step 1 goes to the sign-in page, not the manual</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-01-2"><span>After signing in you land straight on the Consignment manual</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-01-3"><span>The home page shows only Sign In / Register — no Documentation</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-01-4"><span>Documentation lists Claim, Leave, Consignment manuals and this Test Guide; each opens in a new tab</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-01-4"><span>Documentation lists the Claim, Leave, Case DO, Consignment and Inventory manuals and this Test Guide; each opens in a new tab</span></label>
         </div>
       </div>
       <div class="uc" id="uc-02">
@@ -262,24 +272,27 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
           <label class="chk"><input type="checkbox" data-k="UC-02-6"><span>Step 4 is refused: “Enter the serial number for unit 3 — one per machine”</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-02-7"><span>Saved; Stock Overview → Main Warehouse → SWING 15 shows the 3 serial numbers, the two company assets highlighted (“· asset”)</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-02-8"><span>Step 6 is refused: serial number already in stock</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-02-9"><span>Inventory → Serialized Units lists them; the use dropdown offers only For sale / Company asset</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-02-9"><span>Inventory → Lots &amp; Serial Numbers → <b>Serial numbers</b> tab lists them; the use dropdown offers only For sale / Company asset</span></label>
         </div>
       </div>
       <div class="uc" id="uc-03">
-        <div class="uc-hd"><span class="uc-id">UC-03</span><h3>Correct machine details (owner)</h3><span class="who">Owner</span></div>
+        <div class="uc-hd"><span class="uc-id">UC-03</span><h3>Correct machine details — Lots &amp; Serial Numbers</h3><span class="who">Inventory manager / owner</span></div>
+        <div class="info">One job, one place: quantities change only through New Movement; serial numbers and lots only on Lots &amp; Serial Numbers. Stock Overview has no Edit (pencil) any more.</div>
         <ol class="st">
-          <li>Stock Overview → SWING 15 row → <b>Edit</b> (pencil).</li>
-          <li>In <b>Machines (serial numbers)</b>: fix one serial number, change one use, save.</li>
-          <li>Edit again: lower the quantity below the number of serial numbers, save.</li>
-          <li>Remove one serial (bin), keep quantity, save; then <b>+ Add serial no.</b> to give it back a serial.</li>
-          <li>Try the row's <b>Delete</b> (bin) while serial numbers are recorded.</li>
+          <li>Stock Overview → Main Warehouse → SWING 15 row. Look at the buttons on the right.</li>
+          <li>Click <b># Serial numbers</b> → it opens Lots &amp; Serial Numbers filtered to that row. On one unit click <b>Fix serial no.</b>, enter the correct serial and a reason, save.</li>
+          <li>Change another unit's use (For sale ⇄ Company asset).</li>
+          <li>On a unit entered by mistake click <b>Remove</b>, give a reason.</li>
+          <li><b>Register serial numbers</b> → choose Main Warehouse → SWING 15 → give the unit without a serial its number back. Try the dialog on a phone-width screen.</li>
+          <li>Stock Overview → a row with quantity 0 and no serials → <b>Remove row</b>. Then try a row that still has stock.</li>
         </ol>
         <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
-          <label class="chk"><input type="checkbox" data-k="UC-03-10"><span>Corrections saved; Serialized Units shows the note “Serial corrected … by …”</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-03-11"><span>Lowering quantity below the serial count is refused</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-03-12"><span>Removing / adding serial numbers works and quantity stays the same</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-03-13"><span>Delete is refused while serial numbers are recorded there</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-03-14"><span>A red warning appears on any row with more serial numbers than quantity</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-10b"><span>Row buttons: Adjust quantity · Lot numbers · Serial numbers (machines) · Stock settings · Remove (empty rows only, owner) — no Edit</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-10"><span>Fix saved: the unit shows the new serial and its History notes “Serial corrected … by …”; the quantity is unchanged</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-12"><span>Remove: “Serial number removed — the quantity in stock is unchanged”; Register lists only the item(s) held there with units still without a serial</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-12b"><span>Remove is refused for a unit already used on a Case DO or consignment</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-14b"><span>The Register dialog fits the screen — nothing overflows, it scrolls inside</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-03-13"><span>Remove row works only on an empty row; its Movement History is still there afterwards</span></label>
         </div>
       </div>
       <div class="uc" id="uc-04">
@@ -292,7 +305,7 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
         <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
           <label class="chk"><input type="checkbox" data-k="UC-04-15"><span>“Which machine(s) are going out?” lists the serial numbers</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-04-16"><span>Saving without a pick is refused (when all units have serial numbers)</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-04-17"><span>The picked unit disappears from the row; Serialized Units shows it as Disposed</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-04-17"><span>The picked unit disappears from the row; Lots &amp; Serial Numbers shows it as Disposed</span></label>
         </div>
       </div>
       <div class="uc" id="uc-05">
@@ -390,20 +403,23 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
         <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
           <label class="chk"><input type="checkbox" data-k="UC-11-36"><span>Machine shows “Loan · At the hospital” and appears under Field Stock → Machines at hospitals as “loan” with the DO and days out</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-11-37"><span>Return puts it back with Zilarahim (“Returned dd Mmm”)</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-11-38"><span>Sell marks it “Sold to the hospital · RM …”; Serialized Units shows it Sold / For sale</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-11-38"><span>Sell marks it “Sold to the hospital · RM …”; Lots &amp; Serial Numbers shows it Sold / For sale</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-11-39"><span>The invoice is pre-filled with usage-fee and “— sold” lines</span></label>
         </div>
       </div>
       <div class="uc" id="uc-12">
-        <div class="uc-hd"><span class="uc-id">UC-12</span><h3>Deleting a Case DO puts everything back</h3><span class="who">Affirma · owner</span></div>
+        <div class="uc-hd"><span class="uc-id">UC-12</span><h3>Cancelling a Case DO puts everything back</h3><span class="who">Affirma · manager (Cancel Delivery Order)</span></div>
         <ol class="st">
-          <li>Open an unsettled Case DO → <b>Delete</b>.</li>
-          <li>Check Field Stock → Zilarahim, and the consignment's history.</li>
+          <li>Open a Case DO whose actual items are recorded (not invoiced, not settled). Note there is no <b>Delete</b>.</li>
+          <li><b>Cancel DO</b> → reason “Test cancel” → confirm.</li>
+          <li>Check Field Stock → Zilarahim, Movement History, the consignment's history and Inventory → Stock Rules → Shortfalls.</li>
+          <li>Try to cancel a Case DO whose consigned use is already settled.</li>
         </ol>
         <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
-          <label class="chk"><input type="checkbox" data-k="UC-12-40"><span>You return to the Delivery Orders list (no 404)</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-12-41"><span>Stock and machines are back with the specialist; a sold machine is a Company asset again</span></label>
-          <label class="chk"><input type="checkbox" data-k="UC-12-42"><span>A Case DO whose consigned use is already settled cannot be deleted (clear message)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-12-40"><span>Delete is offered only on a draft that hasn't taken stock; this DO offers Cancel DO</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-12-41"><span>The DO stays in the list as Cancelled with reason, who and when; stock, consigned stock and machines are back with the specialist (a sold machine is a Company asset again); reversing movements sit next to the originals</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-12-41b"><span>Any open shortfall from that DO is gone</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-12-42"><span>A Case DO whose consigned use is already settled cannot be cancelled (clear message)</span></label>
         </div>
       </div>
       <div class="uc" id="uc-13">
@@ -437,7 +453,7 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
       <div class="uc" id="uc-15">
         <div class="uc-hd"><span class="uc-id">UC-15</span><h3>Readable locations everywhere</h3><span class="who">Any</span></div>
         <ol class="st">
-          <li>Inventory → Stock Overview, Movement History, Pending Approvals, Serialized Units.</li>
+          <li>Inventory → Stock Overview, Movement History, Pending Approvals, Lots &amp; Serial Numbers, New Movement location list.</li>
         </ol>
         <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
           <label class="chk"><input type="checkbox" data-k="UC-15-49"><span>No raw codes like CS:ORG:… — names such as “Consigned → Test Dealer (dealer)”, “Field stock — Hadif”</span></label>
@@ -532,6 +548,168 @@ kbd{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border:1
           <label class="chk"><input type="checkbox" data-k="UC-20-64"><span>Field Stock → Current Holdings is grouped the same way (each item once, “also in …”); the groups are the same in both companies</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-20-65"><span>Case DO, case type <b>milh</b>: the milh group is first, open and marked “matches case type”, SWING 15 is in it; other groups are folded. Case type <b>evlt</b>: the evlt group moves to the top with SWING 15 in it — and SWING 15 is <b>not</b> repeated under milh. Ticking it selects it once; stock is deducted once</span></label>
           <label class="chk"><input type="checkbox" data-k="UC-20-66"><span>Taking SWING 15 out of one group (click ✓ evlt, or × on the evlt card) keeps it in milh and pldd; deleting a group sends products in no other group to “Other” — no stock changes</span></label>
+        </div>
+      </div>
+
+      <div class="uc" id="uc-21">
+        <div class="uc-hd"><span class="uc-id">UC-21</span><h3>DO and invoice numbering</h3><span class="who">Affirma · DO user + accounting</span></div>
+        <ol class="st">
+          <li>Create a Case DO. Look at its number and the PDF.</li>
+          <li>Record the actual items; check the Movement History reference. Then <b>Mark as Delivered</b>.</li>
+          <li><b>Create Invoice</b> from the DO. Then try a second invoice for the same DO.</li>
+          <li>Cancel the invoice, create it again.</li>
+          <li>Create a standalone invoice (not from a DO), or generate a consignment settlement.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-21-70"><span>The draft shows DRAFT-xxxxxxxx (no DO number); its PDF is stamped DRAFT; Mark as Delivered is blocked until the actual items are recorded</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-21-71"><span>On delivery it gets the next DO number (e.g. DOAF/26-0312); the stock movements and consignment uses now show that number</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-21-72"><span>The invoice number follows the DO (INVAF/26-0312); a second invoice is refused (“already invoiced as … — cancel that invoice first”)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-21-73"><span>The re-issued invoice is INVAF/26-0312.2</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-21-74"><span>Invoices without a DO use the C series (INVAF/26-C0001…)</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-22">
+        <div class="uc-hd"><span class="uc-id">UC-22</span><h3>No consignment terms, no consignment</h3><span class="who">Smart Innosys · owner</span></div>
+        <ol class="st">
+          <li>Consignment → Settings. Look at each sister-company card.</li>
+          <li>For a company that shows <b>Not set up</b>: Consignment → New → Your other company.</li>
+          <li>Back in Settings → that card → <b>Set up terms</b> → fill in → <b>Save and activate</b>. Then <b>Edit terms</b> → change something → Cancel.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-22-75"><span>Cards show <b>Not set up</b> or <b>Active</b> with a summary of the terms</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-22-76"><span>A company without terms is greyed out on New Consignment with a notice; its specialists' Case DOs can't use consigned stock from you (“no consignment terms, can't be used”)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-22-77"><span>After Save and activate the card is Active and consignments can be sent; Cancel on Edit terms puts the old values back</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-23">
+        <div class="uc-hd"><span class="uc-id">UC-23</span><h3>Warehouse set-up gate</h3><span class="who">Owner · a company without a named warehouse</span></div>
+        <ol class="st">
+          <li>In a test company with no warehouse (or a warehouse with an empty name), open Inventory.</li>
+          <li>Click <b>⚠ Set up warehouse</b> in the menu (or the button on the page).</li>
+          <li>Try saving a warehouse row without a name; then give it a name and save.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-23-78"><span>Every inventory page shows “Set up your warehouse first”; the other Inventory menu items are greyed out</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-23-79"><span>The button opens Organization Profile at Warehouse addresses, highlighted, with a blank row</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-23-80"><span>A warehouse without a name can't be saved; after saving a named one the menu unlocks without reloading</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-24">
+        <div class="uc-hd"><span class="uc-id">UC-24</span><h3>New Movement — locations, types, Adjustment ↕</h3><span class="who">Affirma · inventory staff (not an approver) + approver</span></div>
+        <ol class="st">
+          <li>Inventory → Movement History → <b>New Movement</b>. Open the Location list.</li>
+          <li>Pick each Movement Type in turn and read the hint.</li>
+          <li>Type <b>Adjustment</b> → <b>Decrease</b> 1 on a specialist's item, with a note “count 6 Oct”. Save.</li>
+          <li>As an approver: Pending Approvals → approve it. Check the specialist's Field Stock.</li>
+          <li>Stock Overview → a row → <b>Adjust quantity</b>.</li>
+          <li>Stock Overview → a row → <b>Stock settings</b>: change the reorder point.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-24-81"><span>Nothing is preselected; the list is grouped (Warehouses / Field stock — specialists) with readable names, only this company's own people; the hint shows the address or whose stock it is</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-24-82"><span>Each type has a hint saying what it is for and not for; Stock In is offered for warehouses only</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-24-83"><span>The movement is Pending and stock is unchanged until approved; then the quantity drops by 1 and history shows Adjustment −1</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-24-84"><span>Adjust quantity opens New Movement with that location and item filled in, type Adjustment</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-24-85"><span>Stock settings changes reorder point / max stock but never the quantity; unit cost is shown to the owner only</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-25">
+        <div class="uc-hd"><span class="uc-id">UC-25</span><h3>Lots &amp; expiry</h3><span class="who">Inventory manager</span></div>
+        <ol class="st">
+          <li>Inventory → <b>Lots &amp; Serial Numbers</b> → <b>Lots &amp; expiry</b> → choose Main Warehouse.</li>
+          <li>Tap the <b>Without a lot</b> tile. On an item click <b>+ Assign lot no. &amp; expiry</b>; try a quantity larger than what has no lot; then save a lot for part of it.</li>
+          <li>Edit that lot (pencil) — change the expiry.</li>
+          <li>Stock Overview → the same row → <b>Lot numbers</b>. Then open it on a phone-width screen.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-25-86"><span>Tiles Items / Without a lot / Expiring / expired filter the list; each item shows a bar of how much is lotted</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-25-87"><span>The quantity is pre-filled with what has no lot and can't be more; after saving, the rest can be assigned to another lot</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-25-88"><span>Editing a lot updates its movements' lot / expiry in Movement History; the stock quantity is unchanged</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-25-89"><span>Lot numbers from Stock Overview opens this tab focused on that item (“Showing one item from Stock Overview”); Stock Overview's lot list is read-only</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-25-90"><span>On a phone the page is cards, no sideways scrolling</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-26">
+        <div class="uc-hd"><span class="uc-id">UC-26</span><h3>Stock Rules — record &amp; flag, warn, enforce</h3><span class="who">Affirma · inventory manager + DO user (with and without the override)</span></div>
+        <div class="info">Use a specialist and an item where you know what they hold. Put the rules back the way they were afterwards — <b>Changes to these rules</b> shows the old values.</div>
+        <ol class="st">
+          <li>Inventory → <b>Stock Rules</b>. Set <b>Record &amp; flag</b>, save. Record a Case DO's actual items with 1 more than the specialist holds.</li>
+          <li>Set <b>Warn</b>. Record the same way.</li>
+          <li>Set <b>Enforce</b> (no date). Record the same way as a user <b>without</b> “Record Case DO usage without enough stock”; then as a user with it.</li>
+          <li>Under <i>Other items used</i>, add a catalogue item <b>Taken from</b> Main Warehouse; record.</li>
+          <li>Add the item's group under <b>Exceptions</b>; record beyond stock again.</li>
+          <li>Turn on <b>When creating a Case DO</b>; create a Case DO whose customer items the specialist doesn't hold.</li>
+          <li>Set Enforce with <b>Enforce from</b> a date next week; record beyond stock.</li>
+          <li>Shortfalls to reconcile → one shortfall → <b>Mark resolved</b> (Explained, with a note). Look at <b>Ready to enforce?</b></li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-26-91"><span>Record &amp; flag: saved without a box; only what was held is deducted; a shortfall (used / held / short) is listed</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-26-92"><span>Warn: an <b>amber</b> “Not enough stock” box listing needed / held / short; <b>Record anyway</b> needs a reason and adds a shortfall</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-26-93"><span>Enforce, no override: a <b>red</b> “Not enough stock — can't record this” box, nothing saved. With the override: red box with <b>Override and record</b>, reason required, shortfall flagged as an override</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-26-94"><span>Taken from: the item is deducted from Main Warehouse, not the specialist</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-26-95"><span>An exception item is only flagged, never refused (machines still must be held)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-26-96"><span>Check on creation: the box appears when creating the Case DO</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-26-97"><span>Enforce from a later date behaves as Warn until then; the page says so</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-26-98"><span>Resolved shortfalls move to Resolved with who/when; Ready to enforce? shows open shortfalls, specialists not counted in 90 days and negative balances; every save is in Changes to these rules</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-27">
+        <div class="uc-hd"><span class="uc-id">UC-27</span><h3>Dashboard — Waiting for you, Team on leave</h3><span class="who">A checker / approver, an inventory manager, a specialist, a plain member</span></div>
+        <ol class="st">
+          <li>As a claim checker with a pending claim from someone else: open the Dashboard.</li>
+          <li>As an approver of leave, stock movements, SO/PR/PO: open the Dashboard.</li>
+          <li>As an inventory manager (open shortfalls, lots expiring within 30 days, machines without serial).</li>
+          <li>As a specialist with a Case DO whose items aren't recorded.</li>
+          <li>As any member, while someone has approved leave today or this week.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-27-99"><span>Waiting for you lists each task with a role tag (Checker / Approver / Owner / Inventory / Specialist), a count, how long the oldest waited, and a link to the right page</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-27-100"><span>Your own claims / leave / movements are not counted; a member with nothing to do sees “Nothing waiting for you.”</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-27-101"><span>Inventory tasks: shortfalls to reconcile, expiring lots, machines without serial — only for people with inventory permissions</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-27-102"><span>Team on leave shows Today and This week across the companies of the same owner (approved leave only, no reasons)</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-28">
+        <div class="uc-hd"><span class="uc-id">UC-28</span><h3>Record leave for a member</h3><span class="who">Leave approver + the member</span></div>
+        <ol class="st">
+          <li>Leave Approvals → <b>Record leave for a member</b>. Look for yourself in the member list.</li>
+          <li>Choose a member, Medical Leave, a past date, reason “MC sent by WhatsApp”, upload the MC → <b>Record leave</b>.</li>
+          <li>As the member: open the Dashboard and My Leave; click <b>OK, noted</b>.</li>
+          <li>As the approver: look at the recorded leave again.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-28-103"><span>You are not in the list; the member's balance per type is shown; a reason under 5 characters is refused</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-28-104"><span>It is Approved at once, deducted from the balance, shown as “Recorded by HR” with who recorded it</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-28-105"><span>The member gets a notification and a “Leave recorded for you by HR” card that goes away after OK, noted</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-28-106"><span>The approver sees that (and when) the member acknowledged</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-29">
+        <div class="uc-hd"><span class="uc-id">UC-29</span><h3>Leave Summary and Leave Report</h3><span class="who">HR / management (leave:summary)</span></div>
+        <ol class="st">
+          <li>Human Resources → Leave → <b>Leave Summary</b>. Search a member; click one.</li>
+          <li>Export to Excel.</li>
+          <li>As a member without <code>leave:summary</code>, open <code>/dashboard/human-resources/leave/summary</code>.</li>
+          <li>Leave → <b>Leave Report</b>: switch By leave type / By month, tick Only members who took leave, sort by most leave; export Excel and PDF.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-29-107"><span>One row per member: left · used per type, Taken, Pending, Next leave, Patterns; the member detail lists applications and days taken by month (dates in Malaysia time)</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-29-108"><span>The Excel file matches the screen; a member without the permission is refused</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-29-109"><span>Report: emergency leave counted under its leave type, entitlement shown; By month totals Jan–Dec; the PDF has only the columns used</span></label>
+        </div>
+      </div>
+      <div class="uc" id="uc-30">
+        <div class="uc-hd"><span class="uc-id">UC-30</span><h3>Access control — quick setup bundles</h3><span class="who">Owner / admin</span></div>
+        <ol class="st">
+          <li>Admin → Access Control → a test member → Quick setup. Look at the bundles.</li>
+          <li>Apply <b>Application Specialist</b> to a test member; sign in as them and create / record a Case DO.</li>
+          <li>Apply <b>Inventory Manager</b>; check Lots &amp; Serial Numbers and Stock Rules can be changed.</li>
+          <li>As a sales-order approver: open a pending SO → <b>Reject</b> / <b>Recall</b>.</li>
+        </ol>
+        <div class="exp"><span class="exp-lbl">Expected — tick when it works</span>
+          <label class="chk"><input type="checkbox" data-k="UC-30-110"><span>Bundles include Delivery Order Manager, Application Specialist, Inventory Manager, Consignment Officer, Consignment Settlement, Leave Administrator, Document Settings Admin</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-30-111"><span>Application Specialist can do Case DOs but not cancel, override stock or see the internal copy unless granted</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-30-112"><span>Inventory Manager can edit lots / serials / Stock Rules and resolve shortfalls</span></label>
+          <label class="chk"><input type="checkbox" data-k="UC-30-113"><span>SO Reject / Recall work for the SO approver</span></label>
         </div>
       </div>
     </section>

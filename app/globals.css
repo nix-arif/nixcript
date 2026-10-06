@@ -128,3 +128,21 @@
     @apply font-sans;
   }
 }
+/* Testing deployment (NEXT_PUBLIC_TESTING_MODE=true): make room for the red
+   TESTING MODE bar fixed at the top — see components/testing-banner.tsx */
+.testing-mode {
+  --testing-bar: 28px;
+}
+.testing-mode body {
+  padding-top: var(--testing-bar);
+}
+.testing-mode [data-slot="sidebar-wrapper"] {
+  min-height: calc(100svh - var(--testing-bar));
+}
+.testing-mode [data-slot="sidebar-container"] {
+  top: var(--testing-bar);
+  height: calc(100svh - var(--testing-bar));
+}
+.testing-mode [data-app-header] {
+  top: var(--testing-bar);
+}

@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inventory — User Manual</title>
+<style>
+:root {
+  --bg:#F3F7F4;--surface:#FFF;--surface-2:#EAF2EC;
+  --text:#1A2820;--muted:#5A7565;
+  --accent:#1A7A4A;--accent-sub:#E0F2E9;--border:#C8DED0;--r:8px;
+  --pe:#B45309;--pe-bg:#FEF3C7;
+  --ap:#047857;--ap-bg:#D1FAE5;
+  --rj:#B91C1C;--rj-bg:#FEE2E2;
+  --ca:#9CA3AF;--ca-bg:#F1F5F9;
+  --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono","Fira Code",monospace;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0A1410;--surface:#111D16;--surface-2:#182B1F;
+  --text:#D8EDE0;--muted:#7BAF8A;
+  --accent:#3DC87A;--accent-sub:#0D2B1A;--border:#1E3D2A;
+  --pe:#FBB040;--pe-bg:#2B2010;
+  --ap:#4DD8A0;--ap-bg:#0C2B20;
+  --rj:#FF8080;--rj-bg:#2B1010;
+  --ca:#6B7A96;--ca-bg:#182B1F;
+}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+body::before{content:'';display:block;height:3px;background:var(--accent)}
+.ph{background:var(--surface);border-bottom:1px solid var(--border);padding:26px 48px}
+.phi{max-width:1080px;margin:0 auto;display:flex;align-items:center;gap:18px}
+.phi-icon{flex-shrink:0;width:46px;height:46px;background:var(--accent);border-radius:11px;display:flex;align-items:center;justify-content:center}
+.phi-meta h1{font-size:18px;font-weight:700;letter-spacing:-.025em;line-height:1.2}
+.phi-meta p{font-size:13px;color:var(--muted);margin-top:3px}
+.phi-tag{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);background:var(--accent-sub);padding:4px 10px;border-radius:6px;margin-left:auto;white-space:nowrap}
+.layout{max-width:1080px;margin:0 auto;padding:40px 48px;display:grid;grid-template-columns:200px 1fr;gap:52px;align-items:start}
+.toc{position:sticky;top:24px}
+.toc-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:10px;padding-left:10px}
+.toc nav{display:flex;flex-direction:column;gap:1px}
+.toc a{display:block;font-size:13px;color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:6px;line-height:1.3;transition:color .12s,background .12s}
+.toc a:hover{color:var(--text);background:var(--surface-2)}
+.toc a.sub{padding-left:22px;font-size:12px}
+.content{display:flex;flex-direction:column;gap:52px;min-width:0}
+.sec{display:flex;flex-direction:column;gap:22px}
+.sec-hd{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid var(--border);padding-bottom:14px}
+.sec-n{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--accent);flex-shrink:0}
+h2{font-size:19px;font-weight:700;letter-spacing:-.02em;text-wrap:balance;line-height:1.2}
+h3{font-size:14px;font-weight:700;line-height:1.3}
+p{color:var(--text);max-width:62ch}
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--accent)}
+strong{font-weight:700}
+/* badges */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;line-height:1.6;vertical-align:middle}
+.badge::before{content:'';display:block;width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.b-pe{background:var(--pe-bg);color:var(--pe)}
+.b-ap{background:var(--ap-bg);color:var(--ap)}
+.b-rj{background:var(--rj-bg);color:var(--rj)}
+.b-ca{background:var(--ca-bg);color:var(--ca)}
+/* pill tags */
+.pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.03em;vertical-align:middle}
+.pill-paid{background:#D1FAE5;color:#065F46}
+.pill-unpaid{background:#FEE2E2;color:#7F1D1D}
+.pill-doc{background:#FEF3C7;color:#92400E}
+.pill-half{background:var(--accent-sub);color:var(--accent)}
+.pill-cf{background:#EDE9FE;color:#4C1D95}
+@media(prefers-color-scheme:dark){
+  .pill-paid{background:#0C2B20;color:#4DD8A0}
+  .pill-unpaid{background:#2B1010;color:#FF8080}
+  .pill-doc{background:#2B2010;color:#FBB040}
+  .pill-half{background:var(--accent-sub);color:var(--accent)}
+  .pill-cf{background:#1E1438;color:#BB9EFF}
+}
+/* info / warn boxes */
+.info{background:var(--accent-sub);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch}
+.warn{background:var(--pe-bg);border-left:3px solid var(--pe);border-radius:0 6px 6px 0;padding:13px 16px;font-size:13.5px;line-height:1.6;max-width:60ch;color:var(--pe)}
+/* steps */
+.steps{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:40px 1fr;gap:16px;padding-bottom:24px;position:relative}
+.step:not(:last-child)::after{content:'';position:absolute;left:19px;top:42px;bottom:0;width:2px;background:var(--border)}
+.step-n{width:40px;height:40px;background:var(--surface);border:2px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--accent);position:relative;z-index:1;flex-shrink:0}
+.step-b{padding-top:8px}
+.step-b h3{margin-bottom:5px;font-size:14px}
+.step-b p{font-size:13.5px;color:var(--muted);max-width:54ch}
+/* leave type table */
+.lt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* generic table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle;line-height:1.5}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--surface-2)}
+.td-m{color:var(--muted);font-size:12px}
+/* balance card */
+.bal-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.bal-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.bal-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+.bal-val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+.bal-sub{font-size:11px;color:var(--muted);margin-top:3px}
+/* flowchart */
+.fw{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:24px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fw svg{display:block;max-width:100%;height:auto}
+.fw-loading{display:flex;align-items:center;justify-content:center;min-height:160px;color:var(--muted);font-size:13px}
+/* status wrap */
+.status-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* roles */
+.roles-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.rc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 20px}
+.rc-perm{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:6px}
+.rc h3{font-size:15px;margin-bottom:14px}
+.rc-acts{display:flex;flex-direction:column;gap:8px}
+.rc-act{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--muted)}
+.rc-act::before{content:'→';color:var(--accent);font-size:11px;margin-top:2px;flex-shrink:0}
+/* formula */
+.formula{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;font-family:var(--mono);font-size:13px;color:var(--text);line-height:2}
+.formula span{color:var(--accent);font-weight:700}
+/* ref */
+.ref-row{display:flex;align-items:center;gap:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 22px;width:fit-content}
+.ref-lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;font-weight:600}
+.ref-fmt{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.ref-fmt span{color:var(--accent)}
+.ref-div{width:1px;background:var(--border);align-self:stretch}
+.ref-key{font-size:12.5px;color:var(--muted);line-height:1.7}
+.ref-key strong{color:var(--accent)}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+/* cancel cards */
+.act-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ac{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.ac h3{margin-bottom:8px}
+.ac p{font-size:13px;color:var(--muted);max-width:none;line-height:1.55}
+.ac ol{margin-top:10px;padding-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+@media(max-width:800px){
+  .ph{padding:20px}
+  .phi-tag{display:none}
+  .layout{grid-template-columns:1fr;padding:24px 16px;gap:0}
+  .toc{display:none}
+  .bal-grid{grid-template-columns:1fr 1fr}
+  .roles-grid,.act-grid{grid-template-columns:1fr}
+  .ref-row{flex-direction:column;align-items:flex-start;gap:12px;width:100%}
+  .ref-div{display:none}
+  .fw{padding:16px 12px}
+}
+@media(max-width:480px){
+  .bal-grid{grid-template-columns:1fr}
+}
+/* consignment extras */
+.cmp td:first-child{font-weight:600;white-space:nowrap}
+.kv{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.kv .bal-val{font-size:15px}
+@media(max-width:800px){.kv{grid-template-columns:1fr}}
+ul.plain{padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;color:var(--muted);max-width:62ch}
+ul.plain strong{color:var(--text)}
+</style>
+<style>
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:5px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.btn{display:inline-block;font-size:12px;font-weight:600;padding:1px 8px;border-radius:5px;border:1px solid var(--border);background:var(--surface);white-space:nowrap}
+.t-red{color:var(--rj)} .t-amb{color:var(--pe)} .t-grn{color:var(--ap)}
+</style>
+</head>
+<body>
+
+<header class="ph">
+  <div class="phi">
+    <div class="phi-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 9l9-5 9 5v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z M8 20v-6h8v6 M8 14h8" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="phi-meta">
+      <h1>Inventory — User Manual</h1>
+      <p>Warehouses, field stock, movements, lots &amp; serial numbers, Stock Rules</p>
+    </div>
+    <div class="phi-tag">Inventory</div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="toc">
+    <p class="toc-lbl">Contents</p>
+    <nav>
+      <a href="#overview">Overview</a>
+      <a href="#setup">Before You Start</a>
+      <a href="#roles">Roles &amp; Permissions</a>
+      <a href="#pages">The Inventory Pages</a>
+      <a href="#overview-page">Stock Overview</a>
+      <a href="#oneplace" class="sub">One Job, One Place</a>
+      <a href="#movement">New Movement</a>
+      <a href="#types" class="sub">Movement Types</a>
+      <a href="#transfer">Transfers &amp; Field Stock</a>
+      <a href="#history">Movement History</a>
+      <a href="#lots">Lots &amp; Serial Numbers</a>
+      <a href="#groups">Item Groups</a>
+      <a href="#rules">Stock Rules</a>
+      <a href="#shortfalls" class="sub">Shortfalls</a>
+      <a href="#casedo">Case DOs &amp; Stock</a>
+      <a href="#dashboard">Dashboard Tasks</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+
+    <section class="sec" id="overview">
+      <div class="sec-hd"><span class="sec-n">01</span><h2>Overview</h2></div>
+      <p>Inventory keeps <strong>how much</strong> of each product is <strong>where</strong>, for each company separately, and what identifies it (lot numbers with expiry dates, machines' serial numbers). Every change to a quantity is a <strong>stock movement</strong> with a reason, kept in Movement History.</p>
+      <div class="lt-wrap"><table class="cmp">
+        <thead><tr><th>Location</th><th>What it is</th><th>Example</th></tr></thead>
+        <tbody>
+          <tr><td>Warehouse</td><td class="td-m">A store set up in Organization Profile → Warehouses</td><td class="td-m">Main Warehouse</td></tr>
+          <tr><td>Field stock</td><td class="td-m">What one of the company's own people (a specialist) carries</td><td class="td-m">Field stock — Ziyad</td></tr>
+          <tr><td>Consigned stock</td><td class="td-m">Another company's stock placed with you (or yours placed elsewhere) — handled in the Consignment module</td><td class="td-m">Consigned → Affirma · Zilarahim</td></tr>
+        </tbody>
+      </table></div>
+      <div class="info">Each company has its own stock. Field stock is always with the company's <strong>own</strong> people; stock for another company goes by consignment or a sale.</div>
+    </section>
+
+    <section class="sec" id="setup">
+      <div class="sec-hd"><span class="sec-n">02</span><h2>Before You Start — a Named Warehouse</h2></div>
+      <p>Inventory opens only when the company has a warehouse <strong>with a name</strong>. Until then every inventory page shows <em>“Set up your warehouse first”</em> and the Inventory menu shows <strong>⚠ Set up warehouse</strong> with the other items greyed out.</p>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Click ⚠ Set up warehouse</h3><p>It opens Organization → Organization Profile at <strong>Warehouse addresses</strong> (highlighted, with a blank row ready).</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Give it a name and address, then Save</h3><p>e.g. <em>Main Warehouse</em>. A warehouse without a name can't be saved. The menu unlocks straight away.</p></div></div>
+      </div>
+      <div class="warn">Don't rename a warehouse that holds stock — existing stock records keep the old name. Ask an administrator if a rename is really needed.</div>
+    </section>
+
+    <section class="sec" id="roles">
+      <div class="sec-hd"><span class="sec-n">03</span><h2>Roles &amp; Permissions</h2></div>
+      <div class="lt-wrap"><table>
+        <thead><tr><th>Permission</th><th>Lets you</th></tr></thead>
+        <tbody>
+          <tr><td><strong>View Inventory</strong></td><td class="td-m">See stock, field stock, movements, lots &amp; serial numbers, item groups, Stock Rules</td></tr>
+          <tr><td><strong>Submit Stock Movement</strong></td><td class="td-m">New Movement and “Adjust quantity” — applied once approved</td></tr>
+          <tr><td><strong>Transfer Stock to Rep</strong></td><td class="td-m">Move stock between the warehouse and specialists' field stock</td></tr>
+          <tr><td><strong>Request Stock Allocation</strong></td><td class="td-m">A specialist asks for stock; an approver approves it (the transfer happens on approval)</td></tr>
+          <tr><td><strong>Manage Inventory</strong></td><td class="td-m">Lots &amp; serial numbers, item groups, stock settings (reorder point, max stock), Stock Rules and reconciling shortfalls</td></tr>
+          <tr><td><strong>Approve / Reject Stock Movements</strong></td><td class="td-m">Granted in Admin → Approvals. Approves movements and stock requests; an approver's own movements are applied at once</td></tr>
+          <tr><td><strong>Owner</strong></td><td class="td-m">Everything, plus unit cost in stock settings and removing empty stock rows</td></tr>
+        </tbody>
+      </table></div>
+      <p>Quick setup bundles (Admin → Access Control): <span class="tag">Inventory Staff</span> <span class="tag">Inventory Manager</span> <span class="tag">Application Specialist (Case DO)</span> <span class="tag">Consignment Officer</span>.</p>
+    </section>
+
+    <section class="sec" id="pages">
+      <div class="sec-hd"><span class="sec-n">04</span><h2>The Inventory Pages</h2></div>
+      <div class="lt-wrap"><table>
+        <thead><tr><th>Menu item</th><th>For</th></tr></thead>
+        <tbody>
+          <tr><td>Stock Overview</td><td class="td-m">What's held where, per location; row actions; expiring lots; stock consigned in from sister companies</td></tr>
+          <tr><td>Field Stock</td><td class="td-m">Each specialist's holding and their movement history (with running balance)</td></tr>
+          <tr><td>Transfer to Rep</td><td class="td-m">Warehouse ⇄ specialist transfers</td></tr>
+          <tr><td>Pending Approvals</td><td class="td-m">Movements and transfers waiting for an approver</td></tr>
+          <tr><td>Movement History</td><td class="td-m">Every movement, with New Movement and Transfer Between Warehouses</td></tr>
+          <tr><td>Lots &amp; Serial Numbers</td><td class="td-m">Lot numbers &amp; expiry, machines' serial numbers</td></tr>
+          <tr><td>Item Groups</td><td class="td-m">Your own headings for products (e.g. milh, evlt) — lists and the Case DO picker follow them</td></tr>
+          <tr><td>Stock Rules</td><td class="td-m">How strictly Case DOs must be covered by stock held; shortfalls to reconcile</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="sec" id="overview-page">
+      <div class="sec-hd"><span class="sec-n">05</span><h2>Stock Overview</h2></div>
+      <p>Stock is listed by location, under your item groups. Click a row's arrow to see its lots (read-only here). Each row has buttons on the right:</p>
+      <div class="lt-wrap"><table>
+        <thead><tr><th>Button</th><th>Opens</th><th>Who</th></tr></thead>
+        <tbody>
+          <tr><td>↕ Adjust quantity</td><td class="td-m">New Movement, filled in with this location and item, type Adjustment ↕</td><td class="td-m">Submit Stock Movement</td></tr>
+          <tr><td>🏷 Lot numbers</td><td class="td-m">Lots &amp; Serial Numbers → Lots, on this location and item</td><td class="td-m">View Inventory</td></tr>
+          <tr><td># Serial numbers</td><td class="td-m">Lots &amp; Serial Numbers → Serial numbers, filtered to this row (machines only)</td><td class="td-m">View Inventory</td></tr>
+          <tr><td>⚙ Stock settings</td><td class="td-m">Reorder point, max stock; unit cost (owner only). Never the quantity</td><td class="td-m">Manage Inventory</td></tr>
+          <tr><td>🗑 Remove row</td><td class="td-m">Only an <strong>empty</strong> row (nothing on hand, no serial numbers). Movement History is kept</td><td class="td-m">Owner</td></tr>
+        </tbody>
+      </table></div>
+      <div class="info" id="oneplace"><strong>One job, one place.</strong> How many → <em>Adjust quantity</em> (New Movement). Lot no. / expiry / serial no. → <em>Lots &amp; Serial Numbers</em>. Reorder point / max / cost → <em>Stock settings</em>. Nothing else edits stock.</div>
+    </section>
+
+    <section class="sec" id="movement">
+      <div class="sec-hd"><span class="sec-n">06</span><h2>New Movement</h2></div>
+      <div class="steps">
+        <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Location</h3><p>Pick a warehouse or a specialist (your own people only). Nothing is preselected; the hint shows the address or whose field stock it is.</p></div></div>
+        <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Product, type, quantity</h3><p>The hint under Movement Type explains the chosen type. For machines, enter one serial number per unit coming in, or pick the units going out.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Lot, expiry, notes — Save</h3><p>Write <strong>why</strong> in Notes. It is <em>Pending</em> until approved — or applied at once if you can approve.</p></div></div>
+      </div>
+      <div class="lt-wrap" id="types"><table>
+        <thead><tr><th>Type</th><th>Effect</th><th>Use it for</th><th>Not for</th></tr></thead>
+        <tbody>
+          <tr><td>Opening Balance</td><td class="t-grn">+</td><td class="td-m">Starting quantity when you begin using the system</td><td class="td-m">Later corrections</td></tr>
+          <tr><td>Stock In</td><td class="t-grn">+</td><td class="td-m">Goods without a PO (supplier samples, stock found). Warehouses only</td><td class="td-m">PO goods — they come in through Goods Receipt</td></tr>
+          <tr><td>Stock Out</td><td class="t-red">−</td><td class="td-m">Damaged, expired, lost, internal use, samples given — say why</td><td class="td-m">Selling (DO), a case (Case DO), moving stock (Transfer)</td></tr>
+          <tr><td>Adjustment ↕</td><td>+ / −</td><td class="td-m">Stock count: <strong>Increase</strong> when you counted more, <strong>Decrease</strong> when you counted less</td><td class="td-m">—</td></tr>
+          <tr><td>Return</td><td class="t-grn">+</td><td class="td-m">Goods back that aren't on any document (e.g. back from repair)</td><td class="td-m">Customer returns (DO → Record Return), a specialist's stock (Return from Rep), consigned stock (Consignment → Return)</td></tr>
+        </tbody>
+      </table></div>
+      <p>Automatic movements (DO delivery, Case usage, Loan out/return, Field transfer, Consigned in/used/returned/moved…) are created by those screens and appear in Movement History with their document number.</p>
+    </section>
+
+    <section class="sec" id="transfer">
+      <div class="sec-hd"><span class="sec-n">07</span><h2>Transfers &amp; Field Stock</h2></div>
+      <ul class="plain">
+        <li><strong>Transfer to Rep</strong> — warehouse → specialist, or back (Return from Rep). Only the company's own people; machines are picked by serial number.</li>
+        <li><strong>Transfer Between Warehouses</strong> (Movement History) — always needs approval; one decision covers the out and in lines.</li>
+        <li><strong>Stock requests</strong> — a specialist requests stock; when an approver approves, the stock is transferred at once.</li>
+        <li><strong>Field Stock</strong> — each specialist's holding, consigned items tagged with their owner and left out of the stock value; their Movement History has a running balance that ends at what they hold.</li>
+      </ul>
+    </section>
+
+    <section class="sec" id="history">
+      <div class="sec-hd"><span class="sec-n">08</span><h2>Movement History</h2></div>
+      <p>Every movement with type, quantity, balance after, reference (PO, DO, consignment…), who and when. A <em>pending</em> movement can still be edited (an Adjustment keeps its + / − direction); approved ones only their notes and reference. Stock that sister companies consigned to you is listed too, read-only, tagged with the owner.</p>
+    </section>
+
+    <section class="sec" id="lots">
+      <div class="sec-hd"><span class="sec-n">09</span><h2>Lots &amp; Serial Numbers</h2></div>
+      <p>What identifies the stock you hold. <strong>Quantities and Movement History never change here.</strong> Changing anything needs Manage Inventory.</p>
+      <div class="act-grid">
+        <div class="ac"><h3>Lots &amp; expiry tab</h3><p>Choose a warehouse or specialist. Tiles: <em>Items · Without a lot · Expiring / expired</em> (tap to filter). Each item shows a bar of how much is lotted, its lots with expiry status (OK / 45d left / expired), and:</p>
+          <ol><li><strong>+ Assign lot no. &amp; expiry</strong> — quantity pre-filled with what has no lot (never more); split across lots by saving one at a time.</li><li><strong>Edit</strong> (pencil) — correct a lot number or expiry; its movements are updated too.</li></ol></div>
+        <div class="ac"><h3>Serial numbers tab</h3><p>Every machine: serial no., product, use (For sale / Company asset), status, where it is.</p>
+          <ol><li><strong>Register serial numbers</strong> — location → item held there → one serial no. + use per machine still without one.</li><li><strong>Fix serial no.</strong> — a typo, with a reason (noted on the unit; its history follows).</li><li><strong>Remove</strong> — a serial entered by mistake, with a reason; not once used on a Case DO or consignment.</li><li>Change the use; History; Mark returned (on loan).</li></ol></div>
+      </div>
+      <div class="info">Lots should be recorded when stock <strong>arrives</strong> (Goods Receipt, New Movement). This page is for stock that came in without one, and for corrections. Rental/loan/demo is chosen each time a company asset goes out — not stored on the unit.</div>
+    </section>
+
+    <section class="sec" id="groups">
+      <div class="sec-hd"><span class="sec-n">10</span><h2>Item Groups</h2></div>
+      <p>Your own headings (e.g. <em>milh</em>, <em>evlt, silac, filac</em>). A product can be in several groups but is listed once — under the group matching the case type on a Case DO, else its first group. Stock Overview, Field Stock and the Case DO picker follow your order; “Other” is last.</p>
+    </section>
+
+    <section class="sec" id="rules">
+      <div class="sec-hd"><span class="sec-n">11</span><h2>Stock Rules</h2></div>
+      <p>How strictly a <strong>Case DO</strong> must be covered by stock someone actually holds — per company. Use <em>Record &amp; flag</em> while stock isn't reconciled (pilot), then switch to <em>Enforce</em>.</p>
+      <div class="lt-wrap"><table>
+        <thead><tr><th>Mode</th><th>Usage beyond what's held</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td class="t-grn"><strong>Record &amp; flag</strong></td><td class="td-m">Saved; listed under Shortfalls to reconcile</td><td class="td-m">Pilot (default)</td></tr>
+          <tr><td class="t-amb"><strong>Warn</strong></td><td class="td-m">Saved after an <span class="t-amb">amber</span> warning, with a reason</td><td class="td-m">Last weeks before going live</td></tr>
+          <tr><td class="t-red"><strong>Enforce</strong></td><td class="td-m">Refused (<span class="t-red">red</span>) — fix the records first. People with <em>Record Case DO usage without enough stock</em> may override with a reason (flagged)</td><td class="td-m">Stock reconciled; can start on a set date (Warn until then)</td></tr>
+        </tbody>
+      </table></div>
+      <ul class="plain">
+        <li><strong>When:</strong> checked when recording the actual items (on by default); optionally also when creating the Case DO.</li>
+        <li><strong>Where stock may come from:</strong> the specialist's own field stock and consigned stock whose owner set terms; optionally <strong>Taken from</strong> a warehouse or another of your people; optionally negative balances (not in Enforce).</li>
+        <li><strong>Exceptions:</strong> item groups or products still being counted — only flagged, never refused. Machines must always be held.</li>
+        <li><strong>Ready to enforce?</strong> — open shortfalls, specialists not counted in 90 days, negative balances. A count = an approved Adjustment or Opening Balance.</li>
+        <li><strong>Changes to these rules</strong> — who changed what, when.</li>
+      </ul>
+      <div class="info" id="shortfalls"><strong>Shortfalls to reconcile</strong> — each shows the DO, item, location, used / held / short, the reason. Fix the records with <span class="btn">Transfer to …</span> (the stock was really there) or <span class="btn">Correct the count</span>, then <span class="btn">Mark resolved</span> (transferred / corrected / explained). Cancelling the DO clears its open shortfalls.</div>
+    </section>
+
+    <section class="sec" id="casedo">
+      <div class="sec-hd"><span class="sec-n">12</span><h2>Case DOs &amp; Stock</h2></div>
+      <ul class="plain">
+        <li>Stock moves when the <strong>actual items</strong> are recorded (after the case), from the application specialist's field stock — consigned stock first, then their own (Affirma's setting).</li>
+        <li>Under <em>Other items used</em>, a catalogue item can be <strong>Taken from</strong> a warehouse or another specialist; it is deducted there.</li>
+        <li>Only what was really held is deducted; anything beyond is a shortfall (Stock Rules). Cancelling a Case DO puts back exactly what it took.</li>
+        <li>Consigned stock can be used only when its owner has set consignment terms for your company.</li>
+      </ul>
+    </section>
+
+    <section class="sec" id="dashboard">
+      <div class="sec-hd"><span class="sec-n">13</span><h2>Dashboard Tasks</h2></div>
+      <p>The dashboard's <strong>Waiting for you</strong> lists what needs you, with a link:</p>
+      <div class="lt-wrap"><table>
+        <thead><tr><th>Task</th><th>Shown to</th></tr></thead>
+        <tbody>
+          <tr><td>Stock movements / stock requests to approve</td><td class="td-m">Approvers</td></tr>
+          <tr><td>Stock shortfalls to reconcile</td><td class="td-m">Manage Inventory</td></tr>
+          <tr><td>Lots expired or expiring within 30 days</td><td class="td-m">Manage Inventory</td></tr>
+          <tr><td>Machines held without a serial number</td><td class="td-m">Manage Inventory</td></tr>
+          <tr><td>Your Case DOs: record the items used</td><td class="td-m">The application specialist</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="sec" id="faq">
+      <div class="sec-hd"><span class="sec-n">14</span><h2>FAQ</h2></div>
+      <div class="act-grid">
+        <div class="ac"><h3>Inventory says “Set up your warehouse first”</h3><p>The company has no warehouse with a name. Add one in Organization Profile → Warehouses.</p></div>
+        <div class="ac"><h3>My movement didn't change the stock</h3><p>It is pending — an approver approves it in Pending Approvals.</p></div>
+        <div class="ac"><h3>I counted less than the system shows</h3><p>Adjust quantity → Adjustment ↕ → Decrease, with the count date in Notes.</p></div>
+        <div class="ac"><h3>Why can't I pick another company's person?</h3><p>Field stock is only with your own people. Use consignment or a sale for another company.</p></div>
+        <div class="ac"><h3>Where do I edit a lot number or serial number?</h3><p>Lots &amp; Serial Numbers — Stock Overview only shows them.</p></div>
+        <div class="ac"><h3>A Case DO was refused for stock</h3><p>Stock Rules are on Enforce. Transfer the stock to the specialist, take it from another location, or have the count corrected, then record again.</p></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>

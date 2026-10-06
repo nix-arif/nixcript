@@ -43,7 +43,7 @@ export default async function DashboardLayout({
     <SidebarProvider defaultOpen={sidebarOpen}>
       <AppSidebar navSections={navSections} />
       <SidebarInset>
-        <header className="sticky top-0 z-10 flex h-13 shrink-0 items-center border-b border-border/60 bg-background/95 backdrop-blur-sm transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+        <header data-app-header className="sticky top-0 z-10 flex h-13 shrink-0 items-center border-b border-border/60 bg-background/95 backdrop-blur-sm transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4 flex-1 min-w-0">
             <SidebarTrigger className="-ml-1 text-muted-foreground hover:text-foreground" />
             <Separator

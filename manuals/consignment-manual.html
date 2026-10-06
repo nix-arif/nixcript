@@ -275,6 +275,7 @@ ul.plain strong{color:var(--text)}
           <div class="rc-act">Preview and generate settlements (invoices, POs)</div>
           <div class="rc-act">Default: Accounting and Management managers</div></div></div>
       </div>
+      <p>Quick setup bundles in Admin → Access Control: <strong>Consignment Officer</strong> (view, send/return, settings, count adjustments) and <strong>Consignment Settlement</strong> (view, settle).</p>
       <div class="info">When you are the <strong>agent company</strong> (e.g. Affirma viewing Smart Innosys stock placed with it), consignments are <strong>read-only</strong>. Only the owner can send, return, adjust or settle.</div>
     </section>
 
@@ -396,7 +397,8 @@ ul.plain strong{color:var(--text)}
         <li>Each use becomes a billable consume event, linked to the DO number</li>
         <li>With <strong>per use</strong> automatic settlement, the intercompany invoice and PO are created when the Case DO is marked delivered (it then has its DO number)</li>
       </ul>
-      <div class="warn">Deleting a Case DO, or <strong>undoing its recorded actual items</strong>, reverses its consigned use and puts the stock back at the specialist. If that use was <strong>already settled</strong>, it is refused — cancel or credit the settlement documents first.</div>
+      <div class="warn"><strong>Cancelling</strong> a Case DO, or <strong>undoing its recorded actual items</strong>, reverses its consigned use and puts the stock back at the specialist. If that use was <strong>already settled</strong>, it is refused — cancel or credit the settlement documents first. (Only a draft that hasn't taken stock can be deleted.)</div>
+      <div class="info"><strong>Stock Rules</strong> (Inventory → Stock Rules, set by the agent company) count consigned stock as part of what the specialist holds — but only when the owner has set terms for the agent. Usage beyond what is held is listed as a shortfall, warned about or refused, depending on the mode. See the <a href="/manuals/inventory">Inventory Manual</a>.</div>
 
       <h3 id="move" style="margin-top:28px">Moving consigned stock inside the agent company</h3>
       <p>The agent company can move stock consigned to it between <strong>its own warehouse and its specialists</strong> without asking the owner. Ownership doesn't change: it is still the owner's stock and still with the agent, only its location changes, and the owner sees the new location. This is the industry practice for consignment stock: internal moves are the consignee's job; placing the stock with anyone outside the company is the owner's decision.</p>
@@ -553,7 +555,9 @@ ul.plain strong{color:var(--text)}
         <div class="ac"><h3>Why is a line "pending" in settlement?</h3><p>Its price can't be worked out — usually the product has no unit cost or selling price, or a sales-agent use has no hospital. Fix the product or price list and preview again.</p></div>
         <div class="ac"><h3>Can the agent company send or return stock?</h3><p>It can't return stock to the owner, adjust it or settle it; the owner does that. It <strong>can</strong> move consigned stock between its own warehouse and specialists (Stock Overview → Consigned in → <strong>Move</strong>).</p></div>
         <div class="ac"><h3>Why isn't consigned-in stock in my stock value?</h3><p>It is still the owner's stock (MFRS 15 / IFRS 15) until you use it. You see it, by quantity only, under <em>Consigned in</em> in Stock Overview and Movement History.</p></div>
-        <div class="ac"><h3>Why can't I delete this Case DO?</h3><p>It used consigned stock that is already settled. Deal with the settlement invoice/PO first.</p></div>
+        <div class="ac"><h3>Why can't I cancel this Case DO?</h3><p>It used consigned stock that is already settled. Deal with the settlement invoice/PO first. Delete is only for drafts that haven't taken stock.</p></div>
+        <div class="ac"><h3>The company is greyed out on New Consignment</h3><p>No consignment terms yet. The owner clicks <strong>Set up terms → Save and activate</strong> for that company in Consignment → Settings.</p></div>
+        <div class="ac"><h3>Can I consign to another company's specialist directly?</h3><p>Pick the company, then its specialist. Field stock is always with a company's own people — the specialist list only shows that company's members.</p></div>
         <div class="ac"><h3>Why can't I close the consignment?</h3><p>Stock is still on hand. Return it, record its usage, or adjust it after a count.</p></div>
       </div>
     </section>

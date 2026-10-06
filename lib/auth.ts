@@ -11,6 +11,7 @@ import ResetPasswordEmail from "@/components/emails/reset-password";
 import { Resend } from "resend";
 import { onOrganizationCreated } from "./organization/on-created";
 import { nanoid } from "nanoid";
+import { testingSubject } from "./testing-mode";
 // import { seedOrganizationRoles } from "@/db/seeds/organization-roles";
 
 const resend = new Resend(process.env.RESEND_API_KEY as string);
@@ -68,7 +69,7 @@ export const auth = betterAuth({
       await resend.emails.send({
         from: `${process.env.EMAIL_SENDER_NAME} <${process.env.EMAIL_SENDER_ADDRESS}>`,
         to: user.email,
-        subject: "Reset your password",
+        subject: testingSubject("Reset your password"),
         react: ResetPasswordEmail({ email: user.email, resetLink: url }),
       });
     },
@@ -101,7 +102,7 @@ export const auth = betterAuth({
         const { data: dataResend, error } = await resend.emails.send({
           from: `${process.env.EMAIL_SENDER_NAME} <${process.env.EMAIL_SENDER_ADDRESS}>`,
           to: data.email,
-          subject: "You've been invited to join our organization",
+          subject: testingSubject("You've been invited to join our organization"),
           react: OrganizationInvitationEmail({
             email: data.email,
             invitedByUsername: data.inviter.user.name,

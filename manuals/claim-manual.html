@@ -164,6 +164,7 @@ tbody tr:last-child td{border-bottom:none}
       <a href="#manage">Managing Claims</a>
       <a href="#resubmit" class="sub">Resubmit</a>
       <a href="#cancel" class="sub">Cancel</a>
+      <a href="#dashboard">Dashboard Tasks</a>
       <a href="#categories">Line Item Categories</a>
       <a href="#ref">Quick Reference</a>
     </nav>
@@ -318,8 +319,14 @@ tbody tr:last-child td{border-bottom:none}
               <td class="td-a">View journal</td>
             </tr>
             <tr>
+              <td><span class="badge b-pe">Rejection review</span></td>
+              <td class="td-d">The Approver rejected it. The Checker confirms the rejection, or sends it back to the Approver with a reason. The submitter is not told yet. If the company has no Checker, the rejection is final at once.</td>
+              <td>Checker</td>
+              <td class="td-a">Confirm rejection · Send back · Edit lines</td>
+            </tr>
+            <tr>
               <td><span class="badge b-rj">Rejected</span></td>
-              <td class="td-d">Rejected by Checker or Approver. A reason is provided.</td>
+              <td class="td-d">Rejected by the Checker, or the Approver's rejection was confirmed. The reason is shown to the submitter.</td>
               <td>Submitter</td>
               <td class="td-a">Resubmit · Cancel</td>
             </tr>
@@ -356,6 +363,8 @@ tbody tr:last-child td{border-bottom:none}
             <div class="rc-act">Review claims in the Checker queue</div>
             <div class="rc-act">Approve → <span class="badge b-ck">Checked</span></div>
             <div class="rc-act">Reject with reason → <span class="badge b-rj">Rejected</span></div>
+            <div class="rc-act">Correct a line's amount or description, with a reason (the original is kept)</div>
+            <div class="rc-act">Confirm an Approver's rejection, or send it back to the Approver</div>
             <div class="rc-act">View all claims checked in the organisation</div>
           </div>
         </div>
@@ -365,7 +374,7 @@ tbody tr:last-child td{border-bottom:none}
           <div class="rc-acts">
             <div class="rc-act">Review Checked claims (or Pending if no Checker)</div>
             <div class="rc-act">Approve → <span class="badge b-ap">Approved</span> then <span class="badge b-po">Posted</span></div>
-            <div class="rc-act">Reject with reason → <span class="badge b-rj">Rejected</span></div>
+            <div class="rc-act">Reject with reason → <span class="badge b-pe">Rejection review</span> (the Checker confirms)</div>
             <div class="rc-act">View all approved claim history</div>
           </div>
         </div>
@@ -401,8 +410,22 @@ tbody tr:last-child td{border-bottom:none}
       </div>
     </section>
 
+    <section class="sec" id="dashboard">
+      <div class="sec-hd"><span class="sec-n">07</span><h2>Your Claim Tasks on the Dashboard</h2></div>
+      <p>Checkers and Approvers see their claim work in the dashboard's <strong>Waiting for you</strong> panel. Each line shows how many claims are waiting and how long the oldest has waited, and links to the right queue.</p>
+      <table style="max-width:640px">
+        <thead><tr><th>Task</th><th>Shown to</th><th>Opens</th></tr></thead>
+        <tbody>
+          <tr><td>Claims to check</td><td>Checker</td><td class="td-d">Pending claims → Checker queue</td></tr>
+          <tr><td>Claim rejections to confirm</td><td>Checker</td><td class="td-d">Rejection review → Checker queue</td></tr>
+          <tr><td>Checked claims to approve</td><td>Approver</td><td class="td-d">Checked claims → Approvals</td></tr>
+        </tbody>
+      </table>
+      <div class="info">Your own claims are not counted. You can't check or approve your own claim unless an administrator has allowed it in Admin → Approvals.</div>
+    </section>
+
     <section class="sec" id="categories">
-      <div class="sec-hd"><span class="sec-n">07</span><h2>Line Item Categories</h2></div>
+      <div class="sec-hd"><span class="sec-n">08</span><h2>Line Item Categories</h2></div>
       <p>Each line item must be assigned a category. Choose the one that best describes the expense.</p>
       <div class="cat-grp">
         <div>
@@ -430,7 +453,7 @@ tbody tr:last-child td{border-bottom:none}
     </section>
 
     <section class="sec" id="ref">
-      <div class="sec-hd"><span class="sec-n">08</span><h2>Quick Reference</h2></div>
+      <div class="sec-hd"><span class="sec-n">09</span><h2>Quick Reference</h2></div>
       <h3 style="margin-bottom:10px">Application Number Format</h3>
       <div class="ref-row">
         <div>
@@ -451,6 +474,7 @@ tbody tr:last-child td{border-bottom:none}
         <span class="badge b-ck">Checked</span>
         <span class="badge b-ap">Approved</span>
         <span class="badge b-po">Posted</span>
+        <span class="badge b-pe">Rejection review</span>
         <span class="badge b-rj">Rejected</span>
         <span class="badge b-ca">Cancelled</span>
       </div>
@@ -486,7 +510,9 @@ tbody tr:last-child td{border-bottom:none}
     '    CHECKED --> AREV',
     '    CHECKED -->|Cancel| CANCELLED',
     '    AREV -->|Approve| APPROVED([APPROVED])',
-    '    AREV -->|Reject| REJECTED',
+    '    AREV -->|Reject| RREV([REJECTION REVIEW])',
+    '    RREV -->|Checker confirms| REJECTED',
+    '    RREV -->|Checker sends back| AREV',
     '    APPROVED --> POSTED([POSTED — Journal Entry Created])',
     '    POSTED --> DONE([Done])',
     '    REJECTED --> RESUB{Resubmit?}',
@@ -518,6 +544,7 @@ tbody tr:last-child td{border-bottom:none}
   var classAssign = [
     '    class DRAFT sd',
     '    class PENDING sp',
+    '    class RREV sp',
     '    class CHECKED sc',
     '    class APPROVED sa',
     '    class POSTED spo',
