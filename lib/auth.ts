@@ -55,6 +55,8 @@ export const auth = betterAuth({
   trustedOrigins: [
     "https://nixcrip.com",
     "https://www.nixcrip.com",
+    // the deployment's own address, e.g. the testing site
+    ...(process.env.APP_DOMAIN ? [process.env.APP_DOMAIN.replace(/\/$/, "")] : []),
     ...(isProduction
       ? []
       : ["http://localhost:3000", "http://192.168.*:3000", "http://172.20.10.*:3000"]),
