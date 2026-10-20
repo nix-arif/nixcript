@@ -2502,12 +2502,16 @@ export async function updateQuotationSettings(
     showItemizeDiscount?: boolean;
   },
 ) {
-  const { orgId } = await requireAccess("quotation:update");
+  const { orgId, userId } = await requireAccess("quotation:update");
+  // Dummy quotations in a comparison group live under sibling owner orgs.
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds =
+    ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
   const [q] = await db
     .select({ status: quotation.status, subtotal: quotation.subtotal })
     .from(quotation)
-    .where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)))
+    .where(and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)))
     .limit(1);
 
   if (!q) throw new Error("Quotation not found");
@@ -2540,7 +2544,7 @@ export async function updateQuotationSettings(
     inclLampiran12: input.inclLampiran12 ? 1 : 0,
     inclLampiran13: input.inclLampiran13 ? 1 : 0,
     showItemizeDiscount: input.showItemizeDiscount ? 1 : 0,
-  }).where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)));
+  }).where(eq(quotation.id, id));
 }
 
 export async function updateQuotationDocumentOptions(
@@ -2561,12 +2565,15 @@ export async function updateQuotationDocumentOptions(
     inclLampiran13: boolean;
   },
 ) {
-  const { orgId } = await requireAccess("quotation:update");
+  const { orgId, userId } = await requireAccess("quotation:update");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds =
+    ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
 
   const [q] = await db
     .select({ id: quotation.id })
     .from(quotation)
-    .where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)))
+    .where(and(eq(quotation.id, id), inArray(quotation.organizationId, ownerOrgIds)))
     .limit(1);
 
   if (!q) throw new Error("Quotation not found");
@@ -2585,7 +2592,7 @@ export async function updateQuotationDocumentOptions(
     inclMdaEstablishment: input.inclMdaEstablishment ? 1 : 0,
     inclLampiran12: input.inclLampiran12 ? 1 : 0,
     inclLampiran13: input.inclLampiran13 ? 1 : 0,
-  }).where(and(eq(quotation.id, id), eq(quotation.organizationId, orgId)));
+  }).where(eq(quotation.id, id));
 }
 
 export async function deleteQuotation(id: string) {
