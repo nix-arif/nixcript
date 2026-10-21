@@ -54,10 +54,14 @@ export function RecordLeaveClient({ members, types }: { members: Member[]; types
     if (!valid || saving) return;
     setSaving(true);
     try {
-      const appId = await recordLeaveForMember({
+      const created = await recordLeaveForMember({
         userId, leaveTypeId: typeId, startDate: start, endDate, isHalfDay: half,
         halfDayPeriod: half ? period : undefined, reason: reason.trim(),
       });
+      if (!created.ok) { toast.error(created.title, { duration: 10000 }); return; }
+      const appId = created.id;
+      // The leave is recorded now — a failure below must not read as "not recorded".
+      try {
       for (const f of files) {
         const res = await fetch("/api/leave/upload-url", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -68,6 +72,11 @@ export function RecordLeaveClient({ members, types }: { members: Member[]; types
         const up = await fetch(uploadUrl, { method: "PUT", body: f, headers: { "Content-Type": f.type || "application/octet-stream" } });
         if (!up.ok) { toast.error(`Couldn't upload ${f.name}`); continue; }
         await createLeaveDocumentRecord({ applicationId: appId, fileName: f.name, fileKey: key, fileSize: f.size, mimeType: f.type || "application/octet-stream" });
+      }
+      } catch {
+        toast.error("The leave was recorded, but the attachment couldn't be uploaded. Don't record it again — upload the document separately.", { duration: 15000 });
+        router.push("/dashboard/human-resources/leave/approvals");
+        return;
       }
       toast.success(`Leave recorded for ${members.find((m) => m.id === userId)?.name ?? "the member"} — they've been notified`);
       router.push("/dashboard/human-resources/leave/approvals");

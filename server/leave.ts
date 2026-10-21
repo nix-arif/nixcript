@@ -1245,9 +1245,18 @@ export async function getAllLeaveApplications(filters?: {
    APPLY / APPROVE / REJECT / CANCEL
 ========================= */
 
-export async function applyForLeave(data: ApplyLeaveInput): Promise<string> {
-  const { orgId, userId, userName } = await requireAccess("leave:apply");
-  return createLeaveApplication({ orgId, applicantId: userId, applicantName: userName, data, year: new Date().getFullYear() });
+// Returned (not thrown): production masks the message of an error thrown from a
+// server action, so the form couldn't tell the user why a submit was refused.
+export type LeaveSubmitResult = { ok: true; id: string } | { ok: false; title: string };
+
+export async function applyForLeave(data: ApplyLeaveInput): Promise<LeaveSubmitResult> {
+  try {
+    const { orgId, userId, userName } = await requireAccess("leave:apply");
+    const id = await createLeaveApplication({ orgId, applicantId: userId, applicantName: userName, data, year: new Date().getFullYear() });
+    return { ok: true, id };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't submit the leave application" };
+  }
 }
 
 /**
@@ -1413,7 +1422,15 @@ async function createLeaveApplication(p: {
  * reason. Approved on recording; shows as "Recorded by HR"; the member is
  * notified. Nobody records leave for themselves this way.
  */
-export async function recordLeaveForMember(input: ApplyLeaveInput & { userId: string }): Promise<string> {
+export async function recordLeaveForMember(input: ApplyLeaveInput & { userId: string }): Promise<LeaveSubmitResult> {
+  try {
+    return { ok: true, id: await recordLeaveForMemberOrThrow(input) };
+  } catch (e) {
+    return { ok: false, title: e instanceof Error ? e.message : "Couldn't record the leave" };
+  }
+}
+
+async function recordLeaveForMemberOrThrow(input: ApplyLeaveInput & { userId: string }): Promise<string> {
   const { orgId, userId: actorId, userName } = await requireAccess("leave:approve");
   if (input.userId === actorId) throw new Error("You can't record leave for yourself — apply for it in My Leave");
   if (!input.reason?.trim() || input.reason.trim().length < 5) throw new Error("Give the reason for recording this leave (e.g. MC sent by email, member did not apply)");

@@ -132,7 +132,7 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
     if (!isFormValid || submitting) return;
     setSubmitting(true);
     try {
-      const appId = await applyForLeave({
+      const created = await applyForLeave({
         leaveTypeId: selectedTypeId,
         startDate: effectiveStart,
         endDate: effectiveEnd,
@@ -140,7 +140,11 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
         halfDayPeriod: isHalfDay ? halfDayPeriod : undefined,
         reason: reason.trim() || undefined,
       });
+      if (!created.ok) { toast.error(created.title, { duration: 10000 }); return; }
+      const appId = created.id;
 
+      // The application is saved now — a failure below must not read as "not submitted".
+      try {
       for (const qf of queuedFiles) {
         const res = await fetch("/api/leave/upload-url", {
           method: "POST",
@@ -167,6 +171,11 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
           fileSize: qf.file.size,
           mimeType: qf.file.type || "application/octet-stream",
         });
+      }
+      } catch {
+        toast.error("Your leave was submitted, but the attachment couldn't be uploaded. Please don't submit again — send the document to HR directly.", { duration: 15000 });
+        startTransition(() => router.push("/dashboard/human-resources/leave"));
+        return;
       }
 
       toast.success("Leave application submitted successfully");
