@@ -95,7 +95,13 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
   // All data is already loaded — switch is instant, no navigation
   const data = group.find((d) => d.quotation.id === selectedId) ?? group[0];
-  const { quotation: q, orgName, items, siblings, createdByName } = data;
+  // Document options are saved straight to the DB and applied here locally, so
+  // toggling a checkbox doesn't need router.refresh() (which re-fetches the
+  // whole page and flashes it). Cleared whenever fresh server data arrives.
+  const [docOverrides, setDocOverrides] = useState<Record<string, Record<string, number>>>({});
+  useEffect(() => { setDocOverrides({}); }, [group]);
+  const { orgName, items, siblings, createdByName } = data;
+  const q = { ...data.quotation, ...(docOverrides[data.quotation.id] ?? {}) };
   const cust = q.customerSnapshot as any;
 
   const [finalizing, setFinalizing] = useState(false);
@@ -246,7 +252,14 @@ export function QuotationDetailClient({ group, initialId }: Props) {
         inclMdaEstablishment, inclLampiran12, inclLampiran13,
         ...patch,
       });
-      router.refresh();
+      // DB stores these flags as 1/0 — mirror that locally instead of refreshing
+      setDocOverrides((prev) => ({
+        ...prev,
+        [q.id]: {
+          ...prev[q.id],
+          ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, v ? 1 : 0])),
+        },
+      }));
     } catch (e: any) {
       toast.error(e.message);
     }
