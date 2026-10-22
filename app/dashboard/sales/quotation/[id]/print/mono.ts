@@ -3,6 +3,7 @@ import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, Color, StandardFonts } fr
 import {
   wrap, trunc, fmtD, fmtM, hLine, sanitizeText, C_WHITE,
 } from "./_pdf-header";
+import { isSetPriced } from "@/lib/quotation-set-price";
 
 function hexToColor(hex: string | null | undefined): Color | null {
   if (!hex) return null;
@@ -588,8 +589,10 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
 
   // ── Build render entries (set headers interleaved with items) ────────────
   const SET_HDR_H = 18;
+  const SUB_LINE_H = 12; // extra height for the set subtitle line
   type RenderEntry =
-    | { kind: "setHeader"; label: string; qty: number; setTotal: number; pricePerSet: number; rowH: number }
+    | { kind: "setHeader"; label: string; qty: number; setTotal: number; pricePerSet: number; rowH: number; subtitle?: string }
+    | { kind: "subtitle"; text: string; total?: number; rowH: number }
     | { kind: "item"; rowIdx: number; rowH: number };
   const renderItems: RenderEntry[] = [];
   {
@@ -605,7 +608,13 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         const displayQty = setQty * sets;
         const pricePerSet = setQty > 0 ? setTotal / setQty : 0;
         const _lbl = it.setGroupLabel ?? "Set";
-        renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty: displayQty, setTotal: setTotal * sets, pricePerSet, rowH: SET_HDR_H });
+        renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty: displayQty, setTotal: setTotal * sets, pricePerSet, subtitle: it.setSubtitle || undefined, rowH: SET_HDR_H + (it.setSubtitle ? SUB_LINE_H : 0) });
+      }
+      if (!showSetHeaders && i === 0 && (it.setSubtitle || isSetPriced(it))) {
+        // Single set: no set header row, so this row carries the subtitle and/or the set price
+        const _single = (it.setGroupLabel ?? "").toLowerCase() === "not-as-set" ? "Loose Items" : (it.setGroupLabel ?? "");
+        const _total = isSetPriced(it) ? rowInfos.reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0) * sets : undefined;
+        renderItems.push({ kind: "subtitle", text: it.setSubtitle || _single, total: _total, rowH: SET_HDR_H });
       }
       renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
     }
@@ -776,10 +785,26 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
     // ── Item rows ────────────────────────────────────────────────────────────
     for (const entryIdx of pageItems) {
       const entry = renderItems[entryIdx];
+      if (entry.kind === "subtitle") {
+        const subY = curY - entry.rowH;
+        page.drawText(trunc(entry.text.toUpperCase(), fontB, 8.5, CW - TABLE_PAD * 2 - (entry.total !== undefined ? 110 : 0)), {
+          x: ML + TABLE_PAD, y: subY + 5, size: 8.5, font: fontB, color: C_BLACK,
+        });
+        if (entry.total !== undefined && showTPCol) {
+          const totStr = `RM ${entry.total.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          const totW = fontB.widthOfTextAtSize(totStr, 8.5);
+          page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totW, y: subY + 5, size: 8.5, font: fontB, color: C_BLACK });
+        }
+        page.drawLine({ start: { x: ML,     y: subY }, end: { x: W - MR, y: subY }, thickness: 0.8, color: C_BORDER });
+        page.drawLine({ start: { x: ML,     y: curY }, end: { x: ML,     y: subY }, thickness: 0.8, color: C_BORDER });
+        page.drawLine({ start: { x: W - MR, y: curY }, end: { x: W - MR, y: subY }, thickness: 0.8, color: C_BORDER });
+        curY = subY;
+        continue;
+      }
       if (entry.kind === "setHeader") {
-        const hdrY  = curY - SET_HDR_H;
-        const textY = hdrY + (SET_HDR_H - FS_BODY) / 2;
-        page.drawRectangle({ x: ML, y: hdrY, width: CW, height: SET_HDR_H, color: accentColor });
+        const hdrY  = curY - entry.rowH;
+        const textY = curY - SET_HDR_H + (SET_HDR_H - FS_BODY) / 2;
+        page.drawRectangle({ x: ML, y: hdrY, width: CW, height: entry.rowH, color: accentColor });
         page.drawLine({ start: { x: ML,     y: curY  }, end: { x: W - MR, y: curY  }, thickness: 0.8, color: C_BORDER });
         page.drawLine({ start: { x: ML,     y: hdrY  }, end: { x: W - MR, y: hdrY  }, thickness: 0.8, color: C_BORDER });
         page.drawLine({ start: { x: ML,     y: hdrY  }, end: { x: ML,     y: curY  }, thickness: 0.8, color: C_BORDER });
@@ -797,6 +822,11 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
           const totStr = `RM ${entry.setTotal.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           const totW = fontB.widthOfTextAtSize(totStr, FS_BODY);
           page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totW, y: textY, size: FS_BODY, font: fontB, color: C_BLACK });
+        }
+        if (entry.subtitle) {
+          page.drawText(trunc(entry.subtitle.toUpperCase(), fontR, 7.5, CW - TABLE_PAD * 2), {
+            x: ML + TABLE_PAD, y: hdrY + 4, size: 7.5, font: fontR, color: C_BLACK,
+          });
         }
         curY = hdrY;
         continue;
@@ -872,39 +902,42 @@ export async function generateQuotationMono(data: Data): Promise<Uint8Array> {
         x: X_UOM + (C_UOM - uomW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK,
       });
 
-      // Unit Price — "RM" left, value right-aligned (accounting format)
-      if (showIP) {
-        const upNum  = fmtAcct(Number(item.unitPrice ?? 0));
-        const upNumW = fontR.widthOfTextAtSize(upNum, FS_BODY);
-        page.drawText("RM", { x: X_UP + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
-        page.drawText(upNum, { x: X_UP + C_UP - TABLE_PAD - upNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
-      }
-
-      // Discount amount + percentage
-      if (showDisc) {
-        const itemDiscAmt = Number(item.discountAmt ?? 0);
-        const itemDiscPct = Number(item.discountPct ?? 0);
-        if (itemDiscAmt > 0) {
-          const discNum  = fmtAcct(itemDiscAmt);
-          const discNumW = fontR.widthOfTextAtSize(discNum, FS_BODY);
-          page.drawText("RM", { x: X_DISC + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
-          page.drawText(discNum, { x: X_DISC + C_DISC - TABLE_PAD - discNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
-          const pctStr  = `(${itemDiscPct}%)`;
-          const pctStrW = fontR.widthOfTextAtSize(pctStr, FS_BODY - 1);
-          page.drawText(pctStr, { x: X_DISC + (C_DISC - pctStrW) / 2, y: textBaseline - 9, size: FS_BODY - 1, font: fontR, color: C_BLACK });
-        } else {
-          const dash  = "—";
-          const dashW = fontR.widthOfTextAtSize(dash, FS_BODY);
-          page.drawText(dash, { x: X_DISC + (C_DISC - dashW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+      const setPriced = isSetPriced(item); // priced as a whole set: no item price / discount / total
+      if (!setPriced) {
+        // Unit Price — "RM" left, value right-aligned (accounting format)
+        if (showIP) {
+          const upNum  = fmtAcct(Number(item.unitPrice ?? 0));
+          const upNumW = fontR.widthOfTextAtSize(upNum, FS_BODY);
+          page.drawText("RM", { x: X_UP + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+          page.drawText(upNum, { x: X_UP + C_UP - TABLE_PAD - upNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
         }
-      }
 
-      // Total — "RM" left, value right-aligned (accounting format)
-      if (showTPCol) {
-        const totNum  = fmtAcct(Number(item.totalPrice ?? 0));
-        const totNumW = fontR.widthOfTextAtSize(totNum, FS_BODY);
-        page.drawText("RM", { x: X_TOT + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
-        page.drawText(totNum, { x: X_TOT + C_TOT - TABLE_PAD - totNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+        // Discount amount + percentage
+        if (showDisc) {
+          const itemDiscAmt = Number(item.discountAmt ?? 0);
+          const itemDiscPct = Number(item.discountPct ?? 0);
+          if (itemDiscAmt > 0) {
+            const discNum  = fmtAcct(itemDiscAmt);
+            const discNumW = fontR.widthOfTextAtSize(discNum, FS_BODY);
+            page.drawText("RM", { x: X_DISC + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+            page.drawText(discNum, { x: X_DISC + C_DISC - TABLE_PAD - discNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+            const pctStr  = `(${itemDiscPct}%)`;
+            const pctStrW = fontR.widthOfTextAtSize(pctStr, FS_BODY - 1);
+            page.drawText(pctStr, { x: X_DISC + (C_DISC - pctStrW) / 2, y: textBaseline - 9, size: FS_BODY - 1, font: fontR, color: C_BLACK });
+          } else {
+            const dash  = "—";
+            const dashW = fontR.widthOfTextAtSize(dash, FS_BODY);
+            page.drawText(dash, { x: X_DISC + (C_DISC - dashW) / 2, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+          }
+        }
+
+        // Total — "RM" left, value right-aligned (accounting format)
+        if (showTPCol) {
+          const totNum  = fmtAcct(Number(item.totalPrice ?? 0));
+          const totNumW = fontR.widthOfTextAtSize(totNum, FS_BODY);
+          page.drawText("RM", { x: X_TOT + TABLE_PAD, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+          page.drawText(totNum, { x: X_TOT + C_TOT - TABLE_PAD - totNumW, y: textBaseline, size: FS_BODY, font: fontR, color: C_BLACK });
+        }
       }
 
       curY = rowY;

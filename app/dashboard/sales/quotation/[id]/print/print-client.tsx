@@ -1,11 +1,29 @@
 "use client";
 
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
+import { isSetPriced } from "@/lib/quotation-set-price";
 import { getQuotationGroupForPrint } from "@/server/quotation";
 
 type GroupItem = NonNullable<
   Awaited<ReturnType<typeof getQuotationGroupForPrint>>
 >[number];
+
+type SetRowItem = { setGroupId?: string | null; setGroupLabel?: string | null; setSubtitle?: string | null; setPrice?: string | null; totalPrice?: string | null };
+
+// First row of a set group (items are stored contiguously per set)
+const isSetStart = (list: SetRowItem[], i: number) =>
+  i === 0 || list[i].setGroupId !== list[i - 1].setGroupId;
+
+// A set row is shown at the start of a set that has a subtitle and/or a set price
+const showSetRow = (list: SetRowItem[], i: number) =>
+  isSetStart(list, i) && !!(list[i].setSubtitle || isSetPriced(list[i]));
+
+const setRowText = (item: SetRowItem) =>
+  item.setSubtitle || ((item.setGroupLabel ?? "").toLowerCase() === "not-as-set" ? "Loose Items" : (item.setGroupLabel ?? ""));
+
+// Set price total (booked on the set's first item, 0 on the rest)
+const setTotalAt = (list: SetRowItem[], i: number) =>
+  list.filter((x) => x.setGroupId === list[i].setGroupId).reduce((s, x) => s + Number(x.totalPrice ?? 0), 0);
 
 interface Props {
   group: GroupItem[];
@@ -110,6 +128,13 @@ function TemplateCorporate({ entry }: { entry: GroupItem }) {
         </thead>
         <tbody>
           {items.map((item, i) => (
+            <Fragment key={item.id}>
+            {showSetRow(items, i) && (
+              <tr>
+                <td colSpan={7 + (showTP ? 1 : 0) - (showTP && isSetPriced(item) ? 1 : 0)} style={{ padding: "6px 10px", fontWeight: "700", fontSize: "10.5px", textTransform: "uppercase", borderBottom: "1px solid #ddd" }}>{setRowText(item)}</td>
+                {showTP && isSetPriced(item) && <td style={{ padding: "6px 10px", fontWeight: "700", fontSize: "10.5px", textAlign: "right", borderBottom: "1px solid #ddd" }}>RM {setTotalAt(items, i).toFixed(2)}</td>}
+              </tr>
+            )}
             <tr key={item.id} style={{ background: i % 2 === 0 ? "white" : `${primary}07`, borderBottom: `1px solid ${primary}15` }}>
               <td style={{ padding: "7px 10px", color: "#999", textAlign: "right", width: "24px" }}>{item.rowNo}</td>
               <td style={{ padding: "7px 10px", fontFamily: "monospace", fontSize: "10px", whiteSpace: "nowrap" }}>{item.productCode ?? "—"}</td>
@@ -120,10 +145,11 @@ function TemplateCorporate({ entry }: { entry: GroupItem }) {
               </td>
               <td style={{ padding: "7px 10px", textAlign: "center" }}>{item.qty}</td>
               <td style={{ padding: "7px 10px", color: "#666", textAlign: "center" }}>{item.uom || "—"}</td>
-              <td style={{ padding: "7px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</td>
-              <td style={{ padding: "7px 10px", textAlign: "center", color: "#666" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</td>
-              {showTP && <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</td>}
+              <td style={{ padding: "7px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.unitPrice ?? 0).toFixed(2)}</>}</td>
+              <td style={{ padding: "7px 10px", textAlign: "center", color: "#666" }}>{isSetPriced(item) ? "" : (Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—")}</td>
+              {showTP && <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.totalPrice ?? 0).toFixed(2)}</>}</td>}
             </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -269,6 +295,13 @@ function TemplateModern({ entry }: { entry: GroupItem }) {
           ))}
         </div>
         {items.map((item, i) => (
+          <Fragment key={item.id}>
+          {showSetRow(items, i) && (
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontWeight: "700", fontSize: "10.5px", textTransform: "uppercase", borderBottom: "1px solid #f0f0f0" }}>
+              <span>{setRowText(item)}</span>
+              {showTP && isSetPriced(item) && <span>RM {setTotalAt(items, i).toFixed(2)}</span>}
+            </div>
+          )}
           <div key={item.id} style={{ display: "grid", gridTemplateColumns: `28px 90px 1fr 44px 48px 80px 44px${showTP ? " 90px" : ""}`, padding: "7px 0", borderBottom: "1px solid #f0f0f0", alignItems: "start" }}>
             <div style={{ color: "#bbb", textAlign: "right", paddingRight: "8px", paddingTop: "1px", fontSize: "10px" }}>{item.rowNo}</div>
             <div style={{ fontFamily: "monospace", fontSize: "10px", color: "#555", paddingRight: "8px", paddingTop: "1px" }}>{item.productCode ?? "—"}</div>
@@ -279,10 +312,11 @@ function TemplateModern({ entry }: { entry: GroupItem }) {
             </div>
             <div style={{ textAlign: "center", color: "#333" }}>{item.qty}</div>
             <div style={{ textAlign: "center", color: "#888" }}>{item.uom || "—"}</div>
-            <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</div>
-            <div style={{ textAlign: "center", color: "#888" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</div>
-            {showTP && <div style={{ textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</div>}
+            <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.unitPrice ?? 0).toFixed(2)}</>}</div>
+            <div style={{ textAlign: "center", color: "#888" }}>{isSetPriced(item) ? "" : (Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—")}</div>
+            {showTP && <div style={{ textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.totalPrice ?? 0).toFixed(2)}</>}</div>}
           </div>
+          </Fragment>
         ))}
       </div>
 
@@ -432,6 +466,13 @@ function TemplateBold({ entry }: { entry: GroupItem }) {
         </thead>
         <tbody>
           {items.map((item, i) => (
+            <Fragment key={item.id}>
+            {showSetRow(items, i) && (
+              <tr>
+                <td colSpan={7 + (showTP ? 1 : 0) - (showTP && isSetPriced(item) ? 1 : 0)} style={{ padding: "6px 10px", fontWeight: "700", fontSize: "10.5px", textTransform: "uppercase", borderBottom: "1px solid #ddd" }}>{setRowText(item)}</td>
+                {showTP && isSetPriced(item) && <td style={{ padding: "6px 10px", fontWeight: "700", fontSize: "10.5px", textAlign: "right", borderBottom: "1px solid #ddd" }}>RM {setTotalAt(items, i).toFixed(2)}</td>}
+              </tr>
+            )}
             <tr key={item.id} style={{ background: i % 2 === 0 ? "white" : "#f7f7f9", borderBottom: "1px solid #ebebeb" }}>
               <td style={{ padding: "7px 10px", color: "#bbb", textAlign: "center", fontSize: "10px" }}>{item.rowNo}</td>
               <td style={{ padding: "7px 10px", fontFamily: "monospace", fontSize: "10px", color: "#555" }}>{item.productCode ?? "—"}</td>
@@ -442,10 +483,11 @@ function TemplateBold({ entry }: { entry: GroupItem }) {
               </td>
               <td style={{ padding: "7px 10px", textAlign: "center" }}>{item.qty}</td>
               <td style={{ padding: "7px 10px", textAlign: "center", color: "#777" }}>{item.uom || "—"}</td>
-              <td style={{ padding: "7px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</td>
-              <td style={{ padding: "7px 10px", textAlign: "center", color: "#888" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</td>
-              {showTP && <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: "700", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</td>}
+              <td style={{ padding: "7px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.unitPrice ?? 0).toFixed(2)}</>}</td>
+              <td style={{ padding: "7px 10px", textAlign: "center", color: "#888" }}>{isSetPriced(item) ? "" : (Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—")}</td>
+              {showTP && <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: "700", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.totalPrice ?? 0).toFixed(2)}</>}</td>}
             </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -608,6 +650,13 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
         </thead>
         <tbody>
           {items.map((item, i) => (
+            <Fragment key={item.id}>
+            {showSetRow(items, i) && (
+              <tr>
+                <td colSpan={7 + (showTP ? 1 : 0) - (showTP && isSetPriced(item) ? 1 : 0)} style={{ padding: "6px 10px", fontWeight: "700", fontSize: "10.5px", textTransform: "uppercase", borderBottom: "1px solid #ddd" }}>{setRowText(item)}</td>
+                {showTP && isSetPriced(item) && <td style={{ padding: "6px 10px", fontWeight: "700", fontSize: "10.5px", textAlign: "right", borderBottom: "1px solid #ddd" }}>RM {setTotalAt(items, i).toFixed(2)}</td>}
+              </tr>
+            )}
             <tr key={item.id} style={{ background: i % 2 === 0 ? "white" : "#fafbfc", borderBottom: `1px solid #f0f0f0` }}>
               <td style={{ padding: "7px 10px", color: "#bbb", textAlign: "center", fontSize: "10px" }}>{item.rowNo}</td>
               <td style={{ padding: "7px 10px", fontFamily: "monospace", fontSize: "10px", color: "#666" }}>{item.productCode ?? "—"}</td>
@@ -618,10 +667,11 @@ function TemplateAffirma({ entry }: { entry: GroupItem }) {
               </td>
               <td style={{ padding: "7px 10px", textAlign: "center" }}>{item.qty}</td>
               <td style={{ padding: "7px 10px", textAlign: "center", color: "#888" }}>{item.uom || "—"}</td>
-              <td style={{ padding: "7px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</td>
-              <td style={{ padding: "7px 10px", textAlign: "center", color: "#888" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</td>
-              {showTP && <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</td>}
+              <td style={{ padding: "7px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.unitPrice ?? 0).toFixed(2)}</>}</td>
+              <td style={{ padding: "7px 10px", textAlign: "center", color: "#888" }}>{isSetPriced(item) ? "" : (Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—")}</td>
+              {showTP && <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.totalPrice ?? 0).toFixed(2)}</>}</td>}
             </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -788,6 +838,13 @@ function TemplateEmber({ entry }: { entry: GroupItem }) {
           ))}
         </div>
         {items.map((item, i) => (
+          <Fragment key={item.id}>
+          {showSetRow(items, i) && (
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontWeight: "700", fontSize: "10.5px", textTransform: "uppercase", borderBottom: "1px solid #f0f0f0" }}>
+              <span>{setRowText(item)}</span>
+              {showTP && isSetPriced(item) && <span>RM {setTotalAt(items, i).toFixed(2)}</span>}
+            </div>
+          )}
           <div key={item.id} style={{ display: "grid", gridTemplateColumns: `28px${showCode ? " 90px" : ""} 1fr 44px 48px 80px 44px${showTP ? " 90px" : ""}`, padding: "6px 0", borderBottom: "1px solid #f0f0f0", alignItems: "start" }}>
             <div style={{ color: "#ccc", textAlign: "right", paddingRight: "8px", paddingTop: "1px", fontSize: "10px" }}>{item.rowNo}</div>
             {showCode && <div style={{ fontFamily: "monospace", fontSize: "10px", color: "#666", paddingRight: "8px", paddingTop: "1px" }}>{item.productCode ?? "—"}</div>}
@@ -798,10 +855,11 @@ function TemplateEmber({ entry }: { entry: GroupItem }) {
             </div>
             <div style={{ textAlign: "center", color: "#333" }}>{item.qty}</div>
             <div style={{ textAlign: "center", color: "#888" }}>{item.uom || "—"}</div>
-            <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</div>
-            <div style={{ textAlign: "center", color: "#888" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</div>
-            {showTP && <div style={{ textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</div>}
+            <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.unitPrice ?? 0).toFixed(2)}</>}</div>
+            <div style={{ textAlign: "center", color: "#888" }}>{isSetPriced(item) ? "" : (Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—")}</div>
+            {showTP && <div style={{ textAlign: "right", fontWeight: "600", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.totalPrice ?? 0).toFixed(2)}</>}</div>}
           </div>
+          </Fragment>
         ))}
       </div>
 
@@ -1017,6 +1075,13 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
         </thead>
         <tbody>
           {items.map((item, i) => (
+            <Fragment key={item.id}>
+            {showSetRow(items, i) && (
+              <tr>
+                <td colSpan={6 + (showCode ? 1 : 0) + (showTP ? 1 : 0) - (showTP && isSetPriced(item) ? 1 : 0)} style={{ padding: "6px 10px", fontWeight: "700", fontSize: "10.5px", textTransform: "uppercase", borderBottom: "1px solid #ddd" }}>{setRowText(item)}</td>
+                {showTP && isSetPriced(item) && <td style={{ padding: "6px 10px", fontWeight: "700", fontSize: "10.5px", textAlign: "right", borderBottom: "1px solid #ddd" }}>RM {setTotalAt(items, i).toFixed(2)}</td>}
+              </tr>
+            )}
             <tr key={item.id} style={{ borderBottom: border, color: "#000", textTransform: "uppercase" }}>
               <td style={{ padding: "6px 8px", textAlign: "center", borderRight: border }}>{item.rowNo}</td>
               {showCode && <td style={{ padding: "6px 8px", fontFamily: "monospace", borderRight: border, whiteSpace: "nowrap" }}>{item.productCode ?? "—"}</td>}
@@ -1027,10 +1092,11 @@ function TemplateMono({ entry }: { entry: GroupItem }) {
               </td>
               <td style={{ padding: "6px 8px", textAlign: "center", borderRight: border }}>{item.qty}</td>
               <td style={{ padding: "6px 8px", textAlign: "center", borderRight: border }}>{item.uom || "—"}</td>
-              <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", borderRight: border }}>RM {Number(item.unitPrice ?? 0).toFixed(2)}</td>
-              <td style={{ padding: "6px 8px", textAlign: "center", borderRight: showTP ? border : "none" }}>{Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}</td>
-              {showTP && <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>RM {Number(item.totalPrice ?? 0).toFixed(2)}</td>}
+              <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums", borderRight: border }}>{isSetPriced(item) ? "" : <>RM {Number(item.unitPrice ?? 0).toFixed(2)}</>}</td>
+              <td style={{ padding: "6px 8px", textAlign: "center", borderRight: showTP ? border : "none" }}>{isSetPriced(item) ? "" : (Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—")}</td>
+              {showTP && <td style={{ padding: "6px 8px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{isSetPriced(item) ? "" : <>RM {Number(item.totalPrice ?? 0).toFixed(2)}</>}</td>}
             </tr>
+            </Fragment>
           ))}
 
           {/* Subtotal row: label cols 1-3 | qty merged cols 4-5 | amount cols 6-7 centered */}

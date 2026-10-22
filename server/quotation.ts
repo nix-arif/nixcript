@@ -1,6 +1,7 @@
 "use server";
 
 import { db } from "@/db";
+import { lineTotalsWithSetPrice, isSetPriced, setPriceValue } from "@/lib/quotation-set-price";
 import {
   quotation,
   quotationItem,
@@ -327,6 +328,8 @@ export type SpreadsheetRow = {
   // set grouping
   setGroupId?: string;
   setGroupLabel?: string;
+  setSubtitle?: string;
+  setPrice?: string; // price of one set; when present the item unit prices are ignored
   setQty?: string;
 };
 
@@ -390,10 +393,12 @@ export async function matchSpreadsheetToProducts(
       : { value: dbProduct?.uom ?? "", source: "db" as const };
 
     // For price: spreadsheet wins, else db sellingUnitPrice, else 0
-    const sheetPrice = row.unitPrice?.replace(/[^0-9.]/g, "");
+    const setPriced = isSetPriced(row);
+    const sheetPrice = setPriced ? "" : row.unitPrice?.replace(/[^0-9.]/g, "");
     const dbPrice = dbProduct?.sellingUnitPrice ?? "";
-    const unitPrice =
-      sheetPrice && Number(sheetPrice) > 0
+    const unitPrice = setPriced
+      ? { value: "0", source: "sheet" as const } // priced as a whole set — no item price
+      : sheetPrice && Number(sheetPrice) > 0
         ? { value: sheetPrice, source: "sheet" as const }
         : dbPrice && Number(dbPrice) > 0
           ? { value: dbPrice, source: "db" as const }
@@ -407,7 +412,7 @@ export async function matchSpreadsheetToProducts(
     const price = Number(unitPrice.value);
     const disc = Number(discountPct) / 100;
     const total = (qty * price * (1 - disc)).toFixed(2);
-    const hasPrice = Number(unitPrice.value) > 0;
+    const hasPrice = setPriced || Number(unitPrice.value) > 0;
 
     const mdaRegNo = dbProduct?.mdaRegistrationNo ?? "";
     const mdaValidity = dbProduct?.mdaExpiredOn ?? "";
@@ -491,11 +496,12 @@ function calcItemTotal(item: Pick<ReviewItem, "qty" | "unitPrice" | "discountPct
 }
 
 function buildItemRows(quotationId: string, items: ReviewItem[]) {
+  const lineTotals = lineTotalsWithSetPrice(items, calcItemTotal);
   return items.map((item, i) => {
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
     const disc = Number(item.discountPct ?? 0) / 100;
-    const total = calcItemTotal(item);
+    const total = lineTotals[i];
 
     return {
       id: nanoid(),
@@ -528,6 +534,8 @@ function buildItemRows(quotationId: string, items: ReviewItem[]) {
       rentalUnit: item.rentalUnit ?? null,
       setGroupId: item.setGroupId ?? null,
       setGroupLabel: item.setGroupLabel ?? null,
+      setSubtitle: item.setSubtitle?.trim() || null,
+      setPrice: item.setPrice?.trim() || null,
       setQty: item.setQty ?? null,
     };
   });
@@ -554,7 +562,7 @@ export async function createQuotation(input: CreateQuotationInput) {
 
   // Calculate shared pricing — set items use setQty multiplier; global sets multiplies the rest
   const setsCount = Math.max(1, input.sets ?? 1);
-  const perSetSubtotal = input.items.reduce((s, item) => s + calcItemTotal(item), 0);
+  const perSetSubtotal = lineTotalsWithSetPrice(input.items, calcItemTotal).reduce((s, t) => s + t, 0);
   const subtotal = perSetSubtotal * setsCount;
 
   const overallDiscPct = Number(input.overallDiscountPct ?? 0);
@@ -667,16 +675,18 @@ export async function createQuotation(input: CreateQuotationInput) {
     const markupFactor = isDummy ? 1 + (orgMarkupMap.get(org.id) ?? 0) / 100 : 1;
 
     // Compute per-quotation totals (dummy totals differ due to markup)
-    let qSubtotal = 0;
     const markedUpItems = input.items.map((item) => {
-      const qty = Number(item.qty ?? 1);
-      const rawPrice = Number(item.unitPrice ?? 0);
-      const markedPrice = Math.ceil(rawPrice * markupFactor);
-      const disc = Number(item.discountPct ?? 0) / 100;
-      qSubtotal += qty * markedPrice * (1 - disc);
-      return { ...item, unitPrice: markedPrice.toFixed(2) };
+      const markedPrice = Math.ceil(Number(item.unitPrice ?? 0) * markupFactor);
+      const rawSetPrice = setPriceValue(item);
+      return {
+        ...item,
+        unitPrice: markedPrice.toFixed(2),
+        // A priced set is marked up as a whole, so a dummy quote stays above the original
+        ...(rawSetPrice > 0 && { setPrice: Math.ceil(rawSetPrice * markupFactor).toFixed(2) }),
+      };
     });
-    qSubtotal = qSubtotal * setsCount;
+    // Same per-item rules as the saved item rows (set qty, rental duration, set price)
+    const qSubtotal = lineTotalsWithSetPrice(markedUpItems, calcItemTotal).reduce((s, t) => s + t, 0) * setsCount;
     const qOverallDiscAmt = overallDiscPct > 0
       ? qSubtotal * (overallDiscPct / 100)
       : Number(input.overallDiscountAmt ?? 0) * markupFactor;
@@ -1035,6 +1045,8 @@ export async function getQuotationForSO(id: string) {
       rentalUnit: quotationItem.rentalUnit,
       setGroupId: quotationItem.setGroupId,
       setGroupLabel: quotationItem.setGroupLabel,
+      setSubtitle: quotationItem.setSubtitle,
+      setPrice: quotationItem.setPrice,
       setQty: quotationItem.setQty,
     })
     .from(quotationItem)
@@ -1915,6 +1927,8 @@ export type UpdateQuotationInput = {
     rentalUnit?: string | null;
     setGroupId?: string | null;
     setGroupLabel?: string | null;
+    setSubtitle?: string | null;
+    setPrice?: string | null;
     setQty?: string | null;
   }[];
 };
@@ -1945,7 +1959,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
 
   // Recalculate totals — set items use setQty multiplier; global sets multiplies all
   const setsCount = Math.max(1, input.sets ?? Number(q.sets ?? 1));
-  const perSetSubtotal = input.items.reduce((s, item) => s + calcItemTotal({
+  const updLineTotals = lineTotalsWithSetPrice(input.items, (item) => calcItemTotal({
     qty: item.qty,
     unitPrice: item.unitPrice,
     discountPct: item.discountPct,
@@ -1953,7 +1967,8 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
     rentalDuration: item.rentalDuration ?? undefined,
     setGroupId: item.setGroupId ?? undefined,
     setQty: item.setQty ?? undefined,
-  }), 0);
+  }));
+  const perSetSubtotal = updLineTotals.reduce((s, t) => s + t, 0);
   const subtotal = perSetSubtotal * setsCount;
 
   const overallDiscPct = Number(input.overallDiscountPct ?? 0);
@@ -2017,15 +2032,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
         const qty = Number(item.qty ?? 1);
         const price = Number(item.unitPrice ?? 0);
         const disc = Number(item.discountPct ?? 0) / 100;
-        const total = calcItemTotal({
-          qty: item.qty,
-          unitPrice: item.unitPrice,
-          discountPct: item.discountPct,
-          lineType: item.lineType,
-          rentalDuration: item.rentalDuration ?? undefined,
-          setGroupId: item.setGroupId ?? undefined,
-          setQty: item.setQty ?? undefined,
-        });
+        const total = updLineTotals[i];
         return {
           id: nanoid(),
           quotationId: id,
@@ -2057,6 +2064,8 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
           rentalUnit: item.rentalUnit ?? null,
           setGroupId: item.setGroupId ?? null,
           setGroupLabel: item.setGroupLabel ?? null,
+          setSubtitle: item.setSubtitle?.trim() || null,
+          setPrice: item.setPrice?.trim() || null,
           setQty: item.setQty ?? null,
         };
       }),
@@ -2082,14 +2091,14 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       // Primary key: productCode (stable across reordering/removal).
       // Fallback key: sortOrder (for free-text/header lines with no code).
       const siblingItems = await db
-        .select({ sortOrder: quotationItem.sortOrder, productCode: quotationItem.productCode, unitPrice: quotationItem.unitPrice, discountPct: quotationItem.discountPct })
+        .select({ sortOrder: quotationItem.sortOrder, productCode: quotationItem.productCode, unitPrice: quotationItem.unitPrice, discountPct: quotationItem.discountPct, setPrice: quotationItem.setPrice })
         .from(quotationItem)
         .where(eq(quotationItem.quotationId, sibling.id));
 
-      const priceByCode = new Map<string, { unitPrice: string; discountPct: string }>();
-      const priceByPos = new Map<number, { unitPrice: string; discountPct: string }>();
+      const priceByCode = new Map<string, { unitPrice: string; discountPct: string; setPrice: string | null }>();
+      const priceByPos = new Map<number, { unitPrice: string; discountPct: string; setPrice: string | null }>();
       for (const si of siblingItems) {
-        const entry = { unitPrice: si.unitPrice ?? "0", discountPct: si.discountPct ?? "0" };
+        const entry = { unitPrice: si.unitPrice ?? "0", discountPct: si.discountPct ?? "0", setPrice: si.setPrice ?? null };
         if (si.productCode) priceByCode.set(si.productCode, entry);
         priceByPos.set(si.sortOrder, entry);
       }
@@ -2097,22 +2106,33 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       await db.delete(quotationItem).where(eq(quotationItem.quotationId, sibling.id));
 
       if (input.items.length > 0) {
-        const newSiblingItems = input.items.map((item, i) => {
+        // Each sibling keeps its own prices (incl. its own set price), falling back to the anchor's set price
+        const sibBase = input.items.map((item, i) => {
           const preserved = (item.productCode ? priceByCode.get(item.productCode) : undefined) ?? priceByPos.get(i);
-          const unitPrice = preserved?.unitPrice ?? "0";
-          const discountPct = preserved?.discountPct ?? item.discountPct ?? "0";
+          return {
+            item,
+            unitPrice: preserved?.unitPrice ?? "0",
+            discountPct: preserved?.discountPct ?? item.discountPct ?? "0",
+            setPrice: preserved?.setPrice ?? item.setPrice ?? null,
+          };
+        });
+        const sibLineTotals = lineTotalsWithSetPrice(
+          sibBase.map((b) => ({ ...b.item, unitPrice: b.unitPrice, discountPct: b.discountPct, setPrice: b.setPrice })),
+          (x) => calcItemTotal({
+            qty: x.qty,
+            unitPrice: x.unitPrice,
+            discountPct: x.discountPct,
+            lineType: x.lineType,
+            rentalDuration: x.rentalDuration ?? undefined,
+            setGroupId: x.setGroupId ?? undefined,
+            setQty: x.setQty ?? undefined,
+          }),
+        );
+        const newSiblingItems = sibBase.map(({ item, unitPrice, discountPct, setPrice }, i) => {
           const qty = Number(item.qty ?? 1);
           const price = Number(unitPrice);
           const disc = Number(discountPct) / 100;
-          const total = calcItemTotal({
-            qty: item.qty,
-            unitPrice,
-            discountPct,
-            lineType: item.lineType,
-            rentalDuration: item.rentalDuration ?? undefined,
-            setGroupId: item.setGroupId ?? undefined,
-            setQty: item.setQty ?? undefined,
-          });
+          const total = sibLineTotals[i];
           return {
             id: nanoid(),
             quotationId: sibling.id,
@@ -2144,6 +2164,8 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
             rentalUnit: item.rentalUnit ?? null,
             setGroupId: item.setGroupId ?? null,
             setGroupLabel: item.setGroupLabel ?? null,
+            setSubtitle: item.setSubtitle?.trim() || null,
+            setPrice: setPrice?.trim() || null,
             setQty: item.setQty ?? null,
           };
         });
@@ -2151,15 +2173,7 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
 
         // Recalculate sibling totals using its own prices + anchor's qty/structure
         const sibSetsCount = setsCount; // inherit sets count from anchor
-        const sibPerSetSubtotal = newSiblingItems.reduce((s, it) => s + calcItemTotal({
-          qty: it.qty,
-          unitPrice: it.unitPrice,
-          discountPct: it.discountPct,
-          lineType: (it.lineType ?? "sell") as "sell" | "rent",
-          rentalDuration: it.rentalDuration ?? undefined,
-          setGroupId: it.setGroupId ?? undefined,
-          setQty: it.setQty ?? undefined,
-        }), 0);
+        const sibPerSetSubtotal = sibLineTotals.reduce((s, t) => s + t, 0);
         const sibSubtotal = sibPerSetSubtotal * sibSetsCount;
         const sibOverallDiscPct = Number(sibling.overallDiscountPct ?? 0);
         const sibOverallDiscAmt = sibOverallDiscPct > 0

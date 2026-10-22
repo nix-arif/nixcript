@@ -1398,6 +1398,8 @@ export const quotationItem = pgTable(
     // Set grouping
     setGroupId: text("set_group_id"),    // UUID shared by all items in the same set
     setGroupLabel: text("set_group_label"), // e.g. "ICU Package"
+    setSubtitle: text("set_subtitle"),   // shown under the set name; identical for every item of a set
+    setPrice: text("set_price"),         // price of ONE set when the set is priced as a whole; identical for every item of a set
     setQty: text("set_qty"),             // how many sets (multiplier), stored per-item
 
     createdAt: timestamp("created_at").defaultNow().notNull(),

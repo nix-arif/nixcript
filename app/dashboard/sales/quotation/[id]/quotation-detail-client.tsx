@@ -30,6 +30,7 @@ import {
   DatabaseIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isSetPriced } from "@/lib/quotation-set-price";
 
 type Data = NonNullable<Awaited<ReturnType<typeof getQuotationGroupAllDetails>>>[number];
 
@@ -697,8 +698,12 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                         </td>
 
                         <td className="px-3 py-2 text-right tabular-nums align-top">
-                          <div>{acct(Number(item.unitPrice ?? 0))}</div>
-                          <SrcTag src={item.priceSource} userName={createdByName} />
+                          {isSetPriced(item) ? <div>—</div> : (
+                            <>
+                              <div>{acct(Number(item.unitPrice ?? 0))}</div>
+                              <SrcTag src={item.priceSource} userName={createdByName} />
+                            </>
+                          )}
                         </td>
 
                         <td className="px-3 py-2 text-center tabular-nums align-top">
@@ -706,7 +711,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                         </td>
 
                         <td className="px-3 py-2 text-right tabular-nums font-medium align-top">
-                          {Number(q.showTotalPrice) ? acct(Number(item.totalPrice ?? 0)) : "—"}
+                          {Number(q.showTotalPrice) && !isSetPriced(item) ? acct(Number(item.totalPrice ?? 0)) : "—"}
                         </td>
 
                         <td className="px-3 py-2 w-6 align-top">
@@ -743,6 +748,9 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                             </>
                           )}
                         </div>
+                        {e.first.setSubtitle && (
+                          <div className="text-[10px] text-muted-foreground uppercase mt-0.5">{e.first.setSubtitle}</div>
+                        )}
                         {e.first.setQtySource === "user" && (
                           <div className="mt-0.5"><SrcTag src="user" userName={createdByName} /></div>
                         )}
@@ -769,6 +777,9 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                           {Number(q.showTotalPrice) ? acct(e.groupTotal) : "—"}
                         </span>
                       </div>
+                      {e.first.setSubtitle && (
+                        <div className="text-[10px] text-muted-foreground uppercase mt-0.5">{e.first.setSubtitle}</div>
+                      )}
                       {e.first.setQtySource === "user" && (
                         <div className="mt-1"><SrcTag src="user" userName={createdByName} /></div>
                       )}
@@ -802,7 +813,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
                             </span>
                           </div>
                           <span className="text-right font-semibold tabular-nums shrink-0">
-                            {Number(q.showTotalPrice) ? acct(Number(item.totalPrice ?? 0)) : "—"}
+                            {Number(q.showTotalPrice) && !isSetPriced(item) ? acct(Number(item.totalPrice ?? 0)) : "—"}
                           </span>
                         </div>
 
@@ -829,8 +840,8 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
                         <div className="flex items-center justify-between gap-2">
                           <div>
-                            <span>Unit: {acct(Number(item.unitPrice ?? 0))}</span>
-                            <SrcTag src={item.priceSource} userName={createdByName} />
+                            <span>Unit: {isSetPriced(item) ? "—" : acct(Number(item.unitPrice ?? 0))}</span>
+                            {!isSetPriced(item) && <SrcTag src={item.priceSource} userName={createdByName} />}
                           </div>
                           <span className="text-muted-foreground shrink-0">
                             Disc: {Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—"}

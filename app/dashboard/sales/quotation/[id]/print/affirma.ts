@@ -3,6 +3,7 @@ import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, StandardFonts } from "pdf
 import {
   drawCompanyHeader, drawInfoSection, estimateHeaderH, estimateInfoH,
 } from "./_pdf-header";
+import { isSetPriced } from "@/lib/quotation-set-price";
 
 type Data = NonNullable<Awaited<ReturnType<typeof getQuotationDetail>>>;
 
@@ -265,6 +266,29 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
   const P1_ROW_AVAIL = H - MT - HEADER_BLOCK - DIVIDER_GAP - INFO_BLOCK - DIVIDER_GAP - TABLE_HDR_H - (hasBanner ? BANNER_H : 0) - MB - 32;
   const PN_ROW_AVAIL = H - MT - 28 - TABLE_HDR_H - MB - 28;
 
+  // ── Set subtitles — one row at the start of each set group ────────────────
+  // Affirma has no set header rows, so the set name is repeated when there is
+  // more than one set; a single set is already named by the quotation title.
+  const SUB_H = 18;
+  const multiSet = new Set(rowInfos.map(r => r.item.setGroupId).filter(Boolean)).size > 1;
+  const subAt = new Map<number, { text: string; total?: number }>();
+  for (let i = 0; i < rowInfos.length; i++) {
+    const it = rowInfos[i].item;
+    const priced = isSetPriced(it);
+    if (!it.setSubtitle && !priced) continue;
+    if (i > 0 && it.setGroupId === rowInfos[i - 1].item.setGroupId) continue;
+    const lbl = (it.setGroupLabel ?? "").toLowerCase() === "not-as-set" ? "Loose Items" : (it.setGroupLabel ?? "");
+    const text = it.setSubtitle
+      ? (multiSet && lbl ? `${lbl} — ${it.setSubtitle}` : it.setSubtitle)
+      : lbl;
+    // A priced set shows its set price on this row (item rows carry no price)
+    const total = priced
+      ? rowInfos.filter(r => r.item.setGroupId === it.setGroupId).reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0)
+      : undefined;
+    subAt.set(i, { text, total });
+  }
+  const rhOf = (i: number) => rowInfos[i].rowH + (subAt.has(i) ? SUB_H : 0);
+
   // ── Paginate rows ─────────────────────────────────────────────────────────
   const pageGroups: number[][] = [];
   let curGroup: number[] = [];
@@ -272,7 +296,7 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
   let firstPage = true;
 
   for (let i = 0; i < rowInfos.length; i++) {
-    const rh = rowInfos[i].rowH;
+    const rh = rhOf(i);
     const avail = firstPage ? Math.max(P1_ROW_AVAIL, RH_MIN * 3) : Math.max(PN_ROW_AVAIL, RH_MIN * 3);
     if (used + rh > avail && curGroup.length > 0) {
       pageGroups.push(curGroup);
@@ -291,11 +315,11 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
     const lastGroup   = pageGroups[pageGroups.length - 1];
     const lastIsFirst = pageGroups.length === 1;
     const lastAvail   = Math.max(lastIsFirst ? P1_ROW_AVAIL : PN_ROW_AVAIL, RH_MIN * 3);
-    const lastItemsH  = lastGroup.reduce((s, i) => s + rowInfos[i].rowH, 0);
+    const lastItemsH  = lastGroup.reduce((s, i) => s + rhOf(i), 0);
     if (lastItemsH + BOTTOM_RESERVE > lastAvail && lastGroup.length > 1) {
       let fitH = 0, splitAt = 0;
       for (const idx of lastGroup) {
-        if (fitH + rowInfos[idx].rowH + BOTTOM_RESERVE <= lastAvail) { fitH += rowInfos[idx].rowH; splitAt++; }
+        if (fitH + rhOf(idx) + BOTTOM_RESERVE <= lastAvail) { fitH += rhOf(idx); splitAt++; }
         else break;
       }
       splitAt = Math.max(1, splitAt);
@@ -403,6 +427,19 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
 
     // ── Item rows ────────────────────────────────────────────────────────────
     for (const rowIdx of pageItems) {
+      const sub = subAt.get(rowIdx);
+      if (sub) {
+        const subY = curY - SUB_H;
+        page.drawText(trunc(sub.text.toUpperCase(), fontB, 8.5, CW - TABLE_PAD * 2 - (sub.total !== undefined ? 110 : 0)), {
+          x: ML + TABLE_PAD, y: subY + 5, size: 8.5, font: fontB, color: C_DARK,
+        });
+        if (sub.total !== undefined && showTP) {
+          const totStr = `RM ${sub.total.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          const totW = fontB.widthOfTextAtSize(totStr, 8.5);
+          page.drawText(totStr, { x: X_TOT + (C_TOT - totW) / 2, y: subY + 5, size: 8.5, font: fontB, color: C_DARK });
+        }
+        curY = subY;
+      }
       const { item, descLines, codeLines, extraLine, isGreenRow, rowH } = rowInfos[rowIdx];
       const rowY = curY - rowH;
 
@@ -455,31 +492,33 @@ export async function generateQuotationAffirma(data: Data): Promise<Uint8Array> 
         x: X_UOM + (C_UOM - uomW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
       });
 
-      // Unit Price (always shown)
-      const up  = `RM ${Number(item.unitPrice ?? 0).toFixed(2)}`;
-      const upW = fontR.widthOfTextAtSize(up, FS_CODE);
-      page.drawText(up, {
-        x: X_UP + (C_UP - upW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
-      });
-
-      // Disc%
-      if (showDisc) {
-        const disc  = Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—";
-        const discW = fontR.widthOfTextAtSize(disc, FS_CODE);
-        page.drawText(disc, {
-          x: X_DISC + (C_DISC - discW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_LITE,
+      const setPriced = isSetPriced(item); // priced as a whole set: no item price / discount / total
+      if (!setPriced) {
+        // Unit Price (always shown)
+        const up  = `RM ${Number(item.unitPrice ?? 0).toFixed(2)}`;
+        const upW = fontR.widthOfTextAtSize(up, FS_CODE);
+        page.drawText(up, {
+          x: X_UP + (C_UP - upW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
         });
-      }
 
-      // Total
-      if (showTP) {
-        const tot  = `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`;
-        const totW = fontR.widthOfTextAtSize(tot, FS_DESC);
-        page.drawText(tot, {
-          x: X_TOT + (C_TOT - totW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
-        });
-      }
+        // Disc%
+        if (showDisc) {
+          const disc  = Number(item.discountPct ?? 0) > 0 ? `${item.discountPct}%` : "—";
+          const discW = fontR.widthOfTextAtSize(disc, FS_CODE);
+          page.drawText(disc, {
+            x: X_DISC + (C_DISC - discW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_LITE,
+          });
+        }
 
+        // Total
+        if (showTP) {
+          const tot  = `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`;
+          const totW = fontR.widthOfTextAtSize(tot, FS_DESC);
+          page.drawText(tot, {
+            x: X_TOT + (C_TOT - totW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
+          });
+        }
+      }
       hLine(page, rowY, ML, W - MR, rgb(0.93, 0.93, 0.93), 0.3);
       curY = rowY;
     }

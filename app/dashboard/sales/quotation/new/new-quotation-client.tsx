@@ -42,6 +42,7 @@ import {
   ListOrderedIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isSetPriced, lineTotalsWithSetPrice } from "@/lib/quotation-set-price";
 import { PageHeader } from "@/components/page-header";
 import { type DocumentCategoryRow } from "@/server/document-category";
 
@@ -222,14 +223,16 @@ export function NewQuotationClient({
   const [creating, setCreating] = useState(false);
 
   // ── Computed totals ──────────────────────────────────────────────────────
-  const subtotalPerSet = reviewItems.reduce((s, item) => {
+  // Per-item line totals per single global set; a priced set books setPrice × setQty on its first item
+  const lineTotals = lineTotalsWithSetPrice(reviewItems, (item) => {
     const qty = Number(item.qty ?? 1);
     const price = Number(item.unitPrice ?? 0);
     const disc = Number(item.discountPct ?? 0) / 100;
     const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
     const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
-    return s + qty * setMul * dur * price * (1 - disc);
-  }, 0);
+    return qty * setMul * dur * price * (1 - disc);
+  });
+  const subtotalPerSet = lineTotals.reduce((s, t) => s + t, 0);
   const subtotalNSets = subtotalPerSet * sets;
 
   const overallDiscAmt = applyTotalDiscount
@@ -316,16 +319,36 @@ export function NewQuotationClient({
   };
 
   const downloadTemplate = () => {
-    const headers = ["No", "Product Code", "Description", "Set Name", "Qty", "UOM", "Unit Price"];
+    const headers = ["No", "Set Name", "Subtitle", "Set Price", "Product Code", "Description", "Qty", "UOM", "Unit Price"];
     const examples = [
-      [1, "CODE-001", "Example Product A", "Set A", 1, "pcs", 100.00],
-      [2, "CODE-002", "Example Product B", "Set A", 2, "pcs", 50.00],
-      [3, "CODE-003", "Example Product C", "not-as-set", 1, "unit", 200.00],
+      // Set priced as a whole: same Set Price on every row, leave Unit Price blank
+      ["a", "abdominal retractor set", "abdominal retractor set for urology surgery consist of;", 120000, "CODE-001", "Example Product A", 1, "pc", ""],
+      ["b", "abdominal retractor set", "abdominal retractor set for urology surgery consist of;", 120000, "CODE-002", "Example Product B", 6, "pc", ""],
+      ["c", "abdominal retractor set", "abdominal retractor set for urology surgery consist of;", 120000, "CODE-003", "Example Product C", 2, "pc", ""],
+      // Set priced per item: no Set Price, fill Unit Price
+      ["i", "cranial set", "cranial set for neuro surgery consist of;", "", "CODE-004", "Example Product D", 1, "pc", 850],
+      ["ii", "cranial set", "cranial set for neuro surgery consist of;", "", "CODE-005", "Example Product E", 4, "pc", 120],
+      // Loose item
+      [1, "not-as-set", "", "", "CODE-006", "Example Product F", 2, "unit", 200],
+    ];
+    const notes = [
+      ["Column", "How to fill"],
+      ["No", "Kept exactly as typed (a, b, c / i, ii, iii / 1a ...)."],
+      ["Set Name", "Rows of one set must be next to each other. Use not-as-set (or leave blank) for loose items."],
+      ["Subtitle", "Optional. Shown under the set name. Must be identical on every row of the set."],
+      ["Set Price", "Optional. Price of ONE set. Must be identical on every row of the set. When filled, leave Unit Price blank for that set."],
+      ["Product Code", "Key field — matched against your product catalogue."],
+      ["Description / UOM", "Optional — taken from the catalogue when blank."],
+      ["Qty", "Quantity per set."],
+      ["Unit Price", "Price per item. Leave blank for items inside a set that has a Set Price."],
     ];
     const ws = XLSX.utils.aoa_to_sheet([headers, ...examples]);
-    ws["!cols"] = [{ wch: 5 }, { wch: 16 }, { wch: 36 }, { wch: 16 }, { wch: 6 }, { wch: 8 }, { wch: 12 }];
+    ws["!cols"] = [{ wch: 5 }, { wch: 26 }, { wch: 50 }, { wch: 11 }, { wch: 16 }, { wch: 36 }, { wch: 6 }, { wch: 8 }, { wch: 12 }];
+    const wsNotes = XLSX.utils.aoa_to_sheet(notes);
+    wsNotes["!cols"] = [{ wch: 18 }, { wch: 100 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Items");
+    XLSX.utils.book_append_sheet(wb, wsNotes, "How to fill");
     XLSX.writeFile(wb, "quotation-template.xlsx");
   };
 
@@ -371,6 +394,8 @@ export function NewQuotationClient({
               discountPct: col(row, "Disc %", "Disc", "Discount %", "Discount", "Diskaun").trim().toLowerCase(),
               totalPrice: col(row, "Total Price", "total_price", "TotalPrice", "Total").trim().toLowerCase(),
               setGroupLabel: setLabel || undefined,
+              setSubtitle: col(row, "Subtitle", "Sub Title", "Sub-title", "Set Subtitle").trim().replace(/\s+/g, " ").toLowerCase() || undefined,
+              setPrice: col(row, "Set Price", "Set Total", "Price Per Set").replace(/[^0-9.]/g, "") || undefined,
               setGroupId: setLabel ? `g-${setLabel}` : undefined,
               setQty: setLabel ? "1" : undefined,
             };
@@ -409,6 +434,25 @@ export function NewQuotationClient({
             }
             if (label) seenSets.add(label);
             prevSet = label;
+          }
+        }
+
+        // Every row of one set must carry the same subtitle and the same set price
+        for (const [field, name] of [["setSubtitle", "Subtitle"], ["setPrice", "Set price"]] as const) {
+          const seenValue = new Map<string, string>();
+          for (const r of rows) {
+            const label = r.setGroupLabel ?? "";
+            const val = r[field] ?? "";
+            if (!seenValue.has(label)) {
+              seenValue.set(label, val);
+            } else if (seenValue.get(label) !== val) {
+              const shown = (v: string) => (v ? `"${v}"` : "(blank)");
+              toast.error(
+                `${name} mismatch for set "${label === "not-as-set" ? "Loose Items" : label}" (row ${r.rowNo}): ${shown(seenValue.get(label)!)} vs ${shown(val)}. Every row in a set must have the same ${name.toLowerCase()}`,
+              );
+              setParsing(false);
+              return;
+            }
           }
         }
 
@@ -467,15 +511,6 @@ export function NewQuotationClient({
     return qty * dur * price * (1 - disc);
   }
 
-  function rowDisplayTotal(item: ReviewItem, globalSets: number): number {
-    const qty = Number(item.qty ?? 1);
-    const price = Number(item.unitPrice ?? 0);
-    const disc = Number(item.discountPct ?? 0) / 100;
-    const dur = item.lineType === "rent" ? Number(item.rentalDuration || 1) : 1;
-    const setMul = item.setGroupId ? Number(item.setQty || 1) : 1;
-    return qty * dur * price * (1 - disc) * setMul * globalSets;
-  }
-
   const addRow = () => {
     const maxRowNo = reviewItems.reduce((max, it) => Math.max(max, Number(it.rowNo) || 0), 0);
     const uniqueGroups = [...new Set(reviewItems.map((it) => it.setGroupId).filter(Boolean))];
@@ -500,6 +535,8 @@ export function NewQuotationClient({
       ...(singleGroup && {
         setGroupId: singleGroup.setGroupId,
         setGroupLabel: singleGroup.setGroupLabel,
+        setSubtitle: singleGroup.setSubtitle,
+        setPrice: singleGroup.setPrice,
         setQty: singleGroup.setQty,
       }),
       ...(multiGroup && {
@@ -561,6 +598,26 @@ export function NewQuotationClient({
   };
 
 
+  // Price one whole set (applies to every row of the set); empty clears it
+  const applySetPrice = (gid: string, value: string) => {
+    const priced = Number(value) > 0;
+    setReviewItems((prev) =>
+      prev.map((x) => {
+        if (x.setGroupId !== gid) return x;
+        const hasPrice = priced || Number(x.unitPrice ?? 0) > 0;
+        return {
+          ...x,
+          setPrice: value || undefined,
+          hasPrice,
+          status:
+            x.status === "not_found" ? x.status
+              : hasPrice ? (x.hasCert ? "ok" : "no_cert")
+              : (x.hasCert ? "no_price" : "no_price_no_cert"),
+        };
+      }),
+    );
+  };
+
   const updateItemPrice = (i: number, price: string) => {
     setReviewItems((prev) => {
       const next = [...prev];
@@ -602,6 +659,8 @@ export function NewQuotationClient({
         rentalUnit: item.rentalUnit,
         setGroupId: item.setGroupId,
         setGroupLabel: item.setGroupLabel,
+        setSubtitle: item.setSubtitle,
+        setPrice: item.setPrice,
         setQty: item.setQty,
       };
       const [matched] = await matchSpreadsheetToProducts([row]);
@@ -615,6 +674,8 @@ export function NewQuotationClient({
               setQty: x.setQty,
               setGroupId: x.setGroupId,
               setGroupLabel: x.setGroupLabel,
+              setSubtitle: x.setSubtitle,
+              setPrice: x.setPrice,
               discountPct: x.discountPct,
               computedTotal: reviewItemTotal(matched).toFixed(2),
             };
@@ -1484,16 +1545,18 @@ export function NewQuotationClient({
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     "No",
+                    "Set Name",
+                    "Subtitle",
+                    "Set Price",
                     "Product Code",
                     "Description",
-                    "Set Name",
                     "Qty",
                     "UOM",
                     "Unit Price",
                   ].map((col) => (
                     <span
                       key={col}
-                      className={`text-[11px] bg-background border rounded px-2 py-0.5 font-mono ${col === "Set Name" ? "border-blue-400 text-blue-600 dark:text-blue-400" : "border-border"}`}
+                      className={`text-[11px] bg-background border rounded px-2 py-0.5 font-mono ${["Set Name", "Subtitle", "Set Price"].includes(col) ? "border-blue-400 text-blue-600 dark:text-blue-400" : "border-border"}`}
                     >
                       {col}
                     </span>
@@ -1501,6 +1564,7 @@ export function NewQuotationClient({
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-2">
                   Product Code is the key field. Set Name is required — use <span className="font-mono">not-as-set</span> for ungrouped items.
+                  Subtitle and Set Price are optional but must be identical on every row of a set. With a Set Price, leave Unit Price blank for that set.
                 </div>
               </div>
             </div>
@@ -1843,7 +1907,9 @@ export function NewQuotationClient({
 
                           {/* Unit price */}
                           <td className="px-3 py-1.5 text-right">
-                            {isEditable ? (
+                            {isSetPriced(item) ? (
+                              <span className="text-muted-foreground" title="Priced as a whole set">—</span>
+                            ) : isEditable ? (
                               <div className="flex flex-col items-end">
                                 <input
                                   type="number"
@@ -1866,7 +1932,7 @@ export function NewQuotationClient({
 
                           {/* Total */}
                           <td className="px-3 py-1.5 text-right font-mono tabular-nums">
-                            {fmt(String(rowDisplayTotal(item, sets)))}
+                            {isSetPriced(item) ? "—" : fmt(String(lineTotals[idx] * sets))}
                           </td>
 
                           {/* Status + delete */}
@@ -1896,8 +1962,8 @@ export function NewQuotationClient({
                     for (const gid of groupOrder) {
                       const gItems = reviewItems.map((it, idx) => ({ it, idx })).filter(({ it }) => it.setGroupId === gid);
                       const first = gItems[0].it;
-                      const groupTotal = gItems.reduce((s, { it }) => s + rowDisplayTotal(it, sets), 0);
-                      const groupPricePerSet = gItems.reduce((s, { it }) => s + rowDisplayTotal(it, 1), 0);
+                      const groupTotal = gItems.reduce((s, { idx }) => s + lineTotals[idx] * sets, 0);
+                      const groupPricePerSet = gItems.reduce((s, { idx }) => s + lineTotals[idx], 0);
                       rows.push(
                         <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
                           <td colSpan={3} className="px-3 py-1.5">
@@ -1933,9 +1999,24 @@ export function NewQuotationClient({
                                 </>
                               )}
                             </div>
+                            {first.setSubtitle && (
+                              <div className="text-[10px] text-muted-foreground uppercase mt-0.5">{first.setSubtitle}</div>
+                            )}
                           </td>
                           <td colSpan={3} />
                           <td className="px-3 py-1.5 text-right tabular-nums">
+                            {isEditable ? (
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                aria-label="Set price"
+                                placeholder="Set price"
+                                value={first.setPrice ?? ""}
+                                onChange={(e) => applySetPrice(gid, e.target.value)}
+                                className="w-24 h-6 mb-0.5 border border-blue-200 rounded px-1.5 text-right text-xs bg-background tabular-nums"
+                              />
+                            ) : null}
                             <div className="text-[10px] font-mono text-blue-600 dark:text-blue-400">
                               {fmt(String(groupPricePerSet))}
                             </div>

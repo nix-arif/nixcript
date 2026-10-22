@@ -102,6 +102,8 @@ export default async function EditQuotationPage({ params }: Props) {
       rentalUnit: item.rentalUnit ?? undefined,
       setGroupId: item.setGroupId ?? undefined,
       setGroupLabel: item.setGroupLabel ?? undefined,
+      setSubtitle: item.setSubtitle ?? undefined,
+      setPrice: item.setPrice ?? undefined,
       setQty: item.setQty ?? undefined,
       productId: item.productId ?? undefined,
       productName: item.productName ?? undefined,

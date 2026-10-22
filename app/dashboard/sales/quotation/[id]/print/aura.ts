@@ -3,6 +3,7 @@ import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, StandardFonts } from "pdf
 import {
   drawCompanyHeader, drawInfoSection, estimateHeaderH, estimateInfoH,
 } from "./_pdf-header";
+import { isSetPriced } from "@/lib/quotation-set-price";
 
 type Data = NonNullable<Awaited<ReturnType<typeof getQuotationDetail>>>;
 
@@ -35,6 +36,14 @@ function fmtD(d: Date | string | null | undefined): string {
   return new Date(d).toLocaleDateString("en-MY", {
     day: "2-digit", month: "short", year: "numeric",
   });
+}
+
+// Accounting format for the Unit Price / Total columns: thousands separators,
+// 2 decimals, negatives in brackets, no currency (it sits in the column header)
+function fmtAcct(v: string | number | null | undefined): string {
+  const n = Number(v ?? 0);
+  const body = Math.abs(n).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n < 0 ? `(${body})` : body;
 }
 
 function fmtM(v: string | number | null | undefined): string {
@@ -175,9 +184,9 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
   const C_QTY  = showSetHeaders ? 38 : 28;
   const C_TQTY = showSetHeaders ? 48 : 0;
   const C_UOM  = 34;
-  const C_UP   = showIP ? 64 : 0;
+  const C_UP   = showIP ? 74 : 0;
   const C_DISC = showDisc ? 55 : 0;
-  const C_TOT  = showTPCol ? 68 : 0;
+  const C_TOT  = showTPCol ? 74 : 0;
   const C_DESC = CW - C_NO - C_CODE - C_QTY - C_TQTY - C_UOM - C_UP - C_DISC - C_TOT;
 
   const X_NO   = ML;
@@ -192,13 +201,13 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
   // ── Font size + layout from org settings ─────────────────────────────────
   const tfs       = data.orgTableFontSize ?? "normal";
-  const FS_DESC   = tfs === "small" ? 8    : tfs === "large" ? 11   : 9.5;
-  const FS_DETAIL = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 8.5;
-  const FS_CODE   = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 9;
-  const FS_NUM    = tfs === "small" ? 7.5  : tfs === "large" ? 9.5  : 8.5;
-  const LH        = tfs === "small" ? 10   : tfs === "large" ? 13.5 : 11.5;
+  const FS_DESC   = tfs === "small" ? 7.5  : tfs === "large" ? 10   : 8.5;
+  const FS_DETAIL = tfs === "small" ? 7    : tfs === "large" ? 9    : 7.5;
+  const FS_CODE   = tfs === "small" ? 7    : tfs === "large" ? 9    : 8;
+  const FS_NUM    = tfs === "small" ? 7    : tfs === "large" ? 8.5  : 7.5;
+  const LH        = tfs === "small" ? 9.5  : tfs === "large" ? 12.5 : 10.5;
   const CONT_LH   = 8;    // line height for continuation lines at 6pt
-  const RH_MIN    = tfs === "small" ? 15   : tfs === "large" ? 21   : 17;
+  const RH_MIN    = tfs === "small" ? 14   : tfs === "large" ? 19   : 15.5;
   const MDA_GAP   = 3;
 
   const hasBanner = true; // Aura always shows the title banner on every page
@@ -293,8 +302,10 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
   // ── Build render entries (set headers interleaved with items) ────────────
   const SET_HDR_H = 18;
+  const SUB_LINE_H = 12; // extra height for the set subtitle line
   type RenderEntry =
-    | { kind: "setHeader"; label: string; qty: number; setTotal: number; pricePerSet: number; rowH: number }
+    | { kind: "setHeader"; label: string; qty: number; setTotal: number; pricePerSet: number; rowH: number; subtitle?: string }
+    | { kind: "subtitle"; text: string; total?: number; rowH: number }
     | { kind: "item"; rowIdx: number; rowH: number };
   const renderItems: RenderEntry[] = [];
   {
@@ -306,7 +317,13 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         const setTotal = rowInfos
           .filter(r => r.item.setGroupId === it.setGroupId)
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
-        const qty = Number(it.setQty ?? 1); const _lbl = it.setGroupLabel ?? "Set"; renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, rowH: SET_HDR_H });
+        const qty = Number(it.setQty ?? 1); const _lbl = it.setGroupLabel ?? "Set"; renderItems.push({ kind: "setHeader", label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl, qty, setTotal, pricePerSet: qty > 0 ? setTotal / qty : 0, subtitle: it.setSubtitle || undefined, rowH: SET_HDR_H + (it.setSubtitle ? SUB_LINE_H : 0) });
+      }
+      if (!showSetHeaders && i === 0 && (it.setSubtitle || isSetPriced(it))) {
+        // Single set: no set header row, so this row carries the subtitle and/or the set price
+        const _single = (it.setGroupLabel ?? "").toLowerCase() === "not-as-set" ? "Loose Items" : (it.setGroupLabel ?? "");
+        const _total = isSetPriced(it) ? rowInfos.reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0) : undefined;
+        renderItems.push({ kind: "subtitle", text: it.setSubtitle || _single, total: _total, rowH: SET_HDR_H });
       }
       renderItems.push({ kind: "item", rowIdx: i, rowH: rowInfos[i].rowH });
     }
@@ -431,9 +448,9 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       { label: showSetHeaders ? "Qty/Set" : "Qty", x: X_QTY,  w: C_QTY,  align: "c" },
       ...(showSetHeaders ? [{ label: "Total Qty",  x: X_TQTY, w: C_TQTY, align: "c" as const }] : []),
       { label: "UOM",                              x: X_UOM,  w: C_UOM,  align: "c" },
-      ...(showIP ? [{ label: "Unit Price",           x: X_UP,   w: C_UP,   align: "r" as const }] : []),
+      ...(showIP ? [{ label: "Unit Price (RM)",      x: X_UP,   w: C_UP,   align: "r" as const }] : []),
       ...(showDisc ? [{ label: "Discount",         x: X_DISC, w: C_DISC, align: "c" as const }] : []),
-      ...(showTPCol ? [{ label: "Total",            x: X_TOT,  w: C_TOT,  align: "r" as const }] : []),
+      ...(showTPCol ? [{ label: "Total (RM)",       x: X_TOT,  w: C_TOT,  align: "r" as const }] : []),
     ];
 
     if (!isOverflowPage) {
@@ -441,8 +458,8 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
       // Aura: thin rule above header text
       hLine(page, curY, ML, W - MR, C_LINE, 0.4);
       for (const col of thdrs) {
-        const tw = fontB.widthOfTextAtSize(col.label, 7.5);
-        const tx = col.x + (col.w - tw) / 2;
+        const tw = fontB.widthOfTextAtSize(col.label.toUpperCase(), 7.5);
+        const tx = col.align === "r" ? col.x + col.w - TABLE_PAD - tw : col.x + (col.w - tw) / 2;
         page.drawText(col.label.toUpperCase(), {
           x: tx, y: tHdrY + 6, size: 7.5, font: fontB, color: accent,
         });
@@ -455,9 +472,22 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
     // ── Item rows ────────────────────────────────────────────────────────────
     for (const entryIdx of pageItems) {
       const entry = renderItems[entryIdx];
+      if (entry.kind === "subtitle") {
+        const subY = curY - entry.rowH;
+        page.drawText(trunc(entry.text.toUpperCase(), fontB, 8.5, CW - TABLE_PAD * 2 - (entry.total !== undefined ? 110 : 0)), {
+          x: ML + TABLE_PAD, y: subY + 5, size: 8.5, font: fontB, color: C_DARK,
+        });
+        if (entry.total !== undefined && showTPCol) {
+          const totStr = fmtAcct(entry.total);
+          const totW = fontB.widthOfTextAtSize(totStr, 8.5);
+          page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totW, y: subY + 5, size: 8.5, font: fontB, color: C_DARK });
+        }
+        curY = subY;
+        continue;
+      }
       if (entry.kind === "setHeader") {
-        const hdrY  = curY - SET_HDR_H;
-        const textY = hdrY + (SET_HDR_H - FS_DESC) / 2;
+        const hdrY  = curY - entry.rowH;
+        const textY = curY - SET_HDR_H + (SET_HDR_H - FS_DESC) / 2;
 
         // "SET NAME × N set/sets" inline, pinned to left margin
         const labelUpper  = entry.label.toUpperCase();
@@ -468,17 +498,22 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
 
         if (showTPCol) {
           // Unit Price column — price per set
-          const upStr  = `RM ${entry.pricePerSet.toFixed(2)}`;
+          const upStr  = fmtAcct(entry.pricePerSet);
           const upStrW = fontB.widthOfTextAtSize(upStr, FS_DESC);
-          page.drawText(upStr, { x: X_UP + (C_UP - upStrW) / 2, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
+          page.drawText(upStr, { x: X_UP + C_UP - TABLE_PAD - upStrW, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
 
           // Total column — set total
-          const totStr  = `RM ${entry.setTotal.toFixed(2)}`;
+          const totStr  = fmtAcct(entry.setTotal);
           const totStrW = fontB.widthOfTextAtSize(totStr, FS_DESC);
           page.drawText(totStr, { x: X_TOT + C_TOT - TABLE_PAD - totStrW, y: textY, size: FS_DESC, font: fontB, color: C_DARK });
         }
 
         hLine(page, hdrY, ML, W - MR, accent, 0.5);
+        if (entry.subtitle) {
+          page.drawText(trunc(entry.subtitle.toUpperCase(), fontR, 7.5, CW - TABLE_PAD * 2), {
+            x: ML + TABLE_PAD, y: hdrY + 4, size: 7.5, font: fontR, color: C_MID,
+          });
+        }
         curY = hdrY;
         continue;
       }
@@ -542,42 +577,44 @@ export async function generateQuotationAura(data: Data): Promise<Uint8Array> {
         x: X_UOM + (C_UOM - uomW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
       });
 
-      // Unit Price
-      if (showIP) {
-        const up  = `RM ${Number(item.unitPrice ?? 0).toFixed(2)}`;
-        const upW = fontR.widthOfTextAtSize(up, FS_CODE);
-        page.drawText(up, {
-          x: X_UP + (C_UP - upW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
-        });
-      }
+      const setPriced = isSetPriced(item); // priced as a whole set: no item price / discount / total
+      if (!setPriced) {
+        // Unit Price
+        if (showIP) {
+          const up  = fmtAcct(item.unitPrice);
+          const upW = fontR.widthOfTextAtSize(up, FS_CODE);
+          page.drawText(up, {
+            x: X_UP + C_UP - TABLE_PAD - upW, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK,
+          });
+        }
 
-      // Discount amount + percentage
-      if (showDisc) {
-        const itemDiscAmt = Number(item.discountAmt ?? 0);
-        const itemDiscPct = Number(item.discountPct ?? 0);
-        if (itemDiscAmt > 0) {
-          const amtStr  = `RM ${itemDiscAmt.toFixed(2)}`;
-          const amtStrW = fontR.widthOfTextAtSize(amtStr, FS_CODE);
-          page.drawText(amtStr, { x: X_DISC + (C_DISC - amtStrW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK });
-          const pctStr  = `(${itemDiscPct}%)`;
-          const pctStrW = fontR.widthOfTextAtSize(pctStr, FS_CODE - 1.5);
-          page.drawText(pctStr, { x: X_DISC + (C_DISC - pctStrW) / 2, y: textBaseline - 9, size: FS_CODE - 1.5, font: fontR, color: C_LITE });
-        } else {
-          const dash  = "—";
-          const dashW = fontR.widthOfTextAtSize(dash, FS_CODE);
-          page.drawText(dash, { x: X_DISC + (C_DISC - dashW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_LITE });
+        // Discount amount + percentage
+        if (showDisc) {
+          const itemDiscAmt = Number(item.discountAmt ?? 0);
+          const itemDiscPct = Number(item.discountPct ?? 0);
+          if (itemDiscAmt > 0) {
+            const amtStr  = `RM ${itemDiscAmt.toFixed(2)}`;
+            const amtStrW = fontR.widthOfTextAtSize(amtStr, FS_CODE);
+            page.drawText(amtStr, { x: X_DISC + (C_DISC - amtStrW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_DARK });
+            const pctStr  = `(${itemDiscPct}%)`;
+            const pctStrW = fontR.widthOfTextAtSize(pctStr, FS_CODE - 1.5);
+            page.drawText(pctStr, { x: X_DISC + (C_DISC - pctStrW) / 2, y: textBaseline - 9, size: FS_CODE - 1.5, font: fontR, color: C_LITE });
+          } else {
+            const dash  = "—";
+            const dashW = fontR.widthOfTextAtSize(dash, FS_CODE);
+            page.drawText(dash, { x: X_DISC + (C_DISC - dashW) / 2, y: textBaseline, size: FS_CODE, font: fontR, color: C_LITE });
+          }
+        }
+
+        // Total
+        if (showTPCol) {
+          const tot  = fmtAcct(item.totalPrice);
+          const totW = fontR.widthOfTextAtSize(tot, FS_DESC);
+          page.drawText(tot, {
+            x: X_TOT + C_TOT - TABLE_PAD - totW, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
+          });
         }
       }
-
-      // Total
-      if (showTPCol) {
-        const tot  = `RM ${Number(item.totalPrice ?? 0).toFixed(2)}`;
-        const totW = fontR.widthOfTextAtSize(tot, FS_DESC);
-        page.drawText(tot, {
-          x: X_TOT + (C_TOT - totW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
-        });
-      }
-
       hLine(page, rowY, ML, W - MR, C_LINE, 0.3);
       curY = rowY;
     }
