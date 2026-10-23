@@ -8,6 +8,7 @@ import { PDFDocument, rgb, StandardFonts, PDFImage, PDFFont, PDFPage, PDFString 
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { inspectionMediaFilename } from "@/lib/inspection-media";
+import { inspectionMediaShareUrl } from "@/lib/inspection-media-share";
 
 export const maxDuration = 60;
 
@@ -184,8 +185,8 @@ type IssueItem = {
   // them are report-worthy evidence of the finding.
   evidenceImageUrls: string[];
   // Videos can't be embedded in a PDF or spreadsheet, so each one is listed
-  // with a link that downloads it (the app's /api/packing-list/media route
-  // checks the viewer's access, then redirects to a fresh download URL).
+  // with a public signed link that opens a page playing it in the browser — no
+  // login needed, since the report is shared with the supplier.
   videos: { url: string; filename: string }[];
   // Inspection/approval happen per line (different reviewers can handle
   // different rows of the same packing list) — so these are per-item, not a
@@ -248,7 +249,8 @@ function buildIssueItems(
       const videos = item.photos
         .filter((p) => p.category === kind && p.kind === "video")
         .map((p, idx) => ({
-          url: `${ctx.baseUrl}/api/packing-list/media/${p.id}`,
+          // public signed link — the report goes to the supplier, who has no login
+          url: inspectionMediaShareUrl(ctx.baseUrl, p.id),
           filename: inspectionMediaFilename(ctx.packingListNo, item.rowNo, kind, idx + 1, p.imageKey),
         }));
       const catalogImageUrl = item.productCode ? getProductImageUrl(item.productCode) || null : null;
@@ -350,7 +352,7 @@ async function buildXlsxBuffer(
   const baseHeaders = ["No.", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At"];
   const evidenceHeaders = Array.from({ length: maxEvidence }, (_, i) => `Evidence Photo ${i + 1}`);
   const maxVideos = issues.reduce((max, i) => Math.max(max, i.videos.length), 0);
-  const videoHeaders = Array.from({ length: maxVideos }, (_, i) => `Video ${i + 1} (click to download)`);
+  const videoHeaders = Array.from({ length: maxVideos }, (_, i) => `Video ${i + 1} (click to play)`);
   const headers = [...baseHeaders, ...evidenceHeaders, ...videoHeaders];
   const totalCols = headers.length;
 
@@ -809,7 +811,7 @@ async function buildReportPdfBytes(
       }
 
       if (issue.videos.length > 0) {
-        page.drawText(`Videos attached (${issue.videos.length}) — click a line to download:`, { x: detX, y: detY, size: 7, font: fontB, color: C_MID });
+        page.drawText(`Videos attached (${issue.videos.length}) — click a line to play:`, { x: detX, y: detY, size: 7, font: fontB, color: C_MID });
         detY -= EVID_LABEL_H;
         issue.videos.forEach((v, vi) => {
           const text = trunc(`Video ${vi + 1}  -  ${v.filename}`, fontR, 7, detMaxW);
