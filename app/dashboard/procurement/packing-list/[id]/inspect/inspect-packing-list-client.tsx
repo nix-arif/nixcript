@@ -71,9 +71,12 @@ function fmtLineTime(iso: string): string {
 // second background class risks losing to the status color on Tailwind's
 // generated stylesheet order rather than className order. Swapping which
 // single border-color utility gets emitted avoids both problems.
-function rowStateClasses(approvalStatus: string | null, zebra: boolean, zebraClass: string, flashing = false): string {
+function rowStateClasses(approvalStatus: string | null, zebra: boolean, zebraClass: string, flashing = false, short = false): string {
   const state = approvalStatus ? ROW_STATE_STYLES[approvalStatus] : null;
   if (flashing) return cn(state?.bg, "border-l-[6px] border-l-blue-500");
+  // A shortage must not be easy to miss: thick red edge on top of whatever the
+  // approval state colours the row (tinted red itself when it has none).
+  if (short) return cn(state ? state.bg : "bg-red-50/70 dark:bg-red-950/20", "border-l-[6px] border-l-red-500");
   if (state) return cn(state.bg, "border-l-4", state.border);
   return cn(zebra && zebraClass, "border-l-4 border-l-transparent");
 }
@@ -463,6 +466,14 @@ export function InspectPackingListClient({
 
   const pendingApprovableIds = pl.items.map((i) => i.id).filter(isPendingAndApprovable);
 
+  // Scrolls to a line and flashes it — shared by "Review next" and the shortage banner
+  const shortCursorRef = useRef<string | null>(null);
+  function focusItem(id: string) {
+    rowEls.current[id]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashItemId(id);
+    setTimeout(() => setFlashItemId((cur) => (cur === id ? null : cur)), 1600);
+  }
+
   function reviewNextPending() {
     if (pendingApprovableIds.length === 0) return;
     const currentIdx = reviewCursorRef.current ? pendingApprovableIds.indexOf(reviewCursorRef.current) : -1;
@@ -785,6 +796,21 @@ export function InspectPackingListClient({
     return acc;
   }, {});
 
+  // Lines received short of what was expected, in the order they appear on screen
+  const shortItems = Object.values(byPo).flat().flatMap((item) => {
+    const row = rows[item.id];
+    if (!row) return [];
+    const shortBy = Math.max(0, (parseFloat(item.qtyExpected) || 0) - (parseFloat(row.qtyReceived) || 0));
+    return shortBy > 0 ? [{ id: item.id, label: item.productCode || item.description || "item", shortBy, uom: item.uom || "" }] : [];
+  });
+  function jumpToNextShort() {
+    if (shortItems.length === 0) return;
+    const cur = shortCursorRef.current ? shortItems.findIndex((x) => x.id === shortCursorRef.current) : -1;
+    const next = shortItems[(cur + 1) % shortItems.length];
+    shortCursorRef.current = next.id;
+    focusItem(next.id);
+  }
+
   // Mirrors the server's own gate in applyPackingListInspection — every line
   // needs an approval before completion is allowed, so the button reflects
   // that up front instead of only failing after a click.
@@ -844,6 +870,33 @@ export function InspectPackingListClient({
             Rejected
           </span>
         </div>
+
+        {shortItems.length > 0 && (
+          <div className="border-2 border-red-400 dark:border-red-700 bg-red-50 dark:bg-red-950/30 rounded-lg px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span className="flex items-center gap-2 text-sm font-semibold text-red-700 dark:text-red-400">
+                <AlertTriangleIcon className="w-4 h-4 shrink-0" />
+                {shortItems.length} item{shortItems.length !== 1 ? "s" : ""} received short of what was expected
+              </span>
+              <Button type="button" size="sm" variant="outline" className="h-7 text-xs gap-1.5 shrink-0 border-red-300 text-red-700 hover:text-red-700 dark:border-red-700 dark:text-red-400" onClick={jumpToNextShort}>
+                Go to next short item <ArrowRightIcon className="w-3 h-3" />
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {shortItems.map((x) => (
+                <button
+                  key={x.id}
+                  type="button"
+                  onClick={() => { shortCursorRef.current = x.id; focusItem(x.id); }}
+                  className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md bg-white dark:bg-background border border-red-300 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-950/50 transition-colors"
+                >
+                  <span className="font-mono font-medium truncate max-w-48">{x.label}</span>
+                  <span className="font-bold text-red-600 dark:text-red-400 tabular-nums">short {x.shortBy} {x.uom}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {untouchedIds.length > 0 && (
           <div className="flex items-center justify-between gap-3 border border-border bg-muted/30 rounded-lg px-3 py-2">
@@ -915,7 +968,7 @@ export function InspectPackingListClient({
                         ref={(el) => { rowEls.current[item.id] = el; }}
                         className={cn(
                           "border-b border-border/40 last:border-b-0 align-top transition-colors duration-300",
-                          rowStateClasses(row.approvalStatus, itemIndex % 2 === 1, color.stripe, flashItemId === item.id),
+                          rowStateClasses(row.approvalStatus, itemIndex % 2 === 1, color.stripe, flashItemId === item.id, shortfall > 0),
                         )}
                       >
                         <td className="py-2.5 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{itemIndex + 1}</td>
@@ -991,6 +1044,11 @@ export function InspectPackingListClient({
                           </div>
                         </td>
                         <td className="py-2.5 pr-3">
+                          {shortfall > 0 && (
+                            <span className="inline-flex items-center gap-1 mb-1.5 text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md bg-red-600 text-white">
+                              <AlertTriangleIcon className="w-3 h-3 shrink-0" /> Short {shortfall} {item.uom || ""}
+                            </span>
+                          )}
                           {(item.setGroupLabel || item.customerPoNo || item.customerOrganization || item.customerName) && (
                             <div className="flex flex-wrap gap-1 mb-1">
                               {item.setGroupLabel && (
@@ -1125,7 +1183,7 @@ export function InspectPackingListClient({
                                 onFocus={() => handleFocusRow(item.id)}
                                 onChange={(e) => updateRow(item.id, { qtyReceived: e.target.value })}
                                 onBlur={() => handleBlurRow(item.id)}
-                                className={cn("h-6 text-[11px] text-right tabular-nums w-full px-1.5", shortfall > 0 && "border-amber-400 focus-visible:ring-amber-400")}
+                                className={cn("h-6 text-[11px] text-right tabular-nums w-full px-1.5", shortfall > 0 && "border-red-500 bg-red-50 dark:bg-red-950/30 focus-visible:ring-red-500")}
                               />
 
                               <span className="text-muted-foreground">Return</span>
@@ -1150,8 +1208,8 @@ export function InspectPackingListClient({
                             </div>
 
                             {shortfall > 0 && (
-                              <p className="text-[11px] text-amber-600 dark:text-amber-400 text-right">
-                                Short by {shortfall} {item.uom || ""}
+                              <p className="text-xs font-bold text-red-600 dark:text-red-400 text-right bg-red-100 dark:bg-red-950/40 rounded px-1.5 py-0.5">
+                                SHORT by {shortfall} {item.uom || ""}
                               </p>
                             )}
 

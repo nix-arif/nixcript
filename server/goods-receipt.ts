@@ -17,6 +17,7 @@ import {
   member,
   packingList,
   packingListItem,
+  stockLevel,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -1183,4 +1184,95 @@ export async function deleteGoodsReceipt(id: string): Promise<void> {
   revalidatePath("/dashboard/procurement/goods-receipt");
   revalidatePath("/dashboard/procurement/goods-receipt/centralized");
   revalidatePath(`/dashboard/procurement/purchase-order/${gr.purchaseOrderId}`);
+}
+
+// Owner-only, one click: undo a whole completed packing-list inspection. A
+// packing list that spans several POs produced one goods receipt per PO, so
+// recalling "the inspection" used to mean opening and recalling each GR, then
+// deleting each one. This does all of it:
+//   1. checks up front that reversing every receipt's stock is possible (no
+//      product would go negative) — so it fails BEFORE touching anything
+//      rather than leaving some receipts recalled and others not;
+//   2. recalls every confirmed GR of the packing list with the same
+//      recallGoodsReceipt as the per-GR button (stock reversed, PO fulfilment
+//      re-synced), which also reopens the packing list for correction;
+//   3. optionally deletes those recalled receipts, so completing the
+//      inspection again doesn't leave a pile of dead GR records behind.
+// The inspection numbers, remarks and photos on the packing list lines are
+// kept, so it can be corrected and completed again.
+export async function recallPackingListInspection(
+  packingListId: string,
+  opts: { deleteReceipts?: boolean } = {},
+): Promise<{ recalled: number; deleted: number; grNos: string[] }> {
+  const { orgId } = await requireOwner();
+
+  const [pl] = await db
+    .select()
+    .from(packingList)
+    .where(and(eq(packingList.id, packingListId), eq(packingList.organizationId, orgId)));
+  if (!pl) throw new Error("Packing list not found");
+
+  const grs = await db
+    .select()
+    .from(goodsReceipt)
+    .where(and(eq(goodsReceipt.packingListId, packingListId), eq(goodsReceipt.organizationId, orgId)))
+    .orderBy(goodsReceipt.grNo);
+  const active = grs.filter((g) => g.status !== "recalled");
+  const alreadyRecalled = grs.filter((g) => g.status === "recalled");
+  if (active.length === 0 && !(opts.deleteReceipts && alreadyRecalled.length > 0)) {
+    throw new Error("Nothing to recall — this packing list has no confirmed goods receipts");
+  }
+
+  // ── 1. pre-flight: can all of the stock be taken back out? ────────────────
+  const need = new Map<string, { productId: string; warehouse: string; qty: number; code: string }>();
+  for (const gr of active) {
+    const [po] = await db.select().from(purchaseOrder).where(eq(purchaseOrder.id, gr.purchaseOrderId));
+    let warehouse = "Default";
+    if (po?.purchaseRequisitionId) {
+      const [pr] = await db.select({ prType: purchaseRequisition.prType }).from(purchaseRequisition).where(eq(purchaseRequisition.id, po.purchaseRequisitionId));
+      if (pr?.prType === "sample_demo") warehouse = "Demo";
+    }
+    const items = await db.select().from(goodsReceiptItem).where(eq(goodsReceiptItem.goodsReceiptId, gr.id));
+    for (const item of items) {
+      const qty = item.qtyGood !== null ? (parseFloat(item.qtyGood) || 0) : (parseFloat(item.qtyReceived) || 0);
+      if (!item.productId || qty <= 0) continue;
+      const key = `${item.productId}|${warehouse}`;
+      const cur = need.get(key) ?? { productId: item.productId, warehouse, qty: 0, code: item.productCode ?? item.productId };
+      cur.qty += qty;
+      need.set(key, cur);
+    }
+  }
+  if (need.size > 0) {
+    const levels = await db
+      .select({ productId: stockLevel.productId, warehouseLabel: stockLevel.warehouseLabel, quantity: stockLevel.quantity })
+      .from(stockLevel)
+      .where(and(eq(stockLevel.organizationId, orgId), inArray(stockLevel.productId, [...need.values()].map((n) => n.productId))));
+    const have = new Map(levels.map((l) => [`${l.productId}|${l.warehouseLabel}`, parseFloat(l.quantity) || 0]));
+    const short = [...need.entries()]
+      .filter(([key, n]) => (have.get(key) ?? 0) + 1e-9 < n.qty)
+      .map(([key, n]) => `${n.code} (need ${n.qty}, in stock ${have.get(key) ?? 0}${n.warehouse !== "Default" ? `, ${n.warehouse}` : ""})`);
+    if (short.length > 0) {
+      throw new Error(`Can't recall — some of this stock has already been used or delivered: ${short.join("; ")}. Nothing was changed.`);
+    }
+  }
+
+  // ── 2. recall every confirmed GR ──────────────────────────────────────────
+  for (const gr of active) await recallGoodsReceipt(gr.id);
+
+  // ── 3. optionally clear the recalled receipts away ────────────────────────
+  let deleted = 0;
+  if (opts.deleteReceipts) {
+    for (const gr of grs) {
+      await deleteGoodsReceipt(gr.id);
+      deleted++;
+    }
+  }
+
+  // The packing list is reopened for correction by each recall; make sure of
+  // it even when only already-recalled receipts were being cleared.
+  await db.update(packingList).set({ status: "pending" }).where(eq(packingList.id, packingListId));
+  revalidatePath("/dashboard/procurement/packing-list");
+  revalidatePath(`/dashboard/procurement/packing-list/${packingListId}`);
+
+  return { recalled: active.length, deleted, grNos: grs.map((g) => g.grNo) };
 }

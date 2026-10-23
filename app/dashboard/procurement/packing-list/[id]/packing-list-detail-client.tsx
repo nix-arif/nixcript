@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { recallPackingListInspection } from "@/server/goods-receipt";
 import { cancelPackingList, deletePackingList, getInspectionLineStates, type InspectionLineState, type PackingListWithItems } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
@@ -13,7 +14,7 @@ import {
   ArrowLeftIcon, BuildingIcon, CalendarIcon, ClipboardCheckIcon,
   XIcon, TruckIcon, LinkIcon, DatabaseIcon, PencilIcon, ClipboardListIcon, PlusIcon, TagIcon, Trash2Icon,
   AlertTriangleIcon, CheckIcon, UserIcon, FileWarningIcon, ShieldCheckIcon, ShieldXIcon, ShieldQuestionIcon,
-  ChevronDownIcon, FileTextIcon, FileSpreadsheetIcon, DownloadIcon,
+  ChevronDownIcon, FileTextIcon, FileSpreadsheetIcon, DownloadIcon, RotateCcwIcon, LoaderIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -176,6 +177,9 @@ export function PackingListDetailClient({
   const [deleting, setDeleting] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState<"pdf" | "xlsx" | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [recallOpen, setRecallOpen] = useState(false);
+  const [recallDeleteGrs, setRecallDeleteGrs] = useState(true);
+  const [recalling, setRecalling] = useState(false);
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const isOwner = permissions.includes("*");
   const showSourcing = businessType !== "trading";
@@ -259,6 +263,28 @@ export function PackingListDetailClient({
       toast.error(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setCancelling(false);
+    }
+  }
+
+  // Owner-only, own org: undo the whole completed inspection in one go
+  // (recall every goods receipt of this packing list, reopen it for
+  // correction, optionally delete the recalled receipts).
+  const activeGrs = pl.goodsReceipts.filter((g) => g.status !== "recalled");
+  const canRecallInspection = isOwner && !organizationName && pl.status === "completed" && activeGrs.length > 0;
+
+  async function handleRecallInspection() {
+    setRecalling(true);
+    try {
+      const r = await recallPackingListInspection(pl.id, { deleteReceipts: recallDeleteGrs });
+      toast.success(
+        `Inspection recalled — ${r.recalled} goods receipt${r.recalled !== 1 ? "s" : ""} recalled${r.deleted ? ` and ${r.deleted} deleted` : ""}. The packing list is open for correction.`,
+      );
+      setRecallOpen(false);
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't recall the inspection");
+    } finally {
+      setRecalling(false);
     }
   }
 
@@ -350,6 +376,11 @@ export function PackingListDetailClient({
             {isPending && can("packing-list:inspect") && (
               <Button size="sm" className="gap-1.5" onClick={() => router.push(inspectHref ?? `/dashboard/procurement/packing-list/${pl.id}/inspect`)}>
                 <ClipboardCheckIcon className="w-3.5 h-3.5" /> Start Inspection
+              </Button>
+            )}
+            {canRecallInspection && (
+              <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" onClick={() => setRecallOpen(true)}>
+                <RotateCcwIcon className="w-3.5 h-3.5" /> Recall inspection
               </Button>
             )}
             {isPending && can("packing-list:create") && (
@@ -723,6 +754,44 @@ export function PackingListDetailClient({
               </div>
             </section>
           )}
+
+          <Dialog open={recallOpen} onOpenChange={(o) => !recalling && setRecallOpen(o)}>
+            <DialogContent className="sm:max-w-md">
+              <DialogTitle>Recall inspection of {pl.packingListNo}?</DialogTitle>
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">
+                  This recalls <strong>all {activeGrs.length} goods receipt{activeGrs.length !== 1 ? "s" : ""}</strong> from this
+                  packing list in one go, takes the stock they added back out, and reopens the packing list so the inspection can be
+                  corrected and completed again. The numbers, remarks and photos on each line are kept.
+                </p>
+                <ul className="border border-border/60 rounded-lg divide-y divide-border/40 text-xs">
+                  {activeGrs.map((g) => (
+                    <li key={g.id} className="flex items-center gap-2 px-3 py-1.5">
+                      <TruckIcon className="w-3 h-3 text-green-600 dark:text-green-400 shrink-0" />
+                      <span className="font-mono font-medium">{g.grNo}</span>
+                      <span className="text-muted-foreground">against {g.poNo ?? g.purchaseOrderId}</span>
+                    </li>
+                  ))}
+                </ul>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox" checked={recallDeleteGrs} onChange={(e) => setRecallDeleteGrs(e.target.checked)} className="mt-0.5 w-3.5 h-3.5" />
+                  <span className="text-xs">
+                    Also delete the recalled goods receipts <span className="text-muted-foreground">(removes the records permanently; their GR numbers aren&apos;t reused)</span>
+                  </span>
+                </label>
+                <p className="text-[11px] text-muted-foreground">
+                  If any of this stock has already been used or delivered, nothing is changed and you&apos;ll be told which items.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" size="sm" disabled={recalling} onClick={() => setRecallOpen(false)}>Keep as is</Button>
+                <Button size="sm" variant="destructive" disabled={recalling} onClick={handleRecallInspection} className="gap-1.5">
+                  {recalling ? <LoaderIcon className="w-3.5 h-3.5 animate-spin" /> : <RotateCcwIcon className="w-3.5 h-3.5" />}
+                  {recalling ? "Recalling…" : "Recall inspection"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <div className="space-y-5">
