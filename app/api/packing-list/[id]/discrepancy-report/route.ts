@@ -7,6 +7,7 @@ import { inArray } from "drizzle-orm";
 import { PDFDocument, rgb, StandardFonts, PDFImage, PDFFont, PDFPage, PDFString } from "pdf-lib";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
+import { inspectionMediaFilename } from "@/lib/inspection-media";
 
 export const maxDuration = 60;
 
@@ -38,6 +39,7 @@ const C_WHITE  = rgb(1, 1, 1);
 const C_AMBER  = rgb(0.57, 0.25, 0.05);
 const C_RED    = rgb(0.55, 0.13, 0.13);
 const C_BRAND  = rgb(0.36, 0.27, 0.56);
+const C_LINK   = rgb(0.10, 0.30, 0.75);
 
 function sanitize(t: string): string {
   return String(t ?? "").replace(/[\x00-\x1F\x7F]/g, " ");
@@ -181,6 +183,10 @@ type IssueItem = {
   // only the first one was ever shown and the rest silently dropped; all of
   // them are report-worthy evidence of the finding.
   evidenceImageUrls: string[];
+  // Videos can't be embedded in a PDF or spreadsheet, so each one is listed
+  // with a link that downloads it (the app's /api/packing-list/media route
+  // checks the viewer's access, then redirects to a fresh download URL).
+  videos: { url: string; filename: string }[];
   // Inspection/approval happen per line (different reviewers can handle
   // different rows of the same packing list) — so these are per-item, not a
   // single document-level signature.
@@ -220,6 +226,7 @@ function buildIssueItems(
   poLabelById: Map<string, string>,
   poLineNoById: Map<string, number | null>,
   kind: ReportKind,
+  ctx: { baseUrl: string; packingListNo: string },
 ): IssueItem[] {
   return items
     .map((item): Omit<IssueItem, "no"> | null => {
@@ -236,10 +243,14 @@ function buildIssueItems(
       const include = kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0;
       if (!include) return null;
 
-      // Videos can't go into a PDF or spreadsheet — only photos are embedded;
-      // the notes say how many videos to watch in the system.
+      // Only photos are embedded; videos are listed with download links.
       const evidencePhotos = item.photos.filter((p) => p.category === kind && p.kind !== "video");
-      const videoCount = item.photos.filter((p) => p.category === kind && p.kind === "video").length;
+      const videos = item.photos
+        .filter((p) => p.category === kind && p.kind === "video")
+        .map((p, idx) => ({
+          url: `${ctx.baseUrl}/api/packing-list/media/${p.id}`,
+          filename: inspectionMediaFilename(ctx.packingListNo, item.rowNo, kind, idx + 1, p.imageKey),
+        }));
       const catalogImageUrl = item.productCode ? getProductImageUrl(item.productCode) || null : null;
       return {
         poLabel: poLabelById.get(item.purchaseOrderId) ?? item.purchaseOrderId,
@@ -253,11 +264,10 @@ function buildIssueItems(
         received,
         shortfall,
         returned: flagQty,
-        returnNotes: videoCount
-          ? `${flagNotes}${flagNotes ? " " : ""}(${videoCount} video${videoCount > 1 ? "s" : ""} attached — watch on the packing list in the system)`
-          : flagNotes,
+        returnNotes: flagNotes,
         identityImageUrl: item.imageUrl ?? catalogImageUrl,
         evidenceImageUrls: evidencePhotos.map((p) => p.url),
+        videos,
         inspectedByName: item.draftInspectedByName,
         inspectedAt: item.draftInspectedAt,
         approvedByName: item.draftApprovedByName,
@@ -265,8 +275,14 @@ function buildIssueItems(
       };
     })
     .filter((i): i is Omit<IssueItem, "no"> => i !== null)
-    // Numbered only after filtering, so the sequence is 1..N over what this
-    // report actually shows, not the packing list's full item list.
+    // Lowest PO no. first, then the lowest PO line no. within it (natural
+    // order, so PO-2 comes before PO-10); a line with no PO line goes last.
+    // Array.sort is stable, so ties keep the packing list's own order.
+    .sort((a, b) =>
+      a.poLabel.localeCompare(b.poLabel, undefined, { numeric: true, sensitivity: "base" })
+      || (a.poLineNo ?? Number.MAX_SAFE_INTEGER) - (b.poLineNo ?? Number.MAX_SAFE_INTEGER))
+    // Numbered only after sorting and filtering, so the sequence is 1..N in
+    // the order the report shows, not the packing list's full item list.
     .map((issue, idx) => ({ ...issue, no: idx + 1 }));
 }
 
@@ -333,7 +349,9 @@ async function buildXlsxBuffer(
   const maxEvidence = issues.reduce((max, i) => Math.max(max, i.evidenceImageUrls.length), 0);
   const baseHeaders = ["No.", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At"];
   const evidenceHeaders = Array.from({ length: maxEvidence }, (_, i) => `Evidence Photo ${i + 1}`);
-  const headers = [...baseHeaders, ...evidenceHeaders];
+  const maxVideos = issues.reduce((max, i) => Math.max(max, i.videos.length), 0);
+  const videoHeaders = Array.from({ length: maxVideos }, (_, i) => `Video ${i + 1} (click to download)`);
+  const headers = [...baseHeaders, ...evidenceHeaders, ...videoHeaders];
   const totalCols = headers.length;
 
   sheet.mergeCells(1, 1, 1, totalCols);
@@ -400,6 +418,8 @@ async function buildXlsxBuffer(
       issue.approvedByName ?? "",
       fmtDateTime(issue.approvedAt),
       ...issue.evidenceImageUrls.map(() => ""),
+      ...Array.from({ length: maxEvidence - issue.evidenceImageUrls.length }, () => ""),
+      ...issue.videos.map((v) => ({ text: v.filename, hyperlink: v.url })),
     ]);
     row.height = ROW_HEIGHT_PT;
     row.eachCell((cell, colNum) => {
@@ -407,6 +427,11 @@ async function buildXlsxBuffer(
       const colIndex0 = colNum - 1;
       const isTextCol = colIndex0 === DESC_COL || colIndex0 === NOTES_COL;
       cell.alignment = { vertical: "middle", wrapText: isTextCol, horizontal: isTextCol ? "left" : "center" };
+    });
+    issue.videos.forEach((_, vi) => {
+      const cell = row.getCell(baseHeaders.length + maxEvidence + vi + 1);
+      cell.font = { color: { argb: "FF1A4DBF" }, underline: true, size: 8 };
+      cell.alignment = { vertical: "middle", wrapText: true, horizontal: "left" };
     });
     row.getCell(baseHeaders.indexOf("No.") + 1).font = { bold: true };
     if (issue.shortfall > 0) row.getCell(baseHeaders.indexOf("Short") + 1).font = { bold: true, color: { argb: "FF92400E" } };
@@ -438,6 +463,7 @@ async function buildXlsxBuffer(
     { width: 16 },  // Approved By
     { width: 16 },  // Approved At
     ...evidenceHeaders.map(() => ({ width: 12 })),
+    ...videoHeaders.map(() => ({ width: 30 })),
   ];
 
   const buf = await workbook.xlsx.writeBuffer();
@@ -473,6 +499,7 @@ const ROW_MIN_H = IMG_BLOCK_H + ROW_V_PAD;
 const EVID_THUMB = 34;
 const EVID_GAP = 5;
 const EVID_LABEL_H = 11;
+const VIDEO_LINE_H = 10;
 
 function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: number, config: ReportConfig): Measured {
   const poLineText = issue.poLineNo !== null ? `  ·  PO Line ${issue.poLineNo}` : "";
@@ -504,6 +531,7 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
     + (issue.shortfall > 0 ? TEXT_LINE_H : 0)
     + returnLines.length * RETURN_LINE_H
     + (evidenceRows > 0 ? EVID_LABEL_H + evidenceRows * (EVID_THUMB + EVID_GAP) : 0)
+    + (issue.videos.length > 0 ? EVID_LABEL_H + issue.videos.length * VIDEO_LINE_H + 2 : 0)
     + reviewLines.length * RETURN_LINE_H
     + ROW_V_PAD;
 
@@ -534,6 +562,25 @@ function addOpenFileLink(
       F: PDFString.of(relativePath),
       NewWindow: true,
     },
+  });
+  page.node.addAnnot(context.register(annot));
+}
+
+// A normal clickable web link — works in every PDF viewer, unlike the Launch
+// action above. Used for the video download links.
+function addUriLink(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  rect: { x: number; y: number; width: number; height: number },
+  uri: string,
+): void {
+  const { context } = pdfDoc;
+  const annot = context.obj({
+    Type: "Annot",
+    Subtype: "Link",
+    Rect: [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height],
+    Border: [0, 0, 0],
+    A: { Type: "Action", S: "URI", URI: PDFString.of(uri) },
   });
   page.node.addAnnot(context.register(annot));
 }
@@ -761,6 +808,20 @@ async function buildReportPdfBytes(
         detY -= m.evidenceRows * (EVID_THUMB + EVID_GAP);
       }
 
+      if (issue.videos.length > 0) {
+        page.drawText(`Videos attached (${issue.videos.length}) — click a line to download:`, { x: detX, y: detY, size: 7, font: fontB, color: C_MID });
+        detY -= EVID_LABEL_H;
+        issue.videos.forEach((v, vi) => {
+          const text = trunc(`Video ${vi + 1}  -  ${v.filename}`, fontR, 7, detMaxW);
+          const tw = fontR.widthOfTextAtSize(text, 7);
+          page.drawText(text, { x: detX, y: detY, size: 7, font: fontR, color: C_LINK });
+          page.drawLine({ start: { x: detX, y: detY - 1 }, end: { x: detX + tw, y: detY - 1 }, thickness: 0.4, color: C_LINK });
+          addUriLink(pdfDoc, page, { x: detX, y: detY - 2, width: tw, height: VIDEO_LINE_H }, v.url);
+          detY -= VIDEO_LINE_H;
+        });
+        detY -= 2;
+      }
+
       for (const line of m.reviewLines) {
         page.drawText(line, { x: detX, y: detY, size: 7, font: fontR, color: C_LITE });
         detY -= RETURN_LINE_H;
@@ -828,8 +889,12 @@ export async function GET(req: Request, { params }: Props) {
       : [];
     const poLineNoById = new Map(poItemRows.map((r) => [r.id, r.rowNo]));
 
-    const returnIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "return");
-    const repairIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "repair");
+    // Absolute links printed in the report (video downloads) — a saved PDF
+    // needs the full address, so prefer the configured app URL.
+    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL ?? new URL(req.url).origin).replace(/\/$/, "");
+    const ctx = { baseUrl, packingListNo: pl.packingListNo };
+    const returnIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "return", ctx);
+    const repairIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "repair", ctx);
     const hasReturn = returnIssues.length > 0;
     const hasRepair = repairIssues.length > 0;
 

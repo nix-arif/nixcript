@@ -1,6 +1,9 @@
 "use client";
 
-import { PlayIcon } from "lucide-react";
+import { useState } from "react";
+import { DownloadIcon, LoaderIcon, PlayIcon } from "lucide-react";
+import { toast } from "sonner";
+import { getInspectionMediaDownload } from "@/server/packing-list";
 import { cn } from "@/lib/utils";
 import type { InspectionMediaKind } from "@/lib/inspection-media";
 
@@ -42,4 +45,30 @@ export function InspectionMediaView({ media }: { media: Media }) {
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={media.url} className="w-full object-contain max-h-[65vh]" alt="" />;
+}
+
+/** Saves one photo/video to the user's device (presigned link with a download header). */
+export function DownloadMediaButton({ photoId, className }: { photoId: string; className?: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const { url } = await getInspectionMediaDownload(photoId);
+          window.location.assign(url);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Couldn't download this file");
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className={cn("inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 shrink-0", className)}
+    >
+      {busy ? <LoaderIcon className="w-3 h-3 animate-spin" /> : <DownloadIcon className="w-3 h-3" />}
+      Download
+    </button>
+  );
 }

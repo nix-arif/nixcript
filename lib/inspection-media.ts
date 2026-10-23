@@ -19,6 +19,19 @@ export function mediaKindOf(keyOrName: string): InspectionMediaKind {
   return VIDEO_EXTS.includes(extOf(keyOrName)) ? "video" : "image";
 }
 
+/**
+ * Download name for a piece of inspection evidence, shared by the download
+ * button and the discrepancy report so both show the same file name:
+ * "<PL no>_line<row>_<category>_<photo|video><n>.<ext>". n counts within the
+ * same line, category and kind, in upload order.
+ */
+export function inspectionMediaFilename(packingListNo: string, lineNo: number, category: string, n: number, keyOrName: string): string {
+  const safe = packingListNo.replace(/[^a-z0-9]+/gi, "_");
+  const isVideo = mediaKindOf(keyOrName) === "video";
+  const ext = extOf(keyOrName) || (isVideo ? "mp4" : "jpg");
+  return `${safe}_line${lineNo}_${category}_${isVideo ? "video" : "photo"}${n}.${ext}`;
+}
+
 /** What the file input accepts — photos and videos, camera included on phones. */
 export const INSPECTION_MEDIA_ACCEPT = "image/*,video/*";
 

@@ -1,6 +1,6 @@
 "use server";
 
-import { extOf, mediaKindOf, IMAGE_EXTS, VIDEO_EXTS, type InspectionMediaKind } from "@/lib/inspection-media";
+import { extOf, mediaKindOf, inspectionMediaFilename, IMAGE_EXTS, VIDEO_EXTS, type InspectionMediaKind } from "@/lib/inspection-media";
 import { db } from "@/db";
 import {
   packingList,
@@ -1019,6 +1019,52 @@ export async function addInspectionPhoto(packingListItemId: string, imageKey: st
   const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
   const url = await inspectionMediaUrl(imageKey);
   return { id: photo.id, imageKey: photo.imageKey, url, category: photo.category as InspectionPhotoCategory, kind: mediaKindOf(imageKey), uploadedByName: u?.name ?? null, createdAt: photo.createdAt };
+}
+
+// A short-lived link that DOWNLOADS (not plays) one photo or video, under the
+// same name the discrepancy report prints for it. Anyone who can read the
+// packing list — own org via purchase-order:read, or any owned org via
+// packing-list:read:centralized — can fetch its evidence. Used by the
+// Download buttons and, through /api/packing-list/media/<id>, by the links
+// printed in the discrepancy report PDF (a presigned URL would expire inside
+// a saved PDF; this route hands out a fresh one on every click).
+export async function getInspectionMediaDownload(photoId: string): Promise<{ url: string; filename: string }> {
+  const { orgId, userId } = await getSession();
+  const [row] = await db
+    .select({ photo: inspectionPhoto, item: packingListItem, pl: packingList })
+    .from(inspectionPhoto)
+    .innerJoin(packingListItem, eq(inspectionPhoto.packingListItemId, packingListItem.id))
+    .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+    .where(eq(inspectionPhoto.id, photoId));
+  if (!row) throw new Error("File not found");
+
+  const perms = await getUserPermissions(userId, orgId);
+  const ownOrg = row.pl.organizationId === orgId && hasAccess(perms, "purchase-order:read");
+  const centralized = !ownOrg && hasAccess(perms, "packing-list:read:centralized") && (await getOwnerOrgIds(orgId)).includes(row.pl.organizationId);
+  if (!ownOrg && !centralized) throw new Error("You don't have permission to do this");
+
+  // n = position among this line's evidence of the same category and kind
+  const sameKind = (await db
+    .select({ id: inspectionPhoto.id, imageKey: inspectionPhoto.imageKey })
+    .from(inspectionPhoto)
+    .where(and(eq(inspectionPhoto.packingListItemId, row.item.id), eq(inspectionPhoto.category, row.photo.category)))
+    .orderBy(asc(inspectionPhoto.createdAt)))
+    .filter((p) => mediaKindOf(p.imageKey) === mediaKindOf(row.photo.imageKey));
+  const n = Math.max(1, sameKind.findIndex((p) => p.id === photoId) + 1);
+  const filename = inspectionMediaFilename(row.pl.packingListNo, row.item.rowNo, row.photo.category, n, row.photo.imageKey);
+
+  const mov = extOf(row.photo.imageKey) === "mov";
+  const url = await getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: ITEM_INSPECTIONS_BUCKET,
+      Key: row.photo.imageKey,
+      ResponseContentDisposition: `attachment; filename="${filename}"`,
+      ...(mov && { ResponseContentType: "video/mp4" }),
+    }),
+    { expiresIn: 600 },
+  );
+  return { url, filename };
 }
 
 // Anyone who can inspect this packing list can remove any photo on it, not

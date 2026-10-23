@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 import { INSPECTION_MEDIA_ACCEPT, inspectionMediaProblem, mediaKindOf } from "@/lib/inspection-media";
-import { InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
+import { DownloadMediaButton, InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 const POLL_INTERVAL_MS = 5000;
@@ -232,13 +232,16 @@ function InspectionPhotoStrip({
                 <p className="text-xs text-muted-foreground truncate">
                   {lightbox.uploadedByName ? `Added by ${lightbox.uploadedByName}` : ""}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => { onDelete(lightbox.id); setLightbox(null); }}
-                  className="text-xs text-destructive hover:underline shrink-0"
-                >
-                  Delete
-                </button>
+                <div className="flex items-center gap-3 shrink-0">
+                  <DownloadMediaButton photoId={lightbox.id} />
+                  <button
+                    type="button"
+                    onClick={() => { onDelete(lightbox.id); setLightbox(null); }}
+                    className="text-xs text-destructive hover:underline shrink-0"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             </>
           )}

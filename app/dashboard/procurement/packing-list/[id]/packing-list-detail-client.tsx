@@ -18,7 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
-import { InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
+import { DownloadMediaButton, InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
 
 const PO_COLORS = [
   { bg: "bg-blue-50/50 dark:bg-blue-950/15", header: "bg-blue-100/70 dark:bg-blue-900/30", border: "border-blue-200 dark:border-blue-800/50", stripe: "bg-blue-100/60 dark:bg-blue-900/25" },
@@ -123,10 +123,11 @@ function PhotoThumbnails({ photos }: { photos: PackingListWithItems["items"][num
                   <XIcon className="w-3.5 h-3.5" />
                 </button>
               </div>
-              <div className="px-4 py-3 border-t">
+              <div className="px-4 py-3 border-t flex items-center justify-between gap-3">
                 <p className="text-xs text-muted-foreground truncate">
                   {lightbox.uploadedByName ? `Added by ${lightbox.uploadedByName}` : ""}
                 </p>
+                <DownloadMediaButton photoId={lightbox.id} />
               </div>
             </>
           )}
