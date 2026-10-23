@@ -306,9 +306,6 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                           <Highlight text={o.poNo ?? o.id} query={search} />
                         </span>
                         <StatusBadge status={o.status} />
-                        <ReceivedBadge status={o.status} pct={o.receivedPct} />
-                        <PackingListBadges lists={o.packingLists} basePath="/dashboard/procurement/packing-list" highlight={(t) => <Highlight text={t} query={search} />} />
-                        <PendingActionBadge pendingReturnQty={o.pendingReturnQty} pendingRepairQty={o.pendingRepairQty} />
                         {o.prNo && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">
                             <ClipboardListIcon className="w-2.5 h-2.5 shrink-0" />
@@ -320,7 +317,17 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                             <Highlight text={cpo} query={search} />
                           </span>
                         ))}
-                        {o.itemCustomers.map((c) => (
+                      </div>
+                      {(["submitted", "confirmed", "fulfilled"].includes(o.status) || o.packingLists.length > 0 || o.pendingReturnQty > 0 || o.pendingRepairQty > 0) && (
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          <ReceivedBadge status={o.status} pct={o.receivedPct} />
+                          <PackingListBadges lists={o.packingLists} basePath="/dashboard/procurement/packing-list" highlight={(t) => <Highlight text={t} query={search} />} />
+                          <PendingActionBadge pendingReturnQty={o.pendingReturnQty} pendingRepairQty={o.pendingRepairQty} />
+                        </div>
+                      )}
+                      {o.itemCustomers.length > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          {o.itemCustomers.map((c) => (
                           <span key={`${c.name}-${c.organization}`} className="inline-flex items-center gap-1">
                             {c.organization && (
                               <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
@@ -332,7 +339,8 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                             </span>
                           </span>
                         ))}
-                      </div>
+                        </div>
+                      )}
                       <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                         {snap?.name && (
                           <span className="flex items-center gap-1 text-[11px] text-muted-foreground">

@@ -237,8 +237,6 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                         <Highlight text={p.poNo ?? p.id} query={search} />
                       </span>
                       <StatusBadge status={p.status} />
-                      <ReceivedBadge status={p.status} pct={p.receivedPct} />
-                      <PackingListBadges lists={p.packingLists} basePath="/dashboard/procurement/packing-list/centralized" highlight={(t) => <Highlight text={t} query={search} />} />
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={p.organizationName} query={search} />
                       </span>
@@ -248,18 +246,6 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                           <Highlight text={p.prNo} query={search} />
                         </span>
                       )}
-                      {p.itemCustomers.map((c) => (
-                        <span key={`${c.name}-${c.organization}`} className="inline-flex items-center gap-1">
-                          {c.organization && (
-                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                              <Highlight text={c.organization} query={search} />
-                            </span>
-                          )}
-                          <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
-                            <Highlight text={c.name} query={search} />
-                          </span>
-                        </span>
-                      ))}
                       {p.setGroupLabels.map((set) => (
                         <span key={set} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
                           <TagIcon className="w-2.5 h-2.5 shrink-0" />
@@ -275,6 +261,28 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                         {fmtDate(p.createdAt)}
                       </span>
                     </div>
+                    {(["submitted", "confirmed", "fulfilled"].includes(p.status) || p.packingLists.length > 0) && (
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
+                        <ReceivedBadge status={p.status} pct={p.receivedPct} />
+                        <PackingListBadges lists={p.packingLists} basePath="/dashboard/procurement/packing-list/centralized" highlight={(t) => <Highlight text={t} query={search} />} />
+                      </div>
+                    )}
+                    {p.itemCustomers.length > 0 && (
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
+                        {p.itemCustomers.map((c) => (
+                        <span key={`${c.name}-${c.organization}`} className="inline-flex items-center gap-1">
+                          {c.organization && (
+                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                              <Highlight text={c.organization} query={search} />
+                            </span>
+                          )}
+                          <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">
+                            <Highlight text={c.name} query={search} />
+                          </span>
+                        </span>
+                      ))}
+                      </div>
+                    )}
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                       {snap?.name && (
                         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
