@@ -1,5 +1,6 @@
 "use client";
 
+import { PackingListBadges } from "../_shared/packing-list-badges";
 import { ReceivedBadge } from "../_shared/received-badge";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -112,6 +113,7 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
       snap?.name?.toLowerCase().includes(s) ||
       p.organizationName.toLowerCase().includes(s) ||
       p.customerPoNos.some((c) => c.toLowerCase().includes(s)) ||
+      p.packingLists.some((pl) => pl.packingListNo.toLowerCase().includes(s) || (pl.supplierRefNo ?? "").toLowerCase().includes(s)) ||
       p.setGroupLabels.some((set) => set.toLowerCase().includes(s)) ||
       p.itemCustomers.some((c) =>
         c.name.toLowerCase().includes(s) || c.organization?.toLowerCase().includes(s),
@@ -236,6 +238,7 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                       </span>
                       <StatusBadge status={p.status} />
                       <ReceivedBadge status={p.status} pct={p.receivedPct} />
+                      <PackingListBadges lists={p.packingLists} basePath="/dashboard/procurement/packing-list/centralized" highlight={(t) => <Highlight text={t} query={search} />} />
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={p.organizationName} query={search} />
                       </span>

@@ -1,5 +1,6 @@
 "use client";
 
+import { PackingListBadges } from "./_shared/packing-list-badges";
 import { ReceivedBadge } from "./_shared/received-badge";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -130,6 +131,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
       o.status.toLowerCase().includes(s) ||
       o.createdByName?.toLowerCase().includes(s) ||
       o.customerPoNos.some((c) => c.toLowerCase().includes(s)) ||
+      o.packingLists.some((pl) => pl.packingListNo.toLowerCase().includes(s) || (pl.supplierRefNo ?? "").toLowerCase().includes(s)) ||
       o.itemCustomers.some((c) =>
         c.name.toLowerCase().includes(s) || c.organization?.toLowerCase().includes(s),
       )
@@ -305,6 +307,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                         </span>
                         <StatusBadge status={o.status} />
                         <ReceivedBadge status={o.status} pct={o.receivedPct} />
+                        <PackingListBadges lists={o.packingLists} basePath="/dashboard/procurement/packing-list" highlight={(t) => <Highlight text={t} query={search} />} />
                         <PendingActionBadge pendingReturnQty={o.pendingReturnQty} pendingRepairQty={o.pendingRepairQty} />
                         {o.prNo && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">

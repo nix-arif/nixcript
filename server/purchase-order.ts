@@ -23,6 +23,8 @@ import {
   organizationProfile,
   goodsReceipt,
   goodsReceiptItem,
+  packingList,
+  packingListItem,
   customer,
   customerCompany,
   customerOrganization,
@@ -819,6 +821,8 @@ export type PurchaseOrderListRow = PurchaseOrderRow & {
   pendingRepairQty: number;
   /** 0–100: accepted quantity received so far ÷ total ordered quantity */
   receivedPct: number;
+  /** Packing lists (not cancelled) that carry lines of this PO */
+  packingLists: { id: string; packingListNo: string; supplierRefNo: string | null; status: string }[];
 };
 
 // The end-customer(s) a PO's lines are ultimately destined for (e.g. a
@@ -880,6 +884,33 @@ async function getItemCustomersByPo(poIds: string[]): Promise<{
 // qtyReceived for the plain direct-GR flow — from confirmed (non-recalled)
 // goods receipts, the same rule maybeAutoFulfill uses. Each line is capped at
 // its ordered qty so over-receiving one line can't mask a shortfall on another.
+// The packing lists raised for each PO (a PO's lines are linked through
+// packing_list_item; one packing list can span several POs). Cancelled lists
+// are left out. supplierRefNo is the number the supplier printed themselves.
+async function getPackingListsByPo(poIds: string[]): Promise<Map<string, PurchaseOrderListRow["packingLists"]>> {
+  const map = new Map<string, PurchaseOrderListRow["packingLists"]>();
+  if (poIds.length === 0) return map;
+  const rows = await db
+    .selectDistinct({
+      purchaseOrderId: packingListItem.purchaseOrderId,
+      id: packingList.id,
+      packingListNo: packingList.packingListNo,
+      supplierRefNo: packingList.supplierRefNo,
+      status: packingList.status,
+      createdAt: packingList.createdAt,
+    })
+    .from(packingListItem)
+    .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+    .where(and(inArray(packingListItem.purchaseOrderId, poIds), ne(packingList.status, "cancelled")))
+    .orderBy(asc(packingList.createdAt));
+  for (const r of rows) {
+    const arr = map.get(r.purchaseOrderId) ?? [];
+    arr.push({ id: r.id, packingListNo: r.packingListNo, supplierRefNo: r.supplierRefNo, status: r.status });
+    map.set(r.purchaseOrderId, arr);
+  }
+  return map;
+}
+
 async function getReceivedPctByPo(poIds: string[]): Promise<Map<string, number>> {
   const pctMap = new Map<string, number>();
   if (poIds.length === 0) return pctMap;
@@ -1075,9 +1106,10 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     arr.push(link.customerPoNo);
     cpoMap.set(link.purchaseOrderId, arr);
   }
-  const [pendingByPo, receivedPctByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
+  const [pendingByPo, receivedPctByPo, packingListsByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
     getPendingReturnRepairByPo(poIds),
     getReceivedPctByPo(poIds),
+    getPackingListsByPo(poIds),
     getItemCustomersByPo(poIds),
   ]);
 
@@ -1090,6 +1122,7 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     pendingReturnQty: pendingByPo.get(r.id)?.pendingReturnQty ?? 0,
     pendingRepairQty: pendingByPo.get(r.id)?.pendingRepairQty ?? 0,
     receivedPct: receivedPctByPo.get(r.id) ?? 0,
+    packingLists: packingListsByPo.get(r.id) ?? [],
   }));
 }
 
@@ -1203,9 +1236,10 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
   );
   const orgPermsMap = new Map<string, string[]>([[orgId, callerPerms], ...otherOrgPermsEntries]);
   const hasCentralizedUpdate = hasAccess(callerPerms, "purchase-order:update:centralized");
-  const [pendingByPo, receivedPctByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
+  const [pendingByPo, receivedPctByPo, packingListsByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
     getPendingReturnRepairByPo(poIds),
     getReceivedPctByPo(poIds),
+    getPackingListsByPo(poIds),
     getItemCustomersByPo(poIds),
   ]);
 
@@ -1220,6 +1254,7 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
     pendingReturnQty: pendingByPo.get(po.id)?.pendingReturnQty ?? 0,
     pendingRepairQty: pendingByPo.get(po.id)?.pendingRepairQty ?? 0,
     receivedPct: receivedPctByPo.get(po.id) ?? 0,
+    packingLists: packingListsByPo.get(po.id) ?? [],
   }));
 }
 
