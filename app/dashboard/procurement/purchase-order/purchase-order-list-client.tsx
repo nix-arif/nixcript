@@ -1,5 +1,6 @@
 "use client";
 
+import { ReceivedBadge } from "./_shared/received-badge";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { type PurchaseOrderListRow, type PendingPrRow } from "@/server/purchase-order";
@@ -303,6 +304,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                           <Highlight text={o.poNo ?? o.id} query={search} />
                         </span>
                         <StatusBadge status={o.status} />
+                        <ReceivedBadge status={o.status} pct={o.receivedPct} />
                         <PendingActionBadge pendingReturnQty={o.pendingReturnQty} pendingRepairQty={o.pendingRepairQty} />
                         {o.prNo && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">

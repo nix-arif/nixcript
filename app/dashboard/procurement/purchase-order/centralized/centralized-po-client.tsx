@@ -1,5 +1,6 @@
 "use client";
 
+import { ReceivedBadge } from "../_shared/received-badge";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -234,6 +235,7 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                         <Highlight text={p.poNo ?? p.id} query={search} />
                       </span>
                       <StatusBadge status={p.status} />
+                      <ReceivedBadge status={p.status} pct={p.receivedPct} />
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={p.organizationName} query={search} />
                       </span>

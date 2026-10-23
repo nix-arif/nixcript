@@ -817,6 +817,8 @@ export type PurchaseOrderListRow = PurchaseOrderRow & {
   setGroupLabels: string[];
   pendingReturnQty: number;
   pendingRepairQty: number;
+  /** 0–100: accepted quantity received so far ÷ total ordered quantity */
+  receivedPct: number;
 };
 
 // The end-customer(s) a PO's lines are ultimately destined for (e.g. a
@@ -873,6 +875,46 @@ async function getItemCustomersByPo(poIds: string[]): Promise<{
 // actually accepted. This is the other half: how much received quantity is
 // still sitting in "return to supplier" or "in-house repair" limbo,
 // unresolved. Summed once per distinct PO, not per row.
+// How much of each PO has been received, as a 0–100 percentage of ordered
+// quantity. "Received" means accepted quantity — qtyGood, falling back to
+// qtyReceived for the plain direct-GR flow — from confirmed (non-recalled)
+// goods receipts, the same rule maybeAutoFulfill uses. Each line is capped at
+// its ordered qty so over-receiving one line can't mask a shortfall on another.
+async function getReceivedPctByPo(poIds: string[]): Promise<Map<string, number>> {
+  const pctMap = new Map<string, number>();
+  if (poIds.length === 0) return pctMap;
+
+  const [poItems, grItems] = await Promise.all([
+    db.select({ id: purchaseOrderItem.id, purchaseOrderId: purchaseOrderItem.purchaseOrderId, qty: purchaseOrderItem.qty })
+      .from(purchaseOrderItem)
+      .where(inArray(purchaseOrderItem.purchaseOrderId, poIds)),
+    db.select({ purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyGood: goodsReceiptItem.qtyGood, qtyReceived: goodsReceiptItem.qtyReceived })
+      .from(goodsReceiptItem)
+      .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+      .where(and(inArray(goodsReceipt.purchaseOrderId, poIds), ne(goodsReceipt.status, "recalled"))),
+  ]);
+
+  const acceptedByItem = new Map<string, number>();
+  for (const g of grItems) {
+    if (!g.purchaseOrderItemId) continue;
+    const accepted = parseFloat(g.qtyGood ?? g.qtyReceived ?? "0") || 0;
+    acceptedByItem.set(g.purchaseOrderItemId, (acceptedByItem.get(g.purchaseOrderItemId) ?? 0) + accepted);
+  }
+
+  const totals = new Map<string, { ordered: number; received: number }>();
+  for (const it of poItems) {
+    const ordered = parseFloat(it.qty ?? "0") || 0;
+    const t = totals.get(it.purchaseOrderId) ?? { ordered: 0, received: 0 };
+    t.ordered += ordered;
+    t.received += Math.min(acceptedByItem.get(it.id) ?? 0, ordered);
+    totals.set(it.purchaseOrderId, t);
+  }
+  for (const [poId, t] of totals) {
+    pctMap.set(poId, t.ordered > 0 ? Math.round((t.received / t.ordered) * 100) : 0);
+  }
+  return pctMap;
+}
+
 async function getPendingReturnRepairByPo(poIds: string[]): Promise<Map<string, { pendingReturnQty: number; pendingRepairQty: number }>> {
   const map = new Map<string, { pendingReturnQty: number; pendingRepairQty: number }>();
   if (poIds.length === 0) return map;
@@ -1033,8 +1075,9 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     arr.push(link.customerPoNo);
     cpoMap.set(link.purchaseOrderId, arr);
   }
-  const [pendingByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
+  const [pendingByPo, receivedPctByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
     getPendingReturnRepairByPo(poIds),
+    getReceivedPctByPo(poIds),
     getItemCustomersByPo(poIds),
   ]);
 
@@ -1046,6 +1089,7 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     setGroupLabels: setGroupLabelsByPo.get(r.id) ?? [],
     pendingReturnQty: pendingByPo.get(r.id)?.pendingReturnQty ?? 0,
     pendingRepairQty: pendingByPo.get(r.id)?.pendingRepairQty ?? 0,
+    receivedPct: receivedPctByPo.get(r.id) ?? 0,
   }));
 }
 
@@ -1159,8 +1203,9 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
   );
   const orgPermsMap = new Map<string, string[]>([[orgId, callerPerms], ...otherOrgPermsEntries]);
   const hasCentralizedUpdate = hasAccess(callerPerms, "purchase-order:update:centralized");
-  const [pendingByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
+  const [pendingByPo, receivedPctByPo, { customers: itemCustomersByPo, setGroupLabels: setGroupLabelsByPo }] = await Promise.all([
     getPendingReturnRepairByPo(poIds),
+    getReceivedPctByPo(poIds),
     getItemCustomersByPo(poIds),
   ]);
 
@@ -1174,6 +1219,7 @@ export async function getPurchaseOrdersCentralized(): Promise<CentralizedPurchas
     canEdit: po.createdBy === userId || hasCentralizedUpdate || hasAccess(orgPermsMap.get(po.organizationId) ?? [], "purchase-order:update"),
     pendingReturnQty: pendingByPo.get(po.id)?.pendingReturnQty ?? 0,
     pendingRepairQty: pendingByPo.get(po.id)?.pendingRepairQty ?? 0,
+    receivedPct: receivedPctByPo.get(po.id) ?? 0,
   }));
 }
 
