@@ -8,7 +8,7 @@ import { PDFDocument, rgb, StandardFonts, PDFImage, PDFFont, PDFPage, PDFString 
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { inspectionMediaFilename } from "@/lib/inspection-media";
-import { inspectionMediaShareUrl } from "@/lib/inspection-media-share";
+import { inspectionMediaShareUrl, publicBaseUrl } from "@/lib/inspection-media-share";
 
 export const maxDuration = 60;
 
@@ -891,9 +891,10 @@ export async function GET(req: Request, { params }: Props) {
       : [];
     const poLineNoById = new Map(poItemRows.map((r) => [r.id, r.rowNo]));
 
-    // Absolute links printed in the report (video downloads) — a saved PDF
-    // needs the full address, so prefer the configured app URL.
-    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL ?? new URL(req.url).origin).replace(/\/$/, "");
+    // Absolute links printed in the report (video playback) — the public
+    // address (APP_DOMAIN in production), never the internal one the proxy
+    // forwards the request to.
+    const baseUrl = publicBaseUrl(req);
     const ctx = { baseUrl, packingListNo: pl.packingListNo };
     const returnIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "return", ctx);
     const repairIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "repair", ctx);

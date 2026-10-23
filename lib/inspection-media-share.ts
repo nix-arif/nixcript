@@ -33,6 +33,23 @@ export function verifyInspectionMediaSignature(photoId: string, sig: string | un
   return expected.length === given.length && timingSafeEqual(expected, given);
 }
 
+/**
+ * The public address to print in report links. Follows the same rule as the
+ * rest of the app (sign-in, emails): in production it is APP_DOMAIN. Behind a
+ * reverse proxy the request's own address is the INTERNAL one (e.g.
+ * http://192.168.x.x:3000), so it is only a last resort — forwarded headers
+ * first, then the raw request origin.
+ */
+export function publicBaseUrl(req: Request): string {
+  const strip = (u: string) => u.trim().replace(/\/$/, "");
+  if (process.env.NODE_ENV === "production" && process.env.APP_DOMAIN) return strip(process.env.APP_DOMAIN);
+  const configured = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  if (configured) return strip(configured);
+  const host = req.headers.get("x-forwarded-host");
+  if (host) return `${req.headers.get("x-forwarded-proto") ?? "https"}://${host}`;
+  return new URL(req.url).origin;
+}
+
 /** The full public link printed in the report. */
 export function inspectionMediaShareUrl(baseUrl: string, photoId: string): string {
   return `${baseUrl.replace(/\/$/, "")}/share/inspection-media/${photoId}?s=${signInspectionMediaId(photoId)}`;
