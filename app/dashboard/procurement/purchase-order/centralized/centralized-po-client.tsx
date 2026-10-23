@@ -246,12 +246,6 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                           <Highlight text={p.prNo} query={search} />
                         </span>
                       )}
-                      {p.setGroupLabels.map((set) => (
-                        <span key={set} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
-                          <TagIcon className="w-2.5 h-2.5 shrink-0" />
-                          <Highlight text={set} query={search} />
-                        </span>
-                      ))}
                       {!p.canEdit && (
                         <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5">
                           <EyeIcon className="w-2.5 h-2.5 shrink-0" /> View only
@@ -281,6 +275,16 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                           </span>
                         </span>
                       ))}
+                      </div>
+                    )}
+                    {p.setGroupLabels.length > 0 && (
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
+                        {p.setGroupLabels.map((set) => (
+                          <span key={set} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                            <TagIcon className="w-2.5 h-2.5 shrink-0" />
+                            <Highlight text={set} query={search} />
+                          </span>
+                        ))}
                       </div>
                     )}
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">

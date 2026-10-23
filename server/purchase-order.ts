@@ -851,8 +851,11 @@ async function getItemCustomersByPo(poIds: string[]): Promise<{
       setGroupLabel: purchaseOrderItem.setGroupLabel,
     })
     .from(purchaseOrderItem)
-    .where(inArray(purchaseOrderItem.purchaseOrderId, poIds));
+    .where(inArray(purchaseOrderItem.purchaseOrderId, poIds))
+    .orderBy(asc(purchaseOrderItem.rowNo));
 
+  // (customer, set) pairs in line order, to order the set titles by customer below
+  const pairsByPo = new Map<string, { customer: string | null; set: string }[]>();
   for (const r of rows) {
     const name = r.customerName?.trim();
     if (name) {
@@ -869,16 +872,27 @@ async function getItemCustomersByPo(poIds: string[]): Promise<{
       const list = setGroupLabels.get(r.purchaseOrderId) ?? [];
       if (!list.includes(setLabel)) list.push(setLabel);
       setGroupLabels.set(r.purchaseOrderId, list);
+      const pairs = pairsByPo.get(r.purchaseOrderId) ?? [];
+      pairs.push({ customer: name ? `${name}|${r.customerOrganization?.trim() || ""}` : null, set: setLabel });
+      pairsByPo.set(r.purchaseOrderId, pairs);
     }
+  }
+
+  // Set titles follow the order of the customers shown above them: each
+  // customer's sets in turn, then sets that belong to no customer
+  for (const [poId, pairs] of pairsByPo) {
+    const ordered: string[] = [];
+    const add = (label: string) => { if (!ordered.includes(label)) ordered.push(label); };
+    for (const c of customers.get(poId) ?? []) {
+      const key = `${c.name}|${c.organization ?? ""}`;
+      for (const pair of pairs) if (pair.customer === key) add(pair.set);
+    }
+    for (const pair of pairs) add(pair.set);
+    setGroupLabels.set(poId, ordered);
   }
   return { customers, setGroupLabels };
 }
 
-// "Fulfilled" only ever tracks physical receipt (see maybeAutoFulfill in
-// server/goods-receipt.ts) — it says nothing about whether what arrived was
-// actually accepted. This is the other half: how much received quantity is
-// still sitting in "return to supplier" or "in-house repair" limbo,
-// unresolved. Summed once per distinct PO, not per row.
 // How much of each PO has been received, as a 0–100 percentage of ordered
 // quantity. "Received" means accepted quantity — qtyGood, falling back to
 // qtyReceived for the plain direct-GR flow — from confirmed (non-recalled)
@@ -946,6 +960,11 @@ async function getReceivedPctByPo(poIds: string[]): Promise<Map<string, number>>
   return pctMap;
 }
 
+// "Fulfilled" only ever tracks physical receipt (see maybeAutoFulfill in
+// server/goods-receipt.ts) — it says nothing about whether what arrived was
+// actually accepted. This is the other half: how much received quantity is
+// still sitting in "return to supplier" or "in-house repair" limbo,
+// unresolved. Summed once per distinct PO, not per row.
 async function getPendingReturnRepairByPo(poIds: string[]): Promise<Map<string, { pendingReturnQty: number; pendingRepairQty: number }>> {
   const map = new Map<string, { pendingReturnQty: number; pendingRepairQty: number }>();
   if (poIds.length === 0) return map;

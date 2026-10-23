@@ -14,7 +14,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import {
   PlusIcon, SearchIcon, XIcon, TruckIcon,
   BuildingIcon, CalendarIcon, ClipboardListIcon, PackageIcon, ArrowRightIcon, AlertCircleIcon,
-  ArrowUpDownIcon, CheckIcon,
+  ArrowUpDownIcon, CheckIcon, TagIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -339,6 +339,16 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                             </span>
                           </span>
                         ))}
+                        </div>
+                      )}
+                      {o.setGroupLabels.length > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          {o.setGroupLabels.map((set) => (
+                            <span key={set} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                              <TagIcon className="w-2.5 h-2.5 shrink-0" />
+                              <Highlight text={set} query={search} />
+                            </span>
+                          ))}
                         </div>
                       )}
                       <div className="flex items-center gap-3 mt-0.5 flex-wrap">
