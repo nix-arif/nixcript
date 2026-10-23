@@ -142,6 +142,7 @@ export interface GoodsReceiptItemInput {
   returnNotes?: string;
   repairStatus?: string;
   repairNotes?: string;
+  acceptNotes?: string;
 }
 
 export interface CreateGoodsReceiptInput {
@@ -935,6 +936,7 @@ export async function createGoodsReceipt(input: CreateGoodsReceiptInput): Promis
         returnNotes: item.returnNotes ?? null,
         repairStatus: item.repairStatus ?? null,
         repairNotes: item.repairNotes ?? null,
+        acceptNotes: item.acceptNotes ?? null,
         inspectedBy: input.inspectedBy ?? null,
         inspectedAt: input.inspectedBy ? new Date() : null,
       })),

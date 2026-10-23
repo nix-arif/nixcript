@@ -367,6 +367,8 @@ type Row = {
   qtyRepair: string;
   returnNotes: string;
   repairNotes: string;
+  acceptNotes: string; // remark on stock that is still accepted
+  showAcceptRemark: boolean; // UI only — remark box opened
   inspectedByName: string | null;
   inspectedById: string | null;
   inspectedAt: string | null; // ISO — compared against poll results to avoid clobbering newer local saves
@@ -376,6 +378,7 @@ type Row = {
   photos: InspectionPhoto[];
   uploadingReturnPhotos: boolean;
   uploadingRepairPhotos: boolean;
+  uploadingAcceptPhotos: boolean;
   approvalStatus: string | null; // "pending" | "approved" | "rejected" | null
   approvalNotes: string | null;
   approvedByName: string | null;
@@ -391,6 +394,8 @@ function initialRow(item: PackingListWithItems["items"][number]): Row {
     qtyRepair: item.draftQtyRepair ?? "0",
     returnNotes: item.draftReturnNotes ?? "",
     repairNotes: item.draftRepairNotes ?? "",
+    acceptNotes: item.draftAcceptNotes ?? "",
+    showAcceptRemark: !!item.draftAcceptNotes || item.photos.some((p) => p.category === "accept"),
     inspectedByName: item.draftInspectedByName,
     inspectedById: item.draftInspectedBy,
     inspectedAt: item.draftInspectedAt ? new Date(item.draftInspectedAt).toISOString() : null,
@@ -400,6 +405,7 @@ function initialRow(item: PackingListWithItems["items"][number]): Row {
     photos: item.photos,
     uploadingReturnPhotos: false,
     uploadingRepairPhotos: false,
+    uploadingAcceptPhotos: false,
     approvalStatus: item.draftApprovalStatus,
     approvalNotes: item.draftApprovalNotes,
     approvedByName: item.draftApprovedByName,
@@ -511,6 +517,7 @@ export function InspectPackingListClient({
           qtyRepair: row.qtyRepair || "0",
           returnNotes: row.returnNotes || undefined,
           repairNotes: row.repairNotes || undefined,
+          acceptNotes: row.acceptNotes || undefined,
         });
         const changedMeanwhile = (versions.current[itemId] ?? 0) !== version;
         touch(touchedAt.current, itemId);
@@ -624,7 +631,7 @@ export function InspectPackingListClient({
             if ((touchedAt.current[s.packingListItemId] ?? 0) >= startedAt) continue;
             let updated = local;
 
-            if (!local.uploadingReturnPhotos && !local.uploadingRepairPhotos) {
+            if (!local.uploadingReturnPhotos && !local.uploadingRepairPhotos && !local.uploadingAcceptPhotos) {
               updated = { ...updated, photos: s.photos };
             }
 
@@ -652,6 +659,8 @@ export function InspectPackingListClient({
                   qtyRepair: s.draftQtyRepair ?? "0",
                   returnNotes: s.draftReturnNotes ?? "",
                   repairNotes: s.draftRepairNotes ?? "",
+                  acceptNotes: s.draftAcceptNotes ?? "",
+                  showAcceptRemark: updated.showAcceptRemark || !!s.draftAcceptNotes,
                   inspectedByName: s.inspectedByName,
                   inspectedById: s.inspectedById,
                   inspectedAt: s.inspectedAt ? new Date(s.inspectedAt).toISOString() : updated.inspectedAt,
@@ -704,7 +713,7 @@ export function InspectPackingListClient({
     }
     if (validFiles.length === 0) return;
 
-    const uploadingKey = category === "return" ? "uploadingReturnPhotos" : "uploadingRepairPhotos";
+    const uploadingKey = category === "return" ? "uploadingReturnPhotos" : category === "repair" ? "uploadingRepairPhotos" : "uploadingAcceptPhotos";
     setRows((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [uploadingKey]: true } }));
     let failCount = 0;
     for (const file of validFiles) {
@@ -1066,6 +1075,35 @@ export function InspectPackingListClient({
                                 onDelete={(photoId) => handlePhotoDelete(item.id, photoId)}
                               />
                             </div>
+                          )}
+                          {row.showAcceptRemark || row.acceptNotes || row.photos.some((p) => p.category === "accept") ? (
+                            <div className="mt-1.5 flex flex-col gap-1.5 border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 rounded-md p-2">
+                              <div className="flex items-center gap-1 text-[10px] text-green-700 dark:text-green-400 font-medium">
+                                <CheckIcon className="w-3 h-3 shrink-0" /> Accepted with remark
+                              </div>
+                              <Input
+                                value={row.acceptNotes}
+                                onFocus={() => handleFocusRow(item.id)}
+                                onChange={(e) => updateRow(item.id, { acceptNotes: e.target.value })}
+                                onBlur={() => handleBlurRow(item.id)}
+                                placeholder="Remark — the item is still accepted"
+                                className="h-7 text-[11px]"
+                              />
+                              <InspectionPhotoStrip
+                                photos={row.photos.filter((p) => p.category === "accept")}
+                                uploading={row.uploadingAcceptPhotos}
+                                onUpload={(files) => handlePhotoUpload(item.id, "accept", files)}
+                                onDelete={(photoId) => handlePhotoDelete(item.id, photoId)}
+                              />
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setRows((prev) => ({ ...prev, [item.id]: { ...prev[item.id], showAcceptRemark: true } }))}
+                              className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+                            >
+                              <PlusIcon className="w-3 h-3 shrink-0" /> Remark / attach photo or video
+                            </button>
                           )}
                         </td>
                         <td className="py-2.5 pr-3">

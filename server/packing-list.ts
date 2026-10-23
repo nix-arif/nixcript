@@ -927,7 +927,7 @@ async function assertCanApprovePackingList(plOrgId: string, callerOrgId: string,
   }
 }
 
-export type InspectionPhotoCategory = "return" | "repair";
+export type InspectionPhotoCategory = "return" | "repair" | "accept";
 
 export type InspectionPhoto = {
   id: string;
@@ -980,7 +980,7 @@ async function getPhotosForItems(itemIds: string[]): Promise<Map<string, Inspect
 // Requested per packingListItemId (not just a bare "any inspector" check) so
 // the upload URL is scoped to a specific packing list's own authorization —
 // the same rules as saveInspectionLineDraft. category groups the photo under
-// the matching Return or Repair box on the inspect form — a line split
+// the matching Return, Repair or Accepted-remark box on the inspect form — a line split
 // across both needs its evidence kept straight about which is which.
 export async function getInspectionPhotoUploadUrl(packingListItemId: string, filename: string, category: InspectionPhotoCategory): Promise<{ key: string; uploadUrl: string }> {
   const { orgId, userId } = await getSession();
@@ -1045,6 +1045,8 @@ export interface InspectionLineDraftInput {
   qtyRepair: string;
   returnNotes?: string;
   repairNotes?: string;
+  /** Remark on stock that is still accepted */
+  acceptNotes?: string;
 }
 
 // Autosaved as soon as someone edits a line on the inspect form — this IS
@@ -1081,6 +1083,7 @@ export async function saveInspectionLineDraft(packingListItemId: string, input: 
       draftQtyRepair: input.qtyRepair,
       draftReturnNotes: input.returnNotes || null,
       draftRepairNotes: input.repairNotes || null,
+      draftAcceptNotes: input.acceptNotes || null,
       draftInspectedBy: userId,
       draftInspectedAt: inspectedAt,
       // Any edit invalidates a prior approval/rejection — the numbers being
@@ -1187,6 +1190,7 @@ export type InspectionLineState = {
   draftQtyRepair: string | null;
   draftReturnNotes: string | null;
   draftRepairNotes: string | null;
+  draftAcceptNotes: string | null;
   inspectedByName: string | null;
   inspectedById: string | null;
   inspectedAt: Date | null;
@@ -1219,6 +1223,7 @@ export async function getInspectionLineStates(packingListId: string): Promise<In
     draftQtyRepair: r.draftQtyRepair,
     draftReturnNotes: r.draftReturnNotes,
     draftRepairNotes: r.draftRepairNotes,
+    draftAcceptNotes: r.draftAcceptNotes,
     inspectedByName: nameOf(r.draftInspectedBy),
     inspectedById: r.draftInspectedBy,
     inspectedAt: r.draftInspectedAt,
@@ -1295,6 +1300,7 @@ async function applyPackingListInspection(
         returnNotes: plItem.draftReturnNotes || undefined,
         repairStatus: repair > 0 ? "pending" : undefined,
         repairNotes: plItem.draftRepairNotes || undefined,
+        acceptNotes: plItem.draftAcceptNotes || undefined,
         uom: plItem.uom ?? undefined,
         unitPrice: plItem.unitPrice ?? undefined,
         currency: plItem.currency ?? undefined,

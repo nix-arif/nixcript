@@ -2595,6 +2595,8 @@ export const goodsReceiptItem = pgTable(
     qtyRepair: text("qty_repair"),
     returnStatus: text("return_status"), // "pending" | "resolved" — only set when qtyReturn > 0
     returnNotes: text("return_notes"),
+    // Inspector's remark on stock that was still accepted (from the packing list inspection)
+    acceptNotes: text("accept_notes"),
     // Who marked the return resolved and when — set only on the
     // pending -> resolved transition, independent of the repair side below.
     returnResolvedBy: text("return_resolved_by").references(() => user.id),
@@ -2747,6 +2749,9 @@ export const packingListItem = pgTable(
     draftQtyRepair: text("draft_qty_repair"),
     draftReturnNotes: text("draft_return_notes"),
     draftRepairNotes: text("draft_repair_notes"),
+    // A remark on stock that is still ACCEPTED (not returned/repaired) — with
+    // optional photos/videos filed under inspection_photo category "accept"
+    draftAcceptNotes: text("draft_accept_notes"),
     draftInspectedBy: text("draft_inspected_by").references(() => user.id),
     draftInspectedAt: timestamp("draft_inspected_at"),
 
@@ -2797,7 +2802,7 @@ export const inspectionPhoto = pgTable(
     // Which outcome this photo is evidence for — a line can be split across
     // both a return and a repair at once, so photos must say which is which
     // rather than sitting in one undifferentiated pile.
-    category: text("category").notNull(), // "return" | "repair"
+    category: text("category").notNull(), // "return" | "repair" | "accept" (accepted with a remark)
     uploadedBy: text("uploaded_by")
       .notNull()
       .references(() => user.id),

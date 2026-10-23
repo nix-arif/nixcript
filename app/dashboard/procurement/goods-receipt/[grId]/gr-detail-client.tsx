@@ -195,6 +195,11 @@ export function GoodsReceiptDetailClient({ gr, permissions, organizationName, ba
                       <td className="py-2 pr-3 font-mono text-muted-foreground">{item.productCode || "—"}</td>
                       <td className="py-2 pr-3">
                         <div>{item.description || "—"}</div>
+                        {item.acceptNotes && (
+                          <p className="mt-1 text-[10px] text-green-700 dark:text-green-400">
+                            <span className="font-medium">Remark (accepted):</span> {item.acceptNotes}
+                          </p>
+                        )}
                         {wasInspected && (
                           <div className="mt-1 flex flex-wrap items-center gap-1">
                             <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">

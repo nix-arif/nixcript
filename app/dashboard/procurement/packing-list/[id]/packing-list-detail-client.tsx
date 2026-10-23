@@ -221,6 +221,7 @@ export function PackingListDetailClient({
       draftQtyRepair: live.draftQtyRepair,
       draftReturnNotes: live.draftReturnNotes,
       draftRepairNotes: live.draftRepairNotes,
+      draftAcceptNotes: live.draftAcceptNotes,
       draftInspectedByName: live.inspectedByName,
       draftInspectedAt: live.inspectedAt,
       draftApprovalStatus: live.approvalStatus,
@@ -575,6 +576,15 @@ export function PackingListDetailClient({
                                 </div>
                                 {item.draftRepairNotes && <p className="text-[10px] text-muted-foreground">{item.draftRepairNotes}</p>}
                                 <PhotoThumbnails photos={item.photos.filter((p) => p.category === "repair")} />
+                              </div>
+                            )}
+                            {showInspectionResults && (item.draftAcceptNotes || item.photos.some((p) => p.category === "accept")) && (
+                              <div className="mt-1.5 flex flex-col gap-1 border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 rounded-md p-2">
+                                <div className="flex items-center gap-1 text-[10px] text-green-700 dark:text-green-400 font-medium">
+                                  <CheckIcon className="w-3 h-3 shrink-0" /> Accepted with remark
+                                </div>
+                                {item.draftAcceptNotes && <p className="text-[10px] text-muted-foreground">{item.draftAcceptNotes}</p>}
+                                <PhotoThumbnails photos={item.photos.filter((p) => p.category === "accept")} />
                               </div>
                             )}
                           </td>
