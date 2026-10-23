@@ -1,5 +1,6 @@
 "use client";
 
+import { PoLegend } from "../_shared/po-legend";
 import { PackingListBadges } from "../_shared/packing-list-badges";
 import { ReceivedBadge } from "../_shared/received-badge";
 import { useState } from "react";
@@ -207,6 +208,8 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
       <div className="text-xs text-muted-foreground mb-3 tabular-nums">
         {filtered.length} record{filtered.length !== 1 ? "s" : ""}
       </div>
+
+      {filtered.length > 0 && <PoLegend centralized />}
 
       {filtered.length === 0 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">

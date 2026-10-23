@@ -1,5 +1,6 @@
 "use client";
 
+import { PoLegend } from "./_shared/po-legend";
 import { PackingListBadges } from "./_shared/packing-list-badges";
 import { ReceivedBadge } from "./_shared/received-badge";
 import { useEffect, useState } from "react";
@@ -286,6 +287,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
           <div className="text-xs text-muted-foreground mb-3 tabular-nums">
             {filtered.length} record{filtered.length !== 1 ? "s" : ""}
           </div>
+          <PoLegend />
           <div className="space-y-2">
             {filtered.map((o) => {
               const snap = o.supplierSnapshot as any;
