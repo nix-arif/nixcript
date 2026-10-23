@@ -247,6 +247,21 @@ export function PackingListDetailClient({
     (acc[item.purchaseOrderId] ??= []).push(item);
     return acc;
   }, {});
+  // Lines received short of what was expected (only meaningful once inspected),
+  // in on-screen order — emphasised so a shortage can't be missed
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const shortItems = showInspectionResults
+    ? Object.values(byPo).flat().flatMap((item) => {
+        const shortBy = Math.max(0, (parseFloat(item.qtyExpected) || 0) - (parseFloat(item.draftQtyReceived ?? item.qtyExpected) || 0));
+        return shortBy > 0 ? [{ id: item.id, label: item.productCode || item.description || "item", shortBy, uom: item.uom || "" }] : [];
+      })
+    : [];
+  function scrollToItem(id: string) {
+    document.getElementById(`pl-item-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashId(id);
+    setTimeout(() => setFlashId((cur) => (cur === id ? null : cur)), 1600);
+  }
+
   const poLabel = (poId: string) => {
     const po = pl.purchaseOrders.find((p) => p.id === poId);
     return po?.poNo ?? po?.prNo ?? poId;
@@ -430,6 +445,27 @@ export function PackingListDetailClient({
         <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
           Expected Items <span className="font-normal">({pl.items.length})</span>
         </h2>
+        {shortItems.length > 0 && (
+          <div className="border-2 border-red-400 dark:border-red-700 bg-red-50 dark:bg-red-950/30 rounded-lg px-4 py-3 space-y-2 mb-4">
+            <span className="flex items-center gap-2 text-sm font-semibold text-red-700 dark:text-red-400">
+              <AlertTriangleIcon className="w-4 h-4 shrink-0" />
+              {shortItems.length} item{shortItems.length !== 1 ? "s" : ""} received short of what was expected
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {shortItems.map((x) => (
+                <button
+                  key={x.id}
+                  type="button"
+                  onClick={() => scrollToItem(x.id)}
+                  className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md bg-white dark:bg-background border border-red-300 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-950/50 transition-colors"
+                >
+                  <span className="font-mono font-medium truncate max-w-48">{x.label}</span>
+                  <span className="font-bold text-red-600 dark:text-red-400 tabular-nums">short {x.shortBy} {x.uom}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {pl.items.length === 0 ? (
           <p className="text-sm text-muted-foreground">No items</p>
         ) : (
@@ -471,8 +507,18 @@ export function PackingListDetailClient({
                         const ret = parseFloat(item.draftQtyReturn ?? "0") || 0;
                         const repair = parseFloat(item.draftQtyRepair ?? "0") || 0;
                         const accepted = Math.max(0, (parseFloat(received) || 0) - ret);
+                        const shortBy = showInspectionResults ? Math.max(0, (parseFloat(item.qtyExpected) || 0) - (parseFloat(received) || 0)) : 0;
                         return (
-                        <tr key={item.id} className={cn("border-t border-border/40 align-top", itemIndex % 2 === 1 && color.stripe)}>
+                        <tr
+                          key={item.id}
+                          id={`pl-item-${item.id}`}
+                          className={cn(
+                            "border-t border-border/40 align-top transition-colors duration-300",
+                            itemIndex % 2 === 1 && color.stripe,
+                            shortBy > 0 && "bg-red-50/70 dark:bg-red-950/20 border-l-[6px] border-l-red-500",
+                            flashId === item.id && "border-l-blue-500",
+                          )}
+                        >
                           <td className="py-2 pl-3 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{itemIndex + 1}</td>
                           {showSourcing && (
                             <>
@@ -546,6 +592,11 @@ export function PackingListDetailClient({
                             </div>
                           </td>
                           <td className="py-2 pr-3 align-top">
+                            {shortBy > 0 && (
+                              <span className="inline-flex items-center gap-1 mb-1.5 text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md bg-red-600 text-white">
+                                <AlertTriangleIcon className="w-3 h-3 shrink-0" /> Short {shortBy} {item.uom || ""}
+                              </span>
+                            )}
                             {(item.setGroupLabel || item.customerPoNo || item.customerOrganization || item.customerName) && (
                               <div className="flex flex-wrap gap-1 mb-1">
                                 {item.setGroupLabel && (
@@ -633,8 +684,8 @@ export function PackingListDetailClient({
                                     <span className="text-muted-foreground">Received</span>
                                     <span className="text-right tabular-nums">
                                       {parseFloat(received) < (parseFloat(item.qtyExpected) || 0) ? (
-                                        <span className="text-amber-600 dark:text-amber-400 font-medium" title={`Short by ${(parseFloat(item.qtyExpected) || 0) - parseFloat(received)}`}>
-                                          {received}
+                                        <span className="font-bold text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-950/40 rounded px-1.5 py-0.5" title={`Short by ${(parseFloat(item.qtyExpected) || 0) - parseFloat(received)}`}>
+                                          {received} · short {(parseFloat(item.qtyExpected) || 0) - parseFloat(received)}
                                         </span>
                                       ) : (
                                         <span className="text-muted-foreground">{received}</span>
