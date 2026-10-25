@@ -16,10 +16,12 @@ import {
   organization,
   organizationProfile,
   inspectionPhoto,
+  product,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, asc, desc, inArray, ne, isNull } from "drizzle-orm";
+import type { LabelItemData } from "@/lib/label-design";
+import { eq, and, or, asc, desc, inArray, ne, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -635,6 +637,85 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
     createdByName: userRows[0]?.name ?? null,
     goodsReceipts: grs.map((g) => ({ ...g, poNo: poNoMap[g.purchaseOrderId] ?? null })),
     purchaseOrders: poRows,
+  };
+}
+
+export type PackingListLabel = {
+  itemId: string;
+  qty: number;
+  data: LabelItemData;
+};
+
+// One row per packing-list line for the sticker page, with every value a
+// label element can show or encode. The emboss code is the line's private-
+// label code when it has one, else the plain product code; the MDA
+// registration no. lives on the product, so it's looked up from the DB.
+export async function getPackingListLabels(id: string): Promise<{ packingListNo: string; labels: PackingListLabel[] } | null> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  const [pl] = await db
+    .select({ id: packingList.id, packingListNo: packingList.packingListNo, supplierSnapshot: packingList.supplierSnapshot })
+    .from(packingList)
+    .where(and(eq(packingList.id, id), eq(packingList.organizationId, orgId)));
+  if (!pl) return null;
+  const items = await db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo));
+  const productIds = [...new Set(items.map((i) => i.productId).filter((v): v is string => !!v))];
+  const codes = [...new Set(items.flatMap((i) => [i.productCode, i.privateLabelCode]).filter((v): v is string => !!v))];
+  // Match by id first; lines without a productId fall back to the product code
+  // (own code or private-label code) within the same org.
+  const prods = (productIds.length > 0 || codes.length > 0)
+    ? await db
+        .select({ id: product.id, code: product.productCode, label: product.privateLabelCode, mda: product.mdaRegistrationNo, brand: product.brand })
+        .from(product)
+        .where(and(
+          eq(product.organizationId, orgId),
+          or(
+            productIds.length > 0 ? inArray(product.id, productIds) : undefined,
+            codes.length > 0 ? inArray(product.productCode, codes) : undefined,
+            codes.length > 0 ? inArray(product.privateLabelCode, codes) : undefined,
+          ),
+        ))
+    : [];
+  const prodFor = (i: (typeof items)[number]) =>
+    prods.find((x) => x.id === i.productId) ??
+    prods.find((x) => !!i.productCode && x.code === i.productCode) ??
+    prods.find((x) => !!i.privateLabelCode && (x.label === i.privateLabelCode || x.code === i.privateLabelCode));
+
+  const [o] = await db
+    .select({
+      name: organization.name,
+      companyName: organizationProfile.companyName,
+      companyAddress: organizationProfile.companyAddress,
+      mdaEstablishmentNo: organizationProfile.mdaEstablishmentNo,
+    })
+    .from(organization)
+    .leftJoin(organizationProfile, eq(organizationProfile.organizationId, organization.id))
+    .where(eq(organization.id, orgId))
+    .limit(1);
+
+  return {
+    packingListNo: pl.packingListNo,
+    labels: items.map((i) => {
+      const p = prodFor(i);
+      const qty = Math.max(1, Math.ceil(parseFloat(i.qtyExpected) || 1));
+      return {
+        itemId: i.id,
+        qty,
+        data: {
+          code: i.privateLabelCode || i.productCode || "",
+          description: i.description ?? "",
+          mda: p?.mda ?? "",
+          qty: String(qty),
+          uom: i.uom ?? "",
+          brand: p?.brand ?? "",
+          supplier: pl.supplierSnapshot?.name ?? "",
+          plNo: pl.packingListNo,
+          company: o?.companyName || o?.name || "",
+          address: o?.companyAddress ?? "",
+          establishment: o?.mdaEstablishmentNo ?? "",
+          date: new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, "."),
+        },
+      };
+    }),
   };
 }
 

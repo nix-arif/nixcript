@@ -14,7 +14,7 @@ import {
   ArrowLeftIcon, BuildingIcon, CalendarIcon, ClipboardCheckIcon,
   XIcon, TruckIcon, LinkIcon, DatabaseIcon, PencilIcon, ClipboardListIcon, PlusIcon, TagIcon, Trash2Icon,
   AlertTriangleIcon, CheckIcon, UserIcon, FileWarningIcon, ShieldCheckIcon, ShieldXIcon, ShieldQuestionIcon,
-  ChevronDownIcon, FileTextIcon, FileSpreadsheetIcon, DownloadIcon, RotateCcwIcon, LoaderIcon,
+  ChevronDownIcon, FileTextIcon, FileSpreadsheetIcon, DownloadIcon, RotateCcwIcon, LoaderIcon, PrinterIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -387,6 +387,9 @@ export function PackingListDetailClient({
             </Button>
             <Button size="sm" variant="outline" className="gap-1.5" disabled={downloadingPdf} onClick={handleDownloadPdf}>
               <DownloadIcon className="w-3.5 h-3.5" /> {downloadingPdf ? "Generating…" : "Download PDF"}
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/packing-list/${pl.id}/labels`)}>
+              <PrinterIcon className="w-3.5 h-3.5" /> Labels
             </Button>
             {isPending && can("packing-list:inspect") && (
               <Button size="sm" className="gap-1.5" onClick={() => router.push(inspectHref ?? `/dashboard/procurement/packing-list/${pl.id}/inspect`)}>

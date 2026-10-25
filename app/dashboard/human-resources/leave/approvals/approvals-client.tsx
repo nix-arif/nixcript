@@ -192,6 +192,7 @@ export function ApprovalsClient({ applications, creditRequests, permissions: _pe
                 <TableHead>Leave Type</TableHead>
                 <TableHead className="w-44">Period</TableHead>
                 <TableHead className="w-14 text-right">Days</TableHead>
+                <TableHead className="w-36">Balance</TableHead>
                 <TableHead>Reason</TableHead>
                 <TableHead className="w-36 text-right">Actions</TableHead>
               </TableRow>
@@ -248,6 +249,25 @@ export function ApprovalsClient({ applications, creditRequests, permissions: _pe
                   {/* Days */}
                   <TableCell className="text-right text-sm font-medium">
                     {formatDays(app.totalDays)}
+                  </TableCell>
+
+                  {/* Applicant's balance for this leave type */}
+                  <TableCell className="text-xs whitespace-nowrap">
+                    {app.balance ? (
+                      <div className="flex flex-col gap-0.5" title={`${app.balance.year} balance for ${app.leaveTypeName}`}>
+                        <span className="text-muted-foreground">
+                          {formatDays(app.balance.remainingBefore)} left &rarr;{" "}
+                          <span className={parseFloat(app.balance.remainingDays) < 0 ? "font-semibold text-destructive" : "font-medium text-foreground"}>
+                            {formatDays(app.balance.remainingDays)}
+                          </span>
+                        </span>
+                        {parseFloat(app.balance.remainingDays) < 0 && (
+                          <span className="text-destructive">Exceeds balance</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground" title="Balances are shown for the current year only">—</span>
+                    )}
                   </TableCell>
 
                   {/* Reason */}
@@ -437,6 +457,42 @@ export function ApprovalsClient({ applications, creditRequests, permissions: _pe
                 </div>
               )}
             </div>
+
+            {/* Applicant's balance — so the approver can see what's left */}
+            {approveTarget?.balance && (
+              <div className="rounded-md border border-border p-4 space-y-1 text-sm">
+                <p className="text-xs font-medium text-muted-foreground pb-1">
+                  {approveTarget.applicantName ?? "Applicant"}&apos;s {approveTarget.leaveTypeName} balance ({approveTarget.balance.year})
+                </p>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total available</span>
+                  <span className="font-medium">{formatDays(approveTarget.balance.totalDays)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Used (approved)</span>
+                  <span className="font-medium">{formatDays(approveTarget.balance.usedDays)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Pending (incl. this request)</span>
+                  <span className="font-medium">{formatDays(approveTarget.balance.pendingDays)}</span>
+                </div>
+                <div className="flex justify-between border-t border-border pt-1 mt-1">
+                  <span className="text-muted-foreground">Remaining before this request</span>
+                  <span className="font-medium">{formatDays(approveTarget.balance.remainingBefore)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Remaining after approval</span>
+                  <span className={parseFloat(approveTarget.balance.remainingDays) < 0 ? "font-semibold text-destructive" : "font-semibold"}>
+                    {formatDays(approveTarget.balance.remainingDays)}
+                  </span>
+                </div>
+                {parseFloat(approveTarget.balance.remainingDays) < 0 && (
+                  <p className="text-xs text-destructive pt-1">
+                    This request is more than the applicant has left. Approving it takes the balance below zero.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label htmlFor="approveComment">

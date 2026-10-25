@@ -32,9 +32,24 @@ export type LeaveApplicationRow = typeof leaveApplication.$inferSelect;
 export type LeaveCreditRequestRow = typeof leaveCreditRequest.$inferSelect;
 export type LeaveDocumentRow = typeof leaveDocument.$inferSelect;
 
+// What the approver needs to judge a request against the applicant's year
+// balance for that leave type. `remainingDays` already has this (still
+// pending) request deducted; `remainingBefore` is what they had before it.
+export type ApplicantLeaveBalance = {
+  year: number;
+  totalDays: string; // entitlement + carry-forward + opening balance + earned credit
+  usedDays: string; // approved (incl. opening used days)
+  pendingDays: string; // all pending applications, this one included
+  remainingBefore: string;
+  remainingDays: string;
+};
+
 export type LeaveApplicationWithDetails = LeaveApplicationRow & {
   applicantName: string | null;
   documents: LeaveDocumentRow[];
+  // Present on the approvals list; null when the request is for a year other
+  // than the current one (balances are only computed for the current year).
+  balance?: ApplicantLeaveBalance | null;
 };
 
 export type LeaveBalanceBreakdownItem = {
@@ -1079,11 +1094,31 @@ export async function getPendingApprovals(): Promise<LeaveApplicationWithDetails
     docMap[doc.applicationId].push(doc);
   }
 
-  return apps.map(({ app, applicantName }) => ({
-    ...app,
-    applicantName: applicantName ?? null,
-    documents: docMap[app.id] ?? [],
-  }));
+  const year = new Date().getFullYear();
+  const balancesByUser = new Map<string, MyLeaveBalance[]>();
+  for (const uid of new Set(apps.map((a) => a.app.userId))) {
+    balancesByUser.set(uid, await computeBalances(orgId, uid));
+  }
+
+  return apps.map(({ app, applicantName }) => {
+    const b = app.startDate.slice(0, 4) === String(year)
+      ? balancesByUser.get(app.userId)?.find((x) => x.leaveTypeId === app.leaveTypeId)
+      : undefined;
+    const remaining = b ? parseFloat(b.remainingDays) : 0;
+    const used = b ? parseFloat(b.usedDays) + parseFloat(b.openingUsedDays) : 0;
+    const pending = b ? parseFloat(b.pendingDays) : 0;
+    const balance: ApplicantLeaveBalance | null = b
+      ? {
+          year,
+          totalDays: (remaining + used + pending).toFixed(1),
+          usedDays: used.toFixed(1),
+          pendingDays: pending.toFixed(1),
+          remainingBefore: (remaining + parseFloat(app.totalDays)).toFixed(1),
+          remainingDays: remaining.toFixed(1),
+        }
+      : null;
+    return { ...app, applicantName: applicantName ?? null, documents: docMap[app.id] ?? [], balance };
+  });
 }
 
 /* =========================

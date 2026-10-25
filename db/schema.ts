@@ -4991,3 +4991,19 @@ export const changeCounter = pgTable(
   },
   (t) => [primaryKey({ columns: [t.organizationId, t.scope] })],
 );
+
+// Sticker label layout for packing-list labels — one saved design per
+// organisation, shared by everyone who prints labels for it.
+export const labelTemplate = pgTable("label_template", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  design: json("design").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
