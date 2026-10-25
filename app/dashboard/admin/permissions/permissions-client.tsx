@@ -7,6 +7,7 @@ import { upsertUserPermission, bulkGrantPermissions, bulkRevokePermissions } fro
 import { ALL_PERMISSIONS, PERMISSION_BUNDLES } from "@/lib/permissions/constants";
 import { KEY_GROUP, GROUP_DEFS } from "@/lib/permissions/groups";
 import { Switch } from "@/components/ui/switch";
+import { Spinner } from "@/components/ui/spinner";
 import { SearchIcon, ChevronDownIcon, CheckIcon, ShieldIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -169,16 +170,21 @@ function PresetsTab({
   async function handleToggle(bundleId: string, keys: readonly string[], grant: boolean) {
     setPending({ id: bundleId, type: grant ? "grant" : "revoke" });
     const ks = keys as unknown as string[];
-    const res = grant
-      ? await bulkGrantPermissions(member.userId, organizationId, ks)
-      : await bulkRevokePermissions(member.userId, organizationId, ks);
-    if (res.success) {
-      onChange(ks.map((k) => ({ key: k, allowed: grant })));
-      toast.success(grant ? "Bundle granted" : "Bundle revoked");
-    } else {
+    try {
+      const res = grant
+        ? await bulkGrantPermissions(member.userId, organizationId, ks)
+        : await bulkRevokePermissions(member.userId, organizationId, ks);
+      if (res.success) {
+        onChange(ks.map((k) => ({ key: k, allowed: grant })));
+        toast.success(grant ? "Bundle granted" : "Bundle revoked");
+      } else {
+        toast.error(grant ? "Failed to grant bundle" : "Failed to revoke bundle");
+      }
+    } catch {
       toast.error(grant ? "Failed to grant bundle" : "Failed to revoke bundle");
+    } finally {
+      setPending(null);
     }
-    setPending(null);
   }
 
   return (
@@ -245,7 +251,8 @@ function PresetsTab({
               </div>
 
               <div className="flex items-center gap-2 shrink-0 mt-0.5">
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  {busy && <Spinner className="size-3.5" />}
                   {busy ? (isGranting ? "Granting…" : "Revoking…") : fullyGranted ? "Granted" : "Off"}
                 </span>
                 <Switch
@@ -293,13 +300,18 @@ function PermissionsTab({
   async function handleToggle(key: string, current: boolean) {
     setToggling(key);
     const next = !current;
-    const res = await upsertUserPermission(member.userId, organizationId, key, next);
-    if (res.success) {
-      onChange([{ key, allowed: next }]);
-    } else {
+    try {
+      const res = await upsertUserPermission(member.userId, organizationId, key, next);
+      if (res.success) {
+        onChange([{ key, allowed: next }]);
+      } else {
+        toast.error("Failed to update permission");
+      }
+    } catch {
       toast.error("Failed to update permission");
+    } finally {
+      setToggling(null);
     }
-    setToggling(null);
   }
 
   function toggleCollapse(id: string) {
@@ -368,11 +380,15 @@ function PermissionsTab({
                         pi > 0 && "border-t border-border/40",
                       )}
                     >
-                      <Switch
-                        checked={allowed}
-                        disabled={busy}
-                        onCheckedChange={() => handleToggle(p.key, allowed)}
-                      />
+                      {/* fixed-width slot so the switch doesn't jump when the spinner appears */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Switch
+                          checked={allowed}
+                          disabled={busy}
+                          onCheckedChange={() => handleToggle(p.key, allowed)}
+                        />
+                        <span className="w-4 flex items-center justify-center">{busy && <Spinner className="size-3.5 text-muted-foreground" />}</span>
+                      </div>
                       <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
                         <span className="text-sm">{p.label}</span>
                       </div>
