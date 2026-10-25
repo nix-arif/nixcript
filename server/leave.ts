@@ -1466,7 +1466,7 @@ export async function recordLeaveForMember(input: ApplyLeaveInput & { userId: st
 }
 
 async function recordLeaveForMemberOrThrow(input: ApplyLeaveInput & { userId: string }): Promise<string> {
-  const { orgId, userId: actorId, userName } = await requireAccess("leave:approve");
+  const { orgId, userId: actorId, userName } = await requireAccess("leave:record");
   if (input.userId === actorId) throw new Error("You can't record leave for yourself — apply for it in My Leave");
   if (!input.reason?.trim() || input.reason.trim().length < 5) throw new Error("Give the reason for recording this leave (e.g. MC sent by email, member did not apply)");
   const [m] = await db.select({ name: user.name }).from(member).innerJoin(user, eq(user.id, member.userId))
@@ -1481,7 +1481,7 @@ async function recordLeaveForMemberOrThrow(input: ApplyLeaveInput & { userId: st
 
 /** Members leave can be recorded for, and their balances — for the Record leave form. */
 export async function getRecordLeaveOptions(memberId?: string) {
-  const { orgId, userId } = await requireAccess("leave:approve");
+  const { orgId, userId } = await requireAccess("leave:record");
   const [members, types] = await Promise.all([
     db.select({ id: member.userId, name: user.name }).from(member).innerJoin(user, eq(user.id, member.userId))
       .where(and(eq(member.organizationId, orgId), isNull(member.deletedAt), ne(member.userId, userId))).orderBy(asc(user.name)),
@@ -1952,8 +1952,8 @@ export async function createLeaveDocumentRecord(data: {
 }): Promise<LeaveDocumentRow> {
   const { orgId, userId } = await getSession();
   const perms = await getUserPermissions(userId, orgId);
-  // the member's own documents, or an approver attaching one (e.g. the MC for leave they recorded)
-  if (!hasAccess(perms, "leave:apply") && !hasAccess(perms, "leave:approve")) throw new Error("You don't have permission to do this");
+  // the member's own documents, or HR attaching one (e.g. the MC for leave they recorded)
+  if (!hasAccess(perms, "leave:apply") && !hasAccess(perms, "leave:approve") && !hasAccess(perms, "leave:record")) throw new Error("You don't have permission to do this");
   const app = await db
     .select()
     .from(leaveApplication)

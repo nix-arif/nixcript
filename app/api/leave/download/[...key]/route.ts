@@ -37,7 +37,7 @@ export async function GET(
   // document, and never checked leave:approve/leave:read:all at all (an
   // approver reviewing someone else's application got "Forbidden").
   const isOwner = doc[0].applicantId === userId && hasAccess(perms, "leave:read:own");
-  const allowed = isOwner || hasAccess(perms, "leave:approve") || hasAccess(perms, "leave:read:all");
+  const allowed = isOwner || hasAccess(perms, "leave:approve") || hasAccess(perms, "leave:record") || hasAccess(perms, "leave:read:all");
   if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const url = await getLeavePresignedDownloadUrl(fileKey, doc[0].fileName);

@@ -12,8 +12,8 @@ export async function POST(req: NextRequest) {
   const orgId = session.session.activeOrganizationId;
   if (!orgId) return NextResponse.json({ error: "No active org" }, { status: 400 });
   const perms = await getUserPermissions(session.user.id, orgId);
-  // the member uploading for their own application, or an approver for leave they recorded
-  if (!hasAccess(perms, "leave:apply") && !hasAccess(perms, "leave:approve"))
+  // the member uploading for their own application, or HR for leave they recorded
+  if (!hasAccess(perms, "leave:apply") && !hasAccess(perms, "leave:approve") && !hasAccess(perms, "leave:record"))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { appId, fileName, mimeType, fileSize } = await req.json();

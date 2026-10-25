@@ -157,6 +157,7 @@ export const ALL_PERMISSIONS = [
   { key: "leave:apply",    label: "Submit Leave Application" },
   { key: "leave:manage",   label: "Manage Leave Types & Entitlements" },
   { key: "leave:summary",  label: "View Leave Summary (all members)" },
+  { key: "leave:record",   label: "Record Leave for a Member (HR)" },
 
   // Claim management
   { key: "claim:read:own", label: "View Own Claims" },
@@ -377,7 +378,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
       "organization-profile:read",
       "claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage", "claim:read:all",
-      "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all", "leave:summary",
+      "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all", "leave:summary", "leave:record",
       "travel:read:own", "travel:apply", "travel:approve", "travel:manage", "travel:read:all",
       "allowance:read:own", "allowance:read:all", "allowance:manage",
     ],
@@ -739,8 +740,8 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
   {
     id: "leave-administrator",
     label: "Leave Administrator",
-    description: "Set up leave types, entitlements and policy, see every member's leave (report and summary). Approving leave is granted in Admin → Approvals.",
-    permissions: ["leave:read:own", "leave:apply", "leave:manage", "leave:read:all", "leave:summary"],
+    description: "Set up leave types, entitlements and policy, see every member's leave (report and summary). Can record leave a member took but never applied for. Approving leave is granted in Admin → Approvals.",
+    permissions: ["leave:read:own", "leave:apply", "leave:manage", "leave:read:all", "leave:summary", "leave:record"],
   },
   {
     id: "document-settings-admin",

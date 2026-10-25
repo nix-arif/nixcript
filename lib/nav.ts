@@ -183,6 +183,7 @@ export const navConfig: NavGroup[] = [
       { title: "My Payslips",    url: "/dashboard/human-resources/payslips",             permission: "payslip:read:own" },
       { title: "My Leave",       url: "/dashboard/human-resources/leave",                permission: "leave:read:own"   },
       { title: "Leave Approvals",url: "/dashboard/human-resources/leave/approvals",      permission: "leave:approve"    },
+      { title: "Record Leave",   url: "/dashboard/human-resources/leave/approvals/record", permission: "leave:record"  },
       { title: "Leave Types",    url: "/dashboard/human-resources/leave/types",          permission: "leave:manage"     },
       { title: "Leave Balances", url: "/dashboard/human-resources/leave/balances",       permission: "leave:manage"     },
       { title: "Leave Policy", url: "/dashboard/human-resources/leave/policy", permission: "leave:manage" },

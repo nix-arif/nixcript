@@ -38,7 +38,7 @@ export const KEY_GROUP: Record<string, string> = {
   "consignment:read": "inventory", "consignment:manage": "inventory",
   "consignment:adjust": "inventory", "consignment:settle": "inventory",
 
-  "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr", "leave:summary": "hr",
+  "leave:read:own": "hr", "leave:read:all": "hr", "leave:apply": "hr", "leave:manage": "hr", "leave:summary": "hr", "leave:record": "hr",
   "claim:read:own": "hr", "claim:apply": "hr", "claim:manage": "hr", "claim:read:all": "hr",
   "travel:read:own": "hr", "travel:apply": "hr", "travel:manage": "hr", "travel:read:all": "hr",
   "allowance:read:own": "hr", "allowance:read:all": "hr", "allowance:manage": "hr",

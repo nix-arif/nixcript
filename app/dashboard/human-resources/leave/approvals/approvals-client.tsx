@@ -59,7 +59,7 @@ interface Props {
   permissions: string[];
 }
 
-export function ApprovalsClient({ applications, creditRequests, permissions: _permissions }: Props) {
+export function ApprovalsClient({ applications, creditRequests, permissions }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -167,9 +167,11 @@ export function ApprovalsClient({ applications, creditRequests, permissions: _pe
             </Badge>
           )}
           {/* Leave a member took but never applied for (e.g. MC sent by email) */}
-          <Button size="sm" variant="outline" onClick={() => router.push("/dashboard/human-resources/leave/approvals/record")}>
-            Record leave for a member
-          </Button>
+          {(permissions.includes("*") || permissions.includes("leave:record")) && (
+            <Button size="sm" variant="outline" onClick={() => router.push("/dashboard/human-resources/leave/approvals/record")}>
+              Record leave for a member
+            </Button>
+          )}
         </div>
       </div>
 

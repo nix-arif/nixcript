@@ -176,10 +176,13 @@ tbody tr:hover{background:var(--surface-2)}
       <a href="#roles">Roles</a>
       <a href="#cancel">Cancelling Leave</a>
       <a href="#record">Recording Leave for a Member</a>
+      <a href="#happened" class="sub">Leave That Already Happened</a>
+      <a href="#emergency" class="sub">Emergency Leave</a>
       <a href="#dashboard">Dashboard</a>
       <a href="#summary">Leave Summary</a>
       <a href="#report">Leave Report</a>
       <a href="#ref">Quick Reference</a>
+      <a href="#scenarios">Scenarios</a>
     </nav>
   </aside>
 
@@ -313,9 +316,15 @@ tbody tr:hover{background:var(--surface-2)}
         </div>
       </div>
       <div class="formula">
-        <span>Available</span> = Entitled + Carry Forward − Used − Pending
+        <span>Available</span> = Entitled + Carry Forward + Earned Credits + Opening Balance − Opening Used Days − Used − Pending
       </div>
       <p style="font-size:13px;color:var(--muted)">Days in <strong>Pending</strong> status are reserved from your balance until the application is approved or cancelled. Weekends are not counted in any balance.</p>
+      <div class="info" id="opening"><strong>What are “opening” days?</strong> They are set by HR on the Leave Balances page for people whose leave started before the system did, and they only appear if HR set them.
+        <ul style="margin:8px 0 0 18px;display:flex;flex-direction:column;gap:4px;font-size:13px">
+          <li><strong>Opening balance</strong> <em>adds</em> days — leave a member already had left over from before the system (e.g. 5 unused days brought in when the company migrated).</li>
+          <li><strong>Opening used days</strong> <em>subtracts</em> days — leave already taken before the system went live (e.g. 6 days taken January–June when the system started in July). It applies to that year only and does not carry forward.</li>
+        </ul>
+      </div>
     </section>
 
     <section class="sec" id="apply">
@@ -441,7 +450,7 @@ tbody tr:hover{background:var(--surface-2)}
 
     <section class="sec" id="roles">
       <div class="sec-hd"><span class="sec-n">06</span><h2>Roles &amp; Responsibilities</h2></div>
-      <p>Three roles take part in the leave process.</p>
+      <p>Four roles take part in the leave process. Recording leave is a separate permission from approving it, so the person who records leave does not have to be an approver.</p>
       <div class="roles-grid">
         <div class="rc">
           <p class="rc-perm">leave:apply</p>
@@ -461,9 +470,19 @@ tbody tr:hover{background:var(--surface-2)}
             <div class="rc-act">View all pending applications in the Approvals queue</div>
             <div class="rc-act">Approve → <span class="badge b-ap">Approved</span> (with optional comment)</div>
             <div class="rc-act">Reject with reason → <span class="badge b-rj">Rejected</span></div>
+            <div class="rc-act">See the applicant's balance for that leave type before deciding — total available, used, pending, and what remains before and after this request (red if it would go below zero)</div>
             <div class="rc-act">Cancel any application on behalf of applicant</div>
             <div class="rc-act"><strong>Cannot approve their own application</strong></div>
-            <div class="rc-act">Record leave for a member who didn't apply (see 08)</div>
+          </div>
+        </div>
+        <div class="rc">
+          <p class="rc-perm">leave:record</p>
+          <h3>Leave Recorder (HR)</h3>
+          <div class="rc-acts">
+            <div class="rc-act">Record leave for a member who took it but did not apply (see 08)</div>
+            <div class="rc-act">Attach the supporting document (e.g. the MC)</div>
+            <div class="rc-act"><strong>Cannot record leave for themselves</strong></div>
+            <div class="rc-act">Does <em>not</em> need to be an approver, and recording does not let them approve or reject anyone's leave</div>
           </div>
         </div>
         <div class="rc">
@@ -475,7 +494,7 @@ tbody tr:hover{background:var(--surface-2)}
           </div>
         </div>
       </div>
-      <p style="margin-top:12px">Quick setup bundle <strong>Leave Administrator</strong> (Admin → Access Control) gives approve, summary, report and leave settings together.</p>
+      <p style="margin-top:12px">Quick setup bundle <strong>Leave Administrator</strong> (Admin → Access Control) gives record, summary, report and leave settings together. Approving leave is granted separately in Admin → Approvals.</p>
     </section>
 
     <section class="sec" id="cancel">
@@ -509,14 +528,41 @@ tbody tr:hover{background:var(--surface-2)}
 
     <section class="sec" id="record">
       <div class="sec-hd"><span class="sec-n">08</span><h2>Recording Leave for a Member</h2></div>
-      <p>For leave a member <strong>took but never applied for</strong> in the system — e.g. they were on MC and sent the slip by WhatsApp or email. Only someone who can approve leave can record it, and never for themselves.</p>
+      <p>For leave a member <strong>took but never applied for</strong> in the system — e.g. they were on MC and sent the slip by WhatsApp or email. Only someone with the <code>leave:record</code> permission can record it (it is separate from approving), and never for themselves. It is found under <strong>Human Resources → Record Leave</strong>, or the <strong>Record leave for a member</strong> button on Leave Approvals if you also approve.</p>
+      <div class="info"><strong>This is not a request to the member.</strong> HR creates the leave record directly and it counts straight away; the member is only told afterwards and asked to acknowledge it. If you want the member to apply themselves, ask them outside the system and they use Apply Leave as normal.</div>
       <div class="steps">
         <div class="step"><div class="step-n">1</div><div class="step-b"><h3>Leave Approvals → Record leave for a member</h3><p>Choose the member — their remaining balance per type is shown.</p></div></div>
         <div class="step"><div class="step-n">2</div><div class="step-b"><h3>Type, dates, reason</h3><p>The reason is required (at least 5 characters), e.g. <em>“MC sent by WhatsApp on 3 Oct, did not apply”</em>. Upload the MC if the type needs a document.</p></div></div>
-        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Save</h3><p>It is <span class="badge b-ap">Approved</span> at once and deducted from the member's balance. It shows <strong>“Recorded by HR”</strong> with who recorded it.</p></div></div>
+        <div class="step"><div class="step-n">3</div><div class="step-b"><h3>Save</h3><p>It is <span class="badge b-ap">Approved</span> at once and deducted from the member's balance. It shows <strong>“Recorded by HR”</strong> with who recorded it. If the member does not have enough balance, the system stops with “Insufficient balance” — record the days the balance covers, and the rest as <strong>Unpaid Leave</strong>.</p></div></div>
         <div class="step"><div class="step-n">4</div><div class="step-b"><h3>The member is told</h3><p>They get a notification and a card on their dashboard — <em>“Leave recorded for you”</em> — until they click <strong>OK, noted</strong>. The approver sees whether and when they acknowledged.</p></div></div>
       </div>
       <div class="warn">If the member says the recorded leave is wrong, cancel it (approver) and record it again correctly — the balance is restored on cancel.</div>
+
+      <div id="happened" style="display:flex;flex-direction:column;gap:12px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-top:18px">
+        <h3>08a — Leave That Already Happened</h3>
+        <p>Leave whose dates have already passed can still be put on record. Choose the route that fits:</p>
+        <table style="max-width:680px">
+          <thead><tr><th>Situation</th><th>What to do</th></tr></thead>
+          <tbody>
+            <tr><td style="padding:10px 14px"><strong>The member can still apply</strong> (preferred)</td><td style="padding:10px 14px;color:var(--muted)">The member uses <strong>Apply Leave</strong> with the past dates, a clear reason, and proof if any (e.g. the MC). It goes to the approver as <span class="badge b-pe">Pending</span> like any other application.</td></tr>
+            <tr><td style="padding:10px 14px"><strong>The member could not or did not apply</strong> (hospitalised, MC sent by email/WhatsApp, did not turn up)</td><td style="padding:10px 14px;color:var(--muted)">HR uses <strong>Record leave for a member</strong>: same dates and type, a reason (at least 5 characters) and the proof. It is approved on saving and the member acknowledges it.</td></tr>
+            <tr><td style="padding:10px 14px"><strong>Absence with no valid reason</strong> (unauthorised)</td><td style="padding:10px 14px;color:var(--muted)">Record it as <strong>Unpaid Leave</strong> so it does not use up paid leave. Any disciplinary follow-up is a separate HR matter, not part of the leave record.</td></tr>
+            <tr><td style="padding:10px 14px"><strong>Not enough balance left</strong></td><td style="padding:10px 14px;color:var(--muted)">Record what the balance covers under the normal type, and the shortfall as Unpaid Leave.</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:13px;color:var(--muted)">Keep the proof (MC, email, message) attached to the record. Leave that has not happened yet should always be applied for normally.</p>
+      </div>
+
+      <div id="emergency" style="display:flex;flex-direction:column;gap:12px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-top:18px">
+        <h3>08b — Emergency Leave</h3>
+        <p>Emergency Leave (EL) is <strong>not a separate leave type with its own balance</strong>. It is a label the system adds when a leave is applied for with too little notice — when it starts within the emergency threshold of the leave type (2 days for the default Annual Leave setup). A leave whose start date has <strong>already passed</strong> counts as having no notice, so it is labelled EL automatically.</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13.5px">
+          <li>The days are taken from the normal <strong>Annual Leave</strong> balance (the leave type keeps pointing at Annual Leave); only the name shown on the application changes to “Emergency Leave”.</li>
+          <li>It applies whether the member applies themselves or HR records it.</li>
+          <li>Leave Report and Leave Summary count EL under the type it was taken from, and show it separately as “of which emergency” / the <em>Emergency</em> pattern.</li>
+          <li>If the Annual Leave balance is not enough, the request is stopped — record the shortfall as Unpaid Leave.</li>
+        </ul>
+      </div>
     </section>
 
     <section class="sec" id="dashboard">
@@ -530,12 +576,17 @@ tbody tr:hover{background:var(--surface-2)}
 
     <section class="sec" id="summary">
       <div class="sec-hd"><span class="sec-n">10</span><h2>Leave Summary</h2></div>
-      <p>Human Resources → Leave → <strong>Leave Summary</strong> (needs <code>leave:summary</code>). One row per member for the year:</p>
-      <ul class="plain" style="display:flex;flex-direction:column;gap:6px;font-size:13.5px;padding-left:18px;list-style:disc">
-        <li><strong>Left · used</strong> per leave type — left = entitlement + carry-forward + earned credits − taken − pending.</li>
-        <li><strong>Taken</strong> and <strong>Pending</strong> days, and the <strong>Next leave</strong> date.</li>
-        <li><strong>Patterns</strong> (approved leave this year): next to a weekend (starting Monday / ending Friday), emergency leave, applied less than 3 days ahead.</li>
-        <li>Click a member for every application and their <em>days taken by month</em>. Search, and export to <strong>Excel</strong>.</li>
+      <p>Human Resources → Leave → <strong>Leave Summary</strong> (needs <code>leave:summary</code>). It shows at a glance who is away, who is running low on leave and who has requests waiting.</p>
+      <div class="act-grid">
+        <div class="ac"><h3>Overview cards</h3><p><em>Team members</em> (and total days taken), <em>Away today</em> (approved leave covering today), <em>Waiting for approval</em> (pending days and how many members) and <em>No leave left</em> (members who used up at least one leave type). Click a card to filter the table.</p></div>
+        <div class="ac"><h3>Filters and sorting</h3><p>Chips: Everyone, Away today, Has pending, No leave left, Leave patterns — each with a count. Sort by name, most days taken, most pending or least leave left. Search by name.</p></div>
+        <div class="ac"><h3>Days left, with a bar</h3><p>Each leave type shows days left “of” the year's total, with a bar for days taken (dark) and pending (amber). Red means below zero; amber text means none left.</p></div>
+        <div class="ac"><h3>Next leave</h3><p>The next booked leave with how soon it starts (“in 5 days”, “tomorrow”), or “None booked”.</p></div>
+      </div>
+      <ul class="plain" style="display:flex;flex-direction:column;gap:6px;font-size:13.5px;padding-left:18px;list-style:disc;margin-top:12px">
+        <li><strong>Days left</strong> = entitlement + carry-forward + earned credits + opening balance − opening used days − taken − pending.</li>
+        <li><strong>Leave patterns</strong>: <em>Mon/Fri leave</em> (starts on a Monday or ends on a Friday), <em>Emergency</em> (recorded as emergency leave), <em>Short notice</em> (applied for less than 3 days ahead). Hover a tag for its meaning.</li>
+        <li>Click a member for a balance card per leave type, every application (with status badges) and <em>approved days by month</em>. Export everything to <strong>Excel</strong>. A “How to read this page” box at the bottom explains each column.</li>
       </ul>
       <div class="info">Patterns are prompts for a conversation, not a judgement — check the dates before drawing conclusions.</div>
     </section>
@@ -572,7 +623,10 @@ tbody tr:hover{background:var(--surface-2)}
           <tr><td style="font-weight:600;padding:10px 14px">Half-day value</td><td style="color:var(--muted);padding:10px 14px">0.5 days deducted from balance.</td></tr>
           <tr><td style="font-weight:600;padding:10px 14px">Overlap rule</td><td style="color:var(--muted);padding:10px 14px">No two active applications may share a date.</td></tr>
           <tr><td style="font-weight:600;padding:10px 14px">Self-approval</td><td style="color:var(--muted);padding:10px 14px">Approvers cannot approve their own leave.</td></tr>
-          <tr><td style="font-weight:600;padding:10px 14px">Recorded leave</td><td style="color:var(--muted);padding:10px 14px">Approved on recording, reason required, member acknowledges on the dashboard.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Recorded leave</td><td style="color:var(--muted);padding:10px 14px">Needs <code>leave:record</code> (not approver). Approved on recording, reason required, member acknowledges on the dashboard. Blocked if the balance is too low — record the rest as Unpaid Leave.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Emergency Leave</td><td style="color:var(--muted);padding:10px 14px">A label, not a separate balance: leave starting within the emergency threshold (2 days by default), or already passed, is tagged EL and drawn from Annual Leave.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Unauthorised absence</td><td style="color:var(--muted);padding:10px 14px">Record as Unpaid Leave.</td></tr>
+          <tr><td style="font-weight:600;padding:10px 14px">Approver's view</td><td style="color:var(--muted);padding:10px 14px">The applicant's balance for that leave type is shown on the approval screen (current year only).</td></tr>
           <tr><td style="font-weight:600;padding:10px 14px">Carry forward</td><td style="color:var(--muted);padding:10px 14px">Annual Leave only — unused days roll over (max 8 days).</td></tr>
           <tr><td style="font-weight:600;padding:10px 14px">Balance year</td><td style="color:var(--muted);padding:10px 14px">Balances reset every January 1st.</td></tr>
         </tbody>
@@ -583,6 +637,76 @@ tbody tr:hover{background:var(--surface-2)}
         <span class="badge b-ap">Approved</span>
         <span class="badge b-rj">Rejected</span>
         <span class="badge b-ca">Cancelled</span>
+      </div>
+    </section>
+
+    <section class="sec" id="scenarios">
+      <div class="sec-hd"><span class="sec-n">13</span><h2>Scenarios</h2></div>
+      <p>Worked examples of common situations. Dates are examples; remember that weekends are never counted, so leave for a Saturday or Sunday only has no working days and cannot be applied for or recorded.</p>
+      <div class="info"><strong>Company rule used in these examples:</strong> a member who could not apply beforehand must apply on their <strong>first working day back</strong>. The system does not block a later application — the rule is company policy, and a late application is visible to the approver (the “applied … days after” note, and the <em>Short notice</em> pattern on the Leave Summary).</div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px">
+        <h3>Scenario 1 — Emergency, member applies afterwards</h3>
+        <p style="font-size:13px;color:var(--muted)">User A has an emergency on <strong>Thursday 22/10/2026</strong> and cannot apply beforehand. User A is back at work on <strong>Friday 23/10/2026</strong>.</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13.5px">
+          <li><strong>Friday 23/10 (first working day back):</strong> User A opens <em>Apply Leave</em>, chooses <strong>Annual Leave</strong>, sets From and To to <strong>22/10/2026</strong>, writes the reason (e.g. “family emergency”) and attaches proof if there is any.</li>
+          <li>The start date has already passed, so the system labels it <strong>Emergency Leave</strong> automatically. The 1 day is reserved from the Annual Leave balance as <span class="badge b-pe">Pending</span>.</li>
+          <li>The approver opens Leave Approvals and sees the application with User A’s balance (days left before and after). They <strong>approve</strong> or reject with a reason.</li>
+          <li>On approval it becomes <span class="badge b-ap">Approved</span> and the day is deducted from Annual Leave. The Leave Summary counts it under <em>Emergency</em>.</li>
+          <li><strong>If User A does not apply</strong> by the deadline, HR can still put it on record (Scenario 3), and it is visible as late.</li>
+        </ul>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px">
+        <h3>Scenario 2 — Emergency that spans a weekend</h3>
+        <p style="font-size:13px;color:var(--muted)">User B has an emergency on <strong>Friday 23/10/2026</strong> and is also away <strong>Monday 26/10/2026</strong>; back on Tuesday 27/10.</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13.5px">
+          <li>User B applies once on Tuesday 27/10: From <strong>23/10/2026</strong>, To <strong>26/10/2026</strong>.</li>
+          <li>The weekend (24–25/10) is not counted, so the application is <strong>2 days</strong> (Friday and Monday).</li>
+          <li>It is labelled Emergency Leave and follows the same approval as Scenario 1.</li>
+        </ul>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px">
+        <h3>Scenario 3 — Member could not apply (MC sent by WhatsApp)</h3>
+        <p style="font-size:13px;color:var(--muted)">User C was hospitalised <strong>Tuesday 20/10 to Thursday 22/10/2026</strong>, sent the MC to HR by WhatsApp and did not apply in the system.</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13.5px">
+          <li>HR (with the <code>leave:record</code> permission) opens <em>Record Leave</em> and chooses User C.</li>
+          <li>Leave type <strong>Sick Leave</strong>, From <strong>20/10/2026</strong>, To <strong>22/10/2026</strong> (3 working days). Reason: <em>“MC from hospital sent by WhatsApp on 22 Oct; member did not apply”</em>. Upload the MC.</li>
+          <li>Save: it is <span class="badge b-ap">Approved</span> at once, deducted from User C’s Sick Leave, and marked <strong>Recorded by HR</strong>.</li>
+          <li>User C is notified and, on the dashboard, clicks <strong>OK, noted</strong>. HR can see on the Leave Summary whether it has been acknowledged.</li>
+        </ul>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px">
+        <h3>Scenario 4 — Absent without notice or valid reason</h3>
+        <p style="font-size:13px;color:var(--muted)">User D did not come to work on <strong>Monday 19/10/2026</strong>, could not be reached and has no proof.</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13.5px">
+          <li>HR records it as <strong>Unpaid Leave</strong> for 19/10/2026 with the reason, so it is on record and paid leave is not used.</li>
+          <li>The leave record is not a disciplinary decision. Any warning or action follows the company’s normal HR process, separately.</li>
+        </ul>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px">
+        <h3>Scenario 5 — Emergency, but not enough Annual Leave left</h3>
+        <p style="font-size:13px;color:var(--muted)">User E has only <strong>1 day</strong> of Annual Leave left and was absent for an emergency on <strong>Wed 21/10 to Fri 23/10/2026</strong> (3 days).</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13.5px">
+          <li>A single application for 3 days is stopped with “Insufficient Annual Leave balance”.</li>
+          <li>Apply (or have HR record) <strong>1 day as Annual Leave</strong> (labelled Emergency Leave), for example Wednesday 21/10.</li>
+          <li>Apply (or record) the other <strong>2 days (22–23/10) as Unpaid Leave</strong> as a separate application.</li>
+        </ul>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px">
+        <h3>Scenario 6 — HR recorded the wrong dates</h3>
+        <p style="font-size:13px;color:var(--muted)">HR recorded User C’s MC as 20–22/10, but the MC actually covers 21–23/10.</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13.5px">
+          <li>An approver <strong>cancels</strong> the wrong record — User C’s balance is restored.</li>
+          <li>HR records it again with the correct dates and the same proof. The member acknowledges the new record.</li>
+        </ul>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);margin-bottom:14px">
+        <h3>Scenario 7 — Approver checking a request</h3>
+        <p style="font-size:13px;color:var(--muted)">An approver reviews User F’s 5-day Annual Leave request.</p>
+        <ul style="margin-left:18px;display:flex;flex-direction:column;gap:5px;font-size:13.5px">
+          <li>On Leave Approvals, the <strong>Balance</strong> column shows “X left → Y”, and the approve dialog lists total available, used, pending, and remaining before and after this request.</li>
+          <li>If the request is more than User F has left, the result is shown in red with “Exceeds balance” as a warning. Balances are shown for the current year only.</li>
+        </ul>
       </div>
     </section>
 
