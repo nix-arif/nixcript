@@ -159,7 +159,8 @@ function PresetsTab({
   overrides: OverrideMap;
   onChange: (updates: { key: string; allowed: boolean }[]) => void;
 }) {
-  const [pending, setPending] = useState<{ id: string; type: "grant" | "revoke" } | null>(null);
+  // Bundles still saving (several at once is fine), with what is being done
+  const [pending, setPending] = useState<Map<string, "grant" | "revoke">>(new Map());
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const activeKeys = useMemo(
@@ -168,7 +169,7 @@ function PresetsTab({
   );
 
   async function handleToggle(bundleId: string, keys: readonly string[], grant: boolean) {
-    setPending({ id: bundleId, type: grant ? "grant" : "revoke" });
+    setPending((m) => new Map(m).set(bundleId, grant ? "grant" : "revoke"));
     const ks = keys as unknown as string[];
     try {
       const res = grant
@@ -183,7 +184,7 @@ function PresetsTab({
     } catch {
       toast.error(grant ? "Failed to grant bundle" : "Failed to revoke bundle");
     } finally {
-      setPending(null);
+      setPending((m) => { const n = new Map(m); n.delete(bundleId); return n; });
     }
   }
 
@@ -194,8 +195,8 @@ function PresetsTab({
         const fullyGranted = grantedCount === bundle.permissions.length;
         const partial = grantedCount > 0 && !fullyGranted;
         const isExp = expanded === bundle.id;
-        const isGranting = pending?.id === bundle.id && pending.type === "grant";
-        const isRevoking = pending?.id === bundle.id && pending.type === "revoke";
+        const isGranting = pending.get(bundle.id) === "grant";
+        const isRevoking = pending.get(bundle.id) === "revoke";
         const busy = isGranting || isRevoking;
 
         return (
@@ -256,7 +257,7 @@ function PresetsTab({
                   {busy ? (isGranting ? "Granting…" : "Revoking…") : fullyGranted ? "Granted" : "Off"}
                 </span>
                 <Switch
-                  checked={fullyGranted}
+                  checked={busy ? isGranting : fullyGranted}
                   disabled={busy}
                   onCheckedChange={(v) => handleToggle(bundle.id, bundle.permissions, v)}
                 />
@@ -282,7 +283,9 @@ function PermissionsTab({
   overrides: OverrideMap;
   onChange: (updates: { key: string; allowed: boolean }[]) => void;
 }) {
-  const [toggling, setToggling] = useState<string | null>(null);
+  // Every toggle that is still saving, with the value it is saving: several
+  // can be in flight at once, each with its own spinner.
+  const [toggling, setToggling] = useState<Map<string, boolean>>(new Map());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
 
@@ -298,8 +301,8 @@ function PermissionsTab({
   }, [search]);
 
   async function handleToggle(key: string, current: boolean) {
-    setToggling(key);
     const next = !current;
+    setToggling((m) => new Map(m).set(key, next));
     try {
       const res = await upsertUserPermission(member.userId, organizationId, key, next);
       if (res.success) {
@@ -310,7 +313,7 @@ function PermissionsTab({
     } catch {
       toast.error("Failed to update permission");
     } finally {
-      setToggling(null);
+      setToggling((m) => { const n = new Map(m); n.delete(key); return n; });
     }
   }
 
@@ -369,8 +372,9 @@ function PermissionsTab({
             {!isCollapsed && (
               <div>
                 {group.perms.map((p, pi) => {
-                  const allowed = overrides.get(p.key) ?? false;
-                  const busy = toggling === p.key;
+                  const busy = toggling.has(p.key);
+                  // while saving, show the value being saved so the switch responds at once
+                  const allowed = busy ? toggling.get(p.key)! : overrides.get(p.key) ?? false;
 
                   return (
                     <div
@@ -431,18 +435,31 @@ export function AccessControlClient({
   const [activeTab, setActiveTab] = useState<"presets" | "permissions">("presets");
   const selected = members.find((m) => m.userId === selectedId) ?? null;
 
+  // Changes saved here that fresh server data may not include yet (several
+  // saves can be in flight at once, and the data that comes back after one
+  // of them can predate another). They stay on screen until the server's
+  // copy shows the same value.
+  const localChanges = React.useRef(new Map<string, boolean>());
+
   // Whenever the server sends fresh data (after a save, or on revisiting the page), show it
   useEffect(() => {
     const m = members.find((x) => x.userId === selectedId);
-    setOverrides(new Map((m?.permissions ?? []).map((p) => [p.key, p.allowed])));
+    const next = new Map((m?.permissions ?? []).map((p) => [p.key, p.allowed] as [string, boolean]));
+    for (const [k, v] of localChanges.current) {
+      if (next.get(k) === v) localChanges.current.delete(k);
+      else next.set(k, v);
+    }
+    setOverrides(next);
   }, [members, selectedId]);
 
   function handleSelect(m: Member) {
+    localChanges.current.clear();
     setSelectedId(m.userId);
     setActiveTab("presets");
   }
 
   function handleChange(updates: { key: string; allowed: boolean }[]) {
+    for (const u of updates) localChanges.current.set(u.key, u.allowed);
     setOverrides((prev) => {
       const next = new Map(prev);
       for (const u of updates) next.set(u.key, u.allowed);
