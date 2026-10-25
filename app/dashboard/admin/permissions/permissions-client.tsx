@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { upsertUserPermission, bulkGrantPermissions, bulkRevokePermissions } from "@/server/permissions";
@@ -422,13 +422,23 @@ export function AccessControlClient({
   members: Member[];
   organizationId: string;
 }) {
-  const [selected, setSelected] = useState<Member | null>(null);
+  // Keep only the id: the member itself is always read from the latest
+  // `members` prop, so a re-render with fresh server data can't be shadowed by
+  // an old snapshot (switching to another member and back used to show the
+  // permissions from before your changes).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<OverrideMap>(new Map());
   const [activeTab, setActiveTab] = useState<"presets" | "permissions">("presets");
+  const selected = members.find((m) => m.userId === selectedId) ?? null;
+
+  // Whenever the server sends fresh data (after a save, or on revisiting the page), show it
+  useEffect(() => {
+    const m = members.find((x) => x.userId === selectedId);
+    setOverrides(new Map((m?.permissions ?? []).map((p) => [p.key, p.allowed])));
+  }, [members, selectedId]);
 
   function handleSelect(m: Member) {
-    setSelected(m);
-    setOverrides(new Map(m.permissions.map((p) => [p.key, p.allowed])));
+    setSelectedId(m.userId);
     setActiveTab("presets");
   }
 

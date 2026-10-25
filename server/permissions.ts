@@ -7,6 +7,7 @@ import { getCurrentUser } from "./users";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { nanoid } from "nanoid";
+import { revalidatePath } from "next/cache";
 import { ALL_PERMISSIONS } from "@/lib/permissions/constants";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -220,6 +221,8 @@ export const bulkGrantPermissions = async (
           }),
       ),
     );
+    // Without this the browser keeps serving the pre-change copy of the page (back/forward, re-visits)
+    revalidatePath("/dashboard/admin/permissions");
     return { success: true };
   } catch (e) {
     return { success: false, message: (e as Error).message };
@@ -246,6 +249,8 @@ export const bulkRevokePermissions = async (
           }),
       ),
     );
+    // Without this the browser keeps serving the pre-change copy of the page (back/forward, re-visits)
+    revalidatePath("/dashboard/admin/permissions");
     return { success: true };
   } catch (e) {
     return { success: false, message: (e as Error).message };
@@ -280,6 +285,8 @@ export const upsertUserPermission = async (
         ],
         set: { allowed },
       });
+    // Without this the browser keeps serving the pre-change copy of the page (back/forward, re-visits)
+    revalidatePath("/dashboard/admin/permissions");
     return { success: true };
   } catch (e) {
     return { success: false, message: (e as Error).message };
