@@ -200,6 +200,7 @@ export const navConfig: NavGroup[] = [
       { title: "My Allowances",       url: "/dashboard/human-resources/allowance",       permission: "allowance:read:own" },
       { title: "Allowance Statement", url: "/dashboard/human-resources/allowance/all",   permission: "allowance:read:all" },
       { title: "Allowance Rates",     url: "/dashboard/human-resources/allowance/rates", permission: "allowance:manage"   },
+      { title: "Public Holidays",     url: "/dashboard/human-resources/public-holidays", permission: "public-holiday:read" },
     ],
   },
   {

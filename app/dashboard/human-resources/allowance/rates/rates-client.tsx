@@ -11,13 +11,10 @@ import { SettingsIcon, CheckIcon, CalendarDaysIcon, TrashIcon, PlusIcon, InfoIco
 import {
   upsertCategoryAllowanceRate,
   updateAllowanceSettings,
-  createPublicHoliday,
-  deletePublicHoliday,
   upsertMemberAllowanceRate,
   deleteMemberAllowanceRate,
   type CategoryAllowanceRateRow,
   type MultiSalesPersonMode,
-  type PublicHolidayRow,
   type MemberAllowanceRateRow,
   type OrgMemberOption,
 } from "@/server/category-allowance-rate";
@@ -25,7 +22,6 @@ import {
 interface Props {
   rates: CategoryAllowanceRateRow[];
   settings: { multiSalesPersonMode: MultiSalesPersonMode };
-  holidays: PublicHolidayRow[];
   memberRates: MemberAllowanceRateRow[];
   members: OrgMemberOption[];
 }
@@ -70,12 +66,7 @@ const MODE_OPTIONS: { value: MultiSalesPersonMode; label: string; description: s
   { value: "primary_only", label: "Primary only", description: "Only the primary sales person earns it." },
 ];
 
-function fmtHolidayDate(d: string): string {
-  const [y, m, day] = d.split("-").map(Number);
-  return new Date(y, m - 1, day).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
-}
-
-export function AllowanceRatesClient({ rates: initialRates, settings, holidays: initialHolidays, memberRates: initialMemberRates, members }: Props) {
+export function AllowanceRatesClient({ rates: initialRates, settings, memberRates: initialMemberRates, members }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
     Object.fromEntries(initialRates.map((r) => [r.categoryId, toDraft(r)])));
   const [saved, setSaved] = useState<Record<string, Draft>>(() =>
@@ -84,11 +75,6 @@ export function AllowanceRatesClient({ rates: initialRates, settings, holidays: 
   const [mode, setMode] = useState<MultiSalesPersonMode>(settings.multiSalesPersonMode);
   const [savingMode, setSavingMode] = useState(false);
 
-  const [holidays, setHolidays] = useState(initialHolidays);
-  const [newHolidayDate, setNewHolidayDate] = useState("");
-  const [newHolidayName, setNewHolidayName] = useState("");
-  const [addingHoliday, setAddingHoliday] = useState(false);
-  const [deletingHolidayId, setDeletingHolidayId] = useState<string | null>(null);
 
   function setField(categoryId: string, field: keyof Draft, value: string) {
     setDrafts((prev) => ({ ...prev, [categoryId]: { ...prev[categoryId], [field]: value } }));
@@ -132,34 +118,6 @@ export function AllowanceRatesClient({ rates: initialRates, settings, holidays: 
       toast.error(err instanceof Error ? err.message : "Failed to save setting");
     } finally {
       setSavingMode(false);
-    }
-  }
-
-  async function handleAddHoliday() {
-    if (!newHolidayDate || !newHolidayName.trim()) return;
-    setAddingHoliday(true);
-    try {
-      const row = await createPublicHoliday({ date: newHolidayDate, name: newHolidayName.trim() });
-      setHolidays((prev) => [row, ...prev.filter((h) => h.date !== row.date)].sort((a, b) => b.date.localeCompare(a.date)));
-      setNewHolidayDate("");
-      setNewHolidayName("");
-      toast.success("Holiday added");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to add holiday");
-    } finally {
-      setAddingHoliday(false);
-    }
-  }
-
-  async function handleDeleteHoliday(id: string) {
-    setDeletingHolidayId(id);
-    try {
-      await deletePublicHoliday(id);
-      setHolidays((prev) => prev.filter((h) => h.id !== id));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to remove holiday");
-    } finally {
-      setDeletingHolidayId(null);
     }
   }
 
@@ -256,47 +214,12 @@ export function AllowanceRatesClient({ rates: initialRates, settings, holidays: 
           </div>
         </section>
 
-        <section className="border border-border rounded-xl p-4 space-y-2.5">
+        <section className="border border-border rounded-xl p-4 space-y-1.5">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1.5">
             <CalendarDaysIcon className="w-3.5 h-3.5" /> Public Holidays
           </h2>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={newHolidayDate}
-              onChange={(e) => setNewHolidayDate(e.target.value)}
-              className="h-8 px-2 border border-input rounded-md text-xs bg-background outline-none focus:ring-1 focus:ring-ring"
-            />
-            <Input
-              value={newHolidayName}
-              onChange={(e) => setNewHolidayName(e.target.value)}
-              placeholder="Holiday name"
-              className="h-8 text-xs flex-1"
-            />
-            <Button size="sm" className="h-8 gap-1 text-xs shrink-0" disabled={addingHoliday || !newHolidayDate || !newHolidayName.trim()} onClick={handleAddHoliday}>
-              <PlusIcon className="w-3 h-3" /> Add
-            </Button>
-          </div>
-          {holidays.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No holidays added yet.</p>
-          ) : (
-            <div className="max-h-48 overflow-y-auto flex flex-col gap-1">
-              {holidays.map((h) => (
-                <div key={h.id} className="flex items-center justify-between text-xs rounded-md border border-border/60 px-2 py-1.5">
-                  <span className="text-muted-foreground whitespace-nowrap">{fmtHolidayDate(h.date)}</span>
-                  <span className="font-medium truncate mx-2">{h.name}</span>
-                  <button
-                    type="button"
-                    disabled={deletingHolidayId === h.id}
-                    onClick={() => handleDeleteHoliday(h.id)}
-                    className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
-                  >
-                    <TrashIcon className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <p className="text-xs text-muted-foreground">The public holiday calendar now has its own page, with its own permissions.</p>
+          <a href="/dashboard/human-resources/public-holidays" className="text-xs text-primary underline underline-offset-2">Open Public Holidays</a>
         </section>
       </div>
 
@@ -323,7 +246,7 @@ export function AllowanceRatesClient({ rates: initialRates, settings, holidays: 
           </div>
           <div className="flex items-start gap-1.5">
             <span className="font-mono font-semibold text-foreground shrink-0">Holiday</span>
-            <span className="text-muted-foreground">Case date is on the Public Holidays list — always wins over weekday/weekend.</span>
+            <span className="text-muted-foreground">Case date is on the Public Holidays calendar — always wins over weekday/weekend.</span>
           </div>
           <div className="flex items-start gap-1.5 sm:col-span-2 lg:col-span-2">
             <span className="font-mono font-semibold text-foreground shrink-0">Blank</span>

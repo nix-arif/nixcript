@@ -42,6 +42,7 @@ export const KEY_GROUP: Record<string, string> = {
   "claim:read:own": "hr", "claim:apply": "hr", "claim:manage": "hr", "claim:read:all": "hr",
   "travel:read:own": "hr", "travel:apply": "hr", "travel:manage": "hr", "travel:read:all": "hr",
   "allowance:read:own": "hr", "allowance:read:all": "hr", "allowance:manage": "hr",
+  "public-holiday:read": "hr", "public-holiday:create": "hr", "public-holiday:update": "hr", "public-holiday:delete": "hr",
   "payslip:read:own": "hr", "payslip:read:all": "hr", "payslip:create": "hr",
   "profile:read": "hr", "profile:update": "hr", "profile:read:all": "hr", "profile:update:all": "hr", "profile:delete:all": "hr",
 

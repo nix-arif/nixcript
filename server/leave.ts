@@ -293,31 +293,31 @@ async function ensureEntitlement(
   userId: string,
   type: typeof leaveType.$inferSelect,
   year: number,
+  // Callers that already loaded this member (computeBalances does, once for
+  // all of their leave types) pass it in to skip a query per type.
+  knownMember?: typeof member.$inferSelect | null,
 ): Promise<typeof leaveEntitlement.$inferSelect> {
-  const existing = await db
-    .select()
-    .from(leaveEntitlement)
-    .where(
-      and(
-        eq(leaveEntitlement.organizationId, orgId),
-        eq(leaveEntitlement.userId, userId),
-        eq(leaveEntitlement.leaveTypeId, type.id),
-        eq(leaveEntitlement.year, year),
-      ),
-    )
-    .limit(1);
-
-  const memberRow = await db
-    .select()
-    .from(member)
-    .where(
-      and(
-        eq(member.organizationId, orgId),
-        eq(member.userId, userId),
-        isNull(member.deletedAt),
-      ),
-    )
-    .limit(1);
+  const [existing, memberRow] = await Promise.all([
+    db
+      .select()
+      .from(leaveEntitlement)
+      .where(
+        and(
+          eq(leaveEntitlement.organizationId, orgId),
+          eq(leaveEntitlement.userId, userId),
+          eq(leaveEntitlement.leaveTypeId, type.id),
+          eq(leaveEntitlement.year, year),
+        ),
+      )
+      .limit(1),
+    knownMember !== undefined
+      ? Promise.resolve(knownMember ? [knownMember] : [])
+      : db
+          .select()
+          .from(member)
+          .where(and(eq(member.organizationId, orgId), eq(member.userId, userId), isNull(member.deletedAt)))
+          .limit(1),
+  ]);
   const joinDate = memberRow[0]?.hireDate
     ? new Date(memberRow[0].hireDate + "T00:00:00")
     : (memberRow[0]?.createdAt ?? new Date());
@@ -735,36 +735,44 @@ async function getEarnedAvailableByType(
   return result;
 }
 
+// Runs fn over items with at most `limit` in flight — many members at once
+// without opening hundreds of simultaneous database requests.
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]);
+      }
+    }),
+  );
+  return out;
+}
+
 async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBalance[]> {
   const year = new Date().getFullYear();
-  const types = await db
-    .select()
-    .from(leaveType)
-    .where(and(eq(leaveType.organizationId, orgId), eq(leaveType.isActive, true)))
-    .orderBy(asc(leaveType.sortOrder));
-
-  const ents: (typeof leaveEntitlement.$inferSelect)[] = [];
-  for (const type of types) {
-    ents.push(await ensureEntitlement(orgId, userId, type, year));
-  }
-
-  const earnedByType = await getEarnedAvailableByType(orgId, userId);
-
-  const setByIds = [...new Set([
-    ...ents.map((e) => e.openingBalanceSetBy),
-    ...ents.map((e) => e.openingUsedDaysSetBy),
-  ].filter((id): id is string => !!id))];
-  const nameMap: Record<string, string | null> = {};
-  if (setByIds.length > 0) {
-    const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, setByIds));
-    for (const u of users) nameMap[u.id] = u.name;
-  }
+  // These lookups don't depend on each other, so they go out together — each
+  // one is a separate network round trip to the database.
+  const [types, memberRows] = await Promise.all([
+    db
+      .select()
+      .from(leaveType)
+      .where(and(eq(leaveType.organizationId, orgId), eq(leaveType.isActive, true)))
+      .orderBy(asc(leaveType.sortOrder)),
+    db
+      .select()
+      .from(member)
+      .where(and(eq(member.organizationId, orgId), eq(member.userId, userId), isNull(member.deletedAt)))
+      .limit(1),
+  ]);
 
   // Split each type's used/pending by the label actually recorded on each
   // application — a type with emergencyThresholdDays set (normally Annual
   // Leave) draws from one pool but some applications are labeled Emergency
   // Leave, and that split should still be visible per-type.
-  const apps = await db
+  const appsQuery = db
     .select({
       leaveTypeId: leaveApplication.leaveTypeId,
       code: leaveApplication.leaveTypeCode,
@@ -782,6 +790,22 @@ async function computeBalances(orgId: string, userId: string): Promise<MyLeaveBa
         lte(leaveApplication.startDate, `${year}-12-31`),
       ),
     );
+
+  const [ents, earnedByType, apps] = await Promise.all([
+    Promise.all(types.map((type) => ensureEntitlement(orgId, userId, type, year, memberRows[0] ?? null))),
+    getEarnedAvailableByType(orgId, userId),
+    appsQuery,
+  ]);
+
+  const setByIds = [...new Set([
+    ...ents.map((e) => e.openingBalanceSetBy),
+    ...ents.map((e) => e.openingUsedDaysSetBy),
+  ].filter((id): id is string => !!id))];
+  const nameMap: Record<string, string | null> = {};
+  if (setByIds.length > 0) {
+    const users = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, setByIds));
+    for (const u of users) nameMap[u.id] = u.name;
+  }
 
   const breakdownByType = new Map<string, Map<string, LeaveBalanceBreakdownItem>>();
   for (const a of apps) {
@@ -1095,10 +1119,10 @@ export async function getPendingApprovals(): Promise<LeaveApplicationWithDetails
   }
 
   const year = new Date().getFullYear();
-  const balancesByUser = new Map<string, MyLeaveBalance[]>();
-  for (const uid of new Set(apps.map((a) => a.app.userId))) {
-    balancesByUser.set(uid, await computeBalances(orgId, uid));
-  }
+  const applicantIds = [...new Set(apps.map((a) => a.app.userId))];
+  const balancesByUser = new Map<string, MyLeaveBalance[]>(
+    await mapLimit(applicantIds, 4, async (uid) => [uid, await computeBalances(orgId, uid)] as [string, MyLeaveBalance[]]),
+  );
 
   return apps.map(({ app, applicantName }) => {
     const b = app.startDate.slice(0, 4) === String(year)
@@ -2052,9 +2076,13 @@ export async function getLeaveSummary(): Promise<{ year: number; types: { code: 
   ]);
 
   const dayOf = (ymd: string) => new Date(`${ymd}T00:00:00`).getDay();
+  // Balances for every member, a few at a time instead of one after another
+  const balByUser = new Map<string, MyLeaveBalance[]>(
+    await mapLimit(members, 4, async (m) => [m.userId, await computeBalances(orgId, m.userId)] as [string, MyLeaveBalance[]]),
+  );
   const out: LeaveSummaryMember[] = [];
   for (const m of members) {
-    const bal = await computeBalances(orgId, m.userId);
+    const bal = balByUser.get(m.userId)!;
     const mine = apps.filter((a) => a.userId === m.userId);
     const approved = mine.filter((a) => a.status === "APPROVED");
     const byMonth = Array.from({ length: 12 }, () => 0);

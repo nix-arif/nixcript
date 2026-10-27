@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { categoryAllowanceRate, memberAllowanceRate, documentCategory, organizationProfile, publicHoliday, member, user } from "@/db/schema";
+import { categoryAllowanceRate, memberAllowanceRate, documentCategory, organizationProfile, member, user } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -106,32 +106,6 @@ export async function upsertCategoryAllowanceRate(input: {
   revalidatePath("/dashboard/human-resources/allowance/rates");
 }
 
-export type PublicHolidayRow = typeof publicHoliday.$inferSelect;
-
-export async function getPublicHolidays(): Promise<PublicHolidayRow[]> {
-  const { orgId } = await requireAccess("allowance:manage");
-  return db.select().from(publicHoliday).where(eq(publicHoliday.organizationId, orgId)).orderBy(desc(publicHoliday.date));
-}
-
-export async function createPublicHoliday(input: { date: string; name: string }): Promise<PublicHolidayRow> {
-  const { orgId } = await requireAccess("allowance:manage");
-  const [row] = await db
-    .insert(publicHoliday)
-    .values({ id: nanoid(), organizationId: orgId, date: input.date, name: input.name.trim() })
-    .onConflictDoUpdate({
-      target: [publicHoliday.organizationId, publicHoliday.date],
-      set: { name: input.name.trim() },
-    })
-    .returning();
-  revalidatePath("/dashboard/human-resources/allowance/rates");
-  return row;
-}
-
-export async function deletePublicHoliday(id: string): Promise<void> {
-  const { orgId } = await requireAccess("allowance:manage");
-  await db.delete(publicHoliday).where(and(eq(publicHoliday.id, id), eq(publicHoliday.organizationId, orgId)));
-  revalidatePath("/dashboard/human-resources/allowance/rates");
-}
 
 export type MemberAllowanceRateRow = {
   id: string;

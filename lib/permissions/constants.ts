@@ -170,6 +170,12 @@ export const ALL_PERMISSIONS = [
   { key: "allowance:read:all", label: "View All Employees' Allowance Statements" },
   { key: "allowance:manage",   label: "Manage Category Allowance Rates" },
 
+  // Public holiday calendar (used by allowance rates)
+  { key: "public-holiday:read",   label: "View Public Holidays" },
+  { key: "public-holiday:create", label: "Add Public Holidays" },
+  { key: "public-holiday:update", label: "Edit Public Holidays" },
+  { key: "public-holiday:delete", label: "Delete Public Holidays" },
+
   // Travel form (pre-trip authorization)
   { key: "travel:read:own", label: "View Own Travel Forms" },
   { key: "travel:apply",    label: "Submit Travel Form" },
@@ -381,6 +387,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all", "leave:summary", "leave:record",
       "travel:read:own", "travel:apply", "travel:approve", "travel:manage", "travel:read:all",
       "allowance:read:own", "allowance:read:all", "allowance:manage",
+      "public-holiday:read", "public-holiday:create", "public-holiday:update", "public-holiday:delete",
     ],
     member: [
       "member:read",
@@ -754,5 +761,11 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Allowance Manager",
     description: "Configure category allowance rates and view/pay every employee's allowance statement — without full HR-manager rights.",
     permissions: ["allowance:read:own", "allowance:read:all", "allowance:manage"],
+  },
+  {
+    id: "public-holiday-manager",
+    label: "Public Holiday Manager",
+    description: "View, add, edit and delete the company's public holiday calendar.",
+    permissions: ["public-holiday:read", "public-holiday:create", "public-holiday:update", "public-holiday:delete"],
   },
 ];
