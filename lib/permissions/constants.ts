@@ -95,6 +95,8 @@ export const ALL_PERMISSIONS = [
   { key: "product:seed",         label: "Seed Products" },
   { key: "product:update-price", label: "Update Product Selling Prices" },
   { key: "product:upload-image", label: "Upload Product Images" },
+  { key: "brand-conversion:read",   label: "Convert Brand Codes to Best Medical Codes" },
+  { key: "brand-conversion:manage", label: "Manage Brand Conversion List" },
 
   // Member management
   { key: "member:read",   label: "View Members" },
@@ -266,6 +268,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "accounts-receivable:read",
       "customer:read", "customer:create", "customer:update", "customer:delete",
       "product:read", "product:update-price", "product:upload-image",
+      "brand-conversion:read", "brand-conversion:manage",
       "member:read", "member:invite", "member:remove",
       "department:read", "department:create",
       "profile:read", "profile:update", "profile:read:all",
@@ -761,6 +764,12 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Allowance Manager",
     description: "Configure category allowance rates and view/pay every employee's allowance statement — without full HR-manager rights.",
     permissions: ["allowance:read:own", "allowance:read:all", "allowance:manage"],
+  },
+  {
+    id: "brand-conversion",
+    label: "Brand Conversion",
+    description: "Convert hospital brand codes (medicon, geister, …) to Best Medical codes, and maintain the conversion list.",
+    permissions: ["product:read", "brand-conversion:read", "brand-conversion:manage"],
   },
   {
     id: "public-holiday-manager",

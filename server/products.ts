@@ -169,26 +169,52 @@ export async function getProducts(page = 1, limit = 50) {
   return { rows, total: Number(count), page, limit };
 }
 
-// Lightweight index: letter → count. One GROUP BY query, no product rows fetched.
-export async function getGlossaryIndex(): Promise<{ letter: string; count: number }[]> {
+// Brand condition shared by the glossary queries. Brands are free text, so
+// compare case/space-insensitively; "__none__" selects products with no brand.
+const GLOSSARY_NO_BRAND = "__none__";
+
+function glossaryBrandCond(brand?: string | null) {
+  const b = brand?.trim();
+  if (!b) return undefined;
+  if (b === GLOSSARY_NO_BRAND) return sql`COALESCE(TRIM(${product.brand}), '') = ''`;
+  return sql`LOWER(TRIM(${product.brand})) = ${b.toLowerCase()}`;
+}
+
+// Distinct brands (case-insensitive) with product counts, for the brand picker.
+export async function getGlossaryBrands(): Promise<{ brand: string; count: number }[]> {
   const { orgId } = await requireAccess("product:read");
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
 
-  const rows = await db.execute(sql`
-    SELECT
-      CASE
-        WHEN UPPER(LEFT(product_code, 1)) ~ '^[A-Z]$'
-        THEN UPPER(LEFT(product_code, 1))
-        ELSE '#'
-      END AS letter,
-      COUNT(DISTINCT product_code)::int AS count
-    FROM product
-    WHERE organization_id = ANY(ARRAY[${sql.join(ownerOrgIds.map((id) => sql`${id}`), sql`, `)}])
-    GROUP BY letter
-    ORDER BY letter
-  `);
+  const rows = await db
+    .select({
+      key: sql<string>`LOWER(TRIM(${product.brand}))`,
+      label: sql<string>`MIN(TRIM(${product.brand}))`,
+      count: sql<number>`COUNT(DISTINCT ${product.productCode})::int`,
+    })
+    .from(product)
+    .where(and(inArray(product.organizationId, ownerOrgIds), sql`COALESCE(TRIM(${product.brand}), '') <> ''`))
+    .groupBy(sql`LOWER(TRIM(${product.brand}))`)
+    .orderBy(sql`LOWER(TRIM(${product.brand}))`);
 
-  const data = (rows.rows ?? rows) as { letter: string; count: number }[];
+  return rows.map((r) => ({ brand: r.key, count: Number(r.count) }));
+}
+
+// Lightweight index: letter → count. One GROUP BY query, no product rows fetched.
+export async function getGlossaryIndex(brand?: string | null): Promise<{ letter: string; count: number }[]> {
+  const { orgId } = await requireAccess("product:read");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+
+  const rows = await db
+    .select({
+      letter: sql<string>`CASE WHEN UPPER(LEFT(${product.productCode}, 1)) ~ '^[A-Z]$' THEN UPPER(LEFT(${product.productCode}, 1)) ELSE '#' END`,
+      count: sql<number>`COUNT(DISTINCT ${product.productCode})::int`,
+    })
+    .from(product)
+    .where(and(inArray(product.organizationId, ownerOrgIds), glossaryBrandCond(brand)))
+    .groupBy(sql`1`)
+    .orderBy(sql`1`);
+
+  const data = rows.map((r) => ({ letter: r.letter, count: Number(r.count) }));
   return data.sort((a, b) => {
     if (a.letter === "#") return 1;
     if (b.letter === "#") return -1;
@@ -201,6 +227,7 @@ export async function getGlossaryByLetter(
   letter: string,
   page = 1,
   limit = 100,
+  brand?: string | null,
 ): Promise<{ rows: GlossaryProduct[]; total: number }> {
   const { orgId } = await requireAccess("product:read");
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
@@ -209,10 +236,12 @@ export async function getGlossaryByLetter(
     ? and(
         inArray(product.organizationId, ownerOrgIds),
         sql`UPPER(LEFT(${product.productCode}, 1)) !~ '^[A-Z]$'`,
+        glossaryBrandCond(brand),
       )
     : and(
         inArray(product.organizationId, ownerOrgIds),
         sql`UPPER(LEFT(${product.productCode}, 1)) = ${letter}`,
+        glossaryBrandCond(brand),
       );
 
   const [{ total }] = await db
@@ -245,6 +274,7 @@ export async function searchGlossary(
   query: string,
   page = 1,
   limit = 50,
+  brand?: string | null,
 ): Promise<{ rows: GlossaryProduct[]; total: number }> {
   const { orgId } = await requireAccess("product:read");
   if (!query.trim()) return { rows: [], total: 0 };
@@ -259,6 +289,7 @@ export async function searchGlossary(
       ilike(product.brand, q),
       ilike(product.supplier, q),
     ),
+    glossaryBrandCond(brand),
   );
 
   const [{ total }] = await db

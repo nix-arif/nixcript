@@ -5,11 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { SearchIcon, PackageIcon, ChevronLeftIcon, ChevronRightIcon, LoaderCircleIcon } from "lucide-react";
-import { getGlossaryByLetter, searchGlossary } from "@/server/products";
+import { getGlossaryByLetter, getGlossaryIndex, searchGlossary } from "@/server/products";
 import type { GlossaryProduct } from "@/server/products";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/hooks/use-debounce";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,8 @@ type PaneState =
   | { kind: "search"; query: string; rows: GlossaryProduct[]; total: number; page: number };
 
 const PAGE_SIZE = 100;
+const ALL_BRANDS = "__all__";
+const NO_BRAND = "__none__";
 
 // ── Image ──────────────────────────────────────────────────────────────────
 
@@ -426,7 +429,13 @@ function ProductDialog({ rows, index, onClose, onNavigate }: {
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export function GlossaryClient({ index }: { index: IndexEntry[] }) {
+export function GlossaryClient({ index: initialIndex, brands }: {
+  index: IndexEntry[];
+  brands: { brand: string; count: number }[];
+}) {
+  const [index, setIndex]     = useState(initialIndex);
+  const [brand, setBrand]     = useState(ALL_BRANDS);
+  const brandFilter           = brand === ALL_BRANDS ? null : brand;
   const [search, setSearch]   = useState("");
   const [pane, setPane]       = useState<PaneState>({ kind: "empty" });
   const [dialogIdx, setDialogIdx] = useState<number | null>(null);
@@ -442,10 +451,10 @@ export function GlossaryClient({ index }: { index: IndexEntry[] }) {
   // Load a letter
   const loadLetter = useCallback(async (letter: string, page = 1) => {
     setPane({ kind: "loading" });
-    const result = await getGlossaryByLetter(letter, page, PAGE_SIZE);
+    const result = await getGlossaryByLetter(letter, page, PAGE_SIZE, brandFilter);
     setPane({ kind: "letter", letter, page, ...result });
     if (page > 1) scrollToList();
-  }, []);
+  }, [brandFilter]);
 
   // Search effect
   useEffect(() => {
@@ -455,21 +464,35 @@ export function GlossaryClient({ index }: { index: IndexEntry[] }) {
     }
     let cancelled = false;
     setPane({ kind: "loading" });
-    searchGlossary(debouncedSearch, 1, PAGE_SIZE).then((result) => {
+    searchGlossary(debouncedSearch, 1, PAGE_SIZE, brandFilter).then((result) => {
       if (!cancelled) setPane({ kind: "search", query: debouncedSearch, page: 1, ...result });
     });
     return () => { cancelled = true; };
-  }, [debouncedSearch]);
+  }, [debouncedSearch, brandFilter]);
 
   const handleSearchPage = useCallback(async (page: number) => {
     if (pane.kind !== "search") return;
     setPane({ kind: "loading" });
-    const result = await searchGlossary(pane.query, page, PAGE_SIZE);
+    const result = await searchGlossary(pane.query, page, PAGE_SIZE, brandFilter);
     setPane({ kind: "search", query: pane.query, page, ...result });
     scrollToList();
-  }, [pane]);
+  }, [pane, brandFilter]);
 
   const activeLetter = pane.kind === "letter" ? pane.letter : null;
+
+  // Changing brand re-scopes everything: refresh the A–Z counts and drop the
+  // current list so nothing from the previous brand lingers.
+  async function changeBrand(next: string) {
+    setBrand(next);
+    setSearch("");
+    setDialogIdx(null);
+    setPane({ kind: "loading" });
+    try {
+      setIndex(await getGlossaryIndex(next === ALL_BRANDS ? null : next));
+    } finally {
+      setPane({ kind: "empty" });
+    }
+  }
 
   return (
     <div className="min-h-svh overflow-x-clip" style={{ background: "var(--color-background-secondary)" }}>
@@ -478,16 +501,32 @@ export function GlossaryClient({ index }: { index: IndexEntry[] }) {
       <div className="p-6 pb-3">
         <PageHeader
           title="Product Glossary"
-          description={`${totalProducts.toLocaleString()} products · A–Z index`}
+          description={`${totalProducts.toLocaleString()} products${brandFilter ? (brand === NO_BRAND ? " without a brand" : ` · ${brand}`) : ""} · A–Z index`}
         />
-        <div className="relative w-80 mt-4">
-          <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40" />
-          <Input
-            placeholder="Search code, description, brand…"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); }}
-            className="pl-8 h-9 text-sm"
-          />
+        <div className="flex flex-wrap items-center gap-2 mt-4">
+          <div className="relative w-80 max-w-full">
+            <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40" />
+            <Input
+              placeholder="Search code, description, brand…"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); }}
+              className="pl-8 h-9 text-sm"
+            />
+          </div>
+          <Select value={brand} onValueChange={changeBrand} disabled={pane.kind === "loading"}>
+            <SelectTrigger className="h-9 w-56 text-sm">
+              <SelectValue placeholder="All brands" />
+            </SelectTrigger>
+            <SelectContent className="max-h-80">
+              <SelectItem value={ALL_BRANDS}>All brands</SelectItem>
+              <SelectItem value={NO_BRAND}>No brand</SelectItem>
+              {brands.map((b) => (
+                <SelectItem key={b.brand} value={b.brand} className="capitalize">
+                  {b.brand} ({b.count.toLocaleString()})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 

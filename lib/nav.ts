@@ -120,6 +120,7 @@ export const navConfig: NavGroup[] = [
       { title: "Update Selling Price",    url: "/dashboard/products/update-price",              permission: "product:update-price" },
       { title: "Upload Product Images",   url: "/dashboard/products/upload-images",             permission: "product:upload-image" },
       { title: "Picture Reference",       url: "/dashboard/products/picture-ref",               permission: "product:read" },
+      { title: "Brand Conversion",        url: "/dashboard/products/brand-conversion",          permission: "brand-conversion:read" },
     ],
   },
   {

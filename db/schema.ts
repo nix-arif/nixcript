@@ -5007,3 +5007,37 @@ export const labelTemplate = pgTable("label_template", {
     .$onUpdate(() => new Date())
     .notNull(),
 });
+
+// Brand → Best Medical code conversions. A hospital orders by another brand's
+// catalogue code (medicon, geister, bolton surgical, …); each row records the
+// Best Medical code to emboss for it. Built from past order sheets (seeded by
+// scripts/seed-brand-conversion.ts, topped up from the Brand Conversion page).
+// A brand code can have several rows when it was converted differently over
+// time — useCount says how often, so the most-used one is the default.
+export const brandConversion = pgTable(
+  "brand_conversion",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    brandName: text("brand_name").notNull().default(""), // normalised, e.g. "medicon"; "" when unknown
+    brandCode: text("brand_code").notNull(), // as written, e.g. "01.27.03"
+    codeKey: text("code_key").notNull(), // upper-cased, spaces removed — what lookups match on
+    bestMedicalCode: text("best_medical_code").notNull(),
+    description: text("description"), // last description seen with this conversion
+    uom: text("uom"),
+    useCount: integer("use_count").notNull().default(1),
+    lastSeen: text("last_seen"), // YYYY-MM-DD of the newest order sheet it appeared in
+    source: text("source"), // where it came from: file name, "manual", "import"
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("brand_conversion_uidx").on(t.organizationId, t.brandName, t.codeKey, t.bestMedicalCode),
+    index("brand_conversion_key_idx").on(t.organizationId, t.codeKey),
+  ],
+);

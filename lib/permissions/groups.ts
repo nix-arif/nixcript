@@ -31,6 +31,7 @@ export const KEY_GROUP: Record<string, string> = {
 
   "product:read": "products", "product:seed": "products",
   "product:update-price": "products", "product:upload-image": "products",
+  "brand-conversion:read": "products", "brand-conversion:manage": "products",
 
   "inventory:read": "inventory", "inventory:adjust": "inventory",
   "inventory:manage": "inventory", "inventory:request": "inventory",

@@ -47,8 +47,10 @@ import {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function calcWorkingDays(start: string, end: string, isHalfDay: boolean): number {
-  if (isHalfDay) return 0.5;
+// Mirrors calculateWorkingDays in server/leave.ts: Mon–Fri, minus the
+// organisation's public holidays (the server recomputes this at submit time).
+function calcWorkingDays(start: string, end: string, isHalfDay: boolean, holidays: ReadonlySet<string>): number {
+  if (isHalfDay) return holidays.has(start) ? 0 : 0.5;
   if (!start || !end) return 0;
   const s = new Date(start + "T00:00:00");
   const e = new Date(end + "T00:00:00");
@@ -57,7 +59,8 @@ function calcWorkingDays(start: string, end: string, isHalfDay: boolean): number
   const cur = new Date(s);
   while (cur <= e) {
     const d = cur.getDay();
-    if (d !== 0 && d !== 6) days++;
+    const ymd = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+    if (d !== 0 && d !== 6 && !holidays.has(ymd)) days++;
     cur.setDate(cur.getDate() + 1);
   }
   return days;
@@ -284,9 +287,10 @@ interface Props {
   leaveTypes: LeaveTypeRow[];
   creditRequests: LeaveCreditRequestWithDetails[];
   permissions: string[];
+  holidays: string[]; // the organisation's public holiday dates
 }
 
-export function MyLeaveClient({ balances, applications, leaveTypes, creditRequests, permissions }: Props) {
+export function MyLeaveClient({ balances, applications, leaveTypes, creditRequests, permissions, holidays }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -347,7 +351,7 @@ export function MyLeaveClient({ balances, applications, leaveTypes, creditReques
   const selectedType = leaveTypes.find((t) => t.id === selectedTypeId) ?? null;
   const selectedBalance = balances.find((b) => b.leaveTypeId === selectedTypeId) ?? null;
   const effectiveEnd = isHalfDay ? startDate : endDate;
-  const workingDays = calcWorkingDays(startDate, effectiveEnd, isHalfDay);
+  const workingDays = calcWorkingDays(startDate, effectiveEnd, isHalfDay, new Set(holidays));
   const remaining = selectedBalance ? parseFloat(selectedBalance.remainingDays) : 0;
   const insufficientBalance = selectedType !== null && workingDays > 0 && workingDays > remaining;
   const isFormValid =

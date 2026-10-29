@@ -12,6 +12,7 @@ import {
   profile,
   notification,
   noticePeriodPolicy,
+  publicHoliday,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -117,8 +118,12 @@ async function requireAccess(permission: string) {
   return { session, orgId, userId, userName };
 }
 
-function calculateWorkingDays(startDate: string, endDate: string, isHalfDay: boolean): number {
-  if (isHalfDay) return 0.5;
+// Working days = Monday–Friday that are not on the organisation's public
+// holiday calendar (see the Public Holidays page). A holiday is treated like a
+// weekend: it isn't counted, so it isn't taken from the leave balance.
+function calculateWorkingDays(startDate: string, endDate: string, isHalfDay: boolean, holidays?: ReadonlySet<string>): number {
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  if (isHalfDay) return holidays?.has(startDate) ? 0 : 0.5;
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
   if (start > end) return 0;
@@ -126,10 +131,26 @@ function calculateWorkingDays(startDate: string, endDate: string, isHalfDay: boo
   const cur = new Date(start);
   while (cur <= end) {
     const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) days++;
+    if (dow !== 0 && dow !== 6 && !holidays?.has(ymd(cur))) days++;
     cur.setDate(cur.getDate() + 1);
   }
   return days;
+}
+
+// The organisation's public holiday dates in a range, as "YYYY-MM-DD".
+async function holidayDatesBetween(orgId: string, from: string, to: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ date: publicHoliday.date })
+    .from(publicHoliday)
+    .where(and(eq(publicHoliday.organizationId, orgId), gte(publicHoliday.date, from), lte(publicHoliday.date, to)));
+  return new Set(rows.map((r) => r.date));
+}
+
+/** Every public holiday date of the active organisation — lets the apply form show the same day count as the server. */
+export async function getOrgHolidayDates(): Promise<string[]> {
+  const { orgId } = await getSession();
+  const rows = await db.select({ date: publicHoliday.date }).from(publicHoliday).where(eq(publicHoliday.organizationId, orgId));
+  return rows.map((r) => r.date);
 }
 
 // Calendar days between today and the leave's start date — how much advance
@@ -1367,8 +1388,9 @@ async function createLeaveApplication(p: {
   if (data.isHalfDay && !lt.allowHalfDay)
     throw new Error("This leave type does not allow half-day applications");
 
-  const totalDays = calculateWorkingDays(data.startDate, data.endDate, data.isHalfDay);
-  if (totalDays <= 0) throw new Error("Selected dates have no working days");
+  const holidays = await holidayDatesBetween(orgId, data.startDate, data.endDate);
+  const totalDays = calculateWorkingDays(data.startDate, data.endDate, data.isHalfDay, holidays);
+  if (totalDays <= 0) throw new Error("Selected dates have no working days (weekends and public holidays aren't counted)");
 
   if (lt.maxDaysPerApplication && totalDays > lt.maxDaysPerApplication) {
     throw new Error(
@@ -2021,7 +2043,8 @@ export async function calculateLeaveDays(
   endDate: string,
   isHalfDay: boolean,
 ): Promise<number> {
-  return calculateWorkingDays(startDate, endDate, isHalfDay);
+  const { orgId } = await getSession();
+  return calculateWorkingDays(startDate, endDate, isHalfDay, await holidayDatesBetween(orgId, startDate, endDate));
 }
 
 /* =========================
