@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { type PackingListListRow, type PendingPackingListPo } from "@/server/packing-list";
@@ -20,8 +20,6 @@ const STATUS: Record<string, { label: string; className: string }> = {
   cancelled: { label: "Cancelled",          className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
 
-const ACTIVE_ROW_KEY = "packing-list:active-row";
-
 interface Props {
   initialLists: PackingListListRow[];
   pendingPos: PendingPackingListPo[];
@@ -32,20 +30,6 @@ export function PackingListListClient({ initialLists, pendingPos, permissions }:
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
-
-  // Temporary highlight of the last-opened row so it's easy to find again on
-  // back-navigation. Lives in sessionStorage (read after mount to avoid a
-  // hydration mismatch) and is dropped when the tab closes.
-  const [activeId, setActiveId] = useState<string | null>(null);
-  useEffect(() => {
-    try { setActiveId(sessionStorage.getItem(ACTIVE_ROW_KEY)); } catch {}
-  }, []);
-
-  function openList(id: string) {
-    setActiveId(id);
-    try { sessionStorage.setItem(ACTIVE_ROW_KEY, id); } catch {}
-    router.push(`/dashboard/procurement/packing-list/${id}`);
-  }
 
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
 
@@ -220,14 +204,8 @@ export function PackingListListClient({ initialLists, pendingPos, permissions }:
               return (
                 <div
                   key={pl.id}
-                  className={cn(
-                    "border rounded-xl transition-colors cursor-pointer",
-                    activeId === pl.id
-                      ? "border-teal-400 dark:border-teal-600 bg-teal-50/60 dark:bg-teal-900/20"
-                      : "border-border bg-background hover:bg-muted/20",
-                  )}
-                  aria-selected={activeId === pl.id}
-                  onClick={() => openList(pl.id)}
+                  className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                  onClick={() => router.push(`/dashboard/procurement/packing-list/${pl.id}`)}
                 >
                   <div className="flex items-center gap-3 px-4 py-3">
                     <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-teal-50 dark:bg-teal-900/20 shrink-0">

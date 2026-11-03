@@ -174,6 +174,16 @@ export function PackingListDetailClient({
 }: Props) {
   const router = useRouter();
   const [cancelling, setCancelling] = useState(false);
+  // Click-to-highlight on an item row — each row toggles independently, so
+  // any number can be highlighted at once. Purely a viewing aid, kept in
+  // local state only (not persisted anywhere), so it resets on every refresh.
+  const [highlightedItemIds, setHighlightedItemIds] = useState<Set<string>>(new Set());
+  const toggleHighlight = (id: string) =>
+    setHighlightedItemIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   const [deleting, setDeleting] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState<"pdf" | "xlsx" | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -515,10 +525,12 @@ export function PackingListDetailClient({
                         <tr
                           key={item.id}
                           id={`pl-item-${item.id}`}
+                          onClick={() => toggleHighlight(item.id)}
                           className={cn(
-                            "border-t border-border/40 align-top transition-colors duration-300",
+                            "border-t border-border/40 align-top cursor-pointer transition-colors duration-300",
                             itemIndex % 2 === 1 && color.stripe,
                             shortBy > 0 && "bg-red-50/70 dark:bg-red-950/20 border-l-[6px] border-l-red-500",
+                            highlightedItemIds.has(item.id) && "bg-blue-100! dark:bg-blue-900/40!",
                             flashId === item.id && "border-l-blue-500",
                           )}
                         >
