@@ -12,7 +12,7 @@ export default async function PackingListLabelsPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requirePermission("purchase-order:read");
+  await requirePermission("label:read");
   const { id } = await params;
   const [data, template, permissions] = await Promise.all([
     getPackingListLabels(id),
@@ -26,7 +26,8 @@ export default async function PackingListLabelsPage({
       packingListNo={data.packingListNo}
       labels={data.labels}
       savedDesign={template}
-      canSaveTemplate={hasAccess(permissions, "purchase-order:update")}
+      canSaveTemplate={hasAccess(permissions, template ? "label:update" : "label:create")}
+      canDeleteTemplate={!!template && hasAccess(permissions, "label:delete")}
     />
   );
 }

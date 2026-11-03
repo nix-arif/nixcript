@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import type { PackingListLabel } from "@/server/packing-list";
-import { saveLabelTemplate } from "@/server/label-template";
+import { saveLabelTemplate, deleteLabelTemplate } from "@/server/label-template";
 import {
   DEFAULT_DESIGN, FIELD_LABEL, LABEL_TEMPLATES, code128Modules, elementText, encodedValue, newElement, newId, qrMatrix,
   type LabelDesign, type LabelElement, type LabelElementKind, type LabelFieldKey, type LabelItemData,
@@ -91,13 +91,14 @@ function ElementView({ el, data }: { el: LabelElement; data: LabelItemData }) {
 }
 
 export function LabelsClient({
-  packingListId, packingListNo, labels, savedDesign, canSaveTemplate,
+  packingListId, packingListNo, labels, savedDesign, canSaveTemplate, canDeleteTemplate,
 }: {
   packingListId: string;
   packingListNo: string;
   labels: PackingListLabel[];
   savedDesign: LabelDesign | null;
   canSaveTemplate: boolean;
+  canDeleteTemplate: boolean;
 }) {
   const router = useRouter();
   const [design, setDesign] = useState<LabelDesign>(savedDesign ?? DEFAULT_DESIGN);
@@ -184,6 +185,20 @@ export function LabelsClient({
     }
   }
 
+  async function handleDeleteTemplate() {
+    if (!window.confirm("Delete the saved label layout for your organization? Labels will go back to the default design.")) return;
+    setSaving(true);
+    try {
+      await deleteLabelTemplate();
+      toast.success("Saved label layout deleted");
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't delete the layout");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function handleLogoUpload(file: File | undefined, id: string) {
     if (!file) return;
     if (!/^image\/(png|jpe?g)$/.test(file.type)) { toast.error("Use a PNG or JPEG image"); return; }
@@ -208,6 +223,11 @@ export function LabelsClient({
             {canSaveTemplate && (
               <Button variant="outline" size="sm" className="gap-1.5" disabled={saving} onClick={handleSave}>
                 <SaveIcon className="w-3.5 h-3.5" /> {saving ? "Saving…" : "Save layout"}
+              </Button>
+            )}
+            {canDeleteTemplate && (
+              <Button variant="outline" size="sm" className="gap-1.5" disabled={saving} onClick={handleDeleteTemplate}>
+                Delete layout
               </Button>
             )}
             <Button size="sm" className="gap-1.5" disabled={sheet.length === 0 || generating} onClick={handleDownload}>

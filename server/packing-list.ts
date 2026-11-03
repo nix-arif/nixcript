@@ -651,7 +651,7 @@ export type PackingListLabel = {
 // label code when it has one, else the plain product code; the MDA
 // registration no. lives on the product, so it's looked up from the DB.
 export async function getPackingListLabels(id: string): Promise<{ packingListNo: string; labels: PackingListLabel[] } | null> {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("label:read");
   const [pl] = await db
     .select({ id: packingList.id, packingListNo: packingList.packingListNo, supplierSnapshot: packingList.supplierSnapshot })
     .from(packingList)

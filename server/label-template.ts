@@ -20,7 +20,7 @@ async function requireAccess(permission: string) {
 }
 
 export async function getLabelTemplate(): Promise<LabelDesign | null> {
-  const { orgId } = await requireAccess("purchase-order:read");
+  const { orgId } = await requireAccess("label:read");
   const [row] = await db.select().from(labelTemplate).where(eq(labelTemplate.organizationId, orgId)).limit(1);
   return (row?.design as LabelDesign | undefined) ?? null;
 }
@@ -28,7 +28,10 @@ export async function getLabelTemplate(): Promise<LabelDesign | null> {
 const MAX_DESIGN_BYTES = 1_500_000; // uploaded logos are embedded as data URLs
 
 export async function saveLabelTemplate(design: LabelDesign): Promise<void> {
-  const { orgId, userId } = await requireAccess("purchase-order:update");
+  const { orgId, userId } = await requireAccess("label:read");
+  const [existing] = await db.select({ id: labelTemplate.id }).from(labelTemplate).where(eq(labelTemplate.organizationId, orgId)).limit(1);
+  // First save creates the org's template; later saves update it.
+  await requireAccess(existing ? "label:update" : "label:create");
   if (JSON.stringify(design).length > MAX_DESIGN_BYTES) {
     throw new Error("The label design is too large — use a smaller logo image");
   }
@@ -36,4 +39,9 @@ export async function saveLabelTemplate(design: LabelDesign): Promise<void> {
     .insert(labelTemplate)
     .values({ id: nanoid(), organizationId: orgId, design, updatedBy: userId })
     .onConflictDoUpdate({ target: labelTemplate.organizationId, set: { design, updatedBy: userId } });
+}
+
+export async function deleteLabelTemplate(): Promise<void> {
+  const { orgId } = await requireAccess("label:delete");
+  await db.delete(labelTemplate).where(eq(labelTemplate.organizationId, orgId));
 }
