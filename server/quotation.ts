@@ -2086,34 +2086,66 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
       .from(quotation)
       .where(and(eq(quotation.groupId, q.groupId), not(eq(quotation.id, id))));
 
-    for (const sibling of siblings) {
+    for (const [sibIdx, sibling] of siblings.entries()) {
       // Load sibling's existing items to preserve prices.
       // Primary key: productCode (stable across reordering/removal).
-      // Fallback key: sortOrder (for free-text/header lines with no code).
+      // Fallback key: description (free-text rows). Position is NOT used — a
+      // manually inserted row shifts every later position and would hand one
+      // row another row's price.
       const siblingItems = await db
-        .select({ sortOrder: quotationItem.sortOrder, productCode: quotationItem.productCode, unitPrice: quotationItem.unitPrice, discountPct: quotationItem.discountPct, setPrice: quotationItem.setPrice })
+        .select({ productCode: quotationItem.productCode, description: quotationItem.description, unitPrice: quotationItem.unitPrice, discountPct: quotationItem.discountPct, setPrice: quotationItem.setPrice })
         .from(quotationItem)
         .where(eq(quotationItem.quotationId, sibling.id));
 
-      const priceByCode = new Map<string, { unitPrice: string; discountPct: string; setPrice: string | null }>();
-      const priceByPos = new Map<number, { unitPrice: string; discountPct: string; setPrice: string | null }>();
+      type Preserved = { unitPrice: string; discountPct: string; setPrice: string | null };
+      const descKey = (d: string | null | undefined) => (d ?? "").trim().toLowerCase();
+      const priceByCode = new Map<string, Preserved>();
+      const priceByDesc = new Map<string, Preserved>();
       for (const si of siblingItems) {
         const entry = { unitPrice: si.unitPrice ?? "0", discountPct: si.discountPct ?? "0", setPrice: si.setPrice ?? null };
         if (si.productCode) priceByCode.set(si.productCode, entry);
-        priceByPos.set(si.sortOrder, entry);
+        if (descKey(si.description)) priceByDesc.set(descKey(si.description), entry);
       }
+      const findPreserved = (item: (typeof input.items)[number]) =>
+        (item.productCode ? priceByCode.get(item.productCode) : undefined) ?? priceByDesc.get(descKey(item.description));
+
+      // This sibling's markup over the anchor, inferred from the rows it already
+      // priced; used for rows it has never seen (manually added items). With no
+      // overlap, fall back to an ascending markup by sibling position.
+      const ratios: number[] = [];
+      for (const item of input.items) {
+        const anchorPrice = Number(item.unitPrice ?? 0);
+        const preserved = findPreserved(item);
+        if (anchorPrice > 0 && preserved && Number(preserved.unitPrice) > anchorPrice) {
+          ratios.push(Number(preserved.unitPrice) / anchorPrice);
+        }
+      }
+      const markupFactor = ratios.length > 0
+        ? Math.max(1.01, ratios.reduce((a, r) => a + r, 0) / ratios.length)
+        : 1 + (5 + sibIdx * 3) / 100;
 
       await db.delete(quotationItem).where(eq(quotationItem.quotationId, sibling.id));
 
       if (input.items.length > 0) {
-        // Each sibling keeps its own prices (incl. its own set price), falling back to the anchor's set price
-        const sibBase = input.items.map((item, i) => {
-          const preserved = (item.productCode ? priceByCode.get(item.productCode) : undefined) ?? priceByPos.get(i);
+        // Each sibling keeps its own prices (incl. its own set price), but never at or
+        // below the anchor's; rows it has no price for are marked up from the anchor.
+        const sibBase = input.items.map((item) => {
+          const preserved = findPreserved(item);
+          const anchorPrice = Number(item.unitPrice ?? 0);
+          let unitPrice = preserved?.unitPrice ?? "0";
+          if (q.isDummy === 0 && anchorPrice > 0 && !(Number(unitPrice) > anchorPrice)) {
+            unitPrice = Math.ceil(anchorPrice * markupFactor).toFixed(2);
+          }
+          const anchorSetPrice = setPriceValue(item);
+          let setPrice = preserved?.setPrice ?? item.setPrice ?? null;
+          if (q.isDummy === 0 && anchorSetPrice > 0 && !(Number(setPrice ?? 0) > anchorSetPrice)) {
+            setPrice = Math.ceil(anchorSetPrice * markupFactor).toFixed(2);
+          }
           return {
             item,
-            unitPrice: preserved?.unitPrice ?? "0",
+            unitPrice,
             discountPct: preserved?.discountPct ?? item.discountPct ?? "0",
-            setPrice: preserved?.setPrice ?? item.setPrice ?? null,
+            setPrice,
           };
         });
         const sibLineTotals = lineTotalsWithSetPrice(
