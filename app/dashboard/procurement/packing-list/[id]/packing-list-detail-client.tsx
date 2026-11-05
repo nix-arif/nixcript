@@ -17,6 +17,8 @@ import {
   ChevronDownIcon, FileTextIcon, FileSpreadsheetIcon, DownloadIcon, RotateCcwIcon, LoaderIcon, PrinterIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PoBadge } from "@/components/po-badge";
+import { LineIssueChips } from "@/components/line-issue-chips";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 import { DownloadMediaButton, InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
@@ -523,6 +525,8 @@ export function PackingListDetailClient({
                         const repair = parseFloat(item.draftQtyRepair ?? "0") || 0;
                         const accepted = Math.max(0, (parseFloat(received) || 0) - ret);
                         const shortBy = showInspectionResults ? Math.max(0, (parseFloat(item.qtyExpected) || 0) - (parseFloat(received) || 0)) : 0;
+                        const retShown = showInspectionResults ? ret : 0;
+                        const repairShown = showInspectionResults ? repair : 0;
                         return (
                         <tr
                           key={item.id}
@@ -531,7 +535,8 @@ export function PackingListDetailClient({
                           className={cn(
                             "border-t border-border/40 align-top cursor-pointer transition-colors duration-300",
                             itemIndex % 2 === 1 && color.stripe,
-                            shortBy > 0 && "bg-red-50/70 dark:bg-red-950/20 border-l-[6px] border-l-red-500",
+                            (shortBy > 0 || retShown > 0) && "bg-red-100/80 dark:bg-red-950/35 border-l-[6px] border-l-red-600",
+                            !(shortBy > 0 || retShown > 0) && repairShown > 0 && "bg-orange-100/80 dark:bg-orange-950/35 border-l-[6px] border-l-orange-500",
                             highlightedItemIds.has(item.id) && "bg-blue-100! dark:bg-blue-900/40!",
                             flashId === item.id && "border-l-blue-500",
                           )}
@@ -638,6 +643,7 @@ export function PackingListDetailClient({
                                 )}
                               </div>
                             )}
+                            <div className="mb-1 flex flex-wrap items-center gap-1"><PoBadge label={poLabel(poId)} color={color} /><LineIssueChips short={shortBy} ret={retShown} repair={repairShown} /></div>
                             {item.description || "—"}
                             {item.descriptionSource === "product" && (
                               <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">

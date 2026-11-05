@@ -198,6 +198,19 @@ export function GoodsReceiptListClient({ initialGrs, pendingReturnsRepairs, perm
                     )}>
                       {row.qty} {isReturn ? "to return" : isShortfall ? "short-shipped" : "in repair"}
                     </span>
+                    {isReturn && (row.replacementAttempts ?? 0) > 0 && (
+                      <span
+                        className={cn(
+                          "text-[10px] font-medium rounded px-1.5 py-0.5 border shrink-0",
+                          (row.replacementAttempts ?? 0) >= 3
+                            ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800"
+                            : "bg-muted text-muted-foreground border-border",
+                        )}
+                        title={`${row.replacementGood} replacement unit(s) accepted, ${row.replacementFailed} failed again`}
+                      >
+                        {(row.replacementAttempts ?? 0) >= 3 ? "Needs decision · " : ""}{row.replacementAttempts} replacement attempt{row.replacementAttempts !== 1 ? "s" : ""} · {row.replacementFailed} failed
+                      </span>
+                    )}
                     <button
                       className="font-mono text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline shrink-0"
                       title={isShortfall ? "Open the purchase order" : "Open the goods receipt"}

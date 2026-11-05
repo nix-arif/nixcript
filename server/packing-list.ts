@@ -17,6 +17,7 @@ import {
   organizationProfile,
   inspectionPhoto,
   product,
+  returnReplacementAttempt,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -27,6 +28,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
+import { settleAttemptsForPackingList } from "@/server/replacement-attempts-core";
 import { createGoodsReceipt, type GoodsReceiptItemInput } from "@/server/goods-receipt";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -189,6 +191,16 @@ export type CentralizedPackingListWithItems = PackingListWithItems & { organizat
 
 export type PackableSupplier = { id: string; name: string; poCount: number };
 
+// An earlier, COMPLETED packing list that left this PO line short or returned to
+// the supplier — so the create page can point at where the problem came from.
+// Quantities are capped at what's still remaining on the line.
+export type PackableItemPriorIssue = {
+  packingListId: string;
+  packingListNo: string;
+  returnedQty: number;
+  shortQty: number;
+};
+
 export type PackableItem = {
   purchaseOrderId: string;
   poNo: string | null;
@@ -221,6 +233,7 @@ export type PackableItem = {
   customerName: string | null;
   customerOrganization: string | null;
   customerPoNo: string | null;
+  priorIssues: PackableItemPriorIssue[];
 };
 
 export type PendingPackingListPo = {
@@ -285,7 +298,7 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
   if (items.length === 0) return [];
   const itemIds = items.map((i) => i.id);
 
-  const [grItems, plItems] = await Promise.all([
+  const [grItems, plItems, priorRows] = await Promise.all([
     // qtyGood, not qtyReceived — an item sent back to the supplier (qtyReturn)
     // was never actually kept, so it must NOT count toward "already fulfilled"
     // or the supplier's replacement shipment would show zero qty remaining to
@@ -300,7 +313,37 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
       .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"))),
+    // Lines of already-inspected packing lists that came back short or with a
+    // still-open return — the origin of a problem this new packing list may be
+    // making good. Recalled receipts are ignored (the inspection was undone).
+    db.select({
+      purchaseOrderItemId: packingListItem.purchaseOrderItemId,
+      packingListId: packingList.id,
+      packingListNo: packingList.packingListNo,
+      qtyExpected: packingListItem.qtyExpected,
+      qtyReceived: goodsReceiptItem.qtyReceived,
+      qtyReturn: goodsReceiptItem.qtyReturn,
+      returnStatus: goodsReceiptItem.returnStatus,
+    })
+      .from(packingListItem)
+      .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+      .innerJoin(goodsReceiptItem, eq(goodsReceiptItem.packingListItemId, packingListItem.id))
+      .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+      .where(and(
+        inArray(packingListItem.purchaseOrderItemId, itemIds),
+        eq(packingList.status, "completed"),
+        ne(goodsReceipt.status, "recalled"),
+      ))
+      .orderBy(asc(packingList.createdAt)),
   ]);
+
+  const priorByItem: Record<string, { packingListId: string; packingListNo: string; returned: number; short: number }[]> = {};
+  for (const r of priorRows) {
+    const returned = r.returnStatus === "pending" ? parseFloat(r.qtyReturn ?? "0") || 0 : 0;
+    const short = Math.max(0, (parseFloat(r.qtyExpected) || 0) - (parseFloat(r.qtyReceived) || 0));
+    if (returned <= 0 && short <= 0) continue;
+    (priorByItem[r.purchaseOrderItemId] ??= []).push({ packingListId: r.packingListId, packingListNo: r.packingListNo, returned, short });
+  }
 
   const receivedByItem: Record<string, number> = {};
   for (const gi of grItems) {
@@ -360,6 +403,14 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
         customerName: item.customerName,
         customerOrganization: item.customerOrganization,
         customerPoNo: item.customerPoNo,
+        priorIssues: (priorByItem[item.id] ?? [])
+          .map((p) => ({
+            packingListId: p.packingListId,
+            packingListNo: p.packingListNo,
+            returnedQty: Math.min(p.returned, Math.max(0, remaining)),
+            shortQty: Math.min(p.short, Math.max(0, remaining)),
+          }))
+          .filter((p) => p.returnedQty > 0 || p.shortQty > 0),
       };
     }),
   );
@@ -418,6 +469,21 @@ export type PendingReturnForSupplier = {
   description: string | null;
   grNo: string | null;
   poNo: string | null;
+  // Returned qty not yet covered by GOOD replacement units from inspected attempts
+  qtyOutstanding: number;
+  // Qty already earmarked by attempts on packing lists that haven't been inspected yet
+  qtyLinkedPending: number;
+  attempts: {
+    id: string;
+    attemptNo: number;
+    packingListId: string;
+    packingListNo: string;
+    packingListItemId: string;
+    status: string; // "linked" | "inspected"
+    qtyAllocated: number;
+    qtyGood: number | null;
+    qtyFailed: number | null;
+  }[];
 };
 
 // Still-open (returnStatus "pending") return-to-supplier lines for this
@@ -461,15 +527,147 @@ export async function getPendingReturnsForSupplier(supplierId: string, targetOrg
       ne(goodsReceipt.status, "recalled"),
     ));
 
-  return rows.map((r) => ({
-    goodsReceiptItemId: r.id,
-    qty: parseFloat(r.qtyReturn ?? "0") || 0,
-    uom: r.uom,
-    productCode: r.productCode,
-    description: r.description,
-    grNo: r.grNo,
-    poNo: r.poNo,
-  }));
+  const attemptRows = rows.length === 0 ? [] : await db
+    .select({
+      id: returnReplacementAttempt.id,
+      goodsReceiptItemId: returnReplacementAttempt.goodsReceiptItemId,
+      attemptNo: returnReplacementAttempt.attemptNo,
+      packingListItemId: returnReplacementAttempt.packingListItemId,
+      packingListId: packingList.id,
+      packingListNo: packingList.packingListNo,
+      status: returnReplacementAttempt.status,
+      qtyAllocated: returnReplacementAttempt.qtyAllocated,
+      qtyGood: returnReplacementAttempt.qtyGood,
+      qtyFailed: returnReplacementAttempt.qtyFailed,
+    })
+    .from(returnReplacementAttempt)
+    .innerJoin(packingListItem, eq(returnReplacementAttempt.packingListItemId, packingListItem.id))
+    .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+    .where(inArray(returnReplacementAttempt.goodsReceiptItemId, rows.map((r) => r.id)))
+    .orderBy(asc(returnReplacementAttempt.attemptNo));
+
+  return rows.map((r) => {
+    const attempts = attemptRows
+      .filter((a) => a.goodsReceiptItemId === r.id)
+      .map((a) => ({
+        id: a.id,
+        attemptNo: a.attemptNo,
+        packingListId: a.packingListId,
+        packingListNo: a.packingListNo,
+        packingListItemId: a.packingListItemId,
+        status: a.status,
+        qtyAllocated: parseFloat(a.qtyAllocated) || 0,
+        qtyGood: a.qtyGood === null ? null : parseFloat(a.qtyGood) || 0,
+        qtyFailed: a.qtyFailed === null ? null : parseFloat(a.qtyFailed) || 0,
+      }));
+    const qty = parseFloat(r.qtyReturn ?? "0") || 0;
+    const goodSoFar = attempts.filter((a) => a.status === "inspected").reduce((sum, a) => sum + (a.qtyGood ?? 0), 0);
+    const linkedPending = attempts.filter((a) => a.status === "linked").reduce((sum, a) => sum + a.qtyAllocated, 0);
+    return {
+      goodsReceiptItemId: r.id,
+      qty,
+      uom: r.uom,
+      productCode: r.productCode,
+      description: r.description,
+      grNo: r.grNo,
+      poNo: r.poNo,
+      qtyOutstanding: Math.max(0, qty - goodSoFar),
+      qtyLinkedPending: linkedPending,
+      attempts,
+    };
+  });
+}
+
+// Earmarks part of a line on a (not yet inspected) packing list as the
+// replacement for a pending return. This does NOT resolve the return — it is
+// closed automatically at inspection time only if the good units across all
+// attempts cover what was returned (see settleAttemptsForPackingList), so a
+// replacement that is itself defective/short leaves it open as another attempt.
+// Linking is per LINE with a qty, so a shipment mixing replacement units with
+// fresh PO stock of the same product stays separable.
+export async function linkReturnReplacement(goodsReceiptItemId: string, packingListItemId: string, qty: number): Promise<void> {
+  const { orgId, userId } = await getSession();
+  if (!(qty > 0)) throw new Error("Enter how many units of this line are the replacement");
+
+  const [ret] = await db
+    .select({
+      id: goodsReceiptItem.id,
+      qtyReturn: goodsReceiptItem.qtyReturn,
+      returnStatus: goodsReceiptItem.returnStatus,
+      productCode: goodsReceiptItem.productCode,
+      productId: goodsReceiptItem.productId,
+      orgId: goodsReceipt.organizationId,
+      grStatus: goodsReceipt.status,
+      supplierId: purchaseOrder.supplierId,
+    })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .innerJoin(purchaseOrder, eq(goodsReceipt.purchaseOrderId, purchaseOrder.id))
+    .where(eq(goodsReceiptItem.id, goodsReceiptItemId));
+  if (!ret) throw new Error("Return not found");
+  if (ret.returnStatus !== "pending" || ret.grStatus === "recalled") throw new Error("This return is no longer open");
+
+  const [line] = await db
+    .select({
+      id: packingListItem.id,
+      qtyExpected: packingListItem.qtyExpected,
+      productCode: packingListItem.productCode,
+      productId: packingListItem.productId,
+      plId: packingList.id,
+      plStatus: packingList.status,
+      plOrgId: packingList.organizationId,
+      plSupplierId: packingList.supplierId,
+    })
+    .from(packingListItem)
+    .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+    .where(eq(packingListItem.id, packingListItemId));
+  if (!line) throw new Error("Packing list line not found");
+  await assertCanInspectPackingList(line.plOrgId, orgId, userId);
+  if (line.plOrgId !== ret.orgId) throw new Error("This return belongs to a different organization");
+  if (line.plStatus !== "pending") throw new Error("Replacements can only be linked to a packing list that hasn't been inspected yet");
+  if (!ret.supplierId || line.plSupplierId !== ret.supplierId) throw new Error("The replacement must come from the same supplier as the return");
+  const sameProduct = ret.productId && line.productId ? ret.productId === line.productId : !!ret.productCode && ret.productCode === line.productCode;
+  if (!sameProduct) throw new Error("This line is a different product from the one that was returned");
+
+  const existing = await db.select().from(returnReplacementAttempt).where(eq(returnReplacementAttempt.goodsReceiptItemId, goodsReceiptItemId));
+  if (existing.some((a) => a.packingListItemId === packingListItemId)) throw new Error("This line is already linked to that return");
+
+  const returned = parseFloat(ret.qtyReturn ?? "0") || 0;
+  const covered = existing.reduce((sum, a) => sum + (a.status === "inspected" ? parseFloat(a.qtyGood ?? "0") || 0 : parseFloat(a.qtyAllocated) || 0), 0);
+  if (qty > returned - covered + 1e-9) throw new Error(`Only ${Math.max(0, returned - covered)} unit(s) of this return are still uncovered`);
+
+  const onLine = await db.select({ qty: returnReplacementAttempt.qtyAllocated }).from(returnReplacementAttempt).where(eq(returnReplacementAttempt.packingListItemId, packingListItemId));
+  const lineAllocated = onLine.reduce((sum, a) => sum + (parseFloat(a.qty) || 0), 0);
+  const lineQty = parseFloat(line.qtyExpected) || 0;
+  if (qty > lineQty - lineAllocated + 1e-9) throw new Error(`This line only has ${Math.max(0, lineQty - lineAllocated)} unit(s) left to allocate as replacement`);
+
+  await db.insert(returnReplacementAttempt).values({
+    id: nanoid(),
+    organizationId: ret.orgId,
+    goodsReceiptItemId,
+    packingListItemId,
+    attemptNo: existing.length + 1,
+    qtyAllocated: String(qty),
+    createdBy: userId,
+  });
+  revalidatePath(`/dashboard/procurement/packing-list/${line.plId}`);
+}
+
+// Takes back a link made by mistake — only while that packing list is still
+// uninspected; once inspected the attempt is part of the audit trail.
+export async function unlinkReturnReplacement(attemptId: string): Promise<void> {
+  const { orgId, userId } = await getSession();
+  const [row] = await db
+    .select({ id: returnReplacementAttempt.id, status: returnReplacementAttempt.status, plOrgId: packingList.organizationId, plId: packingList.id })
+    .from(returnReplacementAttempt)
+    .innerJoin(packingListItem, eq(returnReplacementAttempt.packingListItemId, packingListItem.id))
+    .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+    .where(eq(returnReplacementAttempt.id, attemptId));
+  if (!row) throw new Error("Link not found");
+  await assertCanInspectPackingList(row.plOrgId, orgId, userId);
+  if (row.status !== "linked") throw new Error("This attempt has already been inspected and can't be removed");
+  await db.delete(returnReplacementAttempt).where(eq(returnReplacementAttempt.id, attemptId));
+  revalidatePath(`/dashboard/procurement/packing-list/${row.plId}`);
 }
 
 // Confirmed POs that still have items with nothing packed for them yet
@@ -1449,6 +1647,10 @@ async function applyPackingListInspection(
   if (!anyReceived) throw new Error("At least one item must have a quantity received greater than 0");
 
   await db.update(packingList).set({ status: "completed" }).where(eq(packingList.id, id));
+
+  // Score any replacement attempts linked to this packing list's lines and close
+  // the returns they fully cover.
+  await settleAttemptsForPackingList(id, userId);
 
   revalidatePath(`/dashboard/procurement/packing-list/${id}`);
   revalidatePath("/dashboard/procurement/packing-list");

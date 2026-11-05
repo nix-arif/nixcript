@@ -184,6 +184,19 @@ export function CentralizedGoodsReceiptClient({ initialGrs, pendingReturnsRepair
                     )}>
                       {row.qty} {isReturn ? "to return" : isShortfall ? "short-shipped" : "in repair"}
                     </span>
+                    {isReturn && (row.replacementAttempts ?? 0) > 0 && (
+                      <span
+                        className={cn(
+                          "text-[10px] font-medium rounded px-1.5 py-0.5 border shrink-0",
+                          (row.replacementAttempts ?? 0) >= 3
+                            ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800"
+                            : "bg-muted text-muted-foreground border-border",
+                        )}
+                        title={`${row.replacementGood} replacement unit(s) accepted, ${row.replacementFailed} failed again`}
+                      >
+                        {(row.replacementAttempts ?? 0) >= 3 ? "Needs decision · " : ""}{row.replacementAttempts} replacement attempt{row.replacementAttempts !== 1 ? "s" : ""} · {row.replacementFailed} failed
+                      </span>
+                    )}
                     {row.organizationName && (
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5 shrink-0">
                         {row.organizationName}

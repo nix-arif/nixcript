@@ -17,6 +17,7 @@ import {
   member,
   packingList,
   packingListItem,
+  returnReplacementAttempt,
   stockLevel,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
@@ -30,6 +31,7 @@ import { revalidatePath } from "next/cache";
 import { createApprovedMovement } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 import { performStockCheckAndReserve } from "@/server/stock-reservation";
+import { revertAttemptsForPackingList } from "@/server/replacement-attempts-core";
 
 // ── Auth helpers ────────────────────────────────────────────────────────────
 
@@ -468,6 +470,12 @@ export type PendingReturnRepairRow = {
   inspectedAt: Date | null;
   organizationId: string;
   organizationName: string | null;
+  // Returns only: scored replacement shipments so far (see returnReplacementAttempt).
+  // `replacementGood` is what has already been made good, `replacementFailed` what
+  // came back defective/short again.
+  replacementAttempts?: number;
+  replacementGood?: number;
+  replacementFailed?: number;
 };
 
 // Shared by getPendingReturnsAndRepairs (own org) and
@@ -613,6 +621,20 @@ async function computeOutstandingIssues(orgIds: string[]): Promise<PendingReturn
   const orgMap = Object.fromEntries(orgs.map((o) => [o.id, o.name]));
 
   const result: PendingReturnRepairRow[] = shortfallRows.map((r) => ({ ...r, organizationName: orgMap[r.organizationId] ?? null }));
+
+  const returnIds = rows.filter((r) => r.returnStatus === "pending").map((r) => r.id);
+  const attemptsByReturn = new Map<string, { status: string; qtyGood: string | null; qtyFailed: string | null }[]>();
+  if (returnIds.length > 0) {
+    const attemptRows = await db
+      .select({ goodsReceiptItemId: returnReplacementAttempt.goodsReceiptItemId, status: returnReplacementAttempt.status, qtyGood: returnReplacementAttempt.qtyGood, qtyFailed: returnReplacementAttempt.qtyFailed })
+      .from(returnReplacementAttempt)
+      .where(inArray(returnReplacementAttempt.goodsReceiptItemId, returnIds));
+    for (const a of attemptRows) {
+      const arr = attemptsByReturn.get(a.goodsReceiptItemId) ?? [];
+      arr.push(a);
+      attemptsByReturn.set(a.goodsReceiptItemId, arr);
+    }
+  }
   for (const r of rows) {
     const po = poMap[r.purchaseOrderId];
     const snap = po?.supplierSnapshot as { name?: string } | null;
@@ -633,7 +655,15 @@ async function computeOutstandingIssues(orgIds: string[]): Promise<PendingReturn
     };
     const qtyReturn = parseFloat(r.qtyReturn ?? "0") || 0;
     if (r.returnStatus === "pending" && qtyReturn > 0) {
-      result.push({ ...base, goodsReceiptItemId: r.id, category: "return", qty: qtyReturn, notes: r.returnNotes });
+      const done = (attemptsByReturn.get(r.id) ?? []).filter((a) => a.status === "inspected");
+      const good = done.reduce((sum, a) => sum + (parseFloat(a.qtyGood ?? "0") || 0), 0);
+      const failed = done.reduce((sum, a) => sum + (parseFloat(a.qtyFailed ?? "0") || 0), 0);
+      result.push({
+        ...base, goodsReceiptItemId: r.id, category: "return",
+        // Only the part not yet made good is still owed back
+        qty: Math.max(0, qtyReturn - good), notes: r.returnNotes,
+        replacementAttempts: done.length, replacementGood: good, replacementFailed: failed,
+      });
     }
     const qtyRepair = parseFloat(r.qtyRepair ?? "0") || 0;
     if (r.repairStatus === "pending" && qtyRepair > 0) {
@@ -1149,6 +1179,7 @@ export async function recallGoodsReceipt(id: string): Promise<void> {
 
   if (gr.packingListId) {
     await db.update(packingList).set({ status: "pending" }).where(eq(packingList.id, gr.packingListId));
+    await revertAttemptsForPackingList(gr.packingListId);
   }
 
   await db.update(goodsReceipt).set({ status: "recalled" }).where(eq(goodsReceipt.id, id));
@@ -1271,6 +1302,9 @@ export async function recallPackingListInspection(
   // The packing list is reopened for correction by each recall; make sure of
   // it even when only already-recalled receipts were being cleared.
   await db.update(packingList).set({ status: "pending" }).where(eq(packingList.id, packingListId));
+  // Replacement attempts scored by that inspection go back to "linked" and any
+  // return they auto-closed reopens, to be re-scored on the next completion.
+  await revertAttemptsForPackingList(packingListId);
   revalidatePath("/dashboard/procurement/packing-list");
   revalidatePath(`/dashboard/procurement/packing-list/${packingListId}`);
 

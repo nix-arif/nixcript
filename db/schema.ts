@@ -5041,3 +5041,40 @@ export const brandConversion = pgTable(
     index("brand_conversion_key_idx").on(t.organizationId, t.codeKey),
   ],
 );
+
+// Each replacement shipment a supplier sends against a pending return is one
+// "attempt". A return is only closed once the GOOD units across all its
+// attempts cover the returned qty — a replacement that is itself defective or
+// short leaves the return open and adds another attempt, instead of the old
+// "link = resolved" shortcut that lost the trail. Links to a packing-list LINE
+// (not the whole packing list) with an allocated qty, so a shipment mixing
+// replacement units with fresh PO stock (even for the same product) stays
+// separable. qtyGood/qtyFailed stay null until that packing list is inspected.
+export const returnReplacementAttempt = pgTable(
+  "return_replacement_attempt",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    goodsReceiptItemId: text("goods_receipt_item_id")
+      .notNull()
+      .references(() => goodsReceiptItem.id, { onDelete: "cascade" }),
+    packingListItemId: text("packing_list_item_id")
+      .notNull()
+      .references(() => packingListItem.id, { onDelete: "cascade" }),
+    attemptNo: integer("attempt_no").notNull(),
+    qtyAllocated: text("qty_allocated").notNull(),
+    qtyGood: text("qty_good"),
+    qtyFailed: text("qty_failed"),
+    status: text("status").notNull().default("linked"), // linked | inspected
+    createdBy: text("created_by").references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    inspectedAt: timestamp("inspected_at"),
+  },
+  (t) => [
+    index("rra_return_idx").on(t.goodsReceiptItemId),
+    uniqueIndex("rra_return_plitem_uidx").on(t.goodsReceiptItemId, t.packingListItemId),
+    index("rra_plitem_idx").on(t.packingListItemId),
+  ],
+);

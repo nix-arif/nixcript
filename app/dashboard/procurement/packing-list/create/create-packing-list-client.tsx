@@ -21,6 +21,7 @@ import {
   ClipboardListIcon, PlusIcon, TagIcon, LinkIcon, XIcon, AlertTriangleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PoBadge } from "@/components/po-badge";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 
@@ -153,6 +154,15 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
   }
 
   const selectedCount = Object.values(selected).filter(Boolean).length;
+  const problemItems = items.filter((i) => i.priorIssues.length > 0);
+  const allProblemSelected = problemItems.length > 0 && problemItems.every((i) => selected[i.purchaseOrderItemId]);
+  function toggleProblemItems() {
+    setSelected((prev) => {
+      const next = { ...prev };
+      problemItems.forEach((i) => { next[i.purchaseOrderItemId] = !allProblemSelected; });
+      return next;
+    });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -303,6 +313,17 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                 Items to Include {selectedCount > 0 && <span className="font-normal">({selectedCount} selected)</span>}
               </h2>
             </div>
+            {problemItems.length > 0 && (
+              <div className="flex items-center justify-between gap-2 mb-3 text-[11px] text-red-800 dark:text-red-300 bg-red-50 dark:bg-red-950/25 border border-red-200 dark:border-red-800/50 rounded-md px-3 py-1.5">
+                <span className="flex items-center gap-1.5">
+                  <AlertTriangleIcon className="w-3.5 h-3.5 shrink-0" />
+                  {problemItems.length} line{problemItems.length !== 1 ? "s" : ""} below {problemItems.length !== 1 ? "were" : "was"} returned or came up short on an earlier packing list — marked in red with a link to where it came from.
+                </span>
+                <button type="button" className="underline hover:text-red-950 dark:hover:text-red-100 shrink-0" onClick={toggleProblemItems}>
+                  {allProblemSelected ? "Unselect these lines" : "Select these lines"}
+                </button>
+              </div>
+            )}
             {poFilterActive && hasPoScope && (
               <div className="flex items-center justify-between gap-2 mb-3 text-[11px] text-muted-foreground bg-muted/40 rounded-md px-3 py-1.5">
                 <span>
@@ -363,7 +384,11 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                           {poItems.map((item, itemIndex) => {
                             const checked = !!selected[item.purchaseOrderItemId];
                             return (
-                              <tr key={item.purchaseOrderItemId} className={cn("border-t border-border/40 first:border-t-0 align-top", itemIndex % 2 === 1 && color.stripe)}>
+                              <tr key={item.purchaseOrderItemId} className={cn(
+                                "border-t border-border/40 first:border-t-0 align-top",
+                                itemIndex % 2 === 1 && color.stripe,
+                                item.priorIssues.length > 0 && "bg-red-100/80 dark:bg-red-950/35 border-l-[6px] border-l-red-600",
+                              )}>
                                 <td className="py-2 pl-3 pr-2 w-6">
                                   <input type="checkbox" checked={checked} onChange={() => toggle(item.purchaseOrderItemId)} />
                                 </td>
@@ -463,6 +488,25 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                                       )}
                                     </div>
                                   )}
+                                  <div className="mb-1 flex flex-wrap items-center gap-1">
+                                    <PoBadge label={first.poNo ?? first.prNo ?? poId} color={color} />
+                                    {item.priorIssues.map((p) => (
+                                      <a
+                                        key={p.packingListId}
+                                        href={`/dashboard/procurement/packing-list/${p.packingListId}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        title="Open the packing list this problem came from (new tab)"
+                                        className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-red-600 text-white hover:bg-red-700"
+                                      >
+                                        {p.returnedQty > 0 && `Return ${p.returnedQty}`}
+                                        {p.returnedQty > 0 && p.shortQty > 0 && " · "}
+                                        {p.shortQty > 0 && `Short ${p.shortQty}`}
+                                        <span className="font-mono normal-case font-medium opacity-90">· {p.packingListNo}</span>
+                                        <LinkIcon className="w-2.5 h-2.5 shrink-0" />
+                                      </a>
+                                    ))}
+                                  </div>
                                   {item.description || "—"}
                                   {item.descriptionSource === "product" && (
                                     <span className="flex items-center gap-1 w-fit mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
