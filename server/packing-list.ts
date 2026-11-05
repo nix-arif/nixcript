@@ -707,6 +707,7 @@ export async function linkReturnReplacement(goodsReceiptItemId: string, packingL
       productId: goodsReceiptItem.productId,
       orgId: goodsReceipt.organizationId,
       grStatus: goodsReceipt.status,
+      grPackingListId: goodsReceipt.packingListId,
       supplierId: purchaseOrder.supplierId,
     })
     .from(goodsReceiptItem)
@@ -733,6 +734,7 @@ export async function linkReturnReplacement(goodsReceiptItemId: string, packingL
   if (!line) throw new Error("Packing list line not found");
   await assertCanInspectPackingList(line.plOrgId, orgId, userId);
   if (line.plOrgId !== ret.orgId) throw new Error("This return belongs to a different organization");
+  if (ret.grPackingListId === line.plId) throw new Error("A packing list can't replace units it rejected itself");
   if (line.plStatus !== "pending") throw new Error("Replacements can only be linked to a packing list that hasn't been inspected yet");
   if (!ret.supplierId || line.plSupplierId !== ret.supplierId) throw new Error("The replacement must come from the same supplier as the return");
   const sameProduct = ret.productId && line.productId ? ret.productId === line.productId : !!ret.productCode && ret.productCode === line.productCode;
@@ -1796,6 +1798,15 @@ async function applyPackingListInspection(
     byPo.set(plItem.purchaseOrderId, arr);
   }
 
+  // Receipts are created one PO at a time, so a failure part-way (e.g. a PO
+  // that can't be received) leaves the earlier POs already booked while the
+  // packing list stays pending. Retrying must resume, not book them twice.
+  const existingGrs = await db
+    .select({ id: goodsReceipt.id, purchaseOrderId: goodsReceipt.purchaseOrderId })
+    .from(goodsReceipt)
+    .where(and(eq(goodsReceipt.packingListId, id), ne(goodsReceipt.status, "recalled")));
+  const grByPo = new Map(existingGrs.map((g) => [g.purchaseOrderId, g.id]));
+
   let anyReceived = false;
   const goodsReceiptIds: string[] = [];
   for (const [purchaseOrderId, lines] of byPo) {
@@ -1828,6 +1839,12 @@ async function applyPackingListInspection(
         currency: plItem.currency ?? undefined,
       };
     });
+
+    const alreadyBooked = grByPo.get(purchaseOrderId);
+    if (alreadyBooked) {
+      goodsReceiptIds.push(alreadyBooked);
+      continue;
+    }
 
     const gr = await createGoodsReceipt({
       purchaseOrderId,

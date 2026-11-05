@@ -69,9 +69,17 @@ export type ReturnToSupplierRow = {
   inspectedByName: string | null;
   shippedAt: Date | null;
   shipRef: string | null;
+  // Settlement — only set once the return is closed
+  status: "pending" | "resolved";
+  resolvedAt: Date | null;
+  resolvedByName: string | null;
+  resolutionType: string | null;
+  resolutionNotes: string | null;
   attempts: {
     id: string;
     attemptNo: number;
+    linkedAt: Date;
+    inspectedAt: Date | null;
     packingListId: string;
     packingListNo: string;
     status: string;
@@ -87,16 +95,28 @@ export type ReturnToSupplierRow = {
 // each goods receipt.
 export async function getReturnsToSupplier(): Promise<ReturnToSupplierRow[]> {
   const { orgId } = await requireRead();
-  return computeReturns([orgId]);
+  return computeReturns([orgId], "pending");
+}
+
+// Closed returns, kept for the item's full history (rejected → sent back →
+// replacement attempts → how it was settled).
+export async function getClosedReturns(): Promise<ReturnToSupplierRow[]> {
+  const { orgId } = await requireRead();
+  return computeReturns([orgId], "resolved");
+}
+
+export async function getClosedReturnsCentralized(): Promise<ReturnToSupplierRow[]> {
+  const { orgId } = await requireRead("goods-receipt:read:centralized");
+  return computeReturns(await getOwnerOrgIds(orgId), "resolved");
 }
 
 // Same list across every org the caller owns.
 export async function getReturnsToSupplierCentralized(): Promise<ReturnToSupplierRow[]> {
   const { orgId } = await requireRead("goods-receipt:read:centralized");
-  return computeReturns(await getOwnerOrgIds(orgId));
+  return computeReturns(await getOwnerOrgIds(orgId), "pending");
 }
 
-async function computeReturns(orgIds: string[]): Promise<ReturnToSupplierRow[]> {
+async function computeReturns(orgIds: string[], status: "pending" | "resolved"): Promise<ReturnToSupplierRow[]> {
   const names = await orgNames(orgIds);
 
   const rows = await db
@@ -111,6 +131,10 @@ async function computeReturns(orgIds: string[]): Promise<ReturnToSupplierRow[]> 
       inspectedByName: user.name,
       shippedAt: goodsReceiptItem.returnShippedAt,
       shipRef: goodsReceiptItem.returnShipRef,
+      resolvedAt: goodsReceiptItem.returnResolvedAt,
+      resolvedBy: goodsReceiptItem.returnResolvedBy,
+      resolutionType: goodsReceiptItem.returnResolutionType,
+      resolutionNotes: goodsReceiptItem.returnResolutionNotes,
       goodsReceiptId: goodsReceipt.id,
       organizationId: goodsReceipt.organizationId,
       grNo: goodsReceipt.grNo,
@@ -129,9 +153,13 @@ async function computeReturns(orgIds: string[]): Promise<ReturnToSupplierRow[]> 
     .leftJoin(user, eq(goodsReceiptItem.inspectedBy, user.id))
     .where(and(
       inArray(goodsReceipt.organizationId, orgIds),
-      eq(goodsReceiptItem.returnStatus, "pending"),
+      eq(goodsReceiptItem.returnStatus, status),
       ne(goodsReceipt.status, "recalled"),
     ));
+
+  const resolverIds = [...new Set(rows.map((r) => r.resolvedBy).filter((v): v is string => !!v))];
+  const resolverRows = resolverIds.length > 0 ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, resolverIds)) : [];
+  const resolverName = new Map(resolverRows.map((u) => [u.id, u.name]));
 
   const attemptRows = rows.length === 0 ? [] : await db
     .select({
@@ -144,6 +172,8 @@ async function computeReturns(orgIds: string[]): Promise<ReturnToSupplierRow[]> 
       qtyAllocated: returnReplacementAttempt.qtyAllocated,
       qtyGood: returnReplacementAttempt.qtyGood,
       qtyFailed: returnReplacementAttempt.qtyFailed,
+      linkedAt: returnReplacementAttempt.createdAt,
+      inspectedAt: returnReplacementAttempt.inspectedAt,
     })
     .from(returnReplacementAttempt)
     .innerJoin(packingListItem, eq(returnReplacementAttempt.packingListItemId, packingListItem.id))
@@ -159,6 +189,8 @@ async function computeReturns(orgIds: string[]): Promise<ReturnToSupplierRow[]> 
         .map((a) => ({
           id: a.id,
           attemptNo: a.attemptNo,
+          linkedAt: a.linkedAt,
+          inspectedAt: a.inspectedAt,
           packingListId: a.packingListId,
           packingListNo: a.packingListNo,
           status: a.status,
@@ -181,7 +213,7 @@ async function computeReturns(orgIds: string[]): Promise<ReturnToSupplierRow[]> 
         description: r.description,
         uom: r.uom,
         qtyRejected: qty,
-        qtyOutstanding: Math.max(0, qty - good),
+        qtyOutstanding: status === "resolved" ? 0 : Math.max(0, qty - good),
         reason: r.returnNotes,
         goodsReceiptId: r.goodsReceiptId,
         grNo: r.grNo,
@@ -191,10 +223,17 @@ async function computeReturns(orgIds: string[]): Promise<ReturnToSupplierRow[]> 
         inspectedByName: r.inspectedByName,
         shippedAt: r.shippedAt,
         shipRef: r.shipRef,
+        status,
+        resolvedAt: r.resolvedAt,
+        resolvedByName: r.resolvedBy ? (resolverName.get(r.resolvedBy) ?? null) : null,
+        resolutionType: r.resolutionType,
+        resolutionNotes: r.resolutionNotes,
         attempts,
       };
     })
-    .sort((a, b) => (a.inspectedAt?.getTime() ?? 0) - (b.inspectedAt?.getTime() ?? 0));
+    .sort((a, b) => status === "resolved"
+      ? (b.resolvedAt?.getTime() ?? 0) - (a.resolvedAt?.getTime() ?? 0)
+      : (a.inspectedAt?.getTime() ?? 0) - (b.inspectedAt?.getTime() ?? 0));
 }
 
 export type SurplusRow = {

@@ -26,11 +26,17 @@ export async function settleAttemptsForPackingList(packingListId: string, userId
     .where(eq(packingListItem.packingListId, packingListId));
   if (lines.length === 0) return;
 
-  const attempts = await db
-    .select()
+  // A packing list never replaces units it rejected itself (its own receipts
+  // are created from this very inspection), so such links are ignored.
+  const attempts = (await db
+    .select({ attempt: returnReplacementAttempt, sourcePackingListId: goodsReceipt.packingListId })
     .from(returnReplacementAttempt)
+    .innerJoin(goodsReceiptItem, eq(returnReplacementAttempt.goodsReceiptItemId, goodsReceiptItem.id))
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
     .where(and(inArray(returnReplacementAttempt.packingListItemId, lines.map((l) => l.id)), eq(returnReplacementAttempt.status, "linked")))
-    .orderBy(asc(returnReplacementAttempt.createdAt));
+    .orderBy(asc(returnReplacementAttempt.createdAt)))
+    .filter((r) => r.sourcePackingListId !== packingListId)
+    .map((r) => r.attempt);
   if (attempts.length === 0) return;
 
   const goodLeft = new Map<string, number>();
