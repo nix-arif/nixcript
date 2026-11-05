@@ -4,7 +4,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { getPackingListLabels } from "@/server/packing-list";
-import { getLabelTemplate } from "@/server/label-template";
+import { listLabelTemplates } from "@/server/label-template";
 import { LabelsClient } from "./labels-client";
 
 export default async function PackingListLabelsPage({
@@ -14,9 +14,9 @@ export default async function PackingListLabelsPage({
 }) {
   await requirePermission("label:read");
   const { id } = await params;
-  const [data, template, permissions] = await Promise.all([
+  const [data, templates, permissions] = await Promise.all([
     getPackingListLabels(id),
-    getLabelTemplate().catch(() => null),
+    listLabelTemplates().catch(() => []),
     getSession().then((s) => getUserPermissions(s!.user.id, s!.session.activeOrganizationId!)),
   ]);
   if (!data) notFound();
@@ -25,9 +25,10 @@ export default async function PackingListLabelsPage({
       packingListId={id}
       packingListNo={data.packingListNo}
       labels={data.labels}
-      savedDesign={template}
-      canSaveTemplate={hasAccess(permissions, template ? "label:update" : "label:create")}
-      canDeleteTemplate={!!template && hasAccess(permissions, "label:delete")}
+      templates={templates}
+      canCreateTemplate={hasAccess(permissions, "label:create")}
+      canUpdateTemplate={hasAccess(permissions, "label:update")}
+      canDeleteTemplate={hasAccess(permissions, "label:delete")}
     />
   );
 }

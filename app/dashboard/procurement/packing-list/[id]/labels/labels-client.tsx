@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeftIcon, DownloadIcon, RotateCcwIcon, SaveIcon, Trash2Icon } from "lucide-react";
+import { ArrowLeftIcon, DownloadIcon, PlusIcon, RotateCcwIcon, SaveIcon, StarIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import type { PackingListLabel } from "@/server/packing-list";
-import { saveLabelTemplate, deleteLabelTemplate } from "@/server/label-template";
+import { saveLabelTemplate, setDefaultLabelTemplate, deleteLabelTemplate, listLabelTemplates, type LabelTemplateRow } from "@/server/label-template";
 import {
   DEFAULT_DESIGN, FIELD_LABEL, LABEL_TEMPLATES, code128Modules, elementText, encodedValue, newElement, newId, qrMatrix,
   type LabelDesign, type LabelElement, type LabelElementKind, type LabelFieldKey, type LabelItemData,
@@ -91,17 +91,23 @@ function ElementView({ el, data }: { el: LabelElement; data: LabelItemData }) {
 }
 
 export function LabelsClient({
-  packingListId, packingListNo, labels, savedDesign, canSaveTemplate, canDeleteTemplate,
+  packingListId, packingListNo, labels, templates: initialTemplates, canCreateTemplate, canUpdateTemplate, canDeleteTemplate,
 }: {
   packingListId: string;
   packingListNo: string;
   labels: PackingListLabel[];
-  savedDesign: LabelDesign | null;
-  canSaveTemplate: boolean;
+  templates: LabelTemplateRow[];
+  canCreateTemplate: boolean;
+  canUpdateTemplate: boolean;
   canDeleteTemplate: boolean;
 }) {
   const router = useRouter();
-  const [design, setDesign] = useState<LabelDesign>(savedDesign ?? DEFAULT_DESIGN);
+  // Saved layouts (shared across the organisation). `activeId` is the one being
+  // edited; null means an unsaved design (the built-in default or a starter template).
+  const [templates, setTemplates] = useState<LabelTemplateRow[]>(initialTemplates);
+  const initialActive = initialTemplates.find((t) => t.isDefault) ?? initialTemplates[0] ?? null;
+  const [activeId, setActiveId] = useState<string | null>(initialActive?.id ?? null);
+  const [design, setDesign] = useState<LabelDesign>(initialActive?.design ?? DEFAULT_DESIGN);
   const [selectedId, setSelectedId] = useState<string | null>(design.elements[0]?.id ?? null);
   const [copies, setCopies] = useState<Record<string, number>>(Object.fromEntries(labels.map((l) => [l.itemId, 1])));
   const [previewIdx, setPreviewIdx] = useState(0);
@@ -173,11 +179,29 @@ export function LabelsClient({
     }
   }
 
+  const activeTemplate = templates.find((t) => t.id === activeId) ?? null;
+  const canSave = activeTemplate ? canUpdateTemplate : canCreateTemplate;
+
+  function applyTemplates(next: LabelTemplateRow[]) {
+    setTemplates([...next].sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name)));
+  }
+
+  function handlePickTemplate(id: string) {
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    setActiveId(t.id);
+    setDesign(t.design);
+    setSelectedId(t.design.elements[0]?.id ?? null);
+  }
+
+  // Updates the open template, or — when the design isn't saved yet — asks for a name.
   async function handleSave() {
+    if (!activeTemplate) return handleSaveAsNew();
     setSaving(true);
     try {
-      await saveLabelTemplate(design);
-      toast.success("Label layout saved for your organization");
+      const row = await saveLabelTemplate({ id: activeTemplate.id, design });
+      applyTemplates(templates.map((t) => (t.id === row.id ? row : t)));
+      toast.success(`“${row.name}” saved`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't save the layout");
     } finally {
@@ -185,15 +209,70 @@ export function LabelsClient({
     }
   }
 
-  async function handleDeleteTemplate() {
-    if (!window.confirm("Delete the saved label layout for your organization? Labels will go back to the default design.")) return;
+  async function handleSaveAsNew() {
+    if (!canCreateTemplate) return;
+    const name = window.prompt("Name for the new template", activeTemplate ? `${activeTemplate.name} copy` : "")?.trim();
+    if (!name) return;
     setSaving(true);
     try {
-      await deleteLabelTemplate();
-      toast.success("Saved label layout deleted");
-      router.refresh();
+      const row = await saveLabelTemplate({ name, design });
+      // Re-read so the default flag is right if this was the organisation's first template
+      const fresh = await listLabelTemplates().catch(() => null);
+      applyTemplates(fresh ?? [...templates, row]);
+      setActiveId(row.id);
+      toast.success(`“${row.name}” created`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't delete the layout");
+      toast.error(e instanceof Error ? e.message : "Couldn't save the layout");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRename() {
+    if (!activeTemplate || !canUpdateTemplate) return;
+    const name = window.prompt("Rename template", activeTemplate.name)?.trim();
+    if (!name || name === activeTemplate.name) return;
+    setSaving(true);
+    try {
+      const row = await saveLabelTemplate({ id: activeTemplate.id, name, design });
+      applyTemplates(templates.map((t) => (t.id === row.id ? row : t)));
+      toast.success("Template renamed");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't rename the template");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSetDefault() {
+    if (!activeTemplate) return;
+    setSaving(true);
+    try {
+      await setDefaultLabelTemplate(activeTemplate.id);
+      applyTemplates(templates.map((t) => ({ ...t, isDefault: t.id === activeTemplate.id })));
+      toast.success(`“${activeTemplate.name}” is now the default`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't set the default");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteTemplate() {
+    if (!activeTemplate) return;
+    if (!window.confirm(`Delete the template “${activeTemplate.name}”? This can't be undone, and everyone in your organization loses it.`)) return;
+    setSaving(true);
+    try {
+      await deleteLabelTemplate(activeTemplate.id);
+      const fresh = await listLabelTemplates();
+      applyTemplates(fresh);
+      const next = fresh.find((t) => t.isDefault) ?? fresh[0] ?? null;
+      setActiveId(next?.id ?? null);
+      setDesign(next?.design ?? DEFAULT_DESIGN);
+      setSelectedId((next?.design ?? DEFAULT_DESIGN).elements[0]?.id ?? null);
+      toast.success("Template deleted");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't delete the template");
     } finally {
       setSaving(false);
     }
@@ -220,14 +299,9 @@ export function LabelsClient({
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/packing-list/${packingListId}`)}>
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
-            {canSaveTemplate && (
+            {canSave && (
               <Button variant="outline" size="sm" className="gap-1.5" disabled={saving} onClick={handleSave}>
-                <SaveIcon className="w-3.5 h-3.5" /> {saving ? "Saving…" : "Save layout"}
-              </Button>
-            )}
-            {canDeleteTemplate && (
-              <Button variant="outline" size="sm" className="gap-1.5" disabled={saving} onClick={handleDeleteTemplate}>
-                Delete layout
+                <SaveIcon className="w-3.5 h-3.5" /> {saving ? "Saving…" : activeTemplate ? "Save layout" : "Save as template"}
               </Button>
             )}
             <Button size="sm" className="gap-1.5" disabled={sheet.length === 0 || generating} onClick={handleDownload}>
@@ -238,6 +312,39 @@ export function LabelsClient({
       />
 
       <div className="rounded-md border p-4 space-y-4">
+        <div className="flex flex-wrap items-end gap-3 text-sm">
+          <label className="space-y-1">
+            <span className="block text-xs text-muted-foreground">My templates</span>
+            <select
+              className="h-8 rounded-md border bg-background px-2 min-w-48"
+              value={activeId ?? ""}
+              onChange={(e) => handlePickTemplate(e.target.value)}
+              disabled={templates.length === 0}
+            >
+              {templates.length === 0 && <option value="">No saved templates yet</option>}
+              {activeId === null && templates.length > 0 && <option value="">Unsaved design</option>}
+              {templates.map((t) => <option key={t.id} value={t.id}>{t.name}{t.isDefault ? " (default)" : ""}</option>)}
+            </select>
+          </label>
+          {canCreateTemplate && (
+            <Button variant="outline" size="sm" className="gap-1.5" disabled={saving} onClick={handleSaveAsNew}>
+              <PlusIcon className="w-3.5 h-3.5" /> Save as new…
+            </Button>
+          )}
+          {activeTemplate && canUpdateTemplate && (
+            <Button variant="outline" size="sm" disabled={saving} onClick={handleRename}>Rename</Button>
+          )}
+          {activeTemplate && canUpdateTemplate && !activeTemplate.isDefault && (
+            <Button variant="outline" size="sm" className="gap-1.5" disabled={saving} onClick={handleSetDefault}>
+              <StarIcon className="w-3.5 h-3.5" /> Set as default
+            </Button>
+          )}
+          {activeTemplate && canDeleteTemplate && (
+            <Button variant="outline" size="sm" className="gap-1.5" disabled={saving} onClick={handleDeleteTemplate}>
+              <Trash2Icon className="w-3.5 h-3.5" /> Delete
+            </Button>
+          )}
+        </div>
         <div className="flex flex-wrap items-end gap-4 text-sm">
           <label className="space-y-1">
             <span className="block text-xs text-muted-foreground">Width (mm)</span>
@@ -388,7 +495,7 @@ export function LabelsClient({
         )}
         <p className="text-xs text-muted-foreground">
           Drag an element to move it, drag its blue corner to resize. Text too long for its box is shrunk to fit. Download the PDF and print it at 100% / actual size.
-          {canSaveTemplate ? " “Save layout” shares this design with everyone in your organization." : ""}
+          {canSave ? " Saved templates are shared with everyone in your organization." : ""}
         </p>
       </div>
 

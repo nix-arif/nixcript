@@ -4992,21 +4992,33 @@ export const changeCounter = pgTable(
   (t) => [primaryKey({ columns: [t.organizationId, t.scope] })],
 );
 
-// Sticker label layout for packing-list labels — one saved design per
-// organisation, shared by everyone who prints labels for it.
-export const labelTemplate = pgTable("label_template", {
-  id: text("id").primaryKey(),
-  organizationId: text("organization_id")
-    .notNull()
-    .unique()
-    .references(() => organization.id, { onDelete: "cascade" }),
-  design: json("design").notNull(),
-  updatedBy: text("updated_by"),
-  updatedAt: timestamp("updated_at")
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
-});
+// Sticker label layouts for packing-list labels — an organisation can keep
+// several named layouts, shared by everyone who prints labels for it. Exactly
+// one is the default (opened first on the labels page).
+export const labelTemplate = pgTable(
+  "label_template",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull().default("Default"),
+    isDefault: boolean("is_default").notNull().default(false),
+    design: json("design").notNull(),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    index("label_template_org_idx").on(t.organizationId),
+    uniqueIndex("label_template_org_name_uidx").on(t.organizationId, t.name),
+  ],
+);
+
 
 // Brand → Best Medical code conversions. A hospital orders by another brand's
 // catalogue code (medicon, geister, bolton surgical, …); each row records the
