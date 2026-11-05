@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PoBadge } from "@/components/po-badge";
+import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
@@ -487,7 +488,7 @@ export function PackingListDetailClient({
           <p className="text-sm text-muted-foreground">No items</p>
         ) : (
           <div className="space-y-4">
-            {Object.entries(byPo).map(([poId, items], poIndex) => {
+            {Object.entries(byPo).sort(([a], [b]) => comparePoNo(poLabel(a), poLabel(b))).map(([poId, items], poIndex) => {
               const color = PO_COLORS[poIndex % PO_COLORS.length];
               return (
               <div key={poId} className={cn("border rounded-lg overflow-hidden", color.border, color.bg)}>

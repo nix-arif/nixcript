@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PoBadge } from "@/components/po-badge";
+import { comparePoNo } from "@/lib/po-sort";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 
@@ -359,7 +360,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
               <p className="text-sm text-muted-foreground">Nothing left to pack for this supplier — every confirmed PO item is already fully packed or received.</p>
             ) : (
               <div className="space-y-4">
-                {Object.entries(byPo).map(([poId, poItems], poIndex) => {
+                {Object.entries(byPo).sort(([, a], [, b]) => comparePoNo(a[0].poNo ?? a[0].prNo ?? "", b[0].poNo ?? b[0].prNo ?? "")).map(([poId, poItems], poIndex) => {
                   const first = poItems[0];
                   const color = PO_COLORS[poIndex % PO_COLORS.length];
                   const packableItems = poItems.filter(isPackable);

@@ -1,3 +1,4 @@
+import { comparePoNo } from "@/lib/po-sort";
 import { PDFDocument, PDFFont, PDFImage, PDFPage, degrees, rgb } from "pdf-lib";
 import { StandardFonts } from "pdf-lib";
 import {
@@ -269,6 +270,7 @@ export async function generatePackingListPdf(
   const breakPage = () => { ({ page, y } = newPage()); y = drawTableHeader(page, y); };
 
   let stripe = 0;
+  groups.sort((a, b) => comparePoNo(poLabel.get(a.poId) ?? "", poLabel.get(b.poId) ?? ""));
   for (const g of groups) {
     if (!fits(GROUP_H + g.rows[0].h)) breakPage();
     y = drawGroupHeader(page, y, g.poId, g.rows.length, false);
