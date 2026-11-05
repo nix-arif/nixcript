@@ -2595,6 +2595,12 @@ export const goodsReceiptItem = pgTable(
     qtyRepair: text("qty_repair"),
     returnStatus: text("return_status"), // "pending" | "resolved" — only set when qtyReturn > 0
     returnNotes: text("return_notes"),
+    // Physical hand-back to the supplier, tracked apart from settlement:
+    // pending + no shippedAt = still in the warehouse, pending + shippedAt =
+    // on its way / with the supplier awaiting make-good, resolved = settled.
+    returnShippedAt: timestamp("return_shipped_at"),
+    returnShippedBy: text("return_shipped_by").references(() => user.id),
+    returnShipRef: text("return_ship_ref"),
     // Inspector's remark on stock that was still accepted (from the packing list inspection)
     acceptNotes: text("accept_notes"),
     // Who marked the return resolved and when — set only on the

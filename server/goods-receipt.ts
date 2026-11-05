@@ -926,7 +926,12 @@ export async function createGoodsReceipt(input: CreateGoodsReceiptInput): Promis
     .from(purchaseOrder)
     .where(and(eq(purchaseOrder.id, input.purchaseOrderId), eq(purchaseOrder.organizationId, orgId)));
   if (!po) throw new Error("Purchase order not found");
-  if (po.status !== "confirmed") throw new Error("Goods receipt can only be created for confirmed purchase orders");
+  // A packing list can still carry units for a PO that already shows
+  // "fulfilled" — a replacement for returned stock, or surplus the supplier
+  // sends again — so inspection-generated receipts accept that status too.
+  // The direct-receipt flow stays confirmed-only.
+  const receivable = po.status === "confirmed" || (!!input.packingListId && po.status === "fulfilled");
+  if (!receivable) throw new Error("Goods receipt can only be created for confirmed purchase orders");
 
   const grNo = await generateGrNo(orgId);
 

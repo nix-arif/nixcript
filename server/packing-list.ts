@@ -28,7 +28,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
-import { settleAttemptsForPackingList } from "@/server/replacement-attempts-core";
+import { settleAttemptsForPackingList, closeReturnIfCovered, autoLinkReplacementsForPackingList } from "@/server/replacement-attempts-core";
 import { createGoodsReceipt, type GoodsReceiptItemInput } from "@/server/goods-receipt";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -504,6 +504,8 @@ export type PendingReturnForSupplier = {
   qtyOutstanding: number;
   // Qty already earmarked by attempts on packing lists that haven't been inspected yet
   qtyLinkedPending: number;
+  shippedAt: Date | null;
+  shipRef: string | null;
   attempts: {
     id: string;
     attemptNo: number;
@@ -547,6 +549,8 @@ export async function getPendingReturnsForSupplier(supplierId: string, targetOrg
       description: goodsReceiptItem.description,
       grNo: goodsReceipt.grNo,
       poNo: purchaseOrder.poNo,
+      shippedAt: goodsReceiptItem.returnShippedAt,
+      shipRef: goodsReceiptItem.returnShipRef,
     })
     .from(goodsReceiptItem)
     .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
@@ -604,6 +608,8 @@ export async function getPendingReturnsForSupplier(supplierId: string, targetOrg
       poNo: r.poNo,
       qtyOutstanding: Math.max(0, qty - goodSoFar),
       qtyLinkedPending: linkedPending,
+      shippedAt: r.shippedAt,
+      shipRef: r.shipRef,
       attempts,
     };
   });
@@ -682,6 +688,52 @@ export async function linkReturnReplacement(goodsReceiptItemId: string, packingL
     createdBy: userId,
   });
   revalidatePath(`/dashboard/procurement/packing-list/${line.plId}`);
+}
+
+// Records that the rejected units have physically gone back to the supplier
+// (the return itself stays "pending" until it is settled). If replacement
+// shipments already covering the returned qty were inspected earlier, this
+// is the step that closes the return.
+export async function markReturnShipped(goodsReceiptItemId: string, input: { shippedAt?: Date; ref?: string } = {}): Promise<{ shippedAt: Date; shipRef: string | null; closed: boolean }> {
+  const { orgId, userId } = await getSession();
+  const [row] = await db
+    .select({ returnStatus: goodsReceiptItem.returnStatus, orgId: goodsReceipt.organizationId, grStatus: goodsReceipt.status })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .where(eq(goodsReceiptItem.id, goodsReceiptItemId));
+  if (!row) throw new Error("Return not found");
+  await assertCanInspectPackingList(row.orgId, orgId, userId);
+  if (row.grStatus === "recalled") throw new Error("This goods receipt has been recalled — nothing to send back");
+  if (row.returnStatus !== "pending") throw new Error("This return is already settled");
+  const shippedAt = input.shippedAt ?? new Date();
+  const shipRef = input.ref?.trim() || null;
+  await db
+    .update(goodsReceiptItem)
+    .set({ returnShippedAt: shippedAt, returnShippedBy: userId, returnShipRef: shipRef })
+    .where(eq(goodsReceiptItem.id, goodsReceiptItemId));
+  const closed = await closeReturnIfCovered(goodsReceiptItemId, userId);
+  revalidatePath("/dashboard/procurement/goods-receipt");
+  revalidatePath("/dashboard/procurement/goods-receipt/centralized");
+  return { shippedAt, shipRef, closed };
+}
+
+// Undo for a mis-click — only while the return is still open.
+export async function unmarkReturnShipped(goodsReceiptItemId: string): Promise<void> {
+  const { orgId, userId } = await getSession();
+  const [row] = await db
+    .select({ returnStatus: goodsReceiptItem.returnStatus, orgId: goodsReceipt.organizationId })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .where(eq(goodsReceiptItem.id, goodsReceiptItemId));
+  if (!row) throw new Error("Return not found");
+  await assertCanInspectPackingList(row.orgId, orgId, userId);
+  if (row.returnStatus !== "pending") throw new Error("This return is already settled");
+  await db
+    .update(goodsReceiptItem)
+    .set({ returnShippedAt: null, returnShippedBy: null, returnShipRef: null })
+    .where(eq(goodsReceiptItem.id, goodsReceiptItemId));
+  revalidatePath("/dashboard/procurement/goods-receipt");
+  revalidatePath("/dashboard/procurement/goods-receipt/centralized");
 }
 
 // Takes back a link made by mistake — only while that packing list is still
@@ -1219,6 +1271,8 @@ export async function createPackingList(input: CreatePackingListInput): Promise<
       customerPoNo: item.customerPoNo ?? null,
     })),
   );
+
+  await autoLinkReplacementsForPackingList(pl.id, orgId, userId);
 
   revalidatePath("/dashboard/procurement/packing-list");
   return pl;

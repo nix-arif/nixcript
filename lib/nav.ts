@@ -82,6 +82,7 @@ export const navConfig: NavGroup[] = [
       { title: "Purchase Orders",      url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
       { title: "Packing Lists",        url: "/dashboard/procurement/packing-list",   permission: "purchase-order:read" },
       { title: "Goods Receipts",       url: "/dashboard/procurement/goods-receipt",  permission: "purchase-order:read" },
+      { title: "Returns & Surplus",    url: "/dashboard/procurement/receiving-issues", permission: "purchase-order:read" },
     ],
   },
   {

@@ -11,13 +11,9 @@ import {
   addInspectionPhoto,
   deleteInspectionPhoto,
   approveInspectionLine,
-  getPendingReturnsForSupplier,
-  linkReturnReplacement,
-  unlinkReturnReplacement,
   type PackingListWithItems,
   type InspectionPhoto,
   type InspectionPhotoCategory,
-  type PendingReturnForSupplier,
 } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -280,153 +276,6 @@ function RejectNoteBox({ onConfirm, onCancel }: { onConfirm: (notes?: string) =>
       <button type="button" onClick={onCancel} className="text-[9px] text-muted-foreground hover:text-foreground shrink-0">
         Cancel
       </button>
-    </div>
-  );
-}
-
-// Surfaces this supplier's still-open return-to-supplier lines (from any
-// earlier packing list) right where a person is about to receive a NEW one —
-// the point where "wait, isn't this the replacement for that?" actually needs
-// to occur to them. Linking earmarks a qty of ONE line of this packing list
-// as the replacement; it does not close the return. The return closes by
-// itself when this packing list is completed, and only if the good units
-// across all its attempts cover what was returned — a replacement that is
-// itself defective or short leaves it open as another attempt.
-function SupplierPendingReturnsBanner({ supplierId, organizationId, packingListId, packingListNo, lines }: {
-  supplierId: string; organizationId: string; packingListId: string; packingListNo: string;
-  lines: PackingListWithItems["items"];
-}) {
-  const [returns, setReturns] = useState<PendingReturnForSupplier[] | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [dismissed, setDismissed] = useState(false);
-  // Per-return picker state: which line of this packing list, and how many units
-  const [pick, setPick] = useState<Record<string, { lineId: string; qty: string }>>({});
-
-  const reload = () =>
-    getPendingReturnsForSupplier(supplierId, organizationId).then(setReturns).catch(() => setReturns([]));
-  useEffect(() => { reload(); }, [supplierId, organizationId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const matchingLines = (r: PendingReturnForSupplier) =>
-    lines.filter((l) => (l.productCode && r.productCode ? l.productCode === r.productCode : false));
-  const allocatedOnLine = (lineId: string) =>
-    (returns ?? []).flatMap((r) => r.attempts).filter((a) => a.packingListItemId === lineId).reduce((sum, a) => sum + a.qtyAllocated, 0);
-
-  async function handleLink(r: PendingReturnForSupplier) {
-    const sel = pick[r.goodsReceiptItemId];
-    const lineId = sel?.lineId ?? matchingLines(r)[0]?.id;
-    const qty = parseFloat(sel?.qty ?? "");
-    if (!lineId || !(qty > 0)) { toast.error("Choose a line and enter the replacement quantity"); return; }
-    setBusyId(r.goodsReceiptItemId);
-    try {
-      await linkReturnReplacement(r.goodsReceiptItemId, lineId, qty);
-      await reload();
-      toast.success("Linked as a replacement attempt — the return closes after inspection if the good units cover it");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't link this return");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function handleUnlink(attemptId: string) {
-    setBusyId(attemptId);
-    try {
-      await unlinkReturnReplacement(attemptId);
-      await reload();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't remove this link");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  if (dismissed || !returns || returns.length === 0) return null;
-
-  return (
-    <div className="border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/15 rounded-lg px-3 py-2.5 space-y-2">
-      <div className="flex items-start justify-between gap-3">
-        <span className="flex items-center gap-1.5 text-[11px] font-medium text-amber-800 dark:text-amber-300">
-          <AlertTriangleIcon className="w-3.5 h-3.5 shrink-0" />
-          This supplier has {returns.length} unresolved return{returns.length !== 1 ? "s" : ""} — is any part of {packingListNo} the replacement for one of them?
-        </span>
-        <button type="button" onClick={() => setDismissed(true)} className="text-amber-700 dark:text-amber-400 hover:text-amber-900 shrink-0">
-          <XIcon className="w-3.5 h-3.5" />
-        </button>
-      </div>
-      <div className="space-y-1">
-        {returns.map((r) => {
-          const candidates = matchingLines(r);
-          const sel = pick[r.goodsReceiptItemId];
-          const lineId = sel?.lineId ?? candidates[0]?.id ?? "";
-          const line = candidates.find((l) => l.id === lineId);
-          const lineFree = line ? Math.max(0, (parseFloat(line.qtyExpected) || 0) - allocatedOnLine(line.id)) : 0;
-          const unlinked = Math.max(0, r.qtyOutstanding - r.qtyLinkedPending);
-          const hereAttempts = r.attempts.filter((a) => a.packingListId === packingListId && a.status === "linked");
-          return (
-            <div key={r.goodsReceiptItemId} className="text-[11px] bg-background/60 border border-amber-200/60 dark:border-amber-800/40 rounded-md px-2 py-1.5 space-y-1.5">
-              <div className="text-muted-foreground">
-                <span className="font-mono text-foreground">{r.productCode || r.description || "item"}</span>
-                {" "}— {r.qtyOutstanding} of {r.qty} {r.uom || ""} still owed
-                {r.grNo && <> · returned on <span className="font-medium text-foreground">{r.grNo}</span></>}
-                {r.poNo && ` (${r.poNo})`}
-              </div>
-
-              {r.attempts.filter((a) => a.status === "inspected").map((a) => (
-                <div key={a.id} className="text-[10px] text-muted-foreground pl-2 border-l-2 border-amber-300 dark:border-amber-700">
-                  Attempt {a.attemptNo} · {a.packingListNo}: {a.qtyGood} good
-                  {(a.qtyFailed ?? 0) > 0 && <span className="text-red-600 dark:text-red-400"> · {a.qtyFailed} failed</span>}
-                </div>
-              ))}
-
-              {hereAttempts.map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-2 text-[10px] pl-2 border-l-2 border-blue-300 dark:border-blue-700">
-                  <span>Attempt {a.attemptNo} · this packing list: {a.qtyAllocated} earmarked as replacement (scored on completion)</span>
-                  <button type="button" disabled={busyId === a.id} onClick={() => handleUnlink(a.id)} className="text-muted-foreground hover:text-foreground underline shrink-0">
-                    {busyId === a.id ? "…" : "Remove"}
-                  </button>
-                </div>
-              ))}
-
-              {unlinked > 0 && candidates.length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <select
-                    value={lineId}
-                    onChange={(e) => setPick((p) => ({ ...p, [r.goodsReceiptItemId]: { lineId: e.target.value, qty: "" } }))}
-                    className="h-6 text-[10px] rounded-md border border-input bg-background px-1.5"
-                  >
-                    {candidates.map((l) => (
-                      <option key={l.id} value={l.id}>Row {l.rowNo + 1} · {l.productCode} · {l.qtyExpected} on list</option>
-                    ))}
-                  </select>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={Math.min(unlinked, lineFree)}
-                    step="any"
-                    value={sel?.qty ?? ""}
-                    placeholder={`max ${Math.min(unlinked, lineFree)}`}
-                    onChange={(e) => setPick((p) => ({ ...p, [r.goodsReceiptItemId]: { lineId, qty: e.target.value } }))}
-                    className="h-6 w-20 text-[10px] px-1.5"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-6 text-[10px] px-2 shrink-0"
-                    disabled={busyId === r.goodsReceiptItemId || Math.min(unlinked, lineFree) <= 0}
-                    onClick={() => handleLink(r)}
-                  >
-                    {busyId === r.goodsReceiptItemId ? "Linking…" : "Link as replacement"}
-                  </Button>
-                </div>
-              )}
-              {unlinked > 0 && candidates.length === 0 && (
-                <div className="text-[10px] text-muted-foreground">No line on this packing list is the same product.</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -915,7 +764,6 @@ export function InspectPackingListClient({
       />
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <SupplierPendingReturnsBanner supplierId={pl.supplierId} organizationId={pl.organizationId} packingListId={pl.id} packingListNo={pl.packingListNo} lines={pl.items} />
 
         <section className="border border-border rounded-xl p-4 space-y-4 max-w-3xl">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Receipt Details</h2>

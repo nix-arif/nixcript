@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { type GoodsReceiptWithItems, type GoodsReceiptItemEnriched, recallGoodsReceipt, deleteGoodsReceipt } from "@/server/goods-receipt";
-import { resolveReceiptItemAction, type ReturnResolutionInput } from "@/server/packing-list";
+import { resolveReceiptItemAction, markReturnShipped, unmarkReturnShipped, type ReturnResolutionInput } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { ArrowLeftIcon, CalendarIcon, BuildingIcon, TruckIcon, AlertTriangleIcon, CheckIcon, RotateCcwIcon, Trash2Icon, UserIcon, LinkIcon } from "lucide-react";
@@ -96,6 +96,27 @@ export function GoodsReceiptDetailClient({ gr, permissions, organizationName, ba
       const { resolvedByName, resolvedAt } = await resolveReceiptItemAction(itemId, "repair");
       setItems((prev) => prev.map((i) => i.id === itemId ? { ...i, repairStatus: "resolved", repairResolvedByName: resolvedByName, repairResolvedAt: resolvedAt } : i));
       toast.success("Marked resolved");
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setResolving(null);
+    }
+  }
+
+  async function handleShipToggle(item: GoodsReceiptItemEnriched) {
+    setResolving(`${item.id}:ship`);
+    try {
+      if (item.returnShippedAt) {
+        await unmarkReturnShipped(item.id);
+        setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, returnShippedAt: null, returnShipRef: null } : i));
+      } else {
+        const ref = window.prompt("Reference for this hand-back (DO / courier / credit note) — optional", "");
+        if (ref === null) return;
+        const r = await markReturnShipped(item.id, { ref });
+        setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, returnShippedAt: r.shippedAt, returnShipRef: r.shipRef, ...(r.closed ? { returnStatus: "resolved", returnResolutionType: "replacement", returnResolvedAt: new Date() } : {}) } : i));
+        toast.success(r.closed ? "Marked sent back — replacement already received, so the return is now closed" : "Marked sent back");
+      }
       router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Something went wrong");
@@ -216,8 +237,23 @@ export function GoodsReceiptDetailClient({ gr, permissions, organizationName, ba
                                     ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"
                                     : "bg-muted text-muted-foreground border-border/60",
                                 )}>
-                                  {item.returnStatus === "resolved" ? "resolved" : "pending"}
+                                  {item.returnStatus === "resolved" ? "resolved" : item.returnShippedAt ? "sent back" : "to return"}
                                 </span>
+                                {item.returnStatus === "pending" && item.returnShippedAt && (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {fmtDateTime(item.returnShippedAt)}{item.returnShipRef && ` · ${item.returnShipRef}`}
+                                  </span>
+                                )}
+                                {item.returnStatus === "pending" && status !== "recalled" && can("packing-list:inspect") && (
+                                  <button
+                                    type="button"
+                                    disabled={resolving === `${item.id}:ship`}
+                                    onClick={() => handleShipToggle(item)}
+                                    className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline"
+                                  >
+                                    {item.returnShippedAt ? "Undo sent back" : "Mark sent back"}
+                                  </button>
+                                )}
                                 {item.returnStatus === "pending" && status !== "recalled" && can("packing-list:inspect") && (
                                   <button
                                     type="button"

@@ -3,8 +3,9 @@
 // from the client — they're only invoked from already-authorised actions in
 // server/packing-list.ts and server/goods-receipt.ts.
 import { db } from "@/db";
-import { returnReplacementAttempt, goodsReceiptItem, packingListItem } from "@/db/schema";
-import { and, asc, eq, inArray, like } from "drizzle-orm";
+import { returnReplacementAttempt, goodsReceiptItem, goodsReceipt, packingListItem } from "@/db/schema";
+import { and, asc, eq, inArray, like, ne } from "drizzle-orm";
+import { nanoid } from "nanoid";
 
 const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
 
@@ -52,31 +53,46 @@ export async function settleAttemptsForPackingList(packingListId: string, userId
     touchedReturns.add(a.goodsReceiptItemId);
   }
 
-  for (const returnId of touchedReturns) {
-    const [ret] = await db
-      .select({ qtyReturn: goodsReceiptItem.qtyReturn, returnStatus: goodsReceiptItem.returnStatus })
-      .from(goodsReceiptItem)
-      .where(eq(goodsReceiptItem.id, returnId));
-    if (!ret || ret.returnStatus !== "pending") continue;
-    const all = await db
-      .select({ qtyGood: returnReplacementAttempt.qtyGood, status: returnReplacementAttempt.status })
-      .from(returnReplacementAttempt)
-      .where(eq(returnReplacementAttempt.goodsReceiptItemId, returnId));
-    const goodTotal = all.filter((x) => x.status === "inspected").reduce((s, x) => s + num(x.qtyGood), 0);
-    if (goodTotal + 1e-9 >= num(ret.qtyReturn)) {
-      await db
-        .update(goodsReceiptItem)
-        .set({
-          returnStatus: "resolved",
-          returnResolvedBy: userId,
-          returnResolvedAt: now,
-          returnResolutionType: "replacement",
-          returnResolutionPackingListId: packingListId,
-          returnResolutionNotes: `Closed automatically after ${all.length} replacement attempt${all.length !== 1 ? "s" : ""}`,
-        })
-        .where(and(eq(goodsReceiptItem.id, returnId), eq(goodsReceiptItem.returnStatus, "pending")));
-    }
+  for (const returnId of touchedReturns) await closeReturnIfCovered(returnId, userId, packingListId, now);
+}
+
+// Closes a return as "replacement" once the good units across its inspected
+// attempts cover the returned qty — but only after the rejected units have
+// physically gone back to the supplier; until then the return stays open so
+// the hand-back isn't forgotten. Called at inspection time and again when the
+// return is marked sent back (whichever happens last triggers the close).
+export async function closeReturnIfCovered(returnId: string, userId: string, packingListId?: string, now = new Date()): Promise<boolean> {
+  const [ret] = await db
+    .select({ qtyReturn: goodsReceiptItem.qtyReturn, returnStatus: goodsReceiptItem.returnStatus, shippedAt: goodsReceiptItem.returnShippedAt })
+    .from(goodsReceiptItem)
+    .where(eq(goodsReceiptItem.id, returnId));
+  if (!ret || ret.returnStatus !== "pending" || !ret.shippedAt) return false;
+  const all = await db
+    .select({ qtyGood: returnReplacementAttempt.qtyGood, status: returnReplacementAttempt.status, packingListItemId: returnReplacementAttempt.packingListItemId })
+    .from(returnReplacementAttempt)
+    .where(eq(returnReplacementAttempt.goodsReceiptItemId, returnId))
+    .orderBy(asc(returnReplacementAttempt.attemptNo));
+  const inspected = all.filter((x) => x.status === "inspected");
+  const goodTotal = inspected.reduce((s, x) => s + num(x.qtyGood), 0);
+  if (goodTotal + 1e-9 < num(ret.qtyReturn)) return false;
+
+  let plId = packingListId;
+  if (!plId && inspected.length > 0) {
+    const [l] = await db.select({ plId: packingListItem.packingListId }).from(packingListItem).where(eq(packingListItem.id, inspected[inspected.length - 1].packingListItemId));
+    plId = l?.plId;
   }
+  await db
+    .update(goodsReceiptItem)
+    .set({
+      returnStatus: "resolved",
+      returnResolvedBy: userId,
+      returnResolvedAt: now,
+      returnResolutionType: "replacement",
+      returnResolutionPackingListId: plId ?? null,
+      returnResolutionNotes: `Closed automatically after ${all.length} replacement attempt${all.length !== 1 ? "s" : ""}`,
+    })
+    .where(and(eq(goodsReceiptItem.id, returnId), eq(goodsReceiptItem.returnStatus, "pending")));
+  return true;
 }
 
 // Undo of the above when a packing list's inspection is recalled: attempts go
@@ -103,4 +119,62 @@ export async function revertAttemptsForPackingList(packingListId: string): Promi
       eq(goodsReceiptItem.returnResolutionPackingListId, packingListId),
       like(goodsReceiptItem.returnResolutionNotes, "Closed automatically%"),
     ));
+}
+
+// Runs when a packing list is created. Every line for a PO item that still has
+// rejected units waiting to go back is, by definition, the make-good for them
+// (the create page already shows that to the user), so the link is recorded
+// here instead of making the inspector re-enter it. Units are handed to the
+// oldest return first, capped by what the return still lacks and by the line's
+// own qty. Replacements arriving under a different PO still go through the
+// manual picker on the inspect page; any auto link can be removed there too.
+export async function autoLinkReplacementsForPackingList(packingListId: string, orgId: string, userId: string): Promise<number> {
+  const lines = await db
+    .select({ id: packingListItem.id, purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
+    .from(packingListItem)
+    .where(eq(packingListItem.packingListId, packingListId))
+    .orderBy(asc(packingListItem.rowNo));
+  const poItemIds = [...new Set(lines.map((l) => l.purchaseOrderItemId))];
+  if (poItemIds.length === 0) return 0;
+
+  const returns = await db
+    .select({ id: goodsReceiptItem.id, purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId, qtyReturn: goodsReceiptItem.qtyReturn, inspectedAt: goodsReceiptItem.inspectedAt })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .where(and(
+      eq(goodsReceipt.organizationId, orgId),
+      ne(goodsReceipt.status, "recalled"),
+      eq(goodsReceiptItem.returnStatus, "pending"),
+      inArray(goodsReceiptItem.purchaseOrderItemId, poItemIds),
+    ))
+    .orderBy(asc(goodsReceiptItem.inspectedAt));
+  if (returns.length === 0) return 0;
+
+  const existing = await db.select().from(returnReplacementAttempt).where(inArray(returnReplacementAttempt.goodsReceiptItemId, returns.map((r) => r.id)));
+  const uncovered = new Map<string, number>();
+  const attemptCount = new Map<string, number>();
+  for (const r of returns) {
+    const mine = existing.filter((a) => a.goodsReceiptItemId === r.id);
+    const covered = mine.reduce((sum, a) => sum + (a.status === "inspected" ? num(a.qtyGood) : num(a.qtyAllocated)), 0);
+    uncovered.set(r.id, Math.max(0, num(r.qtyReturn) - covered));
+    attemptCount.set(r.id, mine.length);
+  }
+
+  const rows: (typeof returnReplacementAttempt.$inferInsert)[] = [];
+  for (const line of lines) {
+    let lineLeft = num(line.qtyExpected);
+    for (const r of returns) {
+      if (lineLeft <= 1e-9) break;
+      if (r.purchaseOrderItemId !== line.purchaseOrderItemId) continue;
+      const take = Math.min(lineLeft, uncovered.get(r.id) ?? 0);
+      if (take <= 1e-9) continue;
+      lineLeft -= take;
+      uncovered.set(r.id, (uncovered.get(r.id) ?? 0) - take);
+      const n = (attemptCount.get(r.id) ?? 0) + 1;
+      attemptCount.set(r.id, n);
+      rows.push({ id: nanoid(), organizationId: orgId, goodsReceiptItemId: r.id, packingListItemId: line.id, attemptNo: n, qtyAllocated: String(take), createdBy: userId });
+    }
+  }
+  if (rows.length > 0) await db.insert(returnReplacementAttempt).values(rows);
+  return rows.length;
 }
