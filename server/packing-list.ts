@@ -120,6 +120,60 @@ async function generatePackingListNo(orgId: string): Promise<string> {
   return buildDocumentNo(cfg, year, nextNo);
 }
 
+// Replacement history per packing-list line: which earlier rejected units
+// (and from which receipt / packing list) each line was sent to make good.
+async function getReplacementsForLines(itemIds: string[]): Promise<Map<string, LineReplacement[]>> {
+  const out = new Map<string, LineReplacement[]>();
+  if (itemIds.length === 0) return out;
+  const rows = await db
+    .select({
+      attemptId: returnReplacementAttempt.id,
+      packingListItemId: returnReplacementAttempt.packingListItemId,
+      attemptNo: returnReplacementAttempt.attemptNo,
+      qtyAllocated: returnReplacementAttempt.qtyAllocated,
+      status: returnReplacementAttempt.status,
+      qtyGood: returnReplacementAttempt.qtyGood,
+      qtyFailed: returnReplacementAttempt.qtyFailed,
+      returnedQty: goodsReceiptItem.qtyReturn,
+      returnReason: goodsReceiptItem.returnNotes,
+      returnGrId: goodsReceipt.id,
+      returnGrNo: goodsReceipt.grNo,
+      sourcePackingListId: goodsReceipt.packingListId,
+      returnPoNo: purchaseOrder.poNo,
+    })
+    .from(returnReplacementAttempt)
+    .innerJoin(goodsReceiptItem, eq(returnReplacementAttempt.goodsReceiptItemId, goodsReceiptItem.id))
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .innerJoin(purchaseOrder, eq(goodsReceipt.purchaseOrderId, purchaseOrder.id))
+    .where(inArray(returnReplacementAttempt.packingListItemId, itemIds))
+    .orderBy(asc(returnReplacementAttempt.attemptNo));
+  const srcIds = [...new Set(rows.map((r) => r.sourcePackingListId).filter((v): v is string => !!v))];
+  const srcRows = srcIds.length > 0
+    ? await db.select({ id: packingList.id, no: packingList.packingListNo }).from(packingList).where(inArray(packingList.id, srcIds))
+    : [];
+  const srcNo = new Map(srcRows.map((r) => [r.id, r.no]));
+  for (const r of rows) {
+    const arr = out.get(r.packingListItemId) ?? [];
+    arr.push({
+      attemptId: r.attemptId,
+      attemptNo: r.attemptNo,
+      qtyAllocated: parseFloat(r.qtyAllocated) || 0,
+      status: r.status,
+      qtyGood: r.qtyGood === null ? null : parseFloat(r.qtyGood) || 0,
+      qtyFailed: r.qtyFailed === null ? null : parseFloat(r.qtyFailed) || 0,
+      returnedQty: parseFloat(r.returnedQty ?? "0") || 0,
+      returnReason: r.returnReason,
+      returnGrId: r.returnGrId,
+      returnGrNo: r.returnGrNo,
+      returnPoNo: r.returnPoNo,
+      sourcePackingListId: r.sourcePackingListId,
+      sourcePackingListNo: r.sourcePackingListId ? (srcNo.get(r.sourcePackingListId) ?? null) : null,
+    });
+    out.set(r.packingListItemId, arr);
+  }
+  return out;
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export type PackingListRow = typeof packingList.$inferSelect;
@@ -129,6 +183,24 @@ export type PackingListItemEnriched = PackingListItemRow & {
   draftInspectedByName: string | null;
   draftApprovedByName: string | null;
   photos: InspectionPhoto[];
+  // Rejected units this line was sent to make good, with how each attempt turned out
+  replacements: LineReplacement[];
+};
+
+export type LineReplacement = {
+  attemptId: string;
+  attemptNo: number;
+  qtyAllocated: number;
+  status: string; // "linked" (awaiting inspection) | "inspected"
+  qtyGood: number | null;
+  qtyFailed: number | null;
+  returnedQty: number;
+  returnReason: string | null;
+  returnGrId: string;
+  returnGrNo: string;
+  returnPoNo: string | null;
+  sourcePackingListId: string | null;
+  sourcePackingListNo: string | null;
 };
 
 export interface PackingListItemInput {
@@ -892,6 +964,7 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
   const poNoMap = Object.fromEntries(poRows.map((p) => [p.id, p.poNo]));
   const nameMap = await getUserNameMap(items.flatMap((i) => [i.draftInspectedBy, i.draftApprovedBy]));
   const photosByItem = await getPhotosForItems(items.map((i) => i.id));
+  const replacementsByItem = await getReplacementsForLines(items.map((i) => i.id));
 
   const enrichedItems: PackingListItemEnriched[] = await Promise.all(
     items.map(async (i) => {
@@ -908,6 +981,7 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
         draftInspectedByName: i.draftInspectedBy ? (nameMap.get(i.draftInspectedBy) ?? null) : null,
         draftApprovedByName: i.draftApprovedBy ? (nameMap.get(i.draftApprovedBy) ?? null) : null,
         photos: photosByItem.get(i.id) ?? [],
+        replacements: replacementsByItem.get(i.id) ?? [],
       };
     }),
   );
@@ -1092,6 +1166,7 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
   const poNoMap = Object.fromEntries(poRows.map((p) => [p.id, p.poNo]));
   const nameMap = await getUserNameMap(items.flatMap((i) => [i.draftInspectedBy, i.draftApprovedBy]));
   const photosByItem = await getPhotosForItems(items.map((i) => i.id));
+  const replacementsByItem = await getReplacementsForLines(items.map((i) => i.id));
 
   const enrichedItems: PackingListItemEnriched[] = await Promise.all(
     items.map(async (i) => {
@@ -1108,6 +1183,7 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
         draftInspectedByName: i.draftInspectedBy ? (nameMap.get(i.draftInspectedBy) ?? null) : null,
         draftApprovedByName: i.draftApprovedBy ? (nameMap.get(i.draftApprovedBy) ?? null) : null,
         photos: photosByItem.get(i.id) ?? [],
+        replacements: replacementsByItem.get(i.id) ?? [],
       };
     }),
   );

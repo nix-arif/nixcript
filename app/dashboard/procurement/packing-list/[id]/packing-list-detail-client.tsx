@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { PoBadge } from "@/components/po-badge";
 import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
+import { ReplacementChips } from "@/components/replacement-chips";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 import { DownloadMediaButton, InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
@@ -645,6 +646,7 @@ export function PackingListDetailClient({
                               </div>
                             )}
                             <div className="mb-1 flex flex-wrap items-center gap-1"><PoBadge label={poLabel(poId)} color={color} /><LineIssueChips short={shortBy} ret={retShown} repair={repairShown} /></div>
+                            <ReplacementChips replacements={item.replacements ?? []} />
                             {item.description || "—"}
                             {item.descriptionSource === "product" && (
                               <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">

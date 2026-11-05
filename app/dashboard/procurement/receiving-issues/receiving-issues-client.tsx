@@ -57,9 +57,13 @@ interface Props {
   initialReturns: ReturnToSupplierRow[];
   surplus: SurplusRow[];
   permissions: string[];
+  // Cross-org view: rows carry their org, links go to the centralized pages
+  centralized?: boolean;
 }
 
-export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: Props) {
+export function ReceivingIssuesClient({ initialReturns, surplus, permissions, centralized = false }: Props) {
+  const grHref = (id: string) => centralized ? `/dashboard/procurement/goods-receipt/centralized/${id}` : `/dashboard/procurement/goods-receipt/${id}`;
+  const plHref = (id: string) => centralized ? `/dashboard/procurement/packing-list/centralized/${id}` : `/dashboard/procurement/packing-list/${id}`;
   const [tab, setTab] = useState<"returns" | "surplus">("returns");
   const [returns, setReturns] = useState(initialReturns);
   const [search, setSearch] = useState("");
@@ -67,7 +71,7 @@ export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: 
   const [resolving, setResolving] = useState<ReturnToSupplierRow | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
-  const canAct = can("packing-list:inspect");
+  const canAct = centralized || can("packing-list:inspect");
 
   const colorOf = useColorOf(useMemo(() => [...returns, ...surplus], [returns, surplus]));
 
@@ -135,7 +139,7 @@ export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: 
     <div className="space-y-4">
       <PageHeader
         title="Returns & Surplus"
-        description="Rejected items waiting to go back to suppliers, and extra items received beyond what was ordered"
+        description={centralized ? "Across all your organizations — rejected items waiting to go back to suppliers, and extra items received beyond what was ordered" : "Rejected items waiting to go back to suppliers, and extra items received beyond what was ordered"}
       />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -168,6 +172,7 @@ export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: 
                       <div className="space-y-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <PoBadge label={poLabelOf(r)} color={color} />
+                          {centralized && r.organizationName && <span className="text-[10px] text-muted-foreground">{r.organizationName}</span>}
                           <span className="font-mono text-foreground">{r.productCode || "—"}</span>
                         </div>
                         {r.description && <p className="text-muted-foreground line-clamp-2">{r.description}</p>}
@@ -182,9 +187,9 @@ export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: 
                         </p>
                         {r.qtyOutstanding < r.qtyRejected && <p className="text-muted-foreground">{r.qtyOutstanding} not yet replaced</p>}
                         <p className="text-muted-foreground">
-                          from <Link className="underline hover:no-underline" href={`/dashboard/procurement/goods-receipt/${r.goodsReceiptId}`}>{r.grNo}</Link>
+                          from <Link className="underline hover:no-underline" href={grHref(r.goodsReceiptId)}>{r.grNo}</Link>
                           {r.packingListId && r.packingListNo && (
-                            <> · <Link className="underline hover:no-underline" href={`/dashboard/procurement/packing-list/${r.packingListId}`}>{r.packingListNo}</Link></>
+                            <> · <Link className="underline hover:no-underline" href={plHref(r.packingListId)}>{r.packingListNo}</Link></>
                           )}
                         </p>
                         <p className="text-muted-foreground">inspected {fmtDate(r.inspectedAt)}{r.inspectedByName && ` by ${r.inspectedByName}`}</p>
@@ -208,7 +213,7 @@ export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: 
                           r.attempts.map((a) => (
                             <p key={a.id} className="text-muted-foreground">
                               Attempt {a.attemptNo} ·{" "}
-                              <Link className="underline hover:no-underline" href={`/dashboard/procurement/packing-list/${a.packingListId}`}>{a.packingListNo}</Link>
+                              <Link className="underline hover:no-underline" href={plHref(a.packingListId)}>{a.packingListNo}</Link>
                               {a.status === "inspected"
                                 ? <>: {a.qtyGood} good{(a.qtyFailed ?? 0) > 0 && <span className="text-red-600 dark:text-red-400"> · {a.qtyFailed} failed</span>}</>
                                 : <>: {a.qtyAllocated} awaiting inspection</>}
@@ -257,6 +262,7 @@ export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: 
                   <div className="space-y-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <PoBadge label={poLabelOf(r)} color={colorOf(r.purchaseOrderId)} />
+                      {centralized && r.organizationName && <span className="text-[10px] text-muted-foreground">{r.organizationName}</span>}
                       <span className="font-mono text-foreground">{r.productCode || "—"}</span>
                       <span className="text-[10px] text-muted-foreground">PO {r.poStatus}</span>
                     </div>
@@ -276,9 +282,9 @@ export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: 
                   <div className="space-y-0.5">
                     {r.receipts.map((x) => (
                       <p key={x.goodsReceiptId} className="text-muted-foreground">
-                        <Link className="underline hover:no-underline" href={`/dashboard/procurement/goods-receipt/${x.goodsReceiptId}`}>{x.grNo}</Link>
+                        <Link className="underline hover:no-underline" href={grHref(x.goodsReceiptId)}>{x.grNo}</Link>
                         {x.packingListId && x.packingListNo && (
-                          <> · <Link className="underline hover:no-underline" href={`/dashboard/procurement/packing-list/${x.packingListId}`}>{x.packingListNo}</Link></>
+                          <> · <Link className="underline hover:no-underline" href={plHref(x.packingListId)}>{x.packingListNo}</Link></>
                         )}
                         {" · "}{fmtDate(x.receivedDate)}: received {x.qtyReceived}, accepted {x.qtyAccepted}
                         {x.qtyReturned > 0 && `, rejected ${x.qtyReturned}`}
@@ -296,6 +302,7 @@ export function ReceivingIssuesClient({ initialReturns, surplus, permissions }: 
         <ResolveReturnDialog
           key={resolving.goodsReceiptItemId}
           supplierId={resolving.supplierId}
+          targetOrgId={centralized ? resolving.organizationId : undefined}
           itemLabel={resolving.productCode || resolving.description || "this item"}
           qty={resolving.qtyOutstanding}
           uom={resolving.uom}

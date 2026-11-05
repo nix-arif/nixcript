@@ -70,6 +70,7 @@ export const navConfig: NavGroup[] = [
       { title: "Supplier POs", url: "/dashboard/procurement/purchase-order/centralized", permission: "purchase-order:read:centralized" },
       { title: "Packing Lists", url: "/dashboard/procurement/packing-list/centralized", permission: "packing-list:read:centralized" },
       { title: "Goods Receipts", url: "/dashboard/procurement/goods-receipt/centralized", permission: "goods-receipt:read:centralized" },
+      { title: "Returns & Surplus", url: "/dashboard/procurement/receiving-issues/centralized", permission: "goods-receipt:read:centralized" },
     ],
   },
   {

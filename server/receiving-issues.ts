@@ -10,25 +10,44 @@ import {
   packingListItem,
   returnReplacementAttempt,
   user,
+  member,
+  organization,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { and, asc, eq, inArray, ne } from "drizzle-orm";
 
-async function requireRead() {
+async function requireRead(permission = "purchase-order:read") {
   const session = await getCachedSession();
   if (!session) throw new Error("You must be signed in to continue");
   const orgId = session.session.activeOrganizationId;
   if (!orgId) throw new Error("No active organization");
   const perms = await getUserPermissions(session.user.id, orgId);
-  if (!hasAccess(perms, "purchase-order:read")) throw new Error("You don't have permission to do this");
+  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
   return { orgId };
+}
+
+// Every org owned by the same owner as the caller's active org (same pattern
+// as server/goods-receipt.ts).
+async function getOwnerOrgIds(orgId: string): Promise<string[]> {
+  const [ownerMember] = await db.select().from(member).where(and(eq(member.organizationId, orgId), eq(member.role, "owner"))).limit(1);
+  if (!ownerMember) return [orgId];
+  const owned = await db.select({ organizationId: member.organizationId }).from(member).where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
+  const ids = [...new Set(owned.map((m) => m.organizationId))];
+  return ids.length > 0 ? ids : [orgId];
+}
+
+async function orgNames(orgIds: string[]): Promise<Map<string, string>> {
+  const rows = await db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, orgIds));
+  return new Map(rows.map((o) => [o.id, o.name]));
 }
 
 const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
 
 export type ReturnToSupplierRow = {
+  organizationId: string;
+  organizationName: string | null;
   goodsReceiptItemId: string;
   supplierId: string | null;
   supplierName: string | null;
@@ -68,6 +87,17 @@ export type ReturnToSupplierRow = {
 // each goods receipt.
 export async function getReturnsToSupplier(): Promise<ReturnToSupplierRow[]> {
   const { orgId } = await requireRead();
+  return computeReturns([orgId]);
+}
+
+// Same list across every org the caller owns.
+export async function getReturnsToSupplierCentralized(): Promise<ReturnToSupplierRow[]> {
+  const { orgId } = await requireRead("goods-receipt:read:centralized");
+  return computeReturns(await getOwnerOrgIds(orgId));
+}
+
+async function computeReturns(orgIds: string[]): Promise<ReturnToSupplierRow[]> {
+  const names = await orgNames(orgIds);
 
   const rows = await db
     .select({
@@ -82,6 +112,7 @@ export async function getReturnsToSupplier(): Promise<ReturnToSupplierRow[]> {
       shippedAt: goodsReceiptItem.returnShippedAt,
       shipRef: goodsReceiptItem.returnShipRef,
       goodsReceiptId: goodsReceipt.id,
+      organizationId: goodsReceipt.organizationId,
       grNo: goodsReceipt.grNo,
       packingListId: packingList.id,
       packingListNo: packingList.packingListNo,
@@ -97,7 +128,7 @@ export async function getReturnsToSupplier(): Promise<ReturnToSupplierRow[]> {
     .leftJoin(packingList, eq(goodsReceipt.packingListId, packingList.id))
     .leftJoin(user, eq(goodsReceiptItem.inspectedBy, user.id))
     .where(and(
-      eq(goodsReceipt.organizationId, orgId),
+      inArray(goodsReceipt.organizationId, orgIds),
       eq(goodsReceiptItem.returnStatus, "pending"),
       ne(goodsReceipt.status, "recalled"),
     ));
@@ -139,6 +170,8 @@ export async function getReturnsToSupplier(): Promise<ReturnToSupplierRow[]> {
       const qty = num(r.qtyReturn);
       return {
         goodsReceiptItemId: r.id,
+        organizationId: r.organizationId,
+        organizationName: names.get(r.organizationId) ?? null,
         supplierId: r.supplierId,
         supplierName: (r.supplierSnapshot as { name?: string } | null)?.name ?? null,
         purchaseOrderId: r.purchaseOrderId,
@@ -165,6 +198,8 @@ export async function getReturnsToSupplier(): Promise<ReturnToSupplierRow[]> {
 }
 
 export type SurplusRow = {
+  organizationId: string;
+  organizationName: string | null;
   purchaseOrderItemId: string;
   supplierId: string | null;
   supplierName: string | null;
@@ -198,6 +233,16 @@ export type SurplusRow = {
 // the PO fulfilment check uses.
 export async function getSurplusItems(): Promise<SurplusRow[]> {
   const { orgId } = await requireRead();
+  return computeSurplus([orgId]);
+}
+
+export async function getSurplusItemsCentralized(): Promise<SurplusRow[]> {
+  const { orgId } = await requireRead("goods-receipt:read:centralized");
+  return computeSurplus(await getOwnerOrgIds(orgId));
+}
+
+async function computeSurplus(orgIds: string[]): Promise<SurplusRow[]> {
+  const names = await orgNames(orgIds);
 
   const rows = await db
     .select({
@@ -210,6 +255,7 @@ export async function getSurplusItems(): Promise<SurplusRow[]> {
       poNo: purchaseOrder.poNo,
       prNo: purchaseOrder.prNo,
       poStatus: purchaseOrder.status,
+      organizationId: goodsReceipt.organizationId,
       supplierId: purchaseOrder.supplierId,
       supplierSnapshot: purchaseOrder.supplierSnapshot,
       qtyReceived: goodsReceiptItem.qtyReceived,
@@ -227,7 +273,7 @@ export async function getSurplusItems(): Promise<SurplusRow[]> {
     .innerJoin(purchaseOrderItem, eq(goodsReceiptItem.purchaseOrderItemId, purchaseOrderItem.id))
     .innerJoin(purchaseOrder, eq(purchaseOrderItem.purchaseOrderId, purchaseOrder.id))
     .leftJoin(packingList, eq(goodsReceipt.packingListId, packingList.id))
-    .where(and(eq(goodsReceipt.organizationId, orgId), ne(goodsReceipt.status, "recalled")));
+    .where(and(inArray(goodsReceipt.organizationId, orgIds), ne(goodsReceipt.status, "recalled")));
 
   const byItem = new Map<string, SurplusRow>();
   for (const r of rows) {
@@ -236,6 +282,8 @@ export async function getSurplusItems(): Promise<SurplusRow[]> {
     if (!row) {
       row = {
         purchaseOrderItemId: r.poItemId,
+        organizationId: r.organizationId,
+        organizationName: names.get(r.organizationId) ?? null,
         supplierId: r.supplierId,
         supplierName: (r.supplierSnapshot as { name?: string } | null)?.name ?? null,
         purchaseOrderId: r.poId,
