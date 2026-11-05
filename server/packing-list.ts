@@ -134,6 +134,11 @@ export type PackingListItemEnriched = PackingListItemRow & {
 export interface PackingListItemInput {
   purchaseOrderId: string;
   purchaseOrderItemId: string;
+  // The person ticked a line that has nothing left to pack (the "covered" lines
+  // on the create page) because the supplier is sending it again. Skips the
+  // remaining-qty cap, but only for a line that really has a problem history —
+  // verified server-side, never trusted from the client.
+  packAgain?: boolean;
   productId?: string;
   productCode?: string;
   description?: string;
@@ -201,6 +206,17 @@ export type PackableItemPriorIssue = {
   shortQty: number;
 };
 
+// A line with nothing left to pack that still ties back to an earlier problem
+// (units returned/short on a completed packing list) — typically because the
+// supplier already made it good, or the units were surplus. Shown on the create
+// page as informational (not a problem, not selectable) so the person packing
+// can see it was accounted for.
+export type PackableItemCovered = {
+  priorIssues: PackableItemPriorIssue[]; // uncapped: what actually happened earlier
+  pendingPackingLists: { packingListId: string; packingListNo: string; qty: number }[]; // replacement already on an uninspected packing list
+  poStatus: string; // a line on a fulfilled PO is only listed because of the above
+};
+
 export type PackableItem = {
   purchaseOrderId: string;
   poNo: string | null;
@@ -234,6 +250,8 @@ export type PackableItem = {
   customerOrganization: string | null;
   customerPoNo: string | null;
   priorIssues: PackableItemPriorIssue[];
+  // Set only when qtyRemaining is 0 — see PackableItemCovered
+  covered: PackableItemCovered | null;
 };
 
 export type PendingPackingListPo = {
@@ -284,7 +302,9 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
     .where(and(
       eq(purchaseOrder.organizationId, orgId),
       eq(purchaseOrder.supplierId, supplierId),
-      eq(purchaseOrder.status, "confirmed"),
+      // "fulfilled" POs are read too, but only so a surplus/already-replaced line
+      // can be shown as covered; they have nothing left to pack themselves
+      inArray(purchaseOrder.status, ["confirmed", "fulfilled"]),
     ));
   if (pos.length === 0) return [];
   const poIds = pos.map((p) => p.id);
@@ -309,7 +329,7 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
       .from(goodsReceiptItem)
       .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
       .where(and(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds), ne(goodsReceipt.status, "recalled"))),
-    db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
+    db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected, packingListId: packingList.id, packingListNo: packingList.packingListNo })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
       .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"))),
@@ -352,7 +372,9 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
     receivedByItem[gi.purchaseOrderItemId] = (receivedByItem[gi.purchaseOrderItemId] ?? 0) + accepted;
   }
   const reservedByItem: Record<string, number> = {};
+  const pendingPlByItem: Record<string, { packingListId: string; packingListNo: string; qty: number }[]> = {};
   for (const pi of plItems) {
+    (pendingPlByItem[pi.purchaseOrderItemId] ??= []).push({ packingListId: pi.packingListId, packingListNo: pi.packingListNo, qty: parseFloat(pi.qtyExpected ?? "0") || 0 });
     reservedByItem[pi.purchaseOrderItemId] = (reservedByItem[pi.purchaseOrderItemId] ?? 0) + (parseFloat(pi.qtyExpected ?? "0") || 0);
   }
 
@@ -363,6 +385,7 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
       // shouldn't be offered for packing even though qty math alone would
       // still show it as remaining.
       const remaining = item.shortfallClosedStatus ? 0 : ordered - (receivedByItem[item.id] ?? 0) - (reservedByItem[item.id] ?? 0);
+      const priors = priorByItem[item.id] ?? [];
       const po = poMap[item.purchaseOrderId];
       let imageUrl: string | null = null;
       if (item.imageKey) {
@@ -383,7 +406,7 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
         unitPrice: item.unitPrice,
         currency: item.currency,
         qtyOrdered: item.qty,
-        qtyRemaining: remaining,
+        qtyRemaining: Math.max(0, remaining),
         sourcingType: item.sourcingType,
         designBrandName: item.designBrandName,
         designBrandCode: item.designBrandCode,
@@ -403,7 +426,14 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
         customerName: item.customerName,
         customerOrganization: item.customerOrganization,
         customerPoNo: item.customerPoNo,
-        priorIssues: (priorByItem[item.id] ?? [])
+        covered: remaining <= 0 && priors.length > 0
+          ? {
+              priorIssues: priors.map((p) => ({ packingListId: p.packingListId, packingListNo: p.packingListNo, returnedQty: p.returned, shortQty: p.short })),
+              pendingPackingLists: pendingPlByItem[item.id] ?? [],
+              poStatus: po?.status ?? "confirmed",
+            }
+          : null,
+        priorIssues: priors
           .map((p) => ({
             packingListId: p.packingListId,
             packingListNo: p.packingListNo,
@@ -415,7 +445,8 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
     }),
   );
 
-  return result.filter((i) => i.qtyRemaining > 0);
+  // Lines with nothing left to pack are dropped, except ones tied to an earlier problem
+  return result.filter((i) => i.qtyRemaining > 0 || i.covered !== null);
 }
 
 export type SupplierOutstandingIssue = { packingListId: string; packingListNo: string; itemCount: number };
@@ -1089,9 +1120,45 @@ export async function createPackingList(input: CreatePackingListInput): Promise<
     reservedByItem[pi.purchaseOrderItemId] = (reservedByItem[pi.purchaseOrderItemId] ?? 0) + (parseFloat(pi.qtyExpected ?? "0") || 0);
   }
 
+  // Lines flagged packAgain must have a returned/short history on a completed
+  // packing list (receipt not recalled), same test the create page uses to list them.
+  const againIds = [...new Set(input.items.filter((i) => i.packAgain).map((i) => i.purchaseOrderItemId))];
+  const withHistory = new Set<string>();
+  if (againIds.length > 0) {
+    const hist = await db
+      .select({
+        purchaseOrderItemId: packingListItem.purchaseOrderItemId,
+        qtyExpected: packingListItem.qtyExpected,
+        qtyReceived: goodsReceiptItem.qtyReceived,
+        qtyReturn: goodsReceiptItem.qtyReturn,
+        returnStatus: goodsReceiptItem.returnStatus,
+      })
+      .from(packingListItem)
+      .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+      .innerJoin(goodsReceiptItem, eq(goodsReceiptItem.packingListItemId, packingListItem.id))
+      .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+      .where(and(
+        inArray(packingListItem.purchaseOrderItemId, againIds),
+        eq(packingList.status, "completed"),
+        ne(goodsReceipt.status, "recalled"),
+      ));
+    for (const h of hist) {
+      const returned = h.returnStatus === "pending" ? parseFloat(h.qtyReturn ?? "0") || 0 : 0;
+      const short = (parseFloat(h.qtyExpected) || 0) - (parseFloat(h.qtyReceived) || 0);
+      if (returned > 0 || short > 0) withHistory.add(h.purchaseOrderItemId);
+    }
+  }
+
   for (const item of input.items) {
     const poItem = poItemMap[item.purchaseOrderItemId];
     if (!poItem) throw new Error("One of the selected items no longer exists");
+    if (item.packAgain) {
+      if (!withHistory.has(item.purchaseOrderItemId)) {
+        throw new Error(`${poItem.productCode ?? "An item"} has no earlier return or shortage, so it can't be packed beyond what's remaining`);
+      }
+      if (!((parseFloat(item.qtyExpected) || 0) > 0)) throw new Error(`Quantity for ${poItem.productCode ?? "an item"} must be greater than 0`);
+      continue;
+    }
     const ordered = parseFloat(poItem.qty ?? "0") || 0;
     const remaining = poItem.shortfallClosedStatus ? 0 : ordered - (receivedByItem[item.purchaseOrderItemId] ?? 0) - (reservedByItem[item.purchaseOrderItemId] ?? 0);
     const qty = parseFloat(item.qtyExpected) || 0;

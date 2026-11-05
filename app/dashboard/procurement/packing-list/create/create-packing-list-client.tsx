@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, ClipboardCheckIcon, DatabaseIcon, PencilIcon,
-  ClipboardListIcon, PlusIcon, TagIcon, LinkIcon, XIcon, AlertTriangleIcon,
+  ClipboardListIcon, PlusIcon, TagIcon, LinkIcon, XIcon, AlertTriangleIcon, InfoIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PoBadge } from "@/components/po-badge";
@@ -122,9 +122,9 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
     getPackableItemsForSupplier(supplierId)
       .then((rows) => {
         setAllItems(rows);
-        const preChecked = scopedPoIds?.length ? rows.filter((r) => scopedPoIds.includes(r.purchaseOrderId)) : [];
+        const preChecked = scopedPoIds?.length ? rows.filter((r) => r.qtyRemaining > 0 && scopedPoIds.includes(r.purchaseOrderId)) : [];
         setSelected(Object.fromEntries(preChecked.map((r) => [r.purchaseOrderItemId, true])));
-        setQtys(Object.fromEntries(rows.map((r) => [r.purchaseOrderItemId, String(r.qtyRemaining)])));
+        setQtys(Object.fromEntries(rows.map((r) => [r.purchaseOrderItemId, r.covered ? String(r.covered.priorIssues.reduce((sum, p) => sum + p.returnedQty + p.shortQty, 0) || 1) : String(r.qtyRemaining)])));
       })
       .finally(() => setLoadingItems(false));
     getSupplierOutstandingIssues(supplierId).then(setOutstandingIssues);
@@ -144,17 +144,23 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
     setSelected((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
   }
 
+  // "Covered" lines (nothing left to pack, but an earlier return/shortage) can be
+  // ticked too — the supplier may well send them again — with a manual quantity.
+  const isPackable = (i: PackableItem) => i.qtyRemaining > 0;
+
   function toggleAllInPo(poItems: PackableItem[]) {
-    const allSelected = poItems.every((i) => selected[i.purchaseOrderItemId]);
+    const packable = poItems.filter(isPackable); // bulk-select skips covered lines; tick those one by one
+    const allSelected = packable.every((i) => selected[i.purchaseOrderItemId]);
     setSelected((prev) => {
       const next = { ...prev };
-      poItems.forEach((i) => { next[i.purchaseOrderItemId] = !allSelected; });
+      packable.forEach((i) => { next[i.purchaseOrderItemId] = !allSelected; });
       return next;
     });
   }
 
   const selectedCount = Object.values(selected).filter(Boolean).length;
-  const problemItems = items.filter((i) => i.priorIssues.length > 0);
+  const problemItems = items.filter((i) => i.priorIssues.length > 0 && isPackable(i));
+  const coveredItems = items.filter((i) => !isPackable(i));
   const allProblemSelected = problemItems.length > 0 && problemItems.every((i) => selected[i.purchaseOrderItemId]);
   function toggleProblemItems() {
     setSelected((prev) => {
@@ -173,8 +179,10 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
 
     for (const item of chosen) {
       const qty = parseFloat(qtys[item.purchaseOrderItemId] ?? "0");
-      if (!(qty > 0) || qty > item.qtyRemaining + 1e-9) {
-        toast.error(`Quantity for ${item.productCode ?? "an item"} must be between 0 and ${item.qtyRemaining}`);
+      if (!(qty > 0) || (!item.covered && qty > item.qtyRemaining + 1e-9)) {
+        toast.error(item.covered
+          ? `Quantity for ${item.productCode ?? "an item"} must be greater than 0`
+          : `Quantity for ${item.productCode ?? "an item"} must be between 0 and ${item.qtyRemaining}`);
         return;
       }
     }
@@ -186,6 +194,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
       productCode: item.productCode ?? undefined,
       description: item.description ?? undefined,
       qtyExpected: qtys[item.purchaseOrderItemId],
+      ...(item.covered ? { packAgain: true } : {}),
       uom: item.uom ?? undefined,
       unitPrice: item.unitPrice ?? undefined,
       currency: item.currency ?? undefined,
@@ -324,6 +333,12 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                 </button>
               </div>
             )}
+            {coveredItems.length > 0 && (
+              <div className="flex items-center gap-1.5 mb-3 text-[11px] text-sky-800 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/50 rounded-md px-3 py-1.5">
+                <InfoIcon className="w-3.5 h-3.5 shrink-0" />
+                {coveredItems.length} line{coveredItems.length !== 1 ? "s" : ""} in blue had a return or shortage earlier but {coveredItems.length !== 1 ? "have" : "has"} nothing left to pack — already replaced, on a pending packing list, or surplus stock. Tick one only if the supplier is sending it again.
+              </div>
+            )}
             {poFilterActive && hasPoScope && (
               <div className="flex items-center justify-between gap-2 mb-3 text-[11px] text-muted-foreground bg-muted/40 rounded-md px-3 py-1.5">
                 <span>
@@ -347,20 +362,22 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                 {Object.entries(byPo).map(([poId, poItems], poIndex) => {
                   const first = poItems[0];
                   const color = PO_COLORS[poIndex % PO_COLORS.length];
-                  const allChecked = poItems.every((i) => selected[i.purchaseOrderItemId]);
-                  const someChecked = !allChecked && poItems.some((i) => selected[i.purchaseOrderItemId]);
+                  const packableItems = poItems.filter(isPackable);
+                  const allChecked = packableItems.length > 0 && packableItems.every((i) => selected[i.purchaseOrderItemId]);
+                  const someChecked = !allChecked && packableItems.some((i) => selected[i.purchaseOrderItemId]);
                   return (
                     <div key={poId} className={cn("border rounded-lg overflow-hidden", color.border, color.bg)}>
                       <label className={cn("px-3 py-1.5 text-[11px] font-mono font-medium text-muted-foreground flex items-center gap-2 cursor-pointer select-none", color.header)}>
                         <input
                           type="checkbox"
                           checked={allChecked}
+                          disabled={packableItems.length === 0}
                           ref={(el) => { if (el) el.indeterminate = someChecked; }}
                           onChange={() => toggleAllInPo(poItems)}
                         />
                         {first.poNo ?? first.prNo ?? poId}
                         <span className="font-sans font-normal normal-case text-muted-foreground/70">
-                          {poItems.filter((i) => selected[i.purchaseOrderItemId]).length}/{poItems.length} selected
+                          {packableItems.filter((i) => selected[i.purchaseOrderItemId]).length}/{packableItems.length} selected
                         </span>
                       </label>
                       <table className="w-full text-xs">
@@ -388,6 +405,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                                 "border-t border-border/40 first:border-t-0 align-top",
                                 itemIndex % 2 === 1 && color.stripe,
                                 item.priorIssues.length > 0 && "bg-red-100/80 dark:bg-red-950/35 border-l-[6px] border-l-red-600",
+                                item.covered && "bg-sky-50 dark:bg-sky-950/25 border-l-[6px] border-l-sky-400",
                               )}>
                                 <td className="py-2 pl-3 pr-2 w-6">
                                   <input type="checkbox" checked={checked} onChange={() => toggle(item.purchaseOrderItemId)} />
@@ -490,6 +508,42 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                                   )}
                                   <div className="mb-1 flex flex-wrap items-center gap-1">
                                     <PoBadge label={first.poNo ?? first.prNo ?? poId} color={color} />
+                                    {item.covered && (
+                                      <>
+                                        {item.covered.priorIssues.map((p) => (
+                                          <a
+                                            key={p.packingListId}
+                                            href={`/dashboard/procurement/packing-list/${p.packingListId}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            title="Open the packing list this came from (new tab)"
+                                            className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 border border-sky-300 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-200 dark:border-sky-700"
+                                          >
+                                            {p.returnedQty > 0 && `Returned ${p.returnedQty}`}
+                                            {p.returnedQty > 0 && p.shortQty > 0 && " · "}
+                                            {p.shortQty > 0 && `Short ${p.shortQty}`}
+                                            <span className="font-mono">· {p.packingListNo}</span>
+                                            <LinkIcon className="w-2.5 h-2.5 shrink-0" />
+                                          </a>
+                                        ))}
+                                        {item.covered.pendingPackingLists.map((p) => (
+                                          <a
+                                            key={p.packingListId}
+                                            href={`/dashboard/procurement/packing-list/${p.packingListId}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            title="A packing list that hasn't been inspected yet already carries these units (new tab)"
+                                            className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 border border-sky-300 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-200 dark:border-sky-700"
+                                          >
+                                            Already on {p.packingListNo} ({p.qty})
+                                            <LinkIcon className="w-2.5 h-2.5 shrink-0" />
+                                          </a>
+                                        ))}
+                                        {item.covered.poStatus !== "confirmed" && (
+                                          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60">PO {item.covered.poStatus}</span>
+                                        )}
+                                      </>
+                                    )}
                                     {item.priorIssues.map((p) => (
                                       <a
                                         key={p.packingListId}
@@ -533,13 +587,13 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                                   <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} designBrandCode={item.designBrandCode} />
                                 </td>
                                 <td className="py-2 pr-3 text-right text-muted-foreground w-28 whitespace-nowrap align-top">
-                                  {item.qtyRemaining} {item.uom || ""} remaining
+                                  {item.covered ? <span className="text-sky-700 dark:text-sky-300 font-medium" title="Nothing left to pack. Tick this line only if the supplier is sending it again.">Covered · tick if sent again</span> : <>{item.qtyRemaining} {item.uom || ""} remaining</>}
                                 </td>
                                 <td className="py-2 pr-3 w-24 align-top">
                                   <Input
                                     type="number"
                                     min="0"
-                                    max={item.qtyRemaining}
+                                    max={item.covered ? undefined : item.qtyRemaining}
                                     step="any"
                                     disabled={!checked}
                                     value={qtys[item.purchaseOrderItemId] ?? ""}
