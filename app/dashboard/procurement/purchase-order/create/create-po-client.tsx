@@ -275,6 +275,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
         const wb = XLSX.read(data, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const grid: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+        // Formatted-text copy of the grid: numeric-looking codes ("101.030")
+        // would otherwise lose trailing zeros once read as numbers (101.03).
+        const textGrid: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
         const cell = (row: unknown[] | undefined, i: number): string =>
           row && row[i] !== undefined && row[i] !== null ? String(row[i]).trim() : "";
 
@@ -350,6 +353,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
         }
         const groupId = groupTitleGuess ? uid() : undefined;
 
+        const sheetHasOemColumns = idxDesignBrandName !== -1 || idxDesignBrandCode !== -1 || idxEmboss !== -1;
+
         // 2. Item rows — stop at the first summary/footer line
         const STOP = /subtotal|^total\b|discount|remark|authoris/i;
         const rawItems: LineItem[] = [];
@@ -365,7 +370,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
           }
           const description = cell(row, idxDescription);
           const embossCode = cell(row, idxEmboss);
-          const productCode = cell(row, idxProductCode) || embossCode;
+          const productCode = cell(textGrid[i], idxProductCode) || embossCode;
           if (!description && !productCode) continue;
 
           const qty = cell(row, idxQty) || "1";
@@ -385,6 +390,12 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
           if (groupTitleGuess) {
             line.setGroupId = groupId;
             line.setGroupLabel = groupTitleGuess;
+          }
+          if (!hasOem && !sheetHasOemColumns) {
+            // Plain trading sheet (no Design Brand / Emboss columns): mark the
+            // line Trading up front so the catalogue lookup below can't flip
+            // it to OEM and fill in an Emboss Code the sheet never had.
+            line.sourcingType = "trading";
           }
           if (hasOem) {
             line.sourcingType = "oem";

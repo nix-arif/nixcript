@@ -71,6 +71,7 @@ export const navConfig: NavGroup[] = [
       { title: "Packing Lists", url: "/dashboard/procurement/packing-list/centralized", permission: "packing-list:read:centralized" },
       { title: "Goods Receipts", url: "/dashboard/procurement/goods-receipt/centralized", permission: "goods-receipt:read:centralized" },
       { title: "Returns & Surplus", url: "/dashboard/procurement/receiving-issues/centralized", permission: "goods-receipt:read:centralized" },
+      { title: "Item Tracking", url: "/dashboard/procurement/item-tracking/centralized", permission: "purchase-order:read:centralized" },
     ],
   },
   {
