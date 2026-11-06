@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import {
   finalizeQuotation,
@@ -28,6 +29,7 @@ import {
   PencilIcon,
   LayersIcon,
   DatabaseIcon,
+  FileSpreadsheetIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isSetPriced } from "@/lib/quotation-set-price";
@@ -346,6 +348,38 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   const grandTotal = Number(q.grandTotal ?? 0);
   const afterDiscount = subtotal - overallDiscAmt;
 
+  // Same figures as the item table: qty is the full quantity across all sets,
+  // price/unit and price are the line's own. Items of a set priced as a whole
+  // have no price of their own (the set total sits on the set's first item).
+  function handleExportExcel() {
+    const rows: (string | number)[][] = [["Product Code", "Description", "Qty", "UOM", "Price/Unit", "Price"]];
+    for (const item of items) {
+      const setPriced = isSetPriced(item);
+      const totalQty = Number(item.qty ?? 1) * Number(item.setQty || 1) * sets;
+      const lineTotal = Number(item.totalPrice ?? 0);
+      rows.push([
+        item.productCode ?? "",
+        item.description ?? "",
+        totalQty,
+        item.uom ?? "",
+        setPriced ? "" : Number(item.unitPrice ?? 0),
+        setPriced ? (lineTotal > 0 ? lineTotal : "") : lineTotal,
+      ]);
+    }
+    rows.push([]);
+    const footer = (label: string, value: number) => rows.push(["", "", "", "", label, value]);
+    footer("Subtotal", subtotal);
+    if (overallDiscAmt > 0) footer(Number(q.overallDiscountPct ?? 0) > 0 ? `Discount (${q.overallDiscountPct}%)` : "Discount", -overallDiscAmt);
+    if (Number(q.sstPct ?? 0) > 0) footer(`SST (${q.sstPct}%)`, sstAmt);
+    footer("Grand Total", grandTotal);
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 18 }, { wch: 60 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 14 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Quotation");
+    XLSX.writeFile(wb, `${q.quotationNo}.xlsx`);
+  }
+
   return (
     <div className="p-6 space-y-4">
 
@@ -402,6 +436,10 @@ export function QuotationDetailClient({ group, initialId }: Props) {
 
         {/* Actions */}
         <div className="flex items-center gap-2 flex-wrap md:shrink-0">
+          <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={handleExportExcel}>
+            <FileSpreadsheetIcon className="w-3.5 h-3.5" />
+            Excel
+          </Button>
           {isDraft && (
             <Button
               variant="outline"

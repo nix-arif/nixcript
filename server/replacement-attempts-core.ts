@@ -4,7 +4,7 @@
 // server/packing-list.ts and server/goods-receipt.ts.
 import { db } from "@/db";
 import { returnReplacementAttempt, goodsReceiptItem, goodsReceipt, packingListItem } from "@/db/schema";
-import { and, asc, eq, inArray, like, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, ne, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
@@ -127,7 +127,9 @@ export async function revertAttemptsForPackingList(packingListId: string): Promi
     ));
 }
 
-// Runs when a packing list is created. Every line for a PO item that still has
+// Runs when a packing list is created, and again just before its inspection is
+// completed (safe to repeat: it only covers what is still uncovered), which
+// catches packing lists created before this existed. Every line for a PO item that still has
 // rejected units waiting to go back is, by definition, the make-good for them
 // (the create page already shows that to the user), so the link is recorded
 // here instead of making the inspector re-enter it. Units are handed to the
@@ -152,6 +154,8 @@ export async function autoLinkReplacementsForPackingList(packingListId: string, 
       ne(goodsReceipt.status, "recalled"),
       eq(goodsReceiptItem.returnStatus, "pending"),
       inArray(goodsReceiptItem.purchaseOrderItemId, poItemIds),
+      // never the returns this packing list's own (possibly part-booked) inspection produced
+      or(isNull(goodsReceipt.packingListId), ne(goodsReceipt.packingListId, packingListId)),
     ))
     .orderBy(asc(goodsReceiptItem.inspectedAt));
   if (returns.length === 0) return 0;

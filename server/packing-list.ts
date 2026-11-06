@@ -1798,6 +1798,8 @@ async function applyPackingListInspection(
     byPo.set(plItem.purchaseOrderId, arr);
   }
 
+  await autoLinkReplacementsForPackingList(id, pl.organizationId, userId);
+
   // Receipts are created one PO at a time, so a failure part-way (e.g. a PO
   // that can't be received) leaves the earlier POs already booked while the
   // packing list stays pending. Retrying must resume, not book them twice.
