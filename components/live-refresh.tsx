@@ -18,7 +18,12 @@ import { authClient } from "@/lib/auth-client";
 import { getTabOrg, setTabOrg, TAB_ORG_RESTORED } from "@/lib/tab-org";
 import { Spinner } from "@/components/ui/spinner";
 
-const INTERVAL_MS = 30_000;
+// Slow check for ordinary pages (saves server CPU); the packing-list
+// inspection page keeps the quick 30s check because several people may be
+// working on the same list at once (it also has its own 5s line-sync poll).
+const INTERVAL_MS = 120_000;
+const INSPECT_INTERVAL_MS = 30_000;
+const INSPECT = /^\/dashboard\/procurement\/packing-list\/[^/]+\/inspect(\/|$)/;
 
 // Which areas each page shows. Forms (create / new / edit) are left alone.
 const RULES: [RegExp, string[]][] = [
@@ -89,7 +94,7 @@ export function LiveRefresh() {
       }
     };
     check();
-    const timer = setInterval(check, INTERVAL_MS);
+    const timer = setInterval(check, INSPECT.test(pathname) ? INSPECT_INTERVAL_MS : INTERVAL_MS);
     const onShow = () => { if (document.visibilityState === "visible") check(); };
     document.addEventListener("visibilitychange", onShow);
     window.addEventListener("focus", onShow);
