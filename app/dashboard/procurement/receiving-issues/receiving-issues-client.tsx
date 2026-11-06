@@ -194,7 +194,7 @@ export function ReceivingIssuesClient({ initialReturns, surplus, closedReturns, 
   );
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 sm:p-6 space-y-4">
       <PageHeader
         title="Returns & Surplus"
         description={centralized ? "Across all your organizations — rejected items waiting to go back to suppliers, and extra items received beyond what was ordered" : "Rejected items waiting to go back to suppliers, and extra items received beyond what was ordered"}

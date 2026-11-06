@@ -14,11 +14,6 @@ import {
   ExternalLinkIcon,
   PackageIcon,
   BuildingIcon,
-  CheckCircle2Icon,
-  AlertCircleIcon,
-  CircleIcon,
-  InfoIcon,
-  AlertTriangleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -36,12 +31,12 @@ const fmtDate = (d: Date | string | null | undefined) =>
 const fmtTime = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" }) : "";
 
-const TONE: Record<TraceEvent["tone"], { dot: string; card: string; Icon: typeof CircleIcon }> = {
-  neutral: { dot: "bg-muted text-muted-foreground border-border", card: "", Icon: CircleIcon },
-  info: { dot: "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/50 dark:text-blue-400 dark:border-blue-800", card: "", Icon: InfoIcon },
-  good: { dot: "bg-green-50 text-green-600 border-green-200 dark:bg-green-950/50 dark:text-green-400 dark:border-green-800", card: "", Icon: CheckCircle2Icon },
-  bad: { dot: "bg-red-50 text-red-600 border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800", card: "border-red-200/70 dark:border-red-900/60", Icon: AlertCircleIcon },
-  warn: { dot: "bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800", card: "border-amber-200/70 dark:border-amber-900/60", Icon: AlertTriangleIcon },
+const DOT: Record<TraceEvent["tone"], string> = {
+  neutral: "bg-muted-foreground/50",
+  info: "bg-blue-500",
+  good: "bg-green-500",
+  bad: "bg-red-500",
+  warn: "bg-amber-500",
 };
 
 const refHref = (r: NonNullable<TraceEvent["ref"]>) =>
@@ -67,9 +62,9 @@ function Chip({ children, className }: { children: React.ReactNode; className?: 
 
 function Stat({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
   return (
-    <div className="rounded-lg border bg-muted/20 px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={cn("text-lg font-semibold tabular-nums leading-tight", tone)}>{value}</p>
+    <div className="px-3 py-2 sm:px-4 sm:py-2.5 sm:min-w-[88px]">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className={cn("text-xl font-semibold tabular-nums leading-tight mt-0.5", tone)}>{value}</p>
     </div>
   );
 }
@@ -85,11 +80,12 @@ export function ItemTrackingClient() {
   const [loadingTrace, setLoadingTrace] = useState(false);
   const [lineFilter, setLineFilter] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
+  const traceRef = useRef<HTMLElement>(null);
 
   // Debounced PO number search
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) { setHits([]); return; }
+    if (q.length < 2) return;
     setSearching(true);
     const t = setTimeout(() => {
       searchPurchaseOrdersForTracking(q)
@@ -128,6 +124,9 @@ export function ItemTrackingClient() {
     setLoadingTrace(true);
     try {
       setTrace(await getItemTrace(lineId));
+      if (window.matchMedia("(max-width: 1023px)").matches) {
+        requestAnimationFrame(() => traceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't load this line");
     } finally {
@@ -151,7 +150,7 @@ export function ItemTrackingClient() {
   const s = trace?.summary;
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
       <PageHeader
         title="Item Tracking"
         description="Follow one PO line from the order to its latest packing list — every inspection, return, repair and replacement along the way"
@@ -199,7 +198,7 @@ export function ItemTrackingClient() {
 
       {/* Empty state */}
       {!po && !loadingPo && (
-        <div className="rounded-xl border border-dashed py-16 px-6 text-center">
+        <div className="rounded-lg border border-dashed py-12 px-4 sm:py-16 sm:px-6 text-center">
           <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
             <ClipboardListIcon className="w-6 h-6 text-muted-foreground" />
           </div>
@@ -213,29 +212,29 @@ export function ItemTrackingClient() {
       {po && (
         <div className="space-y-4">
           {/* PO header */}
-          <div className="rounded-xl border bg-muted/20 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <div className="rounded-lg border bg-muted/50 px-3 py-2.5 sm:px-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:gap-x-4">
             <span className="font-mono text-base font-semibold">{po.poNo ?? po.prNo}</span>
             <Chip className={statusChip(po.status)}>{po.status}</Chip>
-            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
               <PackageIcon className="w-3.5 h-3.5" />{po.supplierName ?? "—"}
             </span>
             <span className="text-xs text-muted-foreground flex items-center gap-1.5">
               <BuildingIcon className="w-3.5 h-3.5" />{po.organizationName ?? "—"}
             </span>
-            <span className="text-xs text-muted-foreground ml-auto">{po.lines.length} line{po.lines.length === 1 ? "" : "s"}</span>
+            <span className="text-xs text-muted-foreground sm:ml-auto">{po.lines.length} line{po.lines.length === 1 ? "" : "s"}</span>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-start">
+          <div className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-start">
             {/* Lines */}
-            <section className="rounded-xl border overflow-hidden">
-              <div className="px-3 py-2 border-b bg-muted/30 flex items-center gap-2">
+            <section className="rounded-lg border overflow-hidden">
+              <div className="px-3 py-2 border-b bg-muted/30 flex flex-wrap items-center gap-x-2 gap-y-1.5">
                 <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lines</h2>
-                <div className="relative ml-auto w-44">
+                <div className="relative w-full sm:w-44 sm:ml-auto order-last sm:order-none">
                   <SearchIcon className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input value={lineFilter} onChange={(e) => setLineFilter(e.target.value)} placeholder="Filter lines" className="h-7 pl-7 text-xs" />
                 </div>
               </div>
-              <div className="max-h-[70vh] overflow-auto divide-y">
+              <div className="lg:max-h-[70vh] lg:overflow-auto divide-y">
                 {lines.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">No lines match.</p>}
                 {lines.map((l) => {
                   const selected = trace?.line.id === l.id;
@@ -247,7 +246,7 @@ export function ItemTrackingClient() {
                       type="button"
                       onClick={() => pickLine(l.id)}
                       className={cn(
-                        "w-full text-left px-3 py-2.5 text-xs flex items-start gap-3 hover:bg-muted/50 border-l-2 transition-colors",
+                        "w-full text-left px-3 py-3 text-xs flex items-start gap-2.5 sm:gap-3 hover:bg-muted/50 border-l-2 transition-colors",
                         selected ? "bg-blue-50/70 dark:bg-blue-950/30 border-l-blue-500" : "border-l-transparent",
                       )}
                     >
@@ -280,28 +279,28 @@ export function ItemTrackingClient() {
             </section>
 
             {/* Trace */}
-            <section className="rounded-xl border min-h-48 lg:sticky lg:top-4">
+            <section ref={traceRef} className="rounded-lg border min-h-40 scroll-mt-4 lg:sticky lg:top-4">
               {loadingTrace && (
-                <div className="p-6 flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="p-5 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2Icon className="w-4 h-4 animate-spin" /> Loading history…
                 </div>
               )}
               {!trace && !loadingTrace && (
-                <div className="p-10 text-center">
+                <div className="p-8 sm:p-10 text-center">
                   <p className="text-sm font-medium">Pick a line</p>
                   <p className="text-xs text-muted-foreground mt-1">Its history will appear here.</p>
                 </div>
               )}
               {trace && s && !loadingTrace && (
-                <div className="max-h-[78vh] overflow-auto">
-                  <div className="p-4 border-b space-y-4">
+                <div className="lg:max-h-[78vh] lg:overflow-auto">
+                  <div className="p-3 sm:p-4 border-b space-y-3 sm:space-y-4">
                     <div>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Line {trace.line.rowNo} of {trace.po.poNo ?? trace.po.prNo}</p>
-                      <p className="font-mono text-base font-semibold">{trace.line.productCode ?? "—"}</p>
+                      <p className="font-mono text-base font-semibold break-all">{trace.line.productCode ?? "—"}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">{trace.line.description}</p>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:flex sm:flex-wrap rounded-lg border overflow-hidden bg-muted/20 gap-px bg-border [&>*]:bg-background sm:[&>*]:flex-1">
                       <Stat label="Ordered" value={s.ordered} />
                       <Stat label="Accepted" value={s.accepted} tone="text-green-700 dark:text-green-400" />
                       <Stat label="Still to pack" value={s.stillToPack} />
@@ -315,7 +314,7 @@ export function ItemTrackingClient() {
                       {s.finalPackingList ? (
                         <Link
                           href={`/dashboard/procurement/packing-list/centralized/${s.finalPackingList.id}`}
-                          className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 hover:bg-muted/60"
+                          className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-md border px-2.5 py-1.5 hover:bg-muted/60"
                         >
                           <span className="text-muted-foreground">Latest packing list</span>
                           <span className="font-mono font-medium">{s.finalPackingList.no}</span>
@@ -334,31 +333,26 @@ export function ItemTrackingClient() {
                   </div>
 
                   {/* Timeline */}
-                  <ol className="p-4">
+                  <ol className="px-3 py-4 sm:px-4">
                     {trace.events.map((e, i) => {
-                      const t = TONE[e.tone];
                       const last = i === trace.events.length - 1;
                       return (
-                        <li key={i} className="relative flex gap-3 pb-4 last:pb-0">
-                          {!last && <span className="absolute left-[13px] top-7 bottom-0 w-px bg-border" />}
-                          <span className={cn("relative z-[1] w-7 h-7 shrink-0 rounded-full border flex items-center justify-center", t.dot)}>
-                            <t.Icon className="w-3.5 h-3.5" />
-                          </span>
-                          <div className={cn("min-w-0 flex-1 rounded-lg border px-3 py-2 text-xs", t.card)}>
-                            <div className="flex items-start justify-between gap-3">
-                              <p className="font-medium text-[13px] leading-snug">{e.title}</p>
-                              <span className="text-[10px] text-muted-foreground whitespace-nowrap text-right leading-tight">
-                                {fmtDate(e.at)}
-                                <span className="block">{fmtTime(e.at)}</span>
-                              </span>
-                            </div>
-                            {e.detail && <p className="text-muted-foreground mt-1 leading-snug">{e.detail}</p>}
+                        <li key={i} className="grid grid-cols-[1rem_minmax(0,1fr)] sm:grid-cols-[4.5rem_1rem_minmax(0,1fr)] gap-x-3 text-xs">
+                          <div className="hidden sm:block text-right pt-0.5 leading-tight">
+                            <p className="font-medium text-foreground/80">{fmtDate(e.at)}</p>
+                            <p className="text-[10px] text-muted-foreground">{fmtTime(e.at)}</p>
+                          </div>
+                          <div className="relative flex justify-center">
+                            {!last && <span className="absolute top-3 -bottom-0 w-px bg-border" />}
+                            <span className={cn("relative mt-1 w-2.5 h-2.5 rounded-full ring-4 ring-background", DOT[e.tone])} />
+                          </div>
+                          <div className="pb-5 min-w-0">
+                            <p className="sm:hidden text-[10px] text-muted-foreground mb-0.5">{fmtDate(e.at)} · {fmtTime(e.at)}</p>
+                            <p className="font-medium text-[13px] leading-snug break-words">{e.title}</p>
+                            {e.detail && <p className="text-muted-foreground mt-0.5 leading-snug">{e.detail}</p>}
                             {e.ref && (
-                              <Link
-                                href={refHref(e.ref)}
-                                className="mt-1.5 inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
-                              >
-                                Open {e.ref.no} <ExternalLinkIcon className="w-3 h-3" />
+                              <Link href={refHref(e.ref)} className="mt-1 inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline">
+                                {e.ref.no} <ExternalLinkIcon className="w-3 h-3" />
                               </Link>
                             )}
                           </div>
