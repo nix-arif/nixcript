@@ -44,18 +44,7 @@ const C_LINK   = rgb(0.10, 0.30, 0.75);
 const C_GREEN  = rgb(0.09, 0.40, 0.20);
 const C_AMBER_BG = rgb(1, 0.97, 0.88);
 
-// Inspection progress table (interim report only)
-const PROG_COLS: { label: string; w: number }[] = [
-  { label: "PO", w: 70 },
-  { label: "LINE", w: 30 },
-  { label: "ITEM", w: 0 }, // takes the remaining width, set below
-  { label: "EXPECTED", w: 58 },
-  { label: "RECEIVED (DRAFT)", w: 72 },
-  { label: "STATUS", w: 88 },
-];
-PROG_COLS[2].w = CW - PROG_COLS.reduce((sum, c) => sum + c.w, 0);
-const PROG_DESC_W = PROG_COLS[2].w;
-const PROG_ROW_MIN_H = 20;
+
 
 function sanitize(t: string): string {
   return String(t ?? "").replace(/[\x00-\x1F\x7F]/g, " ");
@@ -211,6 +200,14 @@ type IssueItem = {
   approvedByName: string | null;
   approvedAt: Date | null;
   progress: LineProgress;
+  itemId: string;
+  // Interim report only — rows for lines that are NOT issues, listed so
+  // every line keeps its own place in PO / line order. doneListing: an
+  // approved line, shown in full with its product photo (not bundled in
+  // the zip, it isn't evidence of anything). compact: a line still in
+  // progress — a short text row, no photo, until it's approved.
+  doneListing?: boolean;
+  compact?: boolean;
 };
 
 type CachedImage = { buffer: Buffer; extension: "jpeg" | "png" | "gif" };
@@ -272,6 +269,26 @@ type InterimInfo = {
   notInspected: number;
   lines: ProgressLine[];
 };
+
+// Interim report: every current line in PO / line order, each in its own
+// place and numbered 1..N straight through. Issue lines are exactly as on
+// the final report; approved lines with no issue get the same picture
+// layout; lines still in progress with no issue are a compact text row.
+function buildInterimRows(
+  items: PackingListItemEnriched[],
+  poLabelById: Map<string, string>,
+  poLineNoById: Map<string, number | null>,
+  kind: ReportKind,
+  ctx: { baseUrl: string; packingListNo: string; completed: boolean },
+  issues: IssueItem[],
+): IssueItem[] {
+  const issueIds = new Set(issues.map((i) => i.itemId));
+  return buildIssueItems(items, poLabelById, poLineNoById, kind, ctx, true).map((row) => {
+    if (issueIds.has(row.itemId)) return row;
+    const done = isDone(row.progress);
+    return { ...row, evidenceImageUrls: [], videos: [], doneListing: true, compact: !done };
+  });
+}
 
 function interimSummaryText(info: InterimInfo): string {
   const bits = [`${info.done} of ${info.total} line${info.total !== 1 ? "s" : ""} done (approved)`];
@@ -341,6 +358,7 @@ function buildIssueItems(
   poLineNoById: Map<string, number | null>,
   kind: ReportKind,
   ctx: { baseUrl: string; packingListNo: string; completed: boolean },
+  includeAll = false,
 ): IssueItem[] {
   return items
     .map((item): Omit<IssueItem, "no"> | null => {
@@ -355,7 +373,7 @@ function buildIssueItems(
       // even with nothing formally returned; the repair report only ever
       // includes a line when something was actually sent for repair.
       const include = kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0;
-      if (!include) return null;
+      if (!include && !includeAll) return null;
 
       // Only photos are embedded; videos are listed with download links.
       const evidencePhotos = item.photos.filter((p) => p.category === kind && p.kind !== "video");
@@ -388,6 +406,7 @@ function buildIssueItems(
         approvedByName: item.draftApprovedByName,
         approvedAt: item.draftApprovedAt,
         progress: lineProgress(item, ctx.completed),
+        itemId: item.id,
       };
     })
     .filter((i): i is Omit<IssueItem, "no"> => i !== null)
@@ -413,7 +432,7 @@ function extOf(cached: CachedImage): string {
 }
 
 function identityFilename(issue: IssueItem, images: Map<string, CachedImage>, prefix: string): string | null {
-  if (!issue.identityImageUrl) return null;
+  if (!issue.identityImageUrl || issue.doneListing) return null;
   const cached = images.get(issue.identityImageUrl);
   if (!cached) return null;
   return `${prefix}-item-${issue.no}-photo.${extOf(cached)}`;
@@ -715,7 +734,7 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
     + reviewLines.length * RETURN_LINE_H
     + ROW_V_PAD;
 
-  return { issue, headerLines, statusLines, brandLine, descLines, returnLines, evidenceRows, evidenceThumbsPerRow, reviewLines, height: Math.max(textH, ROW_MIN_H) };
+  return { issue, headerLines, statusLines, brandLine, descLines, returnLines, evidenceRows, evidenceThumbsPerRow, reviewLines, height: issue.compact ? textH : Math.max(textH, ROW_MIN_H) };
 }
 
 // Invisible link over a thumbnail that opens the matching full-res file from
@@ -818,40 +837,27 @@ async function buildReportPdfBytes(
   // Paginate by accumulated row height rather than a fixed row count, so
   // no row's text, images, or evidence photos are ever cut off to fit a
   // preset grid.
-  const pages: Measured[][] = [];
-  let current: Measured[] = [];
-  let currentH = 0;
-  for (const m of measured) {
-    if (current.length > 0 && currentH + m.height > availH) {
-      pages.push(current);
-      current = [];
-      currentH = 0;
+  const paginate = (rows: Measured[]): Measured[][] => {
+    const out: Measured[][] = [];
+    let current: Measured[] = [];
+    let currentH = 0;
+    for (const m of rows) {
+      if (current.length > 0 && currentH + m.height > availH) {
+        out.push(current);
+        current = [];
+        currentH = 0;
+      }
+      current.push(m);
+      currentH += m.height;
     }
-    current.push(m);
-    currentH += m.height;
-  }
-  if (current.length > 0) pages.push(current);
+    if (current.length > 0) out.push(current);
+    return out;
+  };
+  const pages = paginate(measured);
+  // Real issue lines only — an interim report also carries every other line.
+  const issueCount = issues.filter((i) => !i.doneListing).length;
 
-  // Interim only: the "Inspection progress" pages listing every line,
-  // paginated the same way (by measured row height).
-  const progressRows = interim ? interim.lines.map((line) => {
-    const descLines = wrap(`${line.productCode}  ${line.description}`, fontR, 7, PROG_DESC_W - 6);
-    return { line, descLines, height: Math.max(PROG_ROW_MIN_H, descLines.length * 9 + 6) };
-  }) : [];
-  const progressPages: typeof progressRows[] = [];
-  {
-    const progAvail = availH - 14; // a little room for the section heading
-    let cur: typeof progressRows = [];
-    let curH = 0;
-    for (const r of progressRows) {
-      if (cur.length > 0 && curH + r.height > progAvail) { progressPages.push(cur); cur = []; curH = 0; }
-      cur.push(r);
-      curH += r.height;
-    }
-    if (cur.length > 0) progressPages.push(cur);
-  }
-
-  const totalPgs = pages.length + progressPages.length;
+  const totalPgs = pages.length;
   const dateStr = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
 
   for (let pi = 0; pi < pages.length; pi++) {
@@ -876,7 +882,7 @@ async function buildReportPdfBytes(
     const pgLabel = `Page ${pi + 1} / ${totalPgs}`;
     page.drawText(pgLabel, { x: W - MR - fontB.widthOfTextAtSize(pgLabel, 9), y: H - 24, size: 9, font: fontB, color: rgb(0.85, 0.85, 0.9) });
     page.drawText(dateStr, { x: W - MR - fontR.widthOfTextAtSize(dateStr, 7.5), y: H - 38, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
-    const countLabel = `${issues.length} line${issues.length !== 1 ? "s" : ""} ${config.countNoun}`;
+    const countLabel = `${issueCount} line${issueCount !== 1 ? "s" : ""} ${config.countNoun}`;
     page.drawText(countLabel, { x: W - MR - fontR.widthOfTextAtSize(countLabel, 7), y: H - 50, size: 7, font: fontR, color: rgb(0.65, 0.65, 0.7) });
 
     drawBanner(page);
@@ -887,7 +893,7 @@ async function buildReportPdfBytes(
     page.drawRectangle({ x: ML, y: tableTopY, width: CW, height: COLHDR_H, color: accent });
     page.drawText("NO.", { x: ML + (NO_COL_W - fontB.widthOfTextAtSize("NO.", 6.5)) / 2, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
     page.drawText("IMAGE", { x: ML + NO_COL_W + (IMG_COL_W - fontB.widthOfTextAtSize("IMAGE", 6.5)) / 2, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
-    page.drawText("ITEM / ISSUE", { x: ML + NO_COL_W + IMG_COL_W + 8, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
+    page.drawText(interim ? "ITEM / ISSUE  (amber rows: still in progress, no photo until approved)" : "ITEM / ISSUE", { x: ML + NO_COL_W + IMG_COL_W + 8, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
 
     page.drawLine({ start: { x: ML + NO_COL_W, y: tableBottomY }, end: { x: ML + NO_COL_W, y: tableTopY }, thickness: 0.3, color: C_LINE });
     page.drawLine({ start: { x: ML + NO_COL_W + IMG_COL_W, y: tableBottomY }, end: { x: ML + NO_COL_W + IMG_COL_W, y: tableTopY }, thickness: 0.3, color: C_LINE });
@@ -899,7 +905,8 @@ async function buildReportPdfBytes(
       const rowH = m.height;
       const rowY = rowTopY - rowH;
 
-      if (ri % 2 === 1) page.drawRectangle({ x: ML, y: rowY, width: CW, height: rowH, color: C_ALT });
+      if (issue.compact) page.drawRectangle({ x: ML, y: rowY, width: CW, height: rowH, color: C_AMBER_BG });
+      else if (ri % 2 === 1) page.drawRectangle({ x: ML, y: rowY, width: CW, height: rowH, color: C_ALT });
       page.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
 
       const noStr = String(issue.no);
@@ -908,7 +915,7 @@ async function buildReportPdfBytes(
       // Image + its filename caption sit together as one centered block —
       // the caption only appears when that file actually made it into the
       // bundled zip (a fetch failure just means no thumbnail, no caption).
-      const img = issue.identityImageUrl ? pdfImageCache.get(issue.identityImageUrl) : undefined;
+      const img = issue.identityImageUrl && !issue.compact ? pdfImageCache.get(issue.identityImageUrl) : undefined;
       const idFn = identityFilename(issue, images, prefix);
       const blockY = rowY + (rowH - IMG_BLOCK_H) / 2;
       const imgAreaY = idFn ? blockY + IMG_CAPTION_GAP + IMG_CAPTION_SIZE : blockY;
@@ -923,7 +930,7 @@ async function buildReportPdfBytes(
           width: imgW,
           height: imgH,
         });
-      } else {
+      } else if (!issue.compact) {
         const ph = Math.min(IMG_SZ * 0.7, imgAreaH);
         page.drawRectangle({ x: ML + NO_COL_W + (IMG_COL_W - ph) / 2, y: imgAreaY + (imgAreaH - ph) / 2, width: ph, height: ph, color: C_LINE });
       }
@@ -967,7 +974,10 @@ async function buildReportPdfBytes(
         detY -= TEXT_LINE_H;
       }
 
-      const qtyStr = `Expected ${issue.expected}${issue.uom}  ·  Received ${issue.received}${issue.uom}`;
+      // A line nobody has counted yet has no received figure — the draft
+      // would otherwise fall back to the expected qty and look complete.
+      const receivedStr = issue.progress === "not-inspected" ? "- (not counted yet)" : `${issue.received}${issue.uom}`;
+      const qtyStr = `Expected ${issue.expected}${issue.uom}  ·  Received ${receivedStr}`;
       page.drawText(qtyStr, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MID });
       detY -= TEXT_LINE_H;
 
@@ -1048,93 +1058,7 @@ async function buildReportPdfBytes(
     drawFooter(page, pi);
   }
 
-  // ── Inspection progress pages (interim only) ─────────────────────────
-  for (let gi = 0; gi < progressPages.length; gi++) {
-    const pi = pages.length + gi;
-    const page = pdfDoc.addPage([W, H]);
-    drawHeaderBand(page, pi);
-    drawBanner(page);
-
-    let y = H - HDR_H - BANNER_H - 12;
-    page.drawText(gi === 0 ? "INSPECTION PROGRESS - every line on this packing list" : "INSPECTION PROGRESS (continued)", { x: ML, y, size: 9, font: fontB, color: accentDark });
-    // Legend for the row shading, right-aligned on the heading line — without
-    // it a run of done lines (white) next to a run of open ones (amber)
-    // reads as if one PO were simply formatted differently.
-    {
-      const sw = 8;
-      const doneTxt = "Done (approved) - figures settled";
-      const openTxt = "In progress - figures may still change";
-      const doneW = fontR.widthOfTextAtSize(doneTxt, 7);
-      const openW = fontR.widthOfTextAtSize(openTxt, 7);
-      let lx = W - MR - (sw + 3 + doneW + 12 + sw + 3 + openW);
-      page.drawRectangle({ x: lx, y: y - 1, width: sw, height: sw, color: C_WHITE, borderColor: C_LITE, borderWidth: 0.5 });
-      lx += sw + 3;
-      page.drawText(doneTxt, { x: lx, y, size: 7, font: fontR, color: C_GREEN });
-      lx += doneW + 12;
-      page.drawRectangle({ x: lx, y: y - 1, width: sw, height: sw, color: C_AMBER_BG, borderColor: C_AMBER, borderWidth: 0.5 });
-      lx += sw + 3;
-      page.drawText(openTxt, { x: lx, y, size: 7, font: fontR, color: C_AMBER });
-    }
-    y -= 6;
-
-    const top = y;
-    page.drawRectangle({ x: ML, y: top - COLHDR_H, width: CW, height: COLHDR_H, color: accent });
-    let cx = ML;
-    for (const col of PROG_COLS) {
-      page.drawText(col.label, { x: cx + 4, y: top - COLHDR_H + 6, size: 6.5, font: fontB, color: C_WHITE });
-      cx += col.w;
-    }
-    let rowTop = top - COLHDR_H;
-    progressPages[gi].forEach((r) => {
-      const rowY = rowTop - r.height;
-      const done = isDone(r.line.progress);
-      if (!done) page.drawRectangle({ x: ML, y: rowY, width: CW, height: r.height, color: C_AMBER_BG });
-      page.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
-      const textY = rowTop - 9;
-      const cells = [
-        r.line.poLabel,
-        r.line.poLineNo !== null ? String(r.line.poLineNo) : "-",
-        null, // description, wrapped below
-        `${r.line.expected} ${r.line.uom}`.trim(),
-        r.line.received !== null ? `${r.line.received} ${r.line.uom}`.trim() : "-",
-        PROGRESS_SHORT[r.line.progress],
-      ];
-      let x = ML;
-      PROG_COLS.forEach((col, ci) => {
-        const val = cells[ci];
-        if (val === null) {
-          r.descLines.forEach((dl, di) => page.drawText(dl, { x: x + 4, y: textY - di * 9, size: 7, font: fontR, color: C_DARK }));
-        } else if (ci === PROG_COLS.length - 1) {
-          page.drawText(trunc(val, fontB, 7, col.w - 6), { x: x + 4, y: textY, size: 7, font: fontB, color: done ? C_GREEN : C_AMBER });
-          if (r.line.inspectedByName && r.line.progress !== "not-inspected") {
-            page.drawText(trunc(`by ${r.line.inspectedByName}`, fontR, 6, col.w - 6), { x: x + 4, y: textY - 8, size: 6, font: fontR, color: C_LITE });
-          }
-        } else {
-          page.drawText(trunc(val, fontR, 7, col.w - 6), { x: x + 4, y: textY, size: 7, font: fontR, color: C_DARK });
-        }
-        x += col.w;
-      });
-      rowTop = rowY;
-    });
-    page.drawRectangle({ x: ML, y: rowTop, width: CW, height: top - rowTop, borderColor: C_LINE, borderWidth: 0.4 });
-    drawFooter(page, pi);
-  }
-
   return pdfDoc.save();
-
-  function drawHeaderBand(page: PDFPage, pi: number) {
-    page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: HDR_H, color: accentDark });
-    page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: 3, color: accent });
-    page.drawText(title, { x: ML, y: H - 24, size: 13, font: fontB, color: C_WHITE });
-    page.drawText(`Packing List ${packingListNo}${supplierRefNo ? `  ·  Supplier ref ${supplierRefNo}` : ""}`, {
-      x: ML, y: H - 40, size: 8.5, font: fontR, color: rgb(0.88, 0.88, 0.9),
-    });
-    page.drawText(`${config.recipientLabel}: ${sanitize(supplierName)}`, { x: ML, y: H - 54, size: 9, font: fontB, color: C_WHITE });
-    page.drawText(companyName, { x: ML, y: H - 66, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
-    const pgLabel = `Page ${pi + 1} / ${totalPgs}`;
-    page.drawText(pgLabel, { x: W - MR - fontB.widthOfTextAtSize(pgLabel, 9), y: H - 24, size: 9, font: fontB, color: rgb(0.85, 0.85, 0.9) });
-    page.drawText(dateStr, { x: W - MR - fontR.widthOfTextAtSize(dateStr, 7.5), y: H - 38, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
-  }
 
   function drawBanner(page: PDFPage) {
     if (!interim) return;
@@ -1215,6 +1139,19 @@ export async function GET(req: Request, { params }: Props) {
     const returnIssues = buildIssueItems(currentItems, poLabelById, poLineNoById, "return", ctx);
     const repairIssues = buildIssueItems(currentItems, poLabelById, poLineNoById, "repair", ctx);
     const interim = isInterim ? buildInterimInfo(currentItems, poLabelById, poLineNoById) : null;
+    // Interim: the PDF lists every line in its own place, so issue numbers
+    // follow that full list — renumber the issue rows (spreadsheet too) to
+    // match, so No. 7 means the same line in every file of the download.
+    const returnRows = interim ? buildInterimRows(currentItems, poLabelById, poLineNoById, "return", ctx, returnIssues) : returnIssues;
+    const repairRows = interim ? buildInterimRows(currentItems, poLabelById, poLineNoById, "repair", ctx, repairIssues) : repairIssues;
+    if (interim) {
+      const renumber = (list: IssueItem[], rows: IssueItem[]) => {
+        const noById = new Map(rows.map((r) => [r.itemId, r.no]));
+        for (const i of list) i.no = noById.get(i.itemId) ?? i.no;
+      };
+      renumber(returnIssues, returnRows);
+      renumber(repairIssues, repairRows);
+    }
     const hasReturn = returnIssues.length > 0;
     const hasRepair = repairIssues.length > 0;
 
@@ -1230,7 +1167,7 @@ export async function GET(req: Request, { params }: Props) {
     // list's own org), not whichever org the downloader currently has active
     // — relevant when this is fetched via the centralized/cross-org fallback.
     const orgProfile = await getOrganizationBranding(pl.organizationId);
-    const allImageUrls = [...returnIssues, ...repairIssues].flatMap((i) => [i.identityImageUrl, ...i.evidenceImageUrls]);
+    const allImageUrls = [...returnRows, ...repairRows].flatMap((i) => [i.identityImageUrl, ...i.evidenceImageUrls]);
     const images = await fetchImages(allImageUrls);
     const supplierName = (pl.supplierSnapshot as { name?: string } | null)?.name ?? "Supplier";
     // "_interim" in every file name so a draft copy is never mistaken for the final one.
@@ -1272,8 +1209,8 @@ export async function GET(req: Request, { params }: Props) {
     // The PDF can only ever show small thumbnails, so when there's at least
     // one photo, ship a zip with the PDF plus every photo at full size —
     // named to match the caption/number printed on its thumbnail.
-    const returnImageEntries = hasReturn ? buildImageZipEntries(returnIssues, images, "return") : [];
-    const repairImageEntries = hasRepair ? buildImageZipEntries(repairIssues, images, "repair") : [];
+    const returnImageEntries = hasReturn ? buildImageZipEntries(returnRows, images, "return") : [];
+    const repairImageEntries = hasRepair ? buildImageZipEntries(repairRows, images, "repair") : [];
     const allImageEntries = [...returnImageEntries, ...repairImageEntries];
 
     const accent = (() => {
@@ -1295,14 +1232,14 @@ export async function GET(req: Request, { params }: Props) {
     if (hasReturn) {
       const bytes = await buildReportPdfBytes(
         REPORT_CONFIGS.return, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName,
-        returnIssues, images, accent, accentDark, returnImageEntries.length > 0, "return", interim,
+        returnRows, images, accent, accentDark, returnImageEntries.length > 0, "return", interim,
       );
       pdfParts.push({ name: `${safeNo}_discrepancy_report${sfx}.pdf`, bytes });
     }
     if (hasRepair) {
       const bytes = await buildReportPdfBytes(
         REPORT_CONFIGS.repair, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName,
-        repairIssues, images, accent, accentDark, repairImageEntries.length > 0, "repair", interim,
+        repairRows, images, accent, accentDark, repairImageEntries.length > 0, "repair", interim,
       );
       pdfParts.push({ name: `${safeNo}_repair_report${sfx}.pdf`, bytes });
     }
