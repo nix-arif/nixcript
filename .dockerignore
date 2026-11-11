@@ -1,0 +1,18 @@
+node_modules
+.next
+.git
+.gitignore
+# Secrets and local data must never enter the image — pass env vars at runtime
+.env
+.env.*
+share.env
+prod_backup.sql
+# Not needed to build or run
+e2e
+test-results
+playwright.config.ts
+coverage
+*.log
+.DS_Store
+Dockerfile
+.dockerignore

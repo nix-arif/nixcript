@@ -179,12 +179,37 @@ async function getReplacementsForLines(itemIds: string[]): Promise<Map<string, L
 export type PackingListRow = typeof packingList.$inferSelect;
 export type PackingListItemRow = typeof packingListItem.$inferSelect;
 export type PackingListItemEnriched = PackingListItemRow & {
+  // Line no. of the source PO item (purchase_order_item.row_no). The packing
+  // list's own rowNo is only its position across ALL POs on this list, so
+  // screens and printouts show this instead to match what the PO says.
+  poLineNo: number | null;
+  // Receipts of the same PO line outside this packing list
+  history: LineReceiptHistory | null;
   imageUrl: string | null;
   draftInspectedByName: string | null;
   draftApprovedByName: string | null;
   photos: InspectionPhoto[];
   // Rejected units this line was sent to make good, with how each attempt turned out
   replacements: LineReplacement[];
+};
+
+export type LineReceiptHistory = {
+  poQty: number;
+  // Accepted units of this PO line across the receipts below
+  otherAccepted: number;
+  receipts: {
+    grId: string;
+    grNo: string;
+    at: Date;
+    packingListId: string | null;
+    packingListNo: string | null; // null = direct GR, no packing list
+    received: number;
+    accepted: number;
+    returned: number;
+    returnReason: string | null;
+    returnOpen: boolean;
+    returnSentBack: boolean;
+  }[];
 };
 
 export type LineReplacement = {
@@ -302,6 +327,8 @@ export type PackableItem = {
   currency: string | null;
   qtyOrdered: string;
   qtyRemaining: number;
+  // Units of this PO line already accepted on earlier receipts (recalled GRs excluded)
+  qtyAccepted: number;
   sourcingType: string | null;
   designBrandName: string | null;
   designBrandCode: string | null;
@@ -479,6 +506,7 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
         currency: item.currency,
         qtyOrdered: item.qty,
         qtyRemaining: Math.max(0, remaining),
+        qtyAccepted: receivedByItem[item.id] ?? 0,
         sourcingType: item.sourcingType,
         designBrandName: item.designBrandName,
         designBrandCode: item.designBrandCode,
@@ -967,6 +995,7 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
   const nameMap = await getUserNameMap(items.flatMap((i) => [i.draftInspectedBy, i.draftApprovedBy]));
   const photosByItem = await getPhotosForItems(items.map((i) => i.id));
   const replacementsByItem = await getReplacementsForLines(items.map((i) => i.id));
+  const poLineByItem = await getPoLineContext(id, items.map((i) => i.purchaseOrderItemId));
 
   const enrichedItems: PackingListItemEnriched[] = await Promise.all(
     items.map(async (i) => {
@@ -983,6 +1012,8 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
         draftInspectedByName: i.draftInspectedBy ? (nameMap.get(i.draftInspectedBy) ?? null) : null,
         draftApprovedByName: i.draftApprovedBy ? (nameMap.get(i.draftApprovedBy) ?? null) : null,
         photos: photosByItem.get(i.id) ?? [],
+        poLineNo: poLineByItem.get(i.purchaseOrderItemId)?.rowNo ?? null,
+        history: poLineByItem.get(i.purchaseOrderItemId)?.history ?? null,
         replacements: replacementsByItem.get(i.id) ?? [],
       };
     }),
@@ -1169,6 +1200,7 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
   const nameMap = await getUserNameMap(items.flatMap((i) => [i.draftInspectedBy, i.draftApprovedBy]));
   const photosByItem = await getPhotosForItems(items.map((i) => i.id));
   const replacementsByItem = await getReplacementsForLines(items.map((i) => i.id));
+  const poLineByItem = await getPoLineContext(id, items.map((i) => i.purchaseOrderItemId));
 
   const enrichedItems: PackingListItemEnriched[] = await Promise.all(
     items.map(async (i) => {
@@ -1185,6 +1217,8 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
         draftInspectedByName: i.draftInspectedBy ? (nameMap.get(i.draftInspectedBy) ?? null) : null,
         draftApprovedByName: i.draftApprovedBy ? (nameMap.get(i.draftApprovedBy) ?? null) : null,
         photos: photosByItem.get(i.id) ?? [],
+        poLineNo: poLineByItem.get(i.purchaseOrderItemId)?.rowNo ?? null,
+        history: poLineByItem.get(i.purchaseOrderItemId)?.history ?? null,
         replacements: replacementsByItem.get(i.id) ?? [],
       };
     }),
@@ -1429,6 +1463,77 @@ function inspectionMediaUrl(key: string): Promise<string> {
 // Shared by every read path that shows inspection photos (own-org detail,
 // centralized detail, the inspect page's poll) — one batched query + one
 // batch of presigned URLs per call, not N+1 per item.
+// purchase_order_item id → its line no. and qty on the PO, plus every receipt
+// of that PO line made OUTSIDE this packing list (earlier/later packing lists
+// and direct GRs; recalled GRs left out) — so a line can say "already
+// received N× before" and warn when this delivery takes the PO line over.
+async function getPoLineContext(
+  packingListId: string,
+  poItemIds: string[],
+): Promise<Map<string, { rowNo: number; history: LineReceiptHistory }>> {
+  const ids = [...new Set(poItemIds.filter(Boolean))];
+  if (ids.length === 0) return new Map();
+  const [lines, receipts] = await Promise.all([
+    db
+      .select({ id: purchaseOrderItem.id, rowNo: purchaseOrderItem.rowNo, qty: purchaseOrderItem.qty })
+      .from(purchaseOrderItem)
+      .where(inArray(purchaseOrderItem.id, ids)),
+    db
+      .select({
+        purchaseOrderItemId: goodsReceiptItem.purchaseOrderItemId,
+        qtyReceived: goodsReceiptItem.qtyReceived,
+        qtyGood: goodsReceiptItem.qtyGood,
+        qtyReturn: goodsReceiptItem.qtyReturn,
+        returnStatus: goodsReceiptItem.returnStatus,
+        returnNotes: goodsReceiptItem.returnNotes,
+        returnShippedAt: goodsReceiptItem.returnShippedAt,
+        grId: goodsReceipt.id,
+        grNo: goodsReceipt.grNo,
+        at: goodsReceipt.createdAt,
+        packingListId: goodsReceipt.packingListId,
+        packingListNo: packingList.packingListNo,
+      })
+      .from(goodsReceiptItem)
+      .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+      .leftJoin(packingList, eq(goodsReceipt.packingListId, packingList.id))
+      .where(and(
+        inArray(goodsReceiptItem.purchaseOrderItemId, ids),
+        ne(goodsReceipt.status, "recalled"),
+        or(isNull(goodsReceipt.packingListId), ne(goodsReceipt.packingListId, packingListId)),
+      ))
+      .orderBy(asc(goodsReceipt.createdAt)),
+  ]);
+
+  const out = new Map<string, { rowNo: number; history: LineReceiptHistory }>();
+  for (const l of lines) {
+    out.set(l.id, { rowNo: l.rowNo, history: { poQty: parseFloat(l.qty) || 0, otherAccepted: 0, receipts: [] } });
+  }
+  for (const r of receipts) {
+    const entry = r.purchaseOrderItemId ? out.get(r.purchaseOrderItemId) : undefined;
+    if (!entry) continue;
+    const received = parseFloat(r.qtyReceived) || 0;
+    // Same rule as getPackableItemsForSupplier: qtyGood when inspected,
+    // qtyReceived for a plain direct GR with no inspection split
+    const accepted = parseFloat(r.qtyGood ?? r.qtyReceived) || 0;
+    const returned = parseFloat(r.qtyReturn ?? "0") || 0;
+    entry.history.otherAccepted += accepted;
+    entry.history.receipts.push({
+      grId: r.grId,
+      grNo: r.grNo,
+      at: r.at,
+      packingListId: r.packingListId,
+      packingListNo: r.packingListNo,
+      received,
+      accepted,
+      returned,
+      returnReason: returned > 0 ? r.returnNotes : null,
+      returnOpen: returned > 0 && r.returnStatus === "pending",
+      returnSentBack: returned > 0 && !!r.returnShippedAt,
+    });
+  }
+  return out;
+}
+
 async function getPhotosForItems(itemIds: string[]): Promise<Map<string, InspectionPhoto[]>> {
   const map = new Map<string, InspectionPhoto[]>();
   if (itemIds.length === 0) return map;

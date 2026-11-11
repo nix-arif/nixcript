@@ -147,7 +147,8 @@ export async function generatePackingListPdf(
     ];
     const textH = (ls: Line[]) => ls.reduce((s, l) => s + (l.size >= FS ? LH : LH_S), 0) + 12;
     const h = Math.max(IMG_SZ + 12, textH(itemLines), textH(descLines));
-    g.rows.push({ item, no: g.rows.length + 1, itemLines, descLines, h });
+    // Number by the line on the PO, so "No 9" here is item 9 on that PO
+    g.rows.push({ item, no: item.poLineNo ?? g.rows.length + 1, itemLines, descLines, h });
   }
 
   // ── Page furniture ────────────────────────────────────────────────────────

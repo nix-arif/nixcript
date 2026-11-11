@@ -588,7 +588,20 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                                   <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} designBrandCode={item.designBrandCode} />
                                 </td>
                                 <td className="py-2 pr-3 text-right text-muted-foreground w-28 whitespace-nowrap align-top">
-                                  {item.covered ? <span className="text-sky-700 dark:text-sky-300 font-medium" title="Nothing left to pack. Tick this line only if the supplier is sending it again.">Covered · tick if sent again</span> : <>{item.qtyRemaining} {item.uom || ""} remaining</>}
+                                  {item.covered ? (
+                                    <div className="flex flex-col items-end gap-0.5 whitespace-normal">
+                                      <span className="text-sky-700 dark:text-sky-300 font-medium" title="Nothing left to pack. Tick this line only if the supplier is sending it again.">Covered · tick if sent again</span>
+                                      {item.qtyAccepted > 0 && (
+                                        <span
+                                          className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-400 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-700"
+                                          title="Packing this line again will take it over the PO qty. Allowed, but check with the supplier first."
+                                        >
+                                          <AlertTriangleIcon className="w-2.5 h-2.5 shrink-0" />
+                                          {item.qtyAccepted} of {item.qtyOrdered} already received
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : <>{item.qtyRemaining} {item.uom || ""} remaining</>}
                                 </td>
                                 <td className="py-2 pr-3 w-24 align-top">
                                   <Input

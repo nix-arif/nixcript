@@ -21,6 +21,7 @@ import { PoBadge } from "@/components/po-badge";
 import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
 import { ReplacementChips } from "@/components/replacement-chips";
+import { ReceiptHistoryChips } from "@/components/receipt-history-chips";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 import { DownloadMediaButton, InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
@@ -543,7 +544,7 @@ export function PackingListDetailClient({
                             flashId === item.id && "border-l-blue-500",
                           )}
                         >
-                          <td className="py-2 pl-3 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{itemIndex + 1}</td>
+                          <td className="py-2 pl-3 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{item.poLineNo ?? itemIndex + 1}</td>
                           {showSourcing && (
                             <>
                               <td className="py-2 pl-3 pr-3 align-top">
@@ -647,6 +648,13 @@ export function PackingListDetailClient({
                             )}
                             <div className="mb-1 flex flex-wrap items-center gap-1"><PoBadge label={poLabel(poId)} color={color} /><LineIssueChips short={shortBy} ret={retShown} repair={repairShown} /></div>
                             <ReplacementChips replacements={item.replacements ?? []} />
+                            <ReceiptHistoryChips
+                              history={item.history}
+                              thisQty={accepted}
+                              received={showInspectionResults ? parseFloat(received) || 0 : undefined}
+                              expected={showInspectionResults ? parseFloat(item.qtyExpected) || 0 : undefined}
+                              uom={item.uom}
+                            />
                             {item.description || "—"}
                             {item.descriptionSource === "product" && (
                               <span className="flex items-center gap-1 w-fit mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">

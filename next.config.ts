@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
+  // Self-hosting (Docker/VPS): emit a minimal server in .next/standalone.
+  // Opt-in via BUILD_STANDALONE=1 so Vercel builds are unaffected.
+  ...(process.env.BUILD_STANDALONE === "1" ? { output: "standalone" as const } : {}),
   experimental: {
     authInterrupts: true,
     staleTimes: {

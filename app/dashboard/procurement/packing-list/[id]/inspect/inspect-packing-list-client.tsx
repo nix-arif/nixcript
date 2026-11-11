@@ -29,6 +29,7 @@ import { PoBadge } from "@/components/po-badge";
 import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
 import { ReplacementChips } from "@/components/replacement-chips";
+import { ReceiptHistoryChips } from "@/components/receipt-history-chips";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 import { INSPECTION_MEDIA_ACCEPT, inspectionMediaProblem, mediaKindOf } from "@/lib/inspection-media";
@@ -903,7 +904,7 @@ export function InspectPackingListClient({
                           rowStateClasses(row.approvalStatus, itemIndex % 2 === 1, color.stripe, flashItemId === item.id, shortfall > 0 || ret > 0, repair > 0),
                         )}
                       >
-                        <td className="py-2.5 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{itemIndex + 1}</td>
+                        <td className="py-2.5 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{item.poLineNo ?? itemIndex + 1}</td>
                         {showSourcing && (
                           <>
                             <td className="py-2.5 pr-3 align-top">
@@ -1007,6 +1008,7 @@ export function InspectPackingListClient({
                           )}
                           <div className="mb-1 flex flex-wrap items-center gap-1"><PoBadge label={poLabel(poId)} color={color} /><LineIssueChips short={shortfall} ret={ret} repair={repair} /></div>
                           <ReplacementChips replacements={item.replacements ?? []} />
+                          <ReceiptHistoryChips history={item.history} thisQty={accepted} received={received} expected={expected} uom={item.uom} />
                           <div>{item.description || "—"}</div>
                           {item.descriptionSource === "product" && (
                             <span className="flex items-center gap-1 w-fit mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
