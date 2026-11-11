@@ -2820,8 +2820,12 @@ export const inspectionPhoto = pgTable(
       .notNull()
       .references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    // Set when the photo was attached to a change request on a completed
+    // packing list (drizzle/0060). It only counts as the line's evidence
+    // once that request is approved; null = taken during inspection.
+    amendmentId: text("amendment_id").references((): AnyPgColumn => packingListAmendment.id, { onDelete: "cascade" }),
   },
-  (t) => [index("inspection_photo_item_idx").on(t.packingListItemId)],
+  (t) => [index("inspection_photo_item_idx").on(t.packingListItemId), index("inspection_photo_amendment_idx").on(t.amendmentId)],
 );
 
 export const inspectionPhotoRelations = relations(inspectionPhoto, ({ one }) => ({

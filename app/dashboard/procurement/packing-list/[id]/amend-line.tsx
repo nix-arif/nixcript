@@ -1,19 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { CheckIcon, PencilLineIcon, Trash2Icon, XIcon } from "lucide-react";
+import { CameraIcon, CheckIcon, PencilLineIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { InspectionMediaStrip, InspectionMediaThumb } from "@/components/inspection-media";
+import { INSPECTION_MEDIA_ACCEPT, inspectionMediaProblem, mediaKindOf, type InspectionMediaKind } from "@/lib/inspection-media";
 import {
+  getAmendmentPhotoUploadUrl,
   requestPackingListAmendment,
   decidePackingListAmendment,
   cancelPackingListAmendment,
+  type InspectionPhotoCategory,
   type LineAmendment,
   type PackingListItemEnriched,
 } from "@/server/packing-list";
@@ -22,6 +26,10 @@ const n = (v: number) => String(Math.round(v * 1000) / 1000);
 const num = (s: string) => (s.trim() === "" ? NaN : Number(s));
 
 export type AmendApproval = { canApprove: boolean; currentUserId: string; selfApprovalAllowed: boolean };
+
+type Evidence = { key: string; category: InspectionPhotoCategory; name: string; previewUrl: string; kind: InspectionMediaKind };
+
+const CATEGORY_LABEL: Record<InspectionPhotoCategory, string> = { return: "Return", repair: "Repair", accept: "Remark" };
 
 // "Request change" on one line of a completed packing list. Asks for new
 // received / return / repair figures, or for the line to be removed — with a
@@ -41,9 +49,17 @@ export function RequestAmendButton({ item, poLabel }: { item: PackingListItemEnr
   const [repairNotes, setRepairNotes] = useState("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  // Photos / videos of the problem, uploaded straight away and sent with the
+  // request — the approver sees them, and once approved they become this
+  // line's evidence (and go into the supplementary discrepancy report).
+  const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [evidenceCategory, setEvidenceCategory] = useState<InspectionPhotoCategory | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   function start() {
     setKind("amend");
+    setEvidence([]); setEvidenceCategory(null);
     setReceived(n(curReceived)); setRet(n(curRet)); setRepair(n(curRepair));
     setReturnNotes(item.draftReturnNotes ?? ""); setRepairNotes(item.draftRepairNotes ?? ""); setReason("");
     setOpen(true);
@@ -56,13 +72,45 @@ export function RequestAmendButton({ item, poLabel }: { item: PackingListItemEnr
     || (t > 0 && returnNotes.trim() !== (item.draftReturnNotes ?? "").trim())
     || (p > 0 && repairNotes.trim() !== (item.draftRepairNotes ?? "").trim())));
   const unit = item.uom ? ` ${item.uom}` : "";
+  // Which box the evidence is filed under: what the change is about, unless
+  // the requester picked one.
+  const autoCategory: InspectionPhotoCategory = kind === "amend" && valid
+    ? (t > curRet ? "return" : p > curRepair ? "repair" : t > 0 ? "return" : p > 0 ? "repair" : "accept")
+    : "return";
+  const category = evidenceCategory ?? autoCategory;
+
+  async function addEvidence(files: FileList | null) {
+    const list = Array.from(files ?? []);
+    if (list.length === 0) return;
+    setUploading(true);
+    for (const file of list) {
+      const problem = inspectionMediaProblem(file);
+      if (problem) { toast.error(`${file.name}: ${problem}`); continue; }
+      const mediaKind = mediaKindOf(file.name);
+      const isVideo = mediaKind === "video";
+      const toastId = isVideo ? toast.loading(`Uploading ${file.name}…`) : undefined;
+      try {
+        const { key, uploadUrl } = await getAmendmentPhotoUploadUrl(item.id, file.name, category);
+        const res = await fetch(uploadUrl, { method: "PUT", body: file, headers: file.type ? { "Content-Type": file.type } : undefined });
+        if (!res.ok) throw new Error(`Upload failed (HTTP ${res.status}) — try again`);
+        setEvidence((prev) => [...prev, { key, category, name: file.name, previewUrl: URL.createObjectURL(file), kind: mediaKind }]);
+      } catch (e) {
+        toast.error(`${file.name}: ${e instanceof Error ? e.message : "upload failed"}`);
+      } finally {
+        if (toastId !== undefined) toast.dismiss(toastId);
+      }
+    }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  }
 
   async function submit() {
     setSaving(true);
     try {
+      const photos = evidence.map(({ key, category: c }) => ({ key, category: c }));
       await requestPackingListAmendment(item.id, kind === "remove"
-        ? { kind, reason }
-        : { kind, qtyReceived: r, qtyReturn: t, qtyRepair: p, returnNotes, repairNotes, reason });
+        ? { kind, reason, photos }
+        : { kind, qtyReceived: r, qtyReturn: t, qtyRepair: p, returnNotes, repairNotes, reason, photos });
       toast.success("Change sent for approval");
       setOpen(false);
       router.refresh();
@@ -142,6 +190,43 @@ export function RequestAmendButton({ item, poLabel }: { item: PackingListItemEnr
 
           <Textarea placeholder="Why? (required — the approver sees this)" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="text-sm" />
 
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-medium">Evidence</span>
+              <span className="text-muted-foreground">photos or videos of what was found — goes to the supplier report once approved</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {evidence.map((ev, i) => (
+                <div key={ev.key} className="relative w-12 h-12 rounded border overflow-hidden" title={`${ev.name} · ${CATEGORY_LABEL[ev.category]}`}>
+                  <InspectionMediaThumb media={{ url: ev.previewUrl, kind: ev.kind }} />
+                  <span className="absolute bottom-0 inset-x-0 bg-black/55 text-white text-[8px] text-center leading-3">{CATEGORY_LABEL[ev.category]}</span>
+                  <button
+                    type="button"
+                    onClick={() => setEvidence((prev) => prev.filter((_, j) => j !== i))}
+                    className="absolute top-0 right-0 w-4 h-4 flex items-center justify-center rounded-bl bg-black/60 text-white"
+                    title="Remove"
+                  >
+                    <XIcon className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              ))}
+              <Button type="button" variant="outline" size="sm" className="h-12 gap-1.5 text-xs" disabled={uploading || saving} onClick={() => fileRef.current?.click()}>
+                <CameraIcon className="w-3.5 h-3.5" /> {uploading ? "Uploading…" : "Add"}
+              </Button>
+              <select
+                value={category}
+                onChange={(e) => setEvidenceCategory(e.target.value as InspectionPhotoCategory)}
+                className="h-8 rounded-md border bg-background px-2 text-xs"
+                title="Which part of the line these photos are evidence for"
+              >
+                {(Object.keys(CATEGORY_LABEL) as InspectionPhotoCategory[]).map((c) => (
+                  <option key={c} value={c}>File under: {CATEGORY_LABEL[c]}</option>
+                ))}
+              </select>
+              <input ref={fileRef} type="file" accept={INSPECTION_MEDIA_ACCEPT} multiple className="hidden" onChange={(e) => addEvidence(e.target.files)} />
+            </div>
+          </div>
+
           <div className="text-xs rounded-md border px-3 py-2 bg-muted/40">
             {!valid ? (
               <span className="text-destructive">Quantities must be 0 or more, and return + repair can&apos;t be more than received.</span>
@@ -161,7 +246,7 @@ export function RequestAmendButton({ item, poLabel }: { item: PackingListItemEnr
               type="button"
               size="sm"
               variant={kind === "remove" ? "destructive" : "default"}
-              disabled={saving || !changed || !valid || !reason.trim()}
+              disabled={saving || uploading || !changed || !valid || !reason.trim()}
               onClick={submit}
             >
               {saving ? "Sending…" : "Send for approval"}
@@ -231,6 +316,7 @@ export function AmendmentPanel({ amendments, approval }: { amendments: LineAmend
               {a.decidedAt && a.status !== "cancelled" && <> · {a.status} by {a.decidedByName ?? "someone"}, {format(new Date(a.decidedAt), "d MMM yyyy HH:mm")}</>}
               {a.decisionNotes && <> · “{a.decisionNotes}”</>}
             </p>
+            {a.photos.length > 0 && <InspectionMediaStrip photos={a.photos} />}
 
             {a.status === "pending" && (
               <div className="mt-1 flex flex-wrap items-center gap-1.5">

@@ -26,7 +26,7 @@ import { RequestAmendButton, AmendmentPanel, type AmendApproval } from "./amend-
 import { RequestRevisionButton, RevisionPanel } from "./revision-panel";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
-import { DownloadMediaButton, InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
+import { InspectionMediaStrip as PhotoThumbnails } from "@/components/inspection-media";
 
 const PO_COLORS = [
   { bg: "bg-blue-50/50 dark:bg-blue-950/15", header: "bg-blue-100/70 dark:bg-blue-900/30", border: "border-blue-200 dark:border-blue-800/50", stripe: "bg-blue-100/60 dark:bg-blue-900/25" },
@@ -96,52 +96,6 @@ function ItemImageThumb({ imageUrl, productCode, designBrandCode }: { imageUrl: 
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-function PhotoThumbnails({ photos }: { photos: PackingListWithItems["items"][number]["photos"] }) {
-  const [lightbox, setLightbox] = useState<PackingListWithItems["items"][number]["photos"][number] | null>(null);
-  if (photos.length === 0) return null;
-
-  return (
-    <div className="flex flex-wrap gap-1 mt-1">
-      {photos.map((p) => (
-        <button
-          key={p.id}
-          type="button"
-          onClick={() => setLightbox(p)}
-          className="block w-8 h-8 rounded border border-border overflow-hidden hover:opacity-80 transition-opacity shrink-0"
-          title={p.kind === "video" ? "Play video" : "View photo"}
-        >
-          <InspectionMediaThumb media={p} />
-        </button>
-      ))}
-      <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
-        <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
-          <DialogTitle className="sr-only">Inspection {lightbox?.kind === "video" ? "video" : "photo"}</DialogTitle>
-          {lightbox && (
-            <>
-              <div className="relative bg-muted/30">
-                <InspectionMediaView media={lightbox} />
-                <button
-                  type="button"
-                  onClick={() => setLightbox(null)}
-                  className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
-                >
-                  <XIcon className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <div className="px-4 py-3 border-t flex items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground truncate">
-                  {lightbox.uploadedByName ? `Added by ${lightbox.uploadedByName}` : ""}
-                </p>
-                <DownloadMediaButton photoId={lightbox.id} />
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
   );
 }
 
@@ -261,6 +215,11 @@ export function PackingListDetailClient({
     };
   });
   // Lines taken off the packing list by an approved removal don't count anywhere
+  // An approved change after inspection that touched received / return /
+  // repair — what the supplementary report is made of.
+  const hasChangesAfterInspection = !isPending && items.some((item) => (item.amendments ?? []).some((a) =>
+    a.status === "approved" && a.kind === "amend"
+    && (a.oldQtyReceived !== a.newQtyReceived || a.oldQtyReturn !== a.newQtyReturn || a.oldQtyRepair !== a.newQtyRepair)));
   const hasDiscrepancies = items.some((item) => {
     if (item.removedAt) return false;
     const expected = parseFloat(item.qtyExpected) || 0;
@@ -357,10 +316,13 @@ export function PackingListDetailClient({
   // and only triggering a save on a real 200 (matching the pattern already
   // used in app/dashboard/products/picture-ref) surfaces the actual reason
   // as a toast instead.
-  async function handleDownloadReport(format: "pdf" | "xlsx") {
+  async function handleDownloadReport(format: "pdf" | "xlsx", scope?: "after") {
     setDownloadingReport(format);
     try {
-      const url = `/api/packing-list/${pl.id}/discrepancy-report${format === "xlsx" ? "?format=xlsx" : ""}`;
+      const qs = new URLSearchParams();
+      if (format === "xlsx") qs.set("format", "xlsx");
+      if (scope) qs.set("scope", scope);
+      const url = `/api/packing-list/${pl.id}/discrepancy-report${qs.size ? `?${qs}` : ""}`;
       const res = await fetch(url);
       if (!res.ok) {
         const text = await res.text().catch(() => "");
@@ -444,7 +406,7 @@ export function PackingListDetailClient({
                 <XIcon className="w-3.5 h-3.5" /> Cancel
               </Button>
             )}
-            {showInspectionResults && hasDiscrepancies && (
+            {showInspectionResults && (hasDiscrepancies || hasChangesAfterInspection) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button size="sm" variant="outline" className="gap-1.5">
@@ -474,6 +436,27 @@ export function PackingListDetailClient({
                     <FileSpreadsheetIcon className="w-3.5 h-3.5 shrink-0" />
                     {downloadingReport === "xlsx" ? "Generating…" : "Download as Spreadsheet"}
                   </DropdownMenuItem>
+                  {hasChangesAfterInspection && (
+                    <>
+                      <p className="px-2 pt-2 pb-1 text-[11px] font-medium text-violet-700 dark:text-violet-400 max-w-64">
+                        Supplementary — only problems found after inspection, with their new evidence
+                      </p>
+                      <DropdownMenuItem
+                        disabled={downloadingReport !== null}
+                        onClick={() => handleDownloadReport("pdf", "after")}
+                        className="flex items-center gap-2 cursor-pointer"
+                      >
+                        <FileTextIcon className="w-3.5 h-3.5 shrink-0" /> Supplementary PDF
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        disabled={downloadingReport !== null}
+                        onClick={() => handleDownloadReport("xlsx", "after")}
+                        className="flex items-center gap-2 cursor-pointer"
+                      >
+                        <FileSpreadsheetIcon className="w-3.5 h-3.5 shrink-0" /> Supplementary Spreadsheet
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}

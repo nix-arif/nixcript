@@ -221,6 +221,9 @@ export type LineAmendment = {
   decidedByName: string | null;
   decidedAt: Date | null;
   decisionNotes: string | null;
+  // Evidence the requester attached — photos/videos of a problem found
+  // after inspection. Joins the line's own evidence once approved.
+  photos: InspectionPhoto[];
 };
 
 export type LineReceiptHistory = {
@@ -1577,6 +1580,9 @@ export type InspectionPhoto = {
   kind: InspectionMediaKind;
   uploadedByName: string | null;
   createdAt: Date;
+  // Set when it came in with a change request after inspection was
+  // completed (see LineAmendment.photos) — only approved ones reach a line.
+  amendmentId: string | null;
 };
 
 // A presigned link to a photo or video. A .mov from an iPhone is H.264 inside
@@ -1598,6 +1604,20 @@ async function getAmendmentsForLines(packingListId: string): Promise<Map<string,
     .where(eq(packingListAmendment.packingListId, packingListId))
     .orderBy(asc(packingListAmendment.requestedAt));
   const names = await getUserNameMap(rows.flatMap((r) => [r.requestedBy, r.decidedBy]));
+  const photoRows = rows.length > 0
+    ? await db.select().from(inspectionPhoto)
+      .where(inArray(inspectionPhoto.amendmentId, rows.map((r) => r.id)))
+      .orderBy(asc(inspectionPhoto.createdAt))
+    : [];
+  const uploaderNames = await getUserNameMap(photoRows.map((p) => p.uploadedBy));
+  const photosByAmendment = new Map<string, InspectionPhoto[]>();
+  await Promise.all(photoRows.map(async (p) => {
+    const url = await inspectionMediaUrl(p.imageKey);
+    const arr = photosByAmendment.get(p.amendmentId!) ?? [];
+    arr.push({ id: p.id, imageKey: p.imageKey, url, category: p.category as InspectionPhotoCategory, kind: mediaKindOf(p.imageKey), uploadedByName: uploaderNames.get(p.uploadedBy) ?? null, createdAt: p.createdAt, amendmentId: p.amendmentId });
+    photosByAmendment.set(p.amendmentId!, arr);
+  }));
+  for (const arr of photosByAmendment.values()) arr.sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime());
   const out = new Map<string, LineAmendment[]>();
   const n = (v: string) => parseFloat(v) || 0;
   for (const a of rows) {
@@ -1618,6 +1638,7 @@ async function getAmendmentsForLines(packingListId: string): Promise<Map<string,
       decidedByName: a.decidedBy ? (names.get(a.decidedBy) ?? null) : null,
       decidedAt: a.decidedAt,
       decisionNotes: a.decisionNotes,
+      photos: photosByAmendment.get(a.id) ?? [],
     });
     out.set(a.packingListItemId, arr);
   }
@@ -1699,11 +1720,17 @@ async function getPhotosForItems(itemIds: string[]): Promise<Map<string, Inspect
   const map = new Map<string, InspectionPhoto[]>();
   if (itemIds.length === 0) return map;
 
-  const rows = await db
-    .select()
+  // A photo attached to a change request only becomes the line's evidence
+  // once that request is approved; until then it lives on the request.
+  const rows = (await db
+    .select({ photo: inspectionPhoto })
     .from(inspectionPhoto)
-    .where(inArray(inspectionPhoto.packingListItemId, itemIds))
-    .orderBy(asc(inspectionPhoto.createdAt));
+    .leftJoin(packingListAmendment, eq(inspectionPhoto.amendmentId, packingListAmendment.id))
+    .where(and(
+      inArray(inspectionPhoto.packingListItemId, itemIds),
+      or(isNull(inspectionPhoto.amendmentId), eq(packingListAmendment.status, "approved")),
+    ))
+    .orderBy(asc(inspectionPhoto.createdAt))).map((r) => r.photo);
   if (rows.length === 0) return map;
 
   const uploaderIds = [...new Set(rows.map((r) => r.uploadedBy))];
@@ -1714,7 +1741,7 @@ async function getPhotosForItems(itemIds: string[]): Promise<Map<string, Inspect
     rows.map(async (r) => {
       const url = await inspectionMediaUrl(r.imageKey);
       const arr = map.get(r.packingListItemId) ?? [];
-      arr.push({ id: r.id, imageKey: r.imageKey, url, category: r.category as InspectionPhotoCategory, kind: mediaKindOf(r.imageKey), uploadedByName: nameOf(r.uploadedBy), createdAt: r.createdAt });
+      arr.push({ id: r.id, imageKey: r.imageKey, url, category: r.category as InspectionPhotoCategory, kind: mediaKindOf(r.imageKey), uploadedByName: nameOf(r.uploadedBy), createdAt: r.createdAt, amendmentId: r.amendmentId });
       map.set(r.packingListItemId, arr);
     }),
   );
@@ -1762,7 +1789,7 @@ export async function addInspectionPhoto(packingListItemId: string, imageKey: st
   const [photo] = await db.insert(inspectionPhoto).values({ id: nanoid(), packingListItemId, imageKey, category, uploadedBy: userId }).returning();
   const [u] = await db.select({ name: user.name }).from(user).where(eq(user.id, userId));
   const url = await inspectionMediaUrl(imageKey);
-  return { id: photo.id, imageKey: photo.imageKey, url, category: photo.category as InspectionPhotoCategory, kind: mediaKindOf(imageKey), uploadedByName: u?.name ?? null, createdAt: photo.createdAt };
+  return { id: photo.id, imageKey: photo.imageKey, url, category: photo.category as InspectionPhotoCategory, kind: mediaKindOf(imageKey), uploadedByName: u?.name ?? null, createdAt: photo.createdAt, amendmentId: null };
 }
 
 // A short-lived link that DOWNLOADS (not plays) one photo or video, under the
@@ -2366,6 +2393,8 @@ export interface RequestPackingListAmendmentInput {
   returnNotes?: string;
   repairNotes?: string;
   reason: string;
+  // Evidence already uploaded via getAmendmentPhotoUploadUrl
+  photos?: { key: string; category: InspectionPhotoCategory }[];
 }
 
 const amendNum = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
@@ -2429,6 +2458,30 @@ async function assertAmendmentAllowed(line: BookedLine, next: { ret: number; rep
   }
 }
 
+const MAX_AMENDMENT_PHOTOS = 20;
+const INSPECTION_PHOTO_CATEGORIES: InspectionPhotoCategory[] = ["return", "repair", "accept"];
+
+// Upload link for evidence of a problem found AFTER inspection was completed
+// — attached to a change request (requestPackingListAmendment), not straight
+// to the line. Same R2 bucket and key layout as inspection photos, with an
+// "amend-" prefix the request checks for.
+export async function getAmendmentPhotoUploadUrl(
+  packingListItemId: string,
+  filename: string,
+  category: InspectionPhotoCategory,
+): Promise<{ key: string; uploadUrl: string }> {
+  const { orgId, userId } = await getSession();
+  if (!INSPECTION_PHOTO_CATEGORIES.includes(category)) throw new Error("Unknown photo category");
+  const { pli, pl } = await loadBookedLine(packingListItemId);
+  await assertCanAmendPackingList(pl.organizationId, orgId, userId);
+  const ext = extOf(filename);
+  if (![...IMAGE_EXTS, ...VIDEO_EXTS].includes(ext)) throw new Error("Only photos (JPG, PNG, WebP, GIF) and videos (MP4, MOV, WebM, 3GP) can be attached");
+  const safeName = filename.replace(/[^\w.-]+/g, "_").slice(-80);
+  const key = `item-inspections/${pli.id}/${category}/amend-${nanoid()}-${safeName}`;
+  const uploadUrl = await getSignedUrl(s3, new PutObjectCommand({ Bucket: ITEM_INSPECTIONS_BUCKET, Key: key }), { expiresIn: 3600 });
+  return { key, uploadUrl };
+}
+
 export async function requestPackingListAmendment(
   packingListItemId: string,
   input: RequestPackingListAmendmentInput,
@@ -2465,6 +2518,13 @@ export async function requestPackingListAmendment(
   }
   await assertAmendmentAllowed(line, { ret, repair });
 
+  // Only files uploaded for THIS line through getAmendmentPhotoUploadUrl
+  const photos = (input.photos ?? []).slice(0, MAX_AMENDMENT_PHOTOS);
+  for (const ph of photos) {
+    if (!INSPECTION_PHOTO_CATEGORIES.includes(ph.category)) throw new Error("Unknown photo category");
+    if (!ph.key.startsWith(`item-inspections/${pli.id}/${ph.category}/amend-`)) throw new Error("A photo doesn't belong to this line");
+  }
+
   const id = nanoid();
   await db.insert(packingListAmendment).values({
     id,
@@ -2487,6 +2547,12 @@ export async function requestPackingListAmendment(
     reason,
     requestedBy: userId,
   });
+
+  if (photos.length > 0) {
+    await db.insert(inspectionPhoto).values(photos.map((ph) => ({
+      id: nanoid(), packingListItemId: pli.id, imageKey: ph.key, category: ph.category, uploadedBy: userId, amendmentId: id,
+    })));
+  }
 
   await touchPackingList(pl.id);
   revalidatePath(`/dashboard/procurement/packing-list/${pl.id}`);

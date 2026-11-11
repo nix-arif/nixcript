@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { DownloadIcon, LoaderIcon, PlayIcon } from "lucide-react";
+import { DownloadIcon, LoaderIcon, PlayIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { getInspectionMediaDownload } from "@/server/packing-list";
 import { cn } from "@/lib/utils";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { InspectionMediaKind } from "@/lib/inspection-media";
 
 // Thumbnail and full view for inspection evidence — a photo, or a video that
@@ -70,5 +71,60 @@ export function DownloadMediaButton({ photoId, className }: { photoId: string; c
       {busy ? <LoaderIcon className="w-3 h-3 animate-spin" /> : <DownloadIcon className="w-3 h-3" />}
       Download
     </button>
+  );
+}
+
+type StripMedia = Media & { id: string; uploadedByName: string | null; amendmentId?: string | null };
+
+// A row of small thumbnails that open in a lightbox with a Download button.
+// A photo that came in with an approved change after inspection gets a
+// violet ring, so it's clear it wasn't part of the original inspection.
+export function InspectionMediaStrip({ photos }: { photos: StripMedia[] }) {
+  const [lightbox, setLightbox] = useState<StripMedia | null>(null);
+  if (photos.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {photos.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => setLightbox(p)}
+          className={cn(
+            "block w-8 h-8 rounded border overflow-hidden hover:opacity-80 transition-opacity shrink-0",
+            p.amendmentId ? "border-violet-500 ring-1 ring-violet-500" : "border-border",
+          )}
+          title={`${p.kind === "video" ? "Play video" : "View photo"}${p.amendmentId ? " — added after inspection" : ""}`}
+        >
+          <InspectionMediaThumb media={p} />
+        </button>
+      ))}
+      <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
+        <DialogContent className="sm:max-w-lg p-0 overflow-hidden gap-0" showCloseButton={false}>
+          <DialogTitle className="sr-only">Inspection {lightbox?.kind === "video" ? "video" : "photo"}</DialogTitle>
+          {lightbox && (
+            <>
+              <div className="relative bg-muted/30">
+                <InspectionMediaView media={lightbox} />
+                <button
+                  type="button"
+                  onClick={() => setLightbox(null)}
+                  className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
+                >
+                  <XIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="px-4 py-3 border-t flex items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground truncate">
+                  {lightbox.uploadedByName ? `Added by ${lightbox.uploadedByName}` : ""}
+                  {lightbox.amendmentId ? " · after inspection" : ""}
+                </p>
+                <DownloadMediaButton photoId={lightbox.id} />
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
