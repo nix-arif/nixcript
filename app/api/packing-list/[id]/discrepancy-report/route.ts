@@ -1,4 +1,4 @@
-import { getPackingListDetail, getPackingListDetailCentralized, type PackingListItemEnriched } from "@/server/packing-list";
+import { canInspectPackingList, getPackingListDetail, getPackingListDetailCentralized, type PackingListItemEnriched } from "@/server/packing-list";
 import { getOrganizationBranding } from "@/server/organization-profile";
 import { getProductImageUrl } from "@/helper/product-image";
 import { db } from "@/db";
@@ -41,6 +41,21 @@ const C_AMBER  = rgb(0.57, 0.25, 0.05);
 const C_RED    = rgb(0.55, 0.13, 0.13);
 const C_BRAND  = rgb(0.36, 0.27, 0.56);
 const C_LINK   = rgb(0.10, 0.30, 0.75);
+const C_GREEN  = rgb(0.09, 0.40, 0.20);
+const C_AMBER_BG = rgb(1, 0.97, 0.88);
+
+// Inspection progress table (interim report only)
+const PROG_COLS: { label: string; w: number }[] = [
+  { label: "PO", w: 70 },
+  { label: "LINE", w: 30 },
+  { label: "ITEM", w: 0 }, // takes the remaining width, set below
+  { label: "EXPECTED", w: 58 },
+  { label: "RECEIVED (DRAFT)", w: 72 },
+  { label: "STATUS", w: 88 },
+];
+PROG_COLS[2].w = CW - PROG_COLS.reduce((sum, c) => sum + c.w, 0);
+const PROG_DESC_W = PROG_COLS[2].w;
+const PROG_ROW_MIN_H = 20;
 
 function sanitize(t: string): string {
   return String(t ?? "").replace(/[\x00-\x1F\x7F]/g, " ");
@@ -195,9 +210,107 @@ type IssueItem = {
   inspectedAt: Date | null;
   approvedByName: string | null;
   approvedAt: Date | null;
+  progress: LineProgress;
 };
 
 type CachedImage = { buffer: Buffer; extension: "jpeg" | "png" | "gif" };
+
+// ── Line progress ────────────────────────────────────────────────────────
+// The report can be downloaded while inspection is still open (an "interim"
+// report). Its figures are then the inspectors' drafts, so every line says
+// where it stands: only an approved line's numbers are settled — anything
+// else may still change before the packing list is completed. On a
+// completed packing list every line is simply "final".
+type LineProgress = "final" | "approved" | "awaiting-approval" | "rejected" | "not-inspected";
+
+function lineProgress(item: PackingListItemEnriched, completed: boolean): LineProgress {
+  if (completed) return "final";
+  if (item.draftApprovalStatus === "approved") return "approved";
+  if (item.draftApprovalStatus === "rejected") return "rejected";
+  if (item.draftApprovalStatus === "pending" || item.draftInspectedAt) return "awaiting-approval";
+  return "not-inspected";
+}
+
+const isDone = (p: LineProgress) => p === "final" || p === "approved";
+
+const PROGRESS_LABEL: Record<LineProgress, string> = {
+  "final": "FINAL",
+  "approved": "DONE - approved",
+  "awaiting-approval": "IN PROGRESS - inspected, awaiting approval",
+  "rejected": "IN PROGRESS - rejected by approver, being re-inspected",
+  "not-inspected": "IN PROGRESS - not inspected yet",
+};
+
+const PROGRESS_SHORT: Record<LineProgress, string> = {
+  "final": "Final",
+  "approved": "Done",
+  "awaiting-approval": "Awaiting approval",
+  "rejected": "Re-inspecting",
+  "not-inspected": "Not inspected",
+};
+
+// One row per current (not removed) line of the packing list, issue or not,
+// for the interim report's "Inspection progress" section.
+type ProgressLine = {
+  poLabel: string;
+  poLineNo: number | null;
+  productCode: string;
+  description: string;
+  uom: string;
+  expected: number;
+  // Draft figure, null while nobody has entered one yet.
+  received: number | null;
+  progress: LineProgress;
+  inspectedByName: string | null;
+};
+
+type InterimInfo = {
+  total: number;
+  done: number;
+  awaiting: number;
+  rejected: number;
+  notInspected: number;
+  lines: ProgressLine[];
+};
+
+function interimSummaryText(info: InterimInfo): string {
+  const bits = [`${info.done} of ${info.total} line${info.total !== 1 ? "s" : ""} done (approved)`];
+  if (info.awaiting) bits.push(`${info.awaiting} awaiting approval`);
+  if (info.rejected) bits.push(`${info.rejected} being re-inspected`);
+  if (info.notInspected) bits.push(`${info.notInspected} not inspected yet`);
+  return `INTERIM - INSPECTION STILL IN PROGRESS: ${bits.join(", ")}. Figures on lines not marked DONE may still change.`;
+}
+
+function byPoThenLine(a: { poLabel: string; poLineNo: number | null }, b: { poLabel: string; poLineNo: number | null }): number {
+  return a.poLabel.localeCompare(b.poLabel, undefined, { numeric: true, sensitivity: "base" })
+    || (a.poLineNo ?? Number.MAX_SAFE_INTEGER) - (b.poLineNo ?? Number.MAX_SAFE_INTEGER);
+}
+
+function buildInterimInfo(
+  items: PackingListItemEnriched[],
+  poLabelById: Map<string, string>,
+  poLineNoById: Map<string, number | null>,
+): InterimInfo {
+  const lines: ProgressLine[] = items.map((item) => ({
+    poLabel: poLabelById.get(item.purchaseOrderId) ?? item.purchaseOrderId,
+    poLineNo: item.purchaseOrderItemId ? (poLineNoById.get(item.purchaseOrderItemId) ?? null) : null,
+    productCode: item.productCode ?? "",
+    description: item.description ?? item.productCode ?? "",
+    uom: item.uom ?? "",
+    expected: parseFloat(item.qtyExpected) || 0,
+    received: item.draftQtyReceived != null ? (parseFloat(item.draftQtyReceived) || 0) : null,
+    progress: lineProgress(item, false),
+    inspectedByName: item.draftInspectedByName,
+  })).sort(byPoThenLine);
+  return {
+    total: lines.length,
+    done: lines.filter((l) => isDone(l.progress)).length,
+    awaiting: lines.filter((l) => l.progress === "awaiting-approval").length,
+    rejected: lines.filter((l) => l.progress === "rejected").length,
+    notInspected: lines.filter((l) => l.progress === "not-inspected").length,
+    lines,
+  };
+}
 
 // Fetched once, shared between both report kinds and both the PDF and Excel
 // builders — best-effort per image, a failed fetch just means that one row
@@ -227,7 +340,7 @@ function buildIssueItems(
   poLabelById: Map<string, string>,
   poLineNoById: Map<string, number | null>,
   kind: ReportKind,
-  ctx: { baseUrl: string; packingListNo: string },
+  ctx: { baseUrl: string; packingListNo: string; completed: boolean },
 ): IssueItem[] {
   return items
     .map((item): Omit<IssueItem, "no"> | null => {
@@ -274,15 +387,14 @@ function buildIssueItems(
         inspectedAt: item.draftInspectedAt,
         approvedByName: item.draftApprovedByName,
         approvedAt: item.draftApprovedAt,
+        progress: lineProgress(item, ctx.completed),
       };
     })
     .filter((i): i is Omit<IssueItem, "no"> => i !== null)
     // Lowest PO no. first, then the lowest PO line no. within it (natural
     // order, so PO-2 comes before PO-10); a line with no PO line goes last.
     // Array.sort is stable, so ties keep the packing list's own order.
-    .sort((a, b) =>
-      a.poLabel.localeCompare(b.poLabel, undefined, { numeric: true, sensitivity: "base" })
-      || (a.poLineNo ?? Number.MAX_SAFE_INTEGER) - (b.poLineNo ?? Number.MAX_SAFE_INTEGER))
+    .sort(byPoThenLine)
     // Numbered only after sorting and filtering, so the sequence is 1..N in
     // the order the report shows, not the packing list's full item list.
     .map((issue, idx) => ({ ...issue, no: idx + 1 }));
@@ -337,6 +449,7 @@ async function buildXlsxBuffer(
   brandColorHex: string,
   issues: IssueItem[],
   images: Map<string, CachedImage>,
+  interim: InterimInfo | null,
 ): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(config.sheetName);
@@ -349,7 +462,7 @@ async function buildXlsxBuffer(
   };
 
   const maxEvidence = issues.reduce((max, i) => Math.max(max, i.evidenceImageUrls.length), 0);
-  const baseHeaders = ["No.", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At"];
+  const baseHeaders = ["No.", "Status", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At"];
   const evidenceHeaders = Array.from({ length: maxEvidence }, (_, i) => `Evidence Photo ${i + 1}`);
   const maxVideos = issues.reduce((max, i) => Math.max(max, i.videos.length), 0);
   const videoHeaders = Array.from({ length: maxVideos }, (_, i) => `Video ${i + 1} (click to play)`);
@@ -357,7 +470,7 @@ async function buildXlsxBuffer(
   const totalCols = headers.length;
 
   sheet.mergeCells(1, 1, 1, totalCols);
-  sheet.getCell(1, 1).value = config.title;
+  sheet.getCell(1, 1).value = interim ? `${config.title} - INTERIM` : config.title;
   sheet.getCell(1, 1).font = { bold: true, size: 14 };
 
   sheet.mergeCells(2, 1, 2, totalCols);
@@ -369,7 +482,18 @@ async function buildXlsxBuffer(
   sheet.getCell(3, 1).value = `${config.recipientLabel}: ${supplierName}  ·  From: ${companyName}  ·  ${dateStr}`;
   sheet.getCell(3, 1).font = { size: 9, color: { argb: "FF888888" } };
 
+  // Row 4: blank on a completed report, the in-progress warning otherwise —
+  // either way exactly one row, so the image anchor maths below holds.
   sheet.addRow([]);
+  if (interim) {
+    sheet.mergeCells(4, 1, 4, totalCols);
+    const cell = sheet.getCell(4, 1);
+    cell.value = `${interimSummaryText(interim)} See the "Inspection Progress" sheet for every line.`;
+    cell.font = { bold: true, size: 10, color: { argb: "FF92400E" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
+    cell.alignment = { vertical: "middle", wrapText: true };
+    sheet.getRow(4).height = 30;
+  }
 
   const headerRow = sheet.addRow(headers);
   headerRow.eachCell((cell) => {
@@ -402,6 +526,7 @@ async function buildXlsxBuffer(
   issues.forEach((issue, i) => {
     const row = sheet.addRow([
       issue.no,
+      PROGRESS_SHORT[issue.progress],
       "",
       issue.poLabel,
       issue.poLineNo ?? "",
@@ -436,10 +561,13 @@ async function buildXlsxBuffer(
       cell.alignment = { vertical: "middle", wrapText: true, horizontal: "left" };
     });
     row.getCell(baseHeaders.indexOf("No.") + 1).font = { bold: true };
+    row.getCell(baseHeaders.indexOf("Status") + 1).font = isDone(issue.progress)
+      ? { bold: true, color: { argb: "FF166534" } }
+      : { bold: true, color: { argb: "FF92400E" } };
     if (issue.shortfall > 0) row.getCell(baseHeaders.indexOf("Short") + 1).font = { bold: true, color: { argb: "FF92400E" } };
     if (issue.returned > 0) row.getCell(FLAG_COL + 1).font = { bold: true, color: { argb: "FFB91C1C" } };
 
-    // header(row1) + pl-no(row2) + to/from(row3) + blank(row4) + col-header(row5) + this row (1-indexed) -> 0-indexed anchor row
+    // header(row1) + pl-no(row2) + to/from(row3) + blank/interim(row4) + col-header(row5) + this row (1-indexed) -> 0-indexed anchor row
     const rowIndex0 = 5 + i;
     embedImage(issue.identityImageUrl, IMAGE_COL, rowIndex0);
     issue.evidenceImageUrls.forEach((url, ei) => embedImage(url, EVIDENCE_START_COL + ei, rowIndex0));
@@ -447,6 +575,7 @@ async function buildXlsxBuffer(
 
   sheet.columns = [
     { width: 6 },   // No.
+    { width: 16 },  // Status
     { width: 12 },  // Image
     { width: 12 },  // PO
     { width: 9 },   // PO Line
@@ -468,8 +597,53 @@ async function buildXlsxBuffer(
     ...videoHeaders.map(() => ({ width: 30 })),
   ];
 
+  if (interim) addProgressSheet(workbook, interim, accentArgb, thinBorder);
+
   const buf = await workbook.xlsx.writeBuffer();
   return buf as unknown as Buffer;
+}
+
+// Every current line with where its inspection stands — done lines and the
+// ones still in progress, so the reader knows which part of the report is
+// settled.
+function addProgressSheet(workbook: ExcelJS.Workbook, interim: InterimInfo, accentArgb: string, thinBorder: Partial<ExcelJS.Borders>) {
+  const sheet = workbook.addWorksheet("Inspection Progress");
+  const headers = ["PO", "PO Line", "Product Code", "Description", "UOM", "Expected", "Received (draft)", "Status", "Inspected By"];
+  sheet.mergeCells(1, 1, 1, headers.length);
+  sheet.getCell(1, 1).value = "INSPECTION PROGRESS";
+  sheet.getCell(1, 1).font = { bold: true, size: 14 };
+  sheet.mergeCells(2, 1, 2, headers.length);
+  sheet.getCell(2, 1).value = interimSummaryText(interim);
+  sheet.getCell(2, 1).font = { bold: true, size: 10, color: { argb: "FF92400E" } };
+  sheet.getCell(2, 1).alignment = { wrapText: true, vertical: "middle" };
+  sheet.getRow(2).height = 30;
+  sheet.addRow([]);
+  const headerRow = sheet.addRow(headers);
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: accentArgb } };
+    cell.alignment = { vertical: "middle", horizontal: "center" };
+    cell.border = thinBorder;
+  });
+  for (const line of interim.lines) {
+    const row = sheet.addRow([
+      line.poLabel, line.poLineNo ?? "", line.productCode, line.description, line.uom,
+      line.expected, line.received ?? "", PROGRESS_LABEL[line.progress], line.inspectedByName ?? "",
+    ]);
+    row.eachCell((cell, colNum) => {
+      cell.border = thinBorder;
+      cell.alignment = { vertical: "middle", wrapText: colNum === 4 || colNum === 8, horizontal: colNum === 4 || colNum === 8 ? "left" : "center" };
+    });
+    const done = isDone(line.progress);
+    row.getCell(8).font = { bold: true, color: { argb: done ? "FF166534" : "FF92400E" } };
+    if (!done) {
+      row.eachCell((cell) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFBEB" } }; });
+    }
+  }
+  sheet.columns = [
+    { width: 12 }, { width: 9 }, { width: 14 }, { width: 40 }, { width: 7 },
+    { width: 10 }, { width: 14 }, { width: 34 }, { width: 18 },
+  ];
 }
 
 // ── PDF ──────────────────────────────────────────────────────────────────
@@ -477,6 +651,7 @@ async function buildXlsxBuffer(
 type Measured = {
   issue: IssueItem;
   headerLines: string[];
+  statusLines: string[];
   brandLine: string[];
   descLines: string[];
   returnLines: string[];
@@ -503,7 +678,7 @@ const EVID_GAP = 5;
 const EVID_LABEL_H = 11;
 const VIDEO_LINE_H = 10;
 
-function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: number, config: ReportConfig): Measured {
+function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: number, config: ReportConfig, interim: boolean): Measured {
   const poLineText = issue.poLineNo !== null ? `  ·  PO Line ${issue.poLineNo}` : "";
   const headerLines = wrap(`[${issue.poLabel}]  ${issue.productCode}${poLineText}`, fontB, 8.5, detMaxW);
 
@@ -526,7 +701,10 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
   if (issue.approvedByName) reviewBits.push(`Approved by ${issue.approvedByName} on ${fmtDateTime(issue.approvedAt)}`);
   const reviewLines = reviewBits.length > 0 ? wrap(reviewBits.join("  ·  "), fontR, 7, detMaxW) : [];
 
+  const statusLines = interim ? wrap(`Status: ${PROGRESS_LABEL[issue.progress]}`, fontB, 7.5, detMaxW) : [];
+
   const textH = headerLines.length * HEADER_LINE_H
+    + statusLines.length * TEXT_LINE_H
     + brandLine.length * TEXT_LINE_H
     + descLines.length * TEXT_LINE_H
     + TEXT_LINE_H // expected/received line, always present
@@ -537,7 +715,7 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
     + reviewLines.length * RETURN_LINE_H
     + ROW_V_PAD;
 
-  return { issue, headerLines, brandLine, descLines, returnLines, evidenceRows, evidenceThumbsPerRow, reviewLines, height: Math.max(textH, ROW_MIN_H) };
+  return { issue, headerLines, statusLines, brandLine, descLines, returnLines, evidenceRows, evidenceThumbsPerRow, reviewLines, height: Math.max(textH, ROW_MIN_H) };
 }
 
 // Invisible link over a thumbnail that opens the matching full-res file from
@@ -603,6 +781,7 @@ async function buildReportPdfBytes(
   accentDark: ReturnType<typeof rgb>,
   hasBundledImages: boolean,
   prefix: string,
+  interim: InterimInfo | null,
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const fontR = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -625,11 +804,16 @@ async function buildReportPdfBytes(
   const HDR_H = hasBundledImages ? 90 : 78;
   const COLHDR_H = 18;
   const FOOTER_H = 20;
-  const availH = H - MT - HDR_H - COLHDR_H - MB - FOOTER_H;
+  // Amber "inspection still in progress" strip under the header band on
+  // every page of an interim report.
+  const BANNER_H = interim ? 26 : 0;
+  const availH = H - MT - HDR_H - BANNER_H - COLHDR_H - MB - FOOTER_H;
   const COL_DET = CW - NO_COL_W - IMG_COL_W;
   const detMaxW = COL_DET - 16;
 
-  const measured = issues.map((issue) => measure(issue, fontR, fontB, detMaxW, config));
+  const measured = issues.map((issue) => measure(issue, fontR, fontB, detMaxW, config, !!interim));
+  const title = interim ? `${config.title} - INTERIM` : config.title;
+  const bannerLines = interim ? wrap(interimSummaryText(interim), fontB, 7.5, CW - 16).slice(0, 2) : [];
 
   // Paginate by accumulated row height rather than a fixed row count, so
   // no row's text, images, or evidence photos are ever cut off to fit a
@@ -648,10 +832,29 @@ async function buildReportPdfBytes(
   }
   if (current.length > 0) pages.push(current);
 
-  const totalPgs = pages.length;
+  // Interim only: the "Inspection progress" pages listing every line,
+  // paginated the same way (by measured row height).
+  const progressRows = interim ? interim.lines.map((line) => {
+    const descLines = wrap(`${line.productCode}  ${line.description}`, fontR, 7, PROG_DESC_W - 6);
+    return { line, descLines, height: Math.max(PROG_ROW_MIN_H, descLines.length * 9 + 6) };
+  }) : [];
+  const progressPages: typeof progressRows[] = [];
+  {
+    const progAvail = availH - 14; // a little room for the section heading
+    let cur: typeof progressRows = [];
+    let curH = 0;
+    for (const r of progressRows) {
+      if (cur.length > 0 && curH + r.height > progAvail) { progressPages.push(cur); cur = []; curH = 0; }
+      cur.push(r);
+      curH += r.height;
+    }
+    if (cur.length > 0) progressPages.push(cur);
+  }
+
+  const totalPgs = pages.length + progressPages.length;
   const dateStr = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
 
-  for (let pi = 0; pi < totalPgs; pi++) {
+  for (let pi = 0; pi < pages.length; pi++) {
     const page = pdfDoc.addPage([W, H]);
     const pageRows = pages[pi];
     const pageH = pageRows.reduce((sum, m) => sum + m.height, 0);
@@ -659,7 +862,7 @@ async function buildReportPdfBytes(
     // Header band
     page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: HDR_H, color: accentDark });
     page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: 3, color: accent });
-    page.drawText(config.title, { x: ML, y: H - 24, size: 13, font: fontB, color: C_WHITE });
+    page.drawText(title, { x: ML, y: H - 24, size: 13, font: fontB, color: C_WHITE });
     page.drawText(`Packing List ${packingListNo}${supplierRefNo ? `  ·  Supplier ref ${supplierRefNo}` : ""}`, {
       x: ML, y: H - 40, size: 8.5, font: fontR, color: rgb(0.88, 0.88, 0.9),
     });
@@ -676,8 +879,10 @@ async function buildReportPdfBytes(
     const countLabel = `${issues.length} line${issues.length !== 1 ? "s" : ""} ${config.countNoun}`;
     page.drawText(countLabel, { x: W - MR - fontR.widthOfTextAtSize(countLabel, 7), y: H - 50, size: 7, font: fontR, color: rgb(0.65, 0.65, 0.7) });
 
+    drawBanner(page);
+
     // Column header
-    const tableTopY = H - HDR_H - COLHDR_H;
+    const tableTopY = H - HDR_H - BANNER_H - COLHDR_H;
     const tableBottomY = tableTopY - pageH;
     page.drawRectangle({ x: ML, y: tableTopY, width: CW, height: COLHDR_H, color: accent });
     page.drawText("NO.", { x: ML + (NO_COL_W - fontB.widthOfTextAtSize("NO.", 6.5)) / 2, y: tableTopY + 5, size: 6.5, font: fontB, color: C_WHITE });
@@ -745,6 +950,11 @@ async function buildReportPdfBytes(
       for (const line of m.headerLines) {
         page.drawText(line, { x: detX, y: detY, size: 8.5, font: fontB, color: accent });
         detY -= HEADER_LINE_H;
+      }
+
+      for (const line of m.statusLines) {
+        page.drawText(line, { x: detX, y: detY, size: 7.5, font: fontB, color: isDone(issue.progress) ? C_GREEN : C_AMBER });
+        detY -= TEXT_LINE_H;
       }
 
       for (const line of m.brandLine) {
@@ -835,13 +1045,97 @@ async function buildReportPdfBytes(
     page.drawRectangle({ x: ML, y: tableBottomY, width: CW, height: tableTopY - tableBottomY, borderColor: C_LINE, borderWidth: 0.4 });
 
     page.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.6, color: accent });
-    const footLeft = `${companyName.toUpperCase()}  ·  ${config.title}  ·  COMPUTER GENERATED DOCUMENT`;
-    page.drawText(trunc(footLeft, fontR, 7, CW * 0.75), { x: ML, y: MB + 8, size: 7, font: fontR, color: C_LITE });
-    const footRight = `${pi + 1} / ${totalPgs}`;
-    page.drawText(footRight, { x: W - MR - fontR.widthOfTextAtSize(footRight, 7), y: MB + 8, size: 7, font: fontR, color: C_LITE });
+    drawFooter(page, pi);
+  }
+
+  // ── Inspection progress pages (interim only) ─────────────────────────
+  for (let gi = 0; gi < progressPages.length; gi++) {
+    const pi = pages.length + gi;
+    const page = pdfDoc.addPage([W, H]);
+    drawHeaderBand(page, pi);
+    drawBanner(page);
+
+    let y = H - HDR_H - BANNER_H - 12;
+    page.drawText(gi === 0 ? "INSPECTION PROGRESS - every line on this packing list" : "INSPECTION PROGRESS (continued)", { x: ML, y, size: 9, font: fontB, color: accentDark });
+    y -= 6;
+
+    const top = y;
+    page.drawRectangle({ x: ML, y: top - COLHDR_H, width: CW, height: COLHDR_H, color: accent });
+    let cx = ML;
+    for (const col of PROG_COLS) {
+      page.drawText(col.label, { x: cx + 4, y: top - COLHDR_H + 6, size: 6.5, font: fontB, color: C_WHITE });
+      cx += col.w;
+    }
+    let rowTop = top - COLHDR_H;
+    progressPages[gi].forEach((r, ri) => {
+      const rowY = rowTop - r.height;
+      const done = isDone(r.line.progress);
+      if (!done) page.drawRectangle({ x: ML, y: rowY, width: CW, height: r.height, color: C_AMBER_BG });
+      else if (ri % 2 === 1) page.drawRectangle({ x: ML, y: rowY, width: CW, height: r.height, color: C_ALT });
+      page.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
+      const textY = rowTop - 9;
+      const cells = [
+        r.line.poLabel,
+        r.line.poLineNo !== null ? String(r.line.poLineNo) : "-",
+        null, // description, wrapped below
+        `${r.line.expected} ${r.line.uom}`.trim(),
+        r.line.received !== null ? `${r.line.received} ${r.line.uom}`.trim() : "-",
+        PROGRESS_SHORT[r.line.progress],
+      ];
+      let x = ML;
+      PROG_COLS.forEach((col, ci) => {
+        const val = cells[ci];
+        if (val === null) {
+          r.descLines.forEach((dl, di) => page.drawText(dl, { x: x + 4, y: textY - di * 9, size: 7, font: fontR, color: C_DARK }));
+        } else if (ci === PROG_COLS.length - 1) {
+          page.drawText(trunc(val, fontB, 7, col.w - 6), { x: x + 4, y: textY, size: 7, font: fontB, color: done ? C_GREEN : C_AMBER });
+          if (r.line.inspectedByName && r.line.progress !== "not-inspected") {
+            page.drawText(trunc(`by ${r.line.inspectedByName}`, fontR, 6, col.w - 6), { x: x + 4, y: textY - 8, size: 6, font: fontR, color: C_LITE });
+          }
+        } else {
+          page.drawText(trunc(val, fontR, 7, col.w - 6), { x: x + 4, y: textY, size: 7, font: fontR, color: C_DARK });
+        }
+        x += col.w;
+      });
+      rowTop = rowY;
+    });
+    page.drawRectangle({ x: ML, y: rowTop, width: CW, height: top - rowTop, borderColor: C_LINE, borderWidth: 0.4 });
+    drawFooter(page, pi);
   }
 
   return pdfDoc.save();
+
+  function drawHeaderBand(page: PDFPage, pi: number) {
+    page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: HDR_H, color: accentDark });
+    page.drawRectangle({ x: 0, y: H - HDR_H, width: W, height: 3, color: accent });
+    page.drawText(title, { x: ML, y: H - 24, size: 13, font: fontB, color: C_WHITE });
+    page.drawText(`Packing List ${packingListNo}${supplierRefNo ? `  ·  Supplier ref ${supplierRefNo}` : ""}`, {
+      x: ML, y: H - 40, size: 8.5, font: fontR, color: rgb(0.88, 0.88, 0.9),
+    });
+    page.drawText(`${config.recipientLabel}: ${sanitize(supplierName)}`, { x: ML, y: H - 54, size: 9, font: fontB, color: C_WHITE });
+    page.drawText(companyName, { x: ML, y: H - 66, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
+    const pgLabel = `Page ${pi + 1} / ${totalPgs}`;
+    page.drawText(pgLabel, { x: W - MR - fontB.widthOfTextAtSize(pgLabel, 9), y: H - 24, size: 9, font: fontB, color: rgb(0.85, 0.85, 0.9) });
+    page.drawText(dateStr, { x: W - MR - fontR.widthOfTextAtSize(dateStr, 7.5), y: H - 38, size: 7.5, font: fontR, color: rgb(0.7, 0.7, 0.75) });
+  }
+
+  function drawBanner(page: PDFPage) {
+    if (!interim) return;
+    const y0 = H - HDR_H - BANNER_H;
+    page.drawRectangle({ x: 0, y: y0, width: W, height: BANNER_H, color: C_AMBER_BG });
+    page.drawRectangle({ x: 0, y: y0, width: W, height: 1, color: C_AMBER });
+    bannerLines.forEach((line, i) => {
+      page.drawText(line, { x: ML + 8, y: H - HDR_H - 10 - i * 9, size: 7.5, font: fontB, color: C_AMBER });
+    });
+  }
+
+  function drawFooter(page: PDFPage, pi: number) {
+    page.drawLine({ start: { x: ML, y: MB + 18 }, end: { x: W - MR, y: MB + 18 }, thickness: 0.6, color: accent });
+    const footLeft = `${companyName.toUpperCase()}  ·  ${title}${interim ? "  ·  NOT FINAL" : ""}  ·  COMPUTER GENERATED DOCUMENT`;
+    page.drawText(trunc(footLeft, fontR, 7, CW * 0.75), { x: ML, y: MB + 8, size: 7, font: fontR, color: interim ? C_AMBER : C_LITE });
+    const footRight = `${pi + 1} / ${totalPgs}`;
+    page.drawText(footRight, { x: W - MR - fontR.widthOfTextAtSize(footRight, 7), y: MB + 8, size: 7, font: fontR, color: C_LITE });
+  }
 }
 
 export async function GET(req: Request, { params }: Props) {
@@ -876,8 +1170,12 @@ export async function GET(req: Request, { params }: Props) {
       }
     }
     if (!pl) return new Response("Not Found", { status: 404 });
-    if (pl.status === "pending") {
-      return new Response("Inspection hasn't been completed yet — nothing to report", { status: 400 });
+    // While inspection is still open the report is an INTERIM one built from
+    // the inspectors' draft figures — same rule as the detail page, which
+    // only shows those drafts to someone who could be inspecting this list.
+    const isInterim = pl.status === "pending";
+    if (isInterim && !(await canInspectPackingList(pl.organizationId))) {
+      return new Response("Inspection is still in progress — only inspectors can download an interim report", { status: 403 });
     }
 
     const poLabelById = new Map(pl.purchaseOrders.map((p) => [p.id, p.poNo ?? p.prNo ?? p.id]));
@@ -895,13 +1193,19 @@ export async function GET(req: Request, { params }: Props) {
     // address (APP_DOMAIN in production), never the internal one the proxy
     // forwards the request to.
     const baseUrl = publicBaseUrl(req);
-    const ctx = { baseUrl, packingListNo: pl.packingListNo };
-    const returnIssues = buildIssueItems(pl.items.filter((i) => !i.removedAt), poLabelById, poLineNoById, "return", ctx);
-    const repairIssues = buildIssueItems(pl.items.filter((i) => !i.removedAt), poLabelById, poLineNoById, "repair", ctx);
+    const ctx = { baseUrl, packingListNo: pl.packingListNo, completed: !isInterim };
+    const currentItems = pl.items.filter((i) => !i.removedAt);
+    const returnIssues = buildIssueItems(currentItems, poLabelById, poLineNoById, "return", ctx);
+    const repairIssues = buildIssueItems(currentItems, poLabelById, poLineNoById, "repair", ctx);
+    const interim = isInterim ? buildInterimInfo(currentItems, poLabelById, poLineNoById) : null;
     const hasReturn = returnIssues.length > 0;
     const hasRepair = repairIssues.length > 0;
 
     if (!hasReturn && !hasRepair) {
+      if (interim) {
+        const open = interim.total - interim.done;
+        return new Response(`No issues recorded so far — ${interim.done} of ${interim.total} lines done, ${open} still in progress`, { status: 400 });
+      }
       return new Response("Nothing to report — every item was received in full and nothing was sent for repair", { status: 400 });
     }
 
@@ -912,17 +1216,19 @@ export async function GET(req: Request, { params }: Props) {
     const allImageUrls = [...returnIssues, ...repairIssues].flatMap((i) => [i.identityImageUrl, ...i.evidenceImageUrls]);
     const images = await fetchImages(allImageUrls);
     const supplierName = (pl.supplierSnapshot as { name?: string } | null)?.name ?? "Supplier";
+    // "_interim" in every file name so a draft copy is never mistaken for the final one.
     const safeNo = pl.packingListNo.replace(/[^a-z0-9]/gi, "_");
+    const sfx = interim ? "_interim" : "";
 
     if (format === "xlsx") {
       const parts: { name: string; buf: Buffer }[] = [];
       if (hasReturn) {
-        const buf = await buildXlsxBuffer(REPORT_CONFIGS.return, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName, orgProfile.brandColor, returnIssues, images);
-        parts.push({ name: `${safeNo}_discrepancy_report.xlsx`, buf });
+        const buf = await buildXlsxBuffer(REPORT_CONFIGS.return, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName, orgProfile.brandColor, returnIssues, images, interim);
+        parts.push({ name: `${safeNo}_discrepancy_report${sfx}.xlsx`, buf });
       }
       if (hasRepair) {
-        const buf = await buildXlsxBuffer(REPORT_CONFIGS.repair, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName, orgProfile.brandColor, repairIssues, images);
-        parts.push({ name: `${safeNo}_repair_report.xlsx`, buf });
+        const buf = await buildXlsxBuffer(REPORT_CONFIGS.repair, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName, orgProfile.brandColor, repairIssues, images, interim);
+        parts.push({ name: `${safeNo}_repair_report${sfx}.xlsx`, buf });
       }
 
       if (parts.length === 1) {
@@ -937,7 +1243,7 @@ export async function GET(req: Request, { params }: Props) {
       const zip = new JSZip();
       for (const p of parts) zip.file(p.name, p.buf);
       const zipBuf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
-      const zipName = hasReturn ? `${safeNo}_discrepancy_report.zip` : `${safeNo}_repair_report.zip`;
+      const zipName = hasReturn ? `${safeNo}_discrepancy_report${sfx}.zip` : `${safeNo}_repair_report${sfx}.zip`;
       return new Response(zipBuf as unknown as ArrayBuffer, {
         headers: {
           "Content-Type": "application/zip",
@@ -972,16 +1278,16 @@ export async function GET(req: Request, { params }: Props) {
     if (hasReturn) {
       const bytes = await buildReportPdfBytes(
         REPORT_CONFIGS.return, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName,
-        returnIssues, images, accent, accentDark, returnImageEntries.length > 0, "return",
+        returnIssues, images, accent, accentDark, returnImageEntries.length > 0, "return", interim,
       );
-      pdfParts.push({ name: `${safeNo}_discrepancy_report.pdf`, bytes });
+      pdfParts.push({ name: `${safeNo}_discrepancy_report${sfx}.pdf`, bytes });
     }
     if (hasRepair) {
       const bytes = await buildReportPdfBytes(
         REPORT_CONFIGS.repair, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName,
-        repairIssues, images, accent, accentDark, repairImageEntries.length > 0, "repair",
+        repairIssues, images, accent, accentDark, repairImageEntries.length > 0, "repair", interim,
       );
-      pdfParts.push({ name: `${safeNo}_repair_report.pdf`, bytes });
+      pdfParts.push({ name: `${safeNo}_repair_report${sfx}.pdf`, bytes });
     }
 
     if (pdfParts.length === 1 && allImageEntries.length === 0) {
@@ -998,7 +1304,7 @@ export async function GET(req: Request, { params }: Props) {
     for (const p of pdfParts) zip.file(p.name, Buffer.from(p.bytes));
     for (const entry of allImageEntries) zip.file(entry.name, entry.buffer);
     const zipBuf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
-    const zipName = hasReturn ? `${safeNo}_discrepancy_report.zip` : `${safeNo}_repair_report.zip`;
+    const zipName = hasReturn ? `${safeNo}_discrepancy_report${sfx}.zip` : `${safeNo}_repair_report${sfx}.zip`;
 
     return new Response(zipBuf as unknown as ArrayBuffer, {
       headers: {

@@ -448,11 +448,16 @@ export function PackingListDetailClient({
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button size="sm" variant="outline" className="gap-1.5">
-                    <FileWarningIcon className="w-3.5 h-3.5" /> Download Report
+                    <FileWarningIcon className="w-3.5 h-3.5" /> {isPending ? "Interim Report" : "Download Report"}
                     <ChevronDownIcon className="w-3 h-3 opacity-60" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  {isPending && (
+                    <p className="px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-400 max-w-60">
+                      Inspection is still in progress. The report marks each line as done or in progress, and figures may still change.
+                    </p>
+                  )}
                   <DropdownMenuItem
                     disabled={downloadingReport !== null}
                     onClick={() => handleDownloadReport("pdf")}

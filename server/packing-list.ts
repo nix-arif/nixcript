@@ -1521,6 +1521,18 @@ async function assertCanAmendPackingList(plOrgId: string, callerOrgId: string, u
   }
 }
 
+// For the interim discrepancy report: while inspection is still open its
+// figures are drafts, shown only to people who could be inspecting it.
+export async function canInspectPackingList(plOrganizationId: string): Promise<boolean> {
+  const { orgId, userId } = await getSession();
+  try {
+    await assertCanInspectPackingList(plOrganizationId, orgId, userId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // For the detail pages: may the viewer ask for changes on this packing list?
 export async function canAmendPackingList(plOrganizationId: string): Promise<boolean> {
   const { orgId, userId } = await getSession();
