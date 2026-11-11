@@ -99,10 +99,16 @@ function trunc(text: string, font: PDFFont, size: number, maxW: number): string 
 
 // Full date + time (not just the day) — who inspected/approved a line and
 // exactly when matters for a supplier-facing discrepancy claim.
+//
+// Always Malaysia time: this runs on the server (UTC on Vercel), so without
+// an explicit zone every time printed was 8 hours behind what the web page
+// (rendered in the viewer's browser) shows for the same inspection.
+const REPORT_TZ = "Asia/Kuala_Lumpur";
+
 function fmtDateTime(d: Date | null): string {
   if (!d) return "";
   return new Date(d).toLocaleString("en-MY", {
-    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: REPORT_TZ,
   });
 }
 
@@ -497,7 +503,7 @@ async function buildXlsxBuffer(
   sheet.getCell(2, 1).font = { size: 10, color: { argb: "FF666666" } };
 
   sheet.mergeCells(3, 1, 3, totalCols);
-  const dateStr = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+  const dateStr = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric", timeZone: REPORT_TZ });
   sheet.getCell(3, 1).value = `${config.recipientLabel}: ${supplierName}  ·  From: ${companyName}  ·  ${dateStr}`;
   sheet.getCell(3, 1).font = { size: 9, color: { argb: "FF888888" } };
 
@@ -858,7 +864,7 @@ async function buildReportPdfBytes(
   const issueCount = issues.filter((i) => !i.doneListing).length;
 
   const totalPgs = pages.length;
-  const dateStr = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+  const dateStr = new Date().toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric", timeZone: REPORT_TZ });
 
   for (let pi = 0; pi < pages.length; pi++) {
     const page = pdfDoc.addPage([W, H]);
