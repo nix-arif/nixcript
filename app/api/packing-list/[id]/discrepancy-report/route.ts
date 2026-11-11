@@ -1057,6 +1057,24 @@ async function buildReportPdfBytes(
 
     let y = H - HDR_H - BANNER_H - 12;
     page.drawText(gi === 0 ? "INSPECTION PROGRESS - every line on this packing list" : "INSPECTION PROGRESS (continued)", { x: ML, y, size: 9, font: fontB, color: accentDark });
+    // Legend for the row shading, right-aligned on the heading line — without
+    // it a run of done lines (white) next to a run of open ones (amber)
+    // reads as if one PO were simply formatted differently.
+    {
+      const sw = 8;
+      const doneTxt = "Done (approved) - figures settled";
+      const openTxt = "In progress - figures may still change";
+      const doneW = fontR.widthOfTextAtSize(doneTxt, 7);
+      const openW = fontR.widthOfTextAtSize(openTxt, 7);
+      let lx = W - MR - (sw + 3 + doneW + 12 + sw + 3 + openW);
+      page.drawRectangle({ x: lx, y: y - 1, width: sw, height: sw, color: C_WHITE, borderColor: C_LITE, borderWidth: 0.5 });
+      lx += sw + 3;
+      page.drawText(doneTxt, { x: lx, y, size: 7, font: fontR, color: C_GREEN });
+      lx += doneW + 12;
+      page.drawRectangle({ x: lx, y: y - 1, width: sw, height: sw, color: C_AMBER_BG, borderColor: C_AMBER, borderWidth: 0.5 });
+      lx += sw + 3;
+      page.drawText(openTxt, { x: lx, y, size: 7, font: fontR, color: C_AMBER });
+    }
     y -= 6;
 
     const top = y;
@@ -1067,11 +1085,10 @@ async function buildReportPdfBytes(
       cx += col.w;
     }
     let rowTop = top - COLHDR_H;
-    progressPages[gi].forEach((r, ri) => {
+    progressPages[gi].forEach((r) => {
       const rowY = rowTop - r.height;
       const done = isDone(r.line.progress);
       if (!done) page.drawRectangle({ x: ML, y: rowY, width: CW, height: r.height, color: C_AMBER_BG });
-      else if (ri % 2 === 1) page.drawRectangle({ x: ML, y: rowY, width: CW, height: r.height, color: C_ALT });
       page.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
       const textY = rowTop - 9;
       const cells = [
