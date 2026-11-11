@@ -23,7 +23,7 @@ export async function settleAttemptsForPackingList(packingListId: string, userId
       draftQtyReturn: packingListItem.draftQtyReturn,
     })
     .from(packingListItem)
-    .where(eq(packingListItem.packingListId, packingListId));
+    .where(and(eq(packingListItem.packingListId, packingListId), isNull(packingListItem.removedAt)));
   if (lines.length === 0) return;
 
   // A packing list never replaces units it rejected itself (its own receipts
@@ -127,6 +127,32 @@ export async function revertAttemptsForPackingList(packingListId: string): Promi
     ));
 }
 
+// Line-scoped version of revertAttemptsForPackingList, for an amendment to one
+// line of a completed packing list: that line's scored attempts go back to
+// "linked" and the returns they auto-closed reopen, so the caller can re-run
+// settleAttemptsForPackingList against the corrected numbers.
+export async function revertAttemptsForLine(packingListItemId: string, packingListId: string): Promise<number> {
+  const attempts = await db
+    .select({ id: returnReplacementAttempt.id, goodsReceiptItemId: returnReplacementAttempt.goodsReceiptItemId })
+    .from(returnReplacementAttempt)
+    .where(and(eq(returnReplacementAttempt.packingListItemId, packingListItemId), eq(returnReplacementAttempt.status, "inspected")));
+  if (attempts.length === 0) return 0;
+  await db
+    .update(returnReplacementAttempt)
+    .set({ status: "linked", qtyGood: null, qtyFailed: null, inspectedAt: null })
+    .where(inArray(returnReplacementAttempt.id, attempts.map((a) => a.id)));
+  await db
+    .update(goodsReceiptItem)
+    .set({ returnStatus: "pending", returnResolvedBy: null, returnResolvedAt: null, returnResolutionType: null, returnResolutionPackingListId: null, returnResolutionNotes: null })
+    .where(and(
+      inArray(goodsReceiptItem.id, [...new Set(attempts.map((a) => a.goodsReceiptItemId))]),
+      eq(goodsReceiptItem.returnResolutionType, "replacement"),
+      eq(goodsReceiptItem.returnResolutionPackingListId, packingListId),
+      like(goodsReceiptItem.returnResolutionNotes, "Closed automatically%"),
+    ));
+  return attempts.length;
+}
+
 // Runs when a packing list is created, and again just before its inspection is
 // completed (safe to repeat: it only covers what is still uncovered), which
 // catches packing lists created before this existed. Every line for a PO item that still has
@@ -140,7 +166,7 @@ export async function autoLinkReplacementsForPackingList(packingListId: string, 
   const lines = await db
     .select({ id: packingListItem.id, purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
     .from(packingListItem)
-    .where(eq(packingListItem.packingListId, packingListId))
+    .where(and(eq(packingListItem.packingListId, packingListId), isNull(packingListItem.removedAt)))
     .orderBy(asc(packingListItem.rowNo));
   const poItemIds = [...new Set(lines.map((l) => l.purchaseOrderItemId))];
   if (poItemIds.length === 0) return 0;

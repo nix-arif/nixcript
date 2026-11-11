@@ -30,7 +30,7 @@ import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
 import { ReplacementChips } from "@/components/replacement-chips";
 import { ReceiptHistoryChips } from "@/components/receipt-history-chips";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 import { INSPECTION_MEDIA_ACCEPT, inspectionMediaProblem, mediaKindOf } from "@/lib/inspection-media";
 import { DownloadMediaButton, InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
@@ -356,20 +356,36 @@ function initialRow(item: PackingListWithItems["items"][number]): Row {
 }
 
 export function InspectPackingListClient({
-  packingList: pl, businessType = "trading",
+  packingList: plAll, businessType = "trading",
   submitFn = completePackingListInspection,
   backHref, organizationName, canApprove = false,
   currentUserId = "", selfApprovalAllowed = false,
 }: Props) {
+  // Lines removed by an approved amendment are not inspected again
+  const pl = { ...plAll, items: plAll.items.filter((i) => !i.removedAt) };
   const router = useRouter();
   const backUrl = backHref ?? `/dashboard/procurement/packing-list/${pl.id}`;
   const showSourcing = businessType !== "trading";
   const [receivedDate, setReceivedDate] = useState<string>(new Date().toISOString().split("T")[0]);
   const [notes, setNotes] = useState("");
   const [completing, setCompleting] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewChecked, setReviewChecked] = useState(false);
   const [rows, setRows] = useState<Record<string, Row>>(
     Object.fromEntries(pl.items.map((item) => [item.id, initialRow(item)])),
   );
+
+  // Lines added by an approved line change arrive on refresh — give each one
+  // its row state (the initial useState only covered the lines there at mount)
+  // (adjusting state while rendering when the line list changes, per React's
+  // "storing information from previous renders" pattern — no effect needed)
+  const itemIdsKey = pl.items.map((i) => i.id).join(",");
+  const [rowsForKey, setRowsForKey] = useState(itemIdsKey);
+  if (rowsForKey !== itemIdsKey) {
+    setRowsForKey(itemIdsKey);
+    const missing = pl.items.filter((i) => !rows[i.id]);
+    if (missing.length > 0) setRows({ ...rows, ...Object.fromEntries(missing.map((i) => [i.id, initialRow(i)])) });
+  }
 
   const rowsRef = useRef(rows);
   useEffect(() => { rowsRef.current = rows; }, [rows]);
@@ -699,20 +715,30 @@ export function InspectPackingListClient({
     }
   }
 
+  // Step 1 of completing: save every line, then show the review dialog —
+  // completing books stock and goods receipts, so the unusual lines get one
+  // last look before anything is written.
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!receivedDate) { toast.error("Received date is required"); return; }
 
     setCompleting(true);
-    try {
-      // Flush any edits still pending debounce so completion reflects the
-      // very latest keystrokes, not a stale autosave from a few hundred ms ago.
-      if (!(await flushSaves())) {
-        toast.error("Some lines couldn't be saved — fix the lines marked \"Not saved\" first");
-        setCompleting(false);
-        return;
-      }
+    // Flush any edits still pending debounce so completion reflects the
+    // very latest keystrokes, not a stale autosave from a few hundred ms ago.
+    const saved = await flushSaves().catch(() => false);
+    setCompleting(false);
+    if (!saved) {
+      toast.error("Some lines couldn't be saved — fix the lines marked \"Not saved\" first");
+      return;
+    }
+    setReviewChecked(false);
+    setReviewOpen(true);
+  }
 
+  // Step 2: the user has looked over the review and confirmed
+  async function confirmComplete() {
+    setCompleting(true);
+    try {
       await submitFn(pl.id, {
         receivedDate: new Date(receivedDate),
         notes: notes || undefined,
@@ -749,9 +775,37 @@ export function InspectPackingListClient({
   // needs an approval before completion is allowed, so the button reflects
   // that up front instead of only failing after a click.
   const totalItems = pl.items.length;
-  const approvedItems = Object.values(rows).filter((r) => r.approvalStatus === "approved").length;
+  const approvedItems = pl.items.filter((i) => rows[i.id]?.approvalStatus === "approved").length;
   const allApproved = approvedItems >= totalItems;
-  const canComplete = allApproved && !!receivedDate;
+  // An add/remove-lines request waiting for approval blocks completion (the server refuses too)
+  const pendingRevision = (plAll.revisions ?? []).find((r) => r.status === "pending");
+  const canComplete = allApproved && !!receivedDate && !pendingRevision;
+
+  // Lines worth a second look before completing, in on-screen order
+  const reviewLines = Object.entries(byPo)
+    .sort(([a], [b]) => comparePoNo(poLabel(a), poLabel(b)))
+    .flatMap(([poId, items]) => items.flatMap((item) => {
+      const row = rows[item.id];
+      if (!row) return [];
+      const expected = parseFloat(item.qtyExpected) || 0;
+      const received = parseFloat(row.qtyReceived) || 0;
+      const ret = parseFloat(row.qtyReturn) || 0;
+      const repair = parseFloat(row.qtyRepair) || 0;
+      const accepted = Math.max(0, received - ret);
+      const overPo = item.history ? item.history.otherAccepted + accepted - item.history.poQty : 0;
+      const flags: { label: string; tone: "red" | "amber" }[] = [];
+      if (received > expected + 1e-9) flags.push({ label: `+${+(received - expected).toFixed(3)} more than expected`, tone: "amber" });
+      if (received + 1e-9 < expected) flags.push({ label: `Short ${+(expected - received).toFixed(3)}`, tone: "red" });
+      if (overPo > 1e-9) flags.push({ label: `Over PO by ${+overPo.toFixed(3)}`, tone: "amber" });
+      if (ret > 0) flags.push({ label: `Return ${ret}`, tone: "red" });
+      if (repair > 0) flags.push({ label: `Repair ${repair}`, tone: "amber" });
+      if (flags.length === 0) return [];
+      return [{ id: item.id, po: poLabel(poId), lineNo: item.poLineNo, code: item.productCode || item.description || "item", uom: item.uom || "", expected, received, ret, repair, flags }];
+    }));
+  const reviewTotals = pl.items.map((i) => rows[i.id]).filter(Boolean).reduce(
+    (t, r) => ({ received: t.received + (parseFloat(r.qtyReceived) || 0), ret: t.ret + (parseFloat(r.qtyReturn) || 0) }),
+    { received: 0, ret: 0 },
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -883,7 +937,7 @@ export function InspectPackingListClient({
                 </thead>
                 <tbody>
                   {items.map((item, itemIndex) => {
-                    const row = rows[item.id];
+                    const row = rows[item.id] ?? initialRow(item);
                     const received = parseFloat(row.qtyReceived) || 0;
                     const ret = parseFloat(row.qtyReturn) || 0;
                     const repair = parseFloat(row.qtyRepair) || 0;
@@ -1269,6 +1323,12 @@ export function InspectPackingListClient({
           );
         })}
 
+        {pendingRevision && (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1">
+            <ShieldQuestionIcon className="w-3 h-3 shrink-0" />
+            A change to this packing list&apos;s lines ({pendingRevision.remove.length} to remove, {pendingRevision.add.length} to add) is waiting for approval on the packing list page — it must be approved or rejected before inspection can be completed.
+          </p>
+        )}
         {!allApproved && (
           <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
             <ShieldQuestionIcon className="w-3 h-3 shrink-0" />
@@ -1277,7 +1337,7 @@ export function InspectPackingListClient({
         )}
 
         <div className="flex gap-3">
-          <Button type="submit" disabled={completing || !canComplete} className="gap-1.5" title={!canComplete ? "Every item must be approved before inspection can be completed" : undefined}>
+          <Button type="submit" disabled={completing || !canComplete} className="gap-1.5" title={pendingRevision ? "A line change is waiting for approval" : !canComplete ? "Every item must be approved before inspection can be completed" : undefined}>
             <ClipboardCheckIcon className="w-3.5 h-3.5" />
             {completing ? "Saving…" : "Complete Inspection"}
           </Button>
@@ -1286,6 +1346,100 @@ export function InspectPackingListClient({
           </Button>
         </div>
       </form>
+
+      <Dialog open={reviewOpen} onOpenChange={(o) => !completing && setReviewOpen(o)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Check before completing {pl.packingListNo}</DialogTitle>
+            <DialogDescription>
+              Completing books the stock and creates the goods receipts. Fixing a mistake afterwards needs an amendment, so check these numbers now.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="text-xs text-muted-foreground">
+            {totalItems} line{totalItems !== 1 ? "s" : ""} · {+reviewTotals.received.toFixed(3)} received · {+reviewTotals.ret.toFixed(3)} to return · received on {receivedDate}
+          </div>
+
+          {reviewLines.length === 0 ? (
+            <p className="text-sm rounded-md border border-green-300 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300 px-3 py-2">
+              Every line was received exactly as expected, with nothing to return or repair.
+            </p>
+          ) : (
+            <div className="max-h-[50vh] overflow-auto border rounded-md">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-background">
+                  <tr className="text-muted-foreground border-b">
+                    <th className="text-left py-1.5 px-2 font-medium">PO · No</th>
+                    <th className="text-left py-1.5 pr-2 font-medium">Item</th>
+                    <th className="text-right py-1.5 pr-2 font-medium">Exp.</th>
+                    <th className="text-right py-1.5 pr-2 font-medium">Rec.</th>
+                    <th className="text-right py-1.5 pr-2 font-medium">Ret.</th>
+                    <th className="text-right py-1.5 pr-2 font-medium">Rep.</th>
+                    <th className="text-left py-1.5 pr-2 font-medium">Check</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reviewLines.map((l) => (
+                    <tr
+                      key={l.id}
+                      className="border-b last:border-b-0 align-top cursor-pointer hover:bg-muted/50"
+                      title="Close this and go to the line"
+                      onClick={() => { setReviewOpen(false); focusItem(l.id); }}
+                    >
+                      <td className="py-1.5 px-2 font-mono whitespace-nowrap">{l.po}{l.lineNo != null && <> · #{l.lineNo}</>}</td>
+                      <td className="py-1.5 pr-2 font-mono">{l.code}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{l.expected}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums font-semibold">{l.received}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{l.ret || "–"}</td>
+                      <td className="py-1.5 pr-2 text-right tabular-nums">{l.repair || "–"}</td>
+                      <td className="py-1.5 pr-2">
+                        <div className="flex flex-wrap gap-1">
+                          {l.flags.map((f) => (
+                            <span
+                              key={f.label}
+                              className={cn(
+                                "text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap",
+                                f.tone === "red"
+                                  ? "bg-red-50 text-red-700 border-red-300 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800"
+                                  : "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",
+                              )}
+                            >
+                              {f.label}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {reviewLines.length > 0 && (
+            <label className="flex items-start gap-2 text-xs cursor-pointer">
+              <input type="checkbox" checked={reviewChecked} onChange={(e) => setReviewChecked(e.target.checked)} className="mt-0.5 w-3.5 h-3.5" />
+              I&apos;ve checked the {reviewLines.length} line{reviewLines.length !== 1 ? "s" : ""} above against what physically arrived.
+            </label>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" size="sm" disabled={completing} onClick={() => setReviewOpen(false)}>
+              Back to inspection
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              disabled={completing || (reviewLines.length > 0 && !reviewChecked)}
+              onClick={confirmComplete}
+            >
+              <ClipboardCheckIcon className="w-3.5 h-3.5" />
+              {completing ? "Saving…" : "Confirm & complete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

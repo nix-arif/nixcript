@@ -18,17 +18,24 @@ import {
   inspectionPhoto,
   product,
   returnReplacementAttempt,
+  packingListAmendment,
+  packingListRevision,
+  type PackingListRevisionLine,
+  purchaseRequisition,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import type { LabelItemData } from "@/lib/label-design";
-import { eq, and, or, asc, desc, inArray, ne, isNull } from "drizzle-orm";
+import { eq, and, or, asc, desc, inArray, ne, isNull, sql } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { revalidatePath } from "next/cache";
-import { settleAttemptsForPackingList, closeReturnIfCovered, autoLinkReplacementsForPackingList } from "@/server/replacement-attempts-core";
+import { settleAttemptsForPackingList, closeReturnIfCovered, autoLinkReplacementsForPackingList, revertAttemptsForLine } from "@/server/replacement-attempts-core";
+import { syncPoFulfillmentStatus, retryInsufficientSalesOrders } from "@/server/po-fulfillment-core";
+import { createApprovedMovement } from "@/lib/inventory/create-movement";
+import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 import { createGoodsReceipt, type GoodsReceiptItemInput } from "@/server/goods-receipt";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -191,6 +198,29 @@ export type PackingListItemEnriched = PackingListItemRow & {
   photos: InspectionPhoto[];
   // Rejected units this line was sent to make good, with how each attempt turned out
   replacements: LineReplacement[];
+  // Corrections made after the inspection was completed, oldest first
+  amendments: LineAmendment[];
+};
+
+export type LineAmendment = {
+  id: string;
+  kind: "amend" | "remove";
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  grNo: string | null;
+  oldQtyReceived: number;
+  newQtyReceived: number;
+  oldQtyReturn: number;
+  newQtyReturn: number;
+  oldQtyRepair: number;
+  newQtyRepair: number;
+  stockDelta: number;
+  reason: string;
+  requestedById: string;
+  requestedByName: string | null;
+  requestedAt: Date;
+  decidedByName: string | null;
+  decidedAt: Date | null;
+  decisionNotes: string | null;
 };
 
 export type LineReceiptHistory = {
@@ -271,8 +301,25 @@ export interface CreatePackingListInput {
   items: PackingListItemInput[];
 }
 
+export type PackingListRevisionView = {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  add: PackingListRevisionLine[];
+  remove: PackingListRevisionLine[];
+  removeItemIds: string[];
+  reason: string;
+  requestedById: string;
+  requestedByName: string | null;
+  requestedAt: Date;
+  decidedByName: string | null;
+  decidedAt: Date | null;
+  decisionNotes: string | null;
+};
+
 export type PackingListWithItems = PackingListRow & {
   items: PackingListItemEnriched[];
+  // Add / remove-line requests made while the inspection was still open, newest first
+  revisions: PackingListRevisionView[];
   createdByName: string | null;
   goodsReceipts: { id: string; grNo: string; purchaseOrderId: string; poNo: string | null; status: string }[];
   purchaseOrders: { id: string; poNo: string | null; prNo: string | null }[];
@@ -282,6 +329,8 @@ export type PackingListListRow = PackingListRow & {
   createdByName: string | null;
   supplierName: string | null;
   itemCount: number;
+  // Change requests on completed lines still waiting for an approver
+  pendingChanges: number;
 };
 // isOwnOrg: true when this packing list belongs to the caller's own active
 // org — the inspect/cancel actions stay available to the same permission
@@ -394,6 +443,13 @@ export async function getSuppliersWithConfirmedPos(): Promise<PackableSupplier[]
 
 export async function getPackableItemsForSupplier(supplierId: string): Promise<PackableItem[]> {
   const { orgId } = await requireAccess("purchase-order:read");
+  return computePackableItems(orgId, supplierId);
+}
+
+// What can still be packed for a supplier within one org — shared by the
+// create page and by change requests on an open packing list (which may
+// belong to a sibling org, so the org is passed in, never assumed).
+async function computePackableItems(orgId: string, supplierId: string): Promise<PackableItem[]> {
 
   const pos = await db
     .select()
@@ -431,7 +487,7 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
     db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected, packingListId: packingList.id, packingListNo: packingList.packingListNo })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
-      .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"))),
+      .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"), isNull(packingListItem.removedAt))),
     // Lines of already-inspected packing lists that came back short or with a
     // still-open return — the origin of a problem this new packing list may be
     // making good. Recalled receipts are ignored (the inspection was undone).
@@ -575,6 +631,7 @@ export async function getSupplierOutstandingIssues(supplierId: string): Promise<
       eq(packingList.organizationId, orgId),
       eq(packingList.supplierId, supplierId),
       eq(packingList.status, "completed"),
+      isNull(packingListItem.removedAt),
     ));
 
   const byPl = new Map<string, SupplierOutstandingIssue>();
@@ -891,7 +948,7 @@ export async function getPurchaseOrdersPendingPacking(): Promise<PendingPackingL
     db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
-      .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"))),
+      .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"), isNull(packingListItem.removedAt))),
     supplierIds.length > 0
       ? db.select({ id: supplier.id, name: supplier.name }).from(supplier).where(inArray(supplier.id, supplierIds))
       : Promise.resolve([]),
@@ -953,12 +1010,22 @@ export async function getAllPackingLists(): Promise<PackingListListRow[]> {
 
   const [users, items] = await Promise.all([
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds)),
-    db.select({ packingListId: packingListItem.packingListId }).from(packingListItem).where(inArray(packingListItem.packingListId, listIds)),
+    db.select({ packingListId: packingListItem.packingListId }).from(packingListItem).where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt))),
   ]);
 
   const userMap = Object.fromEntries(users.map((u) => [u.id, u.name]));
   const itemCounts: Record<string, number> = {};
   for (const it of items) itemCounts[it.packingListId] = (itemCounts[it.packingListId] ?? 0) + 1;
+  const pendingRows = await db
+    .select({ packingListId: packingListAmendment.packingListId })
+    .from(packingListAmendment)
+    .where(and(inArray(packingListAmendment.packingListId, listIds), eq(packingListAmendment.status, "pending")));
+  const pendingRevisions = await db
+    .select({ packingListId: packingListRevision.packingListId })
+    .from(packingListRevision)
+    .where(and(inArray(packingListRevision.packingListId, listIds), eq(packingListRevision.status, "pending")));
+  const pendingCounts: Record<string, number> = {};
+  for (const r of [...pendingRows, ...pendingRevisions]) pendingCounts[r.packingListId] = (pendingCounts[r.packingListId] ?? 0) + 1;
 
   return lists.map((l) => {
     const snap = l.supplierSnapshot as { name?: string } | null;
@@ -967,6 +1034,7 @@ export async function getAllPackingLists(): Promise<PackingListListRow[]> {
       createdByName: userMap[l.createdBy] ?? null,
       supplierName: snap?.name ?? null,
       itemCount: itemCounts[l.id] ?? 0,
+      pendingChanges: pendingCounts[l.id] ?? 0,
     };
   });
 }
@@ -996,6 +1064,7 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
   const photosByItem = await getPhotosForItems(items.map((i) => i.id));
   const replacementsByItem = await getReplacementsForLines(items.map((i) => i.id));
   const poLineByItem = await getPoLineContext(id, items.map((i) => i.purchaseOrderItemId));
+  const amendmentsByItem = await getAmendmentsForLines(id);
 
   const enrichedItems: PackingListItemEnriched[] = await Promise.all(
     items.map(async (i) => {
@@ -1014,6 +1083,7 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
         photos: photosByItem.get(i.id) ?? [],
         poLineNo: poLineByItem.get(i.purchaseOrderItemId)?.rowNo ?? null,
         history: poLineByItem.get(i.purchaseOrderItemId)?.history ?? null,
+        amendments: amendmentsByItem.get(i.id) ?? [],
         replacements: replacementsByItem.get(i.id) ?? [],
       };
     }),
@@ -1022,6 +1092,7 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
   return {
     ...pl,
     items: enrichedItems,
+    revisions: await getRevisionsForPackingList(pl.id),
     createdByName: userRows[0]?.name ?? null,
     goodsReceipts: grs.map((g) => ({ ...g, poNo: poNoMap[g.purchaseOrderId] ?? null })),
     purchaseOrders: poRows,
@@ -1045,7 +1116,7 @@ export async function getPackingListLabels(id: string): Promise<{ packingListNo:
     .from(packingList)
     .where(and(eq(packingList.id, id), eq(packingList.organizationId, orgId)));
   if (!pl) return null;
-  const items = await db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo));
+  const items = await db.select().from(packingListItem).where(and(eq(packingListItem.packingListId, id), isNull(packingListItem.removedAt))).orderBy(asc(packingListItem.rowNo));
   const productIds = [...new Set(items.map((i) => i.productId).filter((v): v is string => !!v))];
   const codes = [...new Set(items.flatMap((i) => [i.productCode, i.privateLabelCode]).filter((v): v is string => !!v))];
   // Match by id first; lines without a productId fall back to the product code
@@ -1136,11 +1207,21 @@ export async function getPackingListsCentralized(): Promise<CentralizedPackingLi
   const listIds = rows.map((r) => r.pl.id);
   const [users, items] = await Promise.all([
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [...new Set(rows.map((r) => r.pl.createdBy))])),
-    db.select({ packingListId: packingListItem.packingListId }).from(packingListItem).where(inArray(packingListItem.packingListId, listIds)),
+    db.select({ packingListId: packingListItem.packingListId }).from(packingListItem).where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt))),
   ]);
   const userMap = Object.fromEntries(users.map((u) => [u.id, u.name]));
   const itemCounts: Record<string, number> = {};
   for (const it of items) itemCounts[it.packingListId] = (itemCounts[it.packingListId] ?? 0) + 1;
+  const pendingRows = await db
+    .select({ packingListId: packingListAmendment.packingListId })
+    .from(packingListAmendment)
+    .where(and(inArray(packingListAmendment.packingListId, listIds), eq(packingListAmendment.status, "pending")));
+  const pendingRevisions = await db
+    .select({ packingListId: packingListRevision.packingListId })
+    .from(packingListRevision)
+    .where(and(inArray(packingListRevision.packingListId, listIds), eq(packingListRevision.status, "pending")));
+  const pendingCounts: Record<string, number> = {};
+  for (const r of [...pendingRows, ...pendingRevisions]) pendingCounts[r.packingListId] = (pendingCounts[r.packingListId] ?? 0) + 1;
 
   // Resolve inspect rights once per distinct org among the results (not once
   // per row) to avoid N+1 permission fetches.
@@ -1159,6 +1240,7 @@ export async function getPackingListsCentralized(): Promise<CentralizedPackingLi
       createdByName: userMap[pl.createdBy] ?? null,
       supplierName: snap?.name ?? null,
       itemCount: itemCounts[pl.id] ?? 0,
+      pendingChanges: pendingCounts[pl.id] ?? 0,
       organizationName,
       isOwnOrg: pl.organizationId === orgId,
       canInspect: hasCentralizedInspect || hasAccess(orgPermsMap.get(pl.organizationId) ?? [], "packing-list:inspect"),
@@ -1201,6 +1283,7 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
   const photosByItem = await getPhotosForItems(items.map((i) => i.id));
   const replacementsByItem = await getReplacementsForLines(items.map((i) => i.id));
   const poLineByItem = await getPoLineContext(id, items.map((i) => i.purchaseOrderItemId));
+  const amendmentsByItem = await getAmendmentsForLines(id);
 
   const enrichedItems: PackingListItemEnriched[] = await Promise.all(
     items.map(async (i) => {
@@ -1219,6 +1302,7 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
         photos: photosByItem.get(i.id) ?? [],
         poLineNo: poLineByItem.get(i.purchaseOrderItemId)?.rowNo ?? null,
         history: poLineByItem.get(i.purchaseOrderItemId)?.history ?? null,
+        amendments: amendmentsByItem.get(i.id) ?? [],
         replacements: replacementsByItem.get(i.id) ?? [],
       };
     }),
@@ -1231,6 +1315,7 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
   return {
     ...pl,
     items: enrichedItems,
+    revisions: await getRevisionsForPackingList(pl.id),
     createdByName: userRows[0]?.name ?? null,
     goodsReceipts: grs.map((g) => ({ ...g, poNo: poNoMap[g.purchaseOrderId] ?? null })),
     purchaseOrders: poRows,
@@ -1271,7 +1356,7 @@ export async function createPackingList(input: CreatePackingListInput): Promise<
     db.select({ purchaseOrderItemId: packingListItem.purchaseOrderItemId, qtyExpected: packingListItem.qtyExpected })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
-      .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"))),
+      .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), eq(packingList.status, "pending"), isNull(packingListItem.removedAt))),
   ]);
   const receivedByItem: Record<string, number> = {};
   for (const gi of grItems) {
@@ -1417,6 +1502,36 @@ async function assertCanInspectPackingList(plOrgId: string, callerOrgId: string,
   }
 }
 
+// Same shape again, for asking to change a completed packing list. Own-org
+// needs packing-list:amend; a sibling org's packing list needs the dedicated
+// packing-list:amend:centralized grant, or packing-list:amend evaluated in
+// that packing list's own org.
+async function assertCanAmendPackingList(plOrgId: string, callerOrgId: string, userId: string): Promise<void> {
+  if (plOrgId === callerOrgId) {
+    const perms = await getUserPermissions(userId, callerOrgId);
+    if (!hasAccess(perms, "packing-list:amend")) throw new Error("You don't have permission to do this");
+    return;
+  }
+  const ownerOrgIds = await getOwnerOrgIds(callerOrgId);
+  if (!ownerOrgIds.includes(plOrgId)) throw new Error("You don't have permission to do this");
+  const callerPerms = await getUserPermissions(userId, callerOrgId);
+  const targetPerms = await getUserPermissions(userId, plOrgId);
+  if (!hasAccess(callerPerms, "packing-list:amend:centralized") && !hasAccess(targetPerms, "packing-list:amend")) {
+    throw new Error("You don't have permission to do this");
+  }
+}
+
+// For the detail pages: may the viewer ask for changes on this packing list?
+export async function canAmendPackingList(plOrganizationId: string): Promise<boolean> {
+  const { orgId, userId } = await getSession();
+  try {
+    await assertCanAmendPackingList(plOrganizationId, orgId, userId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Same shape as assertCanInspectPackingList above, but for the approval
 // stage. Own-org just needs packing-list:approve (the Org-Approvals-managed
 // key, with its self-action-allowed setting); cross-org needs either the
@@ -1463,6 +1578,40 @@ function inspectionMediaUrl(key: string): Promise<string> {
 // Shared by every read path that shows inspection photos (own-org detail,
 // centralized detail, the inspect page's poll) — one batched query + one
 // batch of presigned URLs per call, not N+1 per item.
+// packing_list_item id → its post-completion amendment requests, oldest first
+async function getAmendmentsForLines(packingListId: string): Promise<Map<string, LineAmendment[]>> {
+  const rows = await db
+    .select()
+    .from(packingListAmendment)
+    .where(eq(packingListAmendment.packingListId, packingListId))
+    .orderBy(asc(packingListAmendment.requestedAt));
+  const names = await getUserNameMap(rows.flatMap((r) => [r.requestedBy, r.decidedBy]));
+  const out = new Map<string, LineAmendment[]>();
+  const n = (v: string) => parseFloat(v) || 0;
+  for (const a of rows) {
+    const arr = out.get(a.packingListItemId) ?? [];
+    arr.push({
+      id: a.id,
+      kind: a.kind as LineAmendment["kind"],
+      status: a.status as LineAmendment["status"],
+      grNo: a.grNo,
+      oldQtyReceived: n(a.oldQtyReceived), newQtyReceived: n(a.newQtyReceived),
+      oldQtyReturn: n(a.oldQtyReturn), newQtyReturn: n(a.newQtyReturn),
+      oldQtyRepair: n(a.oldQtyRepair), newQtyRepair: n(a.newQtyRepair),
+      stockDelta: n(a.stockDelta),
+      reason: a.reason,
+      requestedById: a.requestedBy,
+      requestedByName: names.get(a.requestedBy) ?? null,
+      requestedAt: a.requestedAt,
+      decidedByName: a.decidedBy ? (names.get(a.decidedBy) ?? null) : null,
+      decidedAt: a.decidedAt,
+      decisionNotes: a.decisionNotes,
+    });
+    out.set(a.packingListItemId, arr);
+  }
+  return out;
+}
+
 // purchase_order_item id → its line no. and qty on the PO, plus every receipt
 // of that PO line made OUTSIDE this packing list (earlier/later packing lists
 // and direct GRs; recalled GRs left out) — so a line can say "already
@@ -1694,6 +1843,7 @@ export async function saveInspectionLineDraft(packingListItemId: string, input: 
     .where(eq(packingListItem.id, packingListItemId));
   if (!row) throw new Error("Item not found");
   if (row.pl.status !== "pending") throw new Error("This packing list has already been inspected or cancelled");
+  if (row.item.removedAt) throw new Error("This line was removed from the packing list");
 
   await assertCanInspectPackingList(row.pl.organizationId, orgId, userId);
 
@@ -1747,6 +1897,7 @@ export async function approveInspectionLine(
     .where(eq(packingListItem.id, packingListItemId));
   if (!row) throw new Error("Item not found");
   if (row.pl.status !== "pending") throw new Error("This packing list has already been inspected or cancelled");
+  if (row.item.removedAt) throw new Error("This line was removed from the packing list");
 
   await assertCanApprovePackingList(row.pl.organizationId, orgId, userId);
   // Self-action-allowed is a setting of the org the packing list actually
@@ -1880,7 +2031,16 @@ async function applyPackingListInspection(
   const id = pl.id;
   if (pl.status !== "pending") throw new Error("This packing list has already been inspected or cancelled");
 
-  const plItems = await db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo));
+  // An add/remove-lines request still waiting would change what's on the
+  // packing list — decide it first, so the receipts match the final list
+  const [openRevision] = await db
+    .select({ id: packingListRevision.id })
+    .from(packingListRevision)
+    .where(and(eq(packingListRevision.packingListId, id), eq(packingListRevision.status, "pending")));
+  if (openRevision) throw new Error("A change to this packing list's lines is waiting for approval — approve or reject it before completing the inspection");
+
+  // Lines removed by an approved amendment are never booked again
+  const plItems = await db.select().from(packingListItem).where(and(eq(packingListItem.packingListId, id), isNull(packingListItem.removedAt))).orderBy(asc(packingListItem.rowNo));
   if (plItems.length === 0) throw new Error("This packing list has no items");
 
   // Every line needs a sign-off from packing-list:approve before the numbers
@@ -2164,4 +2324,579 @@ export async function getPackingListsForSupplier(supplierId: string, targetOrgId
     .from(packingList)
     .where(and(eq(packingList.organizationId, scopedOrgId), eq(packingList.supplierId, supplierId)))
     .orderBy(desc(packingList.createdAt));
+}
+
+
+// ── Amend / remove a line after inspection (maker-checker) ──────────────────
+//
+// A completed inspection is corrected one line at a time, in two steps:
+//   1. requestPackingListAmendment — someone with packing-list:amend asks for
+//      new received / return / repair figures ("amend") or for the line to
+//      come off the packing list ("remove"), with a reason. Nothing changes yet.
+//   2. decidePackingListAmendment — an approver (packing-list:approve, same
+//      people who sign off inspection lines, same self-approval setting)
+//      approves or rejects it. Only an approval touches stock, the goods
+//      receipt line and the packing list line.
+// Every request, approved or not, stays in packing_list_amendment.
+//
+// Refused, rather than guessed at, when the change would contradict
+// something that already happened downstream: stock already used, a return
+// already sent back / settled, a replacement already linked to the units this
+// line returned, or a repair already closed. Expected qty and adding lines
+// aren't amendments — those still need a recall or a new packing list.
+
+export interface RequestPackingListAmendmentInput {
+  kind: "amend" | "remove";
+  // ignored for "remove" (everything goes to 0)
+  qtyReceived?: number;
+  qtyReturn?: number;
+  qtyRepair?: number;
+  returnNotes?: string;
+  repairNotes?: string;
+  reason: string;
+}
+
+const amendNum = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
+const amendSame = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+
+// The line, its packing list and the live goods-receipt line it was booked on
+// Open pages refresh off change counters bumped by DB triggers on the
+// packing_list header — line-level tables don't have one — so every change
+// request / decision touches the header.
+async function touchPackingList(packingListId: string) {
+  await db.update(packingList).set({ updatedAt: new Date() }).where(eq(packingList.id, packingListId));
+}
+
+// Not scoped to the caller's org — a sibling org's packing list can be
+// changed from the centralized pages — so every caller checks permission
+// against pl.organizationId (assertCanAmendPackingList / assertCanApprovePackingList).
+async function loadBookedLine(packingListItemId: string) {
+  const [row] = await db
+    .select({ pli: packingListItem, pl: packingList })
+    .from(packingListItem)
+    .innerJoin(packingList, eq(packingList.id, packingListItem.packingListId))
+    .where(eq(packingListItem.id, packingListItemId));
+  if (!row) throw new Error("Packing list line not found");
+  const { pli, pl } = row;
+  if (pl.status !== "completed") throw new Error("Only a completed inspection can be amended — this packing list is still open, edit it on the inspect page");
+  if (pli.removedAt) throw new Error("This line was already removed from the packing list");
+  const [booked] = await db
+    .select({ gri: goodsReceiptItem, gr: goodsReceipt })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceipt.id, goodsReceiptItem.goodsReceiptId))
+    .where(and(eq(goodsReceiptItem.packingListItemId, pli.id), ne(goodsReceipt.status, "recalled")));
+  if (!booked) throw new Error("This line has no goods receipt to amend");
+  const { gri, gr } = booked;
+  const received = amendNum(gri.qtyReceived);
+  const ret = amendNum(gri.qtyReturn);
+  const repair = amendNum(gri.qtyRepair);
+  const good = gri.qtyGood !== null ? amendNum(gri.qtyGood) : received;
+  return { pli, pl, gri, gr, cur: { received, ret, repair, good } };
+}
+type BookedLine = Awaited<ReturnType<typeof loadBookedLine>>;
+
+// Downstream facts the change would contradict — checked when the request is
+// made AND again on approval (they may have changed in between)
+async function assertAmendmentAllowed(line: BookedLine, next: { ret: number; repair: number }) {
+  const { gri, cur } = line;
+  if (!amendSame(next.ret, cur.ret)) {
+    if (gri.returnShippedAt) throw new Error("The returned units were already marked as sent back to the supplier — undo that first");
+    if (gri.returnStatus === "resolved") throw new Error("The return on this line was already settled — it can't be changed any more");
+    const linked = await db
+      .select({ plNo: packingList.packingListNo })
+      .from(returnReplacementAttempt)
+      .innerJoin(packingListItem, eq(packingListItem.id, returnReplacementAttempt.packingListItemId))
+      .innerJoin(packingList, eq(packingList.id, packingListItem.packingListId))
+      .where(eq(returnReplacementAttempt.goodsReceiptItemId, gri.id));
+    if (linked.length > 0) {
+      throw new Error(`A replacement for this line's returned units is already linked on ${[...new Set(linked.map((l) => l.plNo))].join(", ")} — unlink it first`);
+    }
+  }
+  if (!amendSame(next.repair, cur.repair) && gri.repairStatus === "resolved") {
+    throw new Error("The repair on this line was already closed — it can't be changed any more");
+  }
+}
+
+export async function requestPackingListAmendment(
+  packingListItemId: string,
+  input: RequestPackingListAmendmentInput,
+): Promise<{ id: string }> {
+  const { orgId, userId } = await getSession();
+  const reason = input.reason?.trim() ?? "";
+  if (!reason) throw new Error("Say why this line is being changed");
+  const kind = input.kind === "remove" ? "remove" : "amend";
+
+  const line = await loadBookedLine(packingListItemId);
+  const { pli, pl, gri, gr, cur } = line;
+  await assertCanAmendPackingList(pl.organizationId, orgId, userId);
+
+  const [open] = await db
+    .select({ id: packingListAmendment.id })
+    .from(packingListAmendment)
+    .where(and(eq(packingListAmendment.packingListItemId, pli.id), eq(packingListAmendment.status, "pending")));
+  if (open) throw new Error("This line already has a change waiting for approval — cancel it or wait for the decision");
+
+  let received = 0, ret = 0, repair = 0;
+  let returnNotes: string | null = null, repairNotes: string | null = null;
+  if (kind === "amend") {
+    received = Number(input.qtyReceived);
+    ret = Number(input.qtyReturn);
+    repair = Number(input.qtyRepair);
+    if (![received, ret, repair].every((v) => Number.isFinite(v) && v >= 0)) throw new Error("Quantities must be 0 or more");
+    if (ret + repair > received + 1e-9) throw new Error("Return + repair can't be more than received");
+    returnNotes = ret > 0 ? (input.returnNotes?.trim() || null) : null;
+    repairNotes = repair > 0 ? (input.repairNotes?.trim() || null) : null;
+    const notesChanged = (ret > 0 && returnNotes !== (gri.returnNotes ?? null)) || (repair > 0 && repairNotes !== (gri.repairNotes ?? null));
+    if (amendSame(received, cur.received) && amendSame(ret, cur.ret) && amendSame(repair, cur.repair) && !notesChanged) {
+      throw new Error("Nothing changed");
+    }
+  }
+  await assertAmendmentAllowed(line, { ret, repair });
+
+  const id = nanoid();
+  await db.insert(packingListAmendment).values({
+    id,
+    organizationId: pl.organizationId, // the packing list's own org, not the requester's
+    packingListId: pl.id,
+    packingListItemId: pli.id,
+    goodsReceiptItemId: gri.id,
+    grNo: gr.grNo,
+    kind,
+    status: "pending",
+    oldQtyReceived: String(cur.received),
+    oldQtyReturn: String(cur.ret),
+    oldQtyRepair: String(cur.repair),
+    newQtyReceived: String(received),
+    newQtyReturn: String(ret),
+    newQtyRepair: String(repair),
+    newReturnNotes: returnNotes,
+    newRepairNotes: repairNotes,
+    stockDelta: String(Math.max(0, received - ret) - cur.good),
+    reason,
+    requestedBy: userId,
+  });
+
+  await touchPackingList(pl.id);
+  revalidatePath(`/dashboard/procurement/packing-list/${pl.id}`);
+  revalidatePath(`/dashboard/procurement/packing-list/centralized/${pl.id}`);
+  return { id };
+}
+
+// The requester withdraws their own still-pending request
+export async function cancelPackingListAmendment(amendmentId: string): Promise<void> {
+  const { userId } = await getSession();
+  const [a] = await db
+    .select()
+    .from(packingListAmendment)
+    .where(eq(packingListAmendment.id, amendmentId));
+  if (!a) throw new Error("Request not found");
+  if (a.status !== "pending") throw new Error("This request was already decided");
+  if (a.requestedBy !== userId) throw new Error("Only the person who asked for this change can cancel it");
+  await db
+    .update(packingListAmendment)
+    .set({ status: "cancelled", decidedBy: userId, decidedAt: new Date() })
+    .where(and(eq(packingListAmendment.id, amendmentId), eq(packingListAmendment.status, "pending")));
+  await touchPackingList(a.packingListId);
+  revalidatePath(`/dashboard/procurement/packing-list/${a.packingListId}`);
+  revalidatePath(`/dashboard/procurement/packing-list/centralized/${a.packingListId}`);
+}
+
+export async function decidePackingListAmendment(
+  amendmentId: string,
+  decision: "approved" | "rejected",
+  notes?: string,
+): Promise<{ stockDelta: number }> {
+  const { orgId, userId } = await getSession();
+  const [a] = await db
+    .select()
+    .from(packingListAmendment)
+    .where(eq(packingListAmendment.id, amendmentId));
+  if (!a) throw new Error("Request not found");
+  if (a.status !== "pending") throw new Error("This request was already decided");
+
+  // Own org: packing-list:approve. A sibling org's packing list:
+  // packing-list:approve:centralized, or packing-list:approve in that org —
+  // with the matching self-approval setting, same as inspection approval.
+  await assertCanApprovePackingList(a.organizationId, orgId, userId);
+  const selfActionKey = orgId === a.organizationId ? "packing-list:approve" : "packing-list:approve:centralized";
+  await assertSelfActionAllowed(a.organizationId, selfActionKey, a.requestedBy, userId, decision === "approved" ? "approve" : "reject");
+
+  const decided = { decidedBy: userId, decidedAt: new Date(), decisionNotes: notes?.trim() || null };
+  if (decision === "rejected") {
+    await db.update(packingListAmendment).set({ status: "rejected", ...decided })
+      .where(and(eq(packingListAmendment.id, a.id), eq(packingListAmendment.status, "pending")));
+    await touchPackingList(a.packingListId);
+    revalidatePath(`/dashboard/procurement/packing-list/${a.packingListId}`);
+    revalidatePath(`/dashboard/procurement/packing-list/centralized/${a.packingListId}`);
+    return { stockDelta: 0 };
+  }
+
+  // ── approve: re-check everything against the line as it is NOW ──────────
+  const line = await loadBookedLine(a.packingListItemId);
+  const { pli, pl, gri, gr, cur } = line;
+  if (gri.id !== a.goodsReceiptItemId
+    || !amendSame(cur.received, amendNum(a.oldQtyReceived))
+    || !amendSame(cur.ret, amendNum(a.oldQtyReturn))
+    || !amendSame(cur.repair, amendNum(a.oldQtyRepair))) {
+    throw new Error("This line changed after the request was made — reject this request and ask for a new one");
+  }
+  const remove = a.kind === "remove";
+  const received = amendNum(a.newQtyReceived);
+  const ret = amendNum(a.newQtyReturn);
+  const repair = amendNum(a.newQtyRepair);
+  await assertAmendmentAllowed(line, { ret, repair });
+
+  // ── stock: move only the change in accepted units ───────────────────────
+  // First, because it's the step that can fail (stock already used or
+  // delivered) — and then nothing else has been written yet.
+  const newGood = Math.max(0, received - ret);
+  const stockDelta = newGood - cur.good;
+  let warehouseLabel = "Default";
+  if (gri.productId && !amendSame(stockDelta, 0)) {
+    const [po] = await db.select().from(purchaseOrder).where(eq(purchaseOrder.id, gr.purchaseOrderId));
+    if (po?.purchaseRequisitionId) {
+      const [pr] = await db.select({ prType: purchaseRequisition.prType }).from(purchaseRequisition).where(eq(purchaseRequisition.id, po.purchaseRequisitionId));
+      if (pr?.prType === "sample_demo") warehouseLabel = "Demo";
+    }
+    const poRef = po?.poNo ?? po?.prNo ?? gr.purchaseOrderId;
+    try {
+      await createApprovedMovement({
+        orgId: a.organizationId,
+        userId,
+        productId: gri.productId,
+        warehouseLabel,
+        movementType: stockDelta > 0 ? MOVEMENT_TYPE.STOCK_IN : MOVEMENT_TYPE.STOCK_OUT,
+        quantity: Math.abs(stockDelta),
+        ...(stockDelta > 0 && gri.unitPrice ? { unitCost: gri.unitPrice } : {}),
+        referenceType: REF_TYPE.PURCHASE_ORDER,
+        referenceId: gr.id,
+        referenceNo: gr.grNo,
+        notes: `${remove ? "Line removed from" : "Amend"} ${gr.grNo} · ${pl.packingListNo} · PO ${poRef}: ${gri.productCode ?? ""} accepted ${cur.good} → ${newGood} (${a.reason})`,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.startsWith("Insufficient stock")) {
+        throw new Error(`Can't approve — ${Math.abs(stockDelta)} ${gri.uom ?? "unit(s)"} of ${gri.productCode ?? "this item"} would have to come back out of stock, but some of it has already been used or delivered. Nothing was changed.`);
+      }
+      throw e;
+    }
+  }
+
+  if (remove) {
+    // If this line was a replacement shipment, its attempts go away and the
+    // return it was making good reopens
+    await revertAttemptsForLine(pli.id, pl.id);
+    await db.delete(returnReplacementAttempt).where(eq(returnReplacementAttempt.packingListItemId, pli.id));
+    await db.delete(goodsReceiptItem).where(eq(goodsReceiptItem.id, gri.id));
+    const [left] = await db.select({ id: goodsReceiptItem.id }).from(goodsReceiptItem).where(eq(goodsReceiptItem.goodsReceiptId, gr.id)).limit(1);
+    if (!left) await db.update(goodsReceipt).set({ status: "recalled" }).where(eq(goodsReceipt.id, gr.id));
+    await db
+      .update(packingListItem)
+      .set({ removedAt: decided.decidedAt, removedBy: a.requestedBy, removedReason: a.reason })
+      .where(eq(packingListItem.id, pli.id));
+  } else {
+    await db
+      .update(goodsReceiptItem)
+      .set({
+        qtyReceived: String(received),
+        qtyGood: String(newGood),
+        qtyReturn: ret > 0 ? String(ret) : null,
+        returnStatus: ret > 0 ? (gri.returnStatus ?? "pending") : null,
+        returnNotes: ret > 0 ? a.newReturnNotes : null,
+        qtyRepair: repair > 0 ? String(repair) : null,
+        repairStatus: repair > 0 ? (gri.repairStatus ?? "pending") : null,
+        repairNotes: repair > 0 ? a.newRepairNotes : null,
+      })
+      .where(eq(goodsReceiptItem.id, gri.id));
+    await db
+      .update(packingListItem)
+      .set({
+        draftQtyReceived: String(received),
+        draftQtyReturn: String(ret),
+        draftQtyRepair: String(repair),
+        draftReturnNotes: ret > 0 ? a.newReturnNotes : null,
+        draftRepairNotes: repair > 0 ? a.newRepairNotes : null,
+      })
+      .where(eq(packingListItem.id, pli.id));
+    // A replacement shipment line: re-score it against the corrected good qty
+    if (await revertAttemptsForLine(pli.id, pl.id)) await settleAttemptsForPackingList(pl.id, userId);
+  }
+
+  await db.update(packingListAmendment).set({ status: "approved", stockDelta: String(stockDelta), ...decided })
+    .where(eq(packingListAmendment.id, a.id));
+  await syncPoFulfillmentStatus(gr.purchaseOrderId, a.organizationId);
+  // Same as a receipt: more stock in may now cover SOs that were short of it
+  if (gri.productId && stockDelta > 1e-9 && warehouseLabel === "Default") {
+    await retryInsufficientSalesOrders(a.organizationId, userId, [gri.productId]);
+  }
+  // The goods receipt itself changed — bump its header so open pages refresh
+  await db.update(goodsReceipt).set({ updatedAt: new Date() }).where(eq(goodsReceipt.id, gr.id));
+  await touchPackingList(pl.id);
+
+  revalidatePath(`/dashboard/procurement/packing-list/${pl.id}`);
+  revalidatePath(`/dashboard/procurement/packing-list/centralized/${pl.id}`);
+  revalidatePath("/dashboard/procurement/packing-list");
+  revalidatePath("/dashboard/procurement/packing-list/centralized");
+  revalidatePath(`/dashboard/procurement/goods-receipt/${gr.id}`);
+  revalidatePath(`/dashboard/procurement/goods-receipt/centralized/${gr.id}`);
+  revalidatePath(`/dashboard/procurement/purchase-order/${gr.purchaseOrderId}`);
+  revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard/inventory/movements");
+  return { stockDelta };
+}
+
+// ── Add / remove lines while the inspection is still open (maker-checker) ───
+//
+// requestPackingListRevision — someone with packing-list:amend (or its
+// :centralized grant for a sibling org's packing list) asks to take lines off
+// and/or add PO lines — any number, so a whole PO can come on in one go —
+// with a reason. decidePackingListRevision — an approver (packing-list:approve,
+// same self-approval setting as inspection) approves or rejects it. Only an
+// approval changes the packing list. While a request is waiting the
+// inspection can't be completed, so the two never cross.
+//
+// Added lines follow the same rules as the create page: same supplier,
+// confirmed PO, no more than what's still left to pack — re-checked on
+// approval, since other packing lists may have taken some in between.
+// Removed lines are kept (photos, any inspection already typed in) but marked
+// removedAt, which everything else ignores.
+
+export interface RequestPackingListRevisionInput {
+  add: { purchaseOrderItemId: string; qty: number }[];
+  remove: string[]; // packing_list_item ids on this packing list
+  reason: string;
+}
+
+async function getRevisionsForPackingList(packingListId: string): Promise<PackingListRevisionView[]> {
+  const rows = await db
+    .select()
+    .from(packingListRevision)
+    .where(eq(packingListRevision.packingListId, packingListId))
+    .orderBy(desc(packingListRevision.requestedAt));
+  const names = await getUserNameMap(rows.flatMap((r) => [r.requestedBy, r.decidedBy]));
+  return rows.map((r) => ({
+    id: r.id,
+    status: r.status as PackingListRevisionView["status"],
+    add: r.summary.add,
+    remove: r.summary.remove,
+    removeItemIds: r.removeItemIds,
+    reason: r.reason,
+    requestedById: r.requestedBy,
+    requestedByName: names.get(r.requestedBy) ?? null,
+    requestedAt: r.requestedAt,
+    decidedByName: r.decidedBy ? (names.get(r.decidedBy) ?? null) : null,
+    decidedAt: r.decidedAt,
+    decisionNotes: r.decisionNotes,
+  }));
+}
+
+async function loadOpenPackingList(packingListId: string) {
+  const [pl] = await db.select().from(packingList).where(eq(packingList.id, packingListId));
+  if (!pl) throw new Error("Packing list not found");
+  if (pl.status !== "pending") throw new Error("Lines can only be added or removed while the inspection is still open — for a completed packing list, request a change on the line instead");
+  return pl;
+}
+
+// PO lines of this packing list's supplier (in the packing list's own org)
+// that can still be added: something left to pack, and not already on it
+export async function getAddableLinesForPackingList(packingListId: string): Promise<PackableItem[]> {
+  const { orgId, userId } = await getSession();
+  const pl = await loadOpenPackingList(packingListId);
+  await assertCanAmendPackingList(pl.organizationId, orgId, userId);
+  const onList = await db
+    .select({ id: packingListItem.purchaseOrderItemId })
+    .from(packingListItem)
+    .where(and(eq(packingListItem.packingListId, pl.id), isNull(packingListItem.removedAt)));
+  const taken = new Set(onList.map((r) => r.id));
+  const packable = await computePackableItems(pl.organizationId, pl.supplierId);
+  return packable.filter((i) => i.qtyRemaining > 0 && !taken.has(i.purchaseOrderItemId));
+}
+
+// Checks a requested change against the packing list as it is now. Used when
+// the request is made and again on approval. Returns what to apply plus the
+// summary the approver reads.
+async function validateRevision(pl: PackingListRow, input: { add: { purchaseOrderItemId: string; qty: number }[]; remove: string[] }) {
+  const removeIds = [...new Set(input.remove)];
+  const lines = await db
+    .select()
+    .from(packingListItem)
+    .where(and(eq(packingListItem.packingListId, pl.id), isNull(packingListItem.removedAt)));
+  const lineById = new Map(lines.map((l) => [l.id, l]));
+  for (const id of removeIds) if (!lineById.has(id)) throw new Error("One of the lines to remove is no longer on this packing list");
+  if (removeIds.length > 0 && removeIds.length >= lines.length && input.add.length === 0) {
+    throw new Error("That would leave the packing list empty — cancel the packing list instead");
+  }
+
+  const seen = new Set<string>();
+  for (const a of input.add) {
+    if (seen.has(a.purchaseOrderItemId)) throw new Error("The same PO line was added twice");
+    seen.add(a.purchaseOrderItemId);
+  }
+  const staying = new Set(lines.filter((l) => !removeIds.includes(l.id)).map((l) => l.purchaseOrderItemId));
+  const packable = input.add.length > 0 ? await computePackableItems(pl.organizationId, pl.supplierId) : [];
+  const packableById = new Map(packable.map((p) => [p.purchaseOrderItemId, p]));
+  const adds = input.add.map((a) => {
+    const p = packableById.get(a.purchaseOrderItemId);
+    if (!p || p.qtyRemaining <= 0) throw new Error("One of the PO lines to add has nothing left to pack any more");
+    if (staying.has(a.purchaseOrderItemId)) throw new Error(`${p.productCode ?? "A PO line"} is already on this packing list`);
+    const qty = Number(a.qty);
+    if (!(Number.isFinite(qty) && qty > 0)) throw new Error(`Quantity for ${p.productCode ?? "an item"} must be greater than 0`);
+    if (qty > p.qtyRemaining + 1e-9) throw new Error(`Quantity for ${p.productCode ?? "an item"} exceeds what's left to pack (${p.qtyRemaining})`);
+    return { item: p, qty };
+  });
+
+  const poNoById = new Map<string, string | null>();
+  const poIds = [...new Set(removeIds.map((id) => lineById.get(id)!.purchaseOrderId))];
+  const poLineIds = removeIds.map((id) => lineById.get(id)!.purchaseOrderItemId);
+  const [pos, poLines] = await Promise.all([
+    poIds.length ? db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo }).from(purchaseOrder).where(inArray(purchaseOrder.id, poIds)) : [],
+    poLineIds.length ? db.select({ id: purchaseOrderItem.id, rowNo: purchaseOrderItem.rowNo }).from(purchaseOrderItem).where(inArray(purchaseOrderItem.id, poLineIds)) : [],
+  ]);
+  for (const p of pos) poNoById.set(p.id, p.poNo ?? p.prNo);
+  const rowNoById = new Map(poLines.map((r) => [r.id, r.rowNo]));
+  const addRowNos = adds.length
+    ? new Map((await db.select({ id: purchaseOrderItem.id, rowNo: purchaseOrderItem.rowNo }).from(purchaseOrderItem).where(inArray(purchaseOrderItem.id, adds.map((a) => a.item.purchaseOrderItemId)))).map((r) => [r.id, r.rowNo]))
+    : new Map<string, number>();
+
+  const summary = {
+    add: adds.map(({ item, qty }) => ({ poNo: item.poNo ?? item.prNo, lineNo: addRowNos.get(item.purchaseOrderItemId) ?? null, code: item.productCode, description: item.description, qty, uom: item.uom })),
+    remove: removeIds.map((id) => {
+      const l = lineById.get(id)!;
+      return { poNo: poNoById.get(l.purchaseOrderId) ?? null, lineNo: rowNoById.get(l.purchaseOrderItemId) ?? null, code: l.productCode, description: l.description, qty: parseFloat(l.qtyExpected) || 0, uom: l.uom };
+    }),
+  };
+  return { removeIds, adds, lines, summary };
+}
+
+export async function requestPackingListRevision(packingListId: string, input: RequestPackingListRevisionInput): Promise<{ id: string }> {
+  const { orgId, userId } = await getSession();
+  const reason = input.reason?.trim() ?? "";
+  if (!reason) throw new Error("Say why the packing list is being changed");
+  if ((input.add?.length ?? 0) === 0 && (input.remove?.length ?? 0) === 0) throw new Error("Pick at least one line to add or remove");
+
+  const pl = await loadOpenPackingList(packingListId);
+  await assertCanAmendPackingList(pl.organizationId, orgId, userId);
+  const [open] = await db
+    .select({ id: packingListRevision.id })
+    .from(packingListRevision)
+    .where(and(eq(packingListRevision.packingListId, pl.id), eq(packingListRevision.status, "pending")));
+  if (open) throw new Error("This packing list already has a change waiting for approval — cancel it or wait for the decision");
+
+  const v = await validateRevision(pl, { add: input.add ?? [], remove: input.remove ?? [] });
+  const id = nanoid();
+  await db.insert(packingListRevision).values({
+    id,
+    organizationId: pl.organizationId,
+    packingListId: pl.id,
+    status: "pending",
+    addItems: v.adds.map((a) => ({ purchaseOrderItemId: a.item.purchaseOrderItemId, qty: a.qty })),
+    removeItemIds: v.removeIds,
+    summary: v.summary,
+    reason,
+    requestedBy: userId,
+  });
+  await touchPackingList(pl.id);
+  revalidatePath(`/dashboard/procurement/packing-list/${pl.id}`);
+  revalidatePath(`/dashboard/procurement/packing-list/centralized/${pl.id}`);
+  return { id };
+}
+
+export async function cancelPackingListRevision(revisionId: string): Promise<void> {
+  const { userId } = await getSession();
+  const [r] = await db.select().from(packingListRevision).where(eq(packingListRevision.id, revisionId));
+  if (!r) throw new Error("Request not found");
+  if (r.status !== "pending") throw new Error("This request was already decided");
+  if (r.requestedBy !== userId) throw new Error("Only the person who asked for this change can cancel it");
+  await db.update(packingListRevision).set({ status: "cancelled", decidedBy: userId, decidedAt: new Date() })
+    .where(and(eq(packingListRevision.id, revisionId), eq(packingListRevision.status, "pending")));
+  await touchPackingList(r.packingListId);
+  revalidatePath(`/dashboard/procurement/packing-list/${r.packingListId}`);
+  revalidatePath(`/dashboard/procurement/packing-list/centralized/${r.packingListId}`);
+}
+
+export async function decidePackingListRevision(revisionId: string, decision: "approved" | "rejected", notes?: string): Promise<void> {
+  const { orgId, userId } = await getSession();
+  const [r] = await db.select().from(packingListRevision).where(eq(packingListRevision.id, revisionId));
+  if (!r) throw new Error("Request not found");
+  if (r.status !== "pending") throw new Error("This request was already decided");
+
+  await assertCanApprovePackingList(r.organizationId, orgId, userId);
+  const selfActionKey = orgId === r.organizationId ? "packing-list:approve" : "packing-list:approve:centralized";
+  await assertSelfActionAllowed(r.organizationId, selfActionKey, r.requestedBy, userId, decision === "approved" ? "approve" : "reject");
+
+  const decided = { decidedBy: userId, decidedAt: new Date(), decisionNotes: notes?.trim() || null };
+  const revalidate = async () => {
+    await touchPackingList(r.packingListId);
+    revalidatePath(`/dashboard/procurement/packing-list/${r.packingListId}`);
+    revalidatePath(`/dashboard/procurement/packing-list/centralized/${r.packingListId}`);
+    revalidatePath(`/dashboard/procurement/packing-list/${r.packingListId}/inspect`);
+    revalidatePath(`/dashboard/procurement/packing-list/centralized/${r.packingListId}/inspect`);
+    revalidatePath("/dashboard/procurement/packing-list");
+    revalidatePath("/dashboard/procurement/packing-list/centralized");
+  };
+  if (decision === "rejected") {
+    await db.update(packingListRevision).set({ status: "rejected", ...decided })
+      .where(and(eq(packingListRevision.id, r.id), eq(packingListRevision.status, "pending")));
+    await revalidate();
+    return;
+  }
+
+  const pl = await loadOpenPackingList(r.packingListId);
+  const v = await validateRevision(pl, { add: r.addItems, remove: r.removeItemIds });
+
+  if (v.removeIds.length > 0) {
+    // Links that made these lines a replacement shipment go too (not yet
+    // inspected, so nothing was scored against them)
+    await db.delete(returnReplacementAttempt).where(inArray(returnReplacementAttempt.packingListItemId, v.removeIds));
+    await db
+      .update(packingListItem)
+      .set({ removedAt: decided.decidedAt, removedBy: r.requestedBy, removedReason: r.reason })
+      .where(inArray(packingListItem.id, v.removeIds));
+  }
+  if (v.adds.length > 0) {
+    const [{ maxRow }] = await db
+      .select({ maxRow: sql<number | null>`max(${packingListItem.rowNo})` })
+      .from(packingListItem)
+      .where(eq(packingListItem.packingListId, pl.id));
+    const start = (maxRow ?? -1) + 1;
+    await db.insert(packingListItem).values(
+      v.adds.map(({ item, qty }, i) => ({
+        id: nanoid(),
+        packingListId: pl.id,
+        rowNo: start + i,
+        purchaseOrderId: item.purchaseOrderId,
+        purchaseOrderItemId: item.purchaseOrderItemId,
+        productId: item.productId,
+        productCode: item.productCode,
+        description: item.description,
+        qtyExpected: String(qty),
+        uom: item.uom,
+        unitPrice: item.unitPrice ?? "0",
+        currency: item.currency ?? "MYR",
+        sourcingType: item.sourcingType,
+        designBrandName: item.designBrandName,
+        designBrandCode: item.designBrandCode,
+        privateLabelCode: item.privateLabelCode,
+        imageKey: item.imageKey,
+        designBrandSource: item.designBrandSource,
+        privateLabelSource: item.privateLabelSource,
+        oemEditedBy: item.oemEditedBy,
+        descriptionSource: item.descriptionSource,
+        isAdditional: item.isAdditional,
+        editedBy: item.editedBy,
+        setGroupId: item.setGroupId,
+        setGroupLabel: item.setGroupLabel,
+        customerId: item.customerId,
+        customerOrganizationId: item.customerOrganizationId,
+        customerName: item.customerName,
+        customerOrganization: item.customerOrganization,
+        customerPoNo: item.customerPoNo,
+      })),
+    );
+    // A newly added line may be the make-good for an earlier return
+    await autoLinkReplacementsForPackingList(pl.id, pl.organizationId, userId);
+  }
+
+  await db.update(packingListRevision).set({ status: "approved", ...decided }).where(eq(packingListRevision.id, r.id));
+  await revalidate();
 }

@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import {
-  assetUnit, claimApplication, deliveryOrder, leaveApplication, leaveCreditRequest, member, packingList, packingListItem, payrollPeriod,
+  assetUnit, claimApplication, deliveryOrder, leaveApplication, leaveCreditRequest, member, packingList, packingListAmendment, packingListItem, packingListRevision, payrollPeriod,
   pendingDepartmentAssignment, pendingInvitation, product, purchaseOrder, purchaseRequisition, salesOrder, stockLevel, stockLot, stockMovement,
   stockRequest, stockShortfall, travelForm,
 } from "@/db/schema";
@@ -77,12 +77,28 @@ export async function getMyApprovalTasks(): Promise<MyTask[]> {
   const inspected = async (orgIds: string[], key: string) => {
     const [r] = await db.select({ n: sql<number>`count(*)::int`, oldest: sql<string | null>`min(${packingListItem.draftInspectedAt})` })
       .from(packingListItem).innerJoin(packingList, eq(packingList.id, packingListItem.packingListId))
-      .where(and(inArray(packingList.organizationId, orgIds), eq(packingList.status, "pending"), eq(packingListItem.draftApprovalStatus, "pending"),
+      .where(and(inArray(packingList.organizationId, orgIds), eq(packingList.status, "pending"), eq(packingListItem.draftApprovalStatus, "pending"), isNull(packingListItem.removedAt),
         await notMine(key, packingListItem.draftInspectedBy)));
     return { count: r?.n ?? 0, oldest: r?.oldest ? new Date(r.oldest) : null };
   };
   add("packing-list:approve", { key: "packing", title: "Inspected packing-list items to approve", role: "Approver", href: "/dashboard/procurement/packing-list",
     run: () => inspected([orgId], "packing-list:approve") });
+  add("packing-list:approve", { key: "packing-amend", title: "Packing-list changes to approve", role: "Approver", href: "/dashboard/procurement/packing-list",
+    run: async () => tally(packingListAmendment, packingListAmendment.requestedAt, and(eq(packingListAmendment.organizationId, orgId), eq(packingListAmendment.status, "pending"), await notMine("packing-list:approve", packingListAmendment.requestedBy))) });
+  add("packing-list:approve", { key: "packing-revision", title: "Packing-list line additions / removals to approve", role: "Approver", href: "/dashboard/procurement/packing-list",
+    run: async () => tally(packingListRevision, packingListRevision.requestedAt, and(eq(packingListRevision.organizationId, orgId), eq(packingListRevision.status, "pending"), await notMine("packing-list:approve", packingListRevision.requestedBy))) });
+  add("packing-list:approve:centralized", { key: "packing-revision-central", title: "Packing-list line additions / removals to approve — other companies", role: "Approver", href: "/dashboard/procurement/packing-list/centralized",
+    run: async () => {
+      const others = (await getOrgGroupIds(orgId)).filter((id) => id !== orgId);
+      if (others.length === 0) return { count: 0, oldest: null };
+      return tally(packingListRevision, packingListRevision.requestedAt, and(inArray(packingListRevision.organizationId, others), eq(packingListRevision.status, "pending"), await notMine("packing-list:approve:centralized", packingListRevision.requestedBy)));
+    } });
+  add("packing-list:approve:centralized", { key: "packing-amend-central", title: "Packing-list changes to approve — other companies", role: "Approver", href: "/dashboard/procurement/packing-list/centralized",
+    run: async () => {
+      const others = (await getOrgGroupIds(orgId)).filter((id) => id !== orgId);
+      if (others.length === 0) return { count: 0, oldest: null };
+      return tally(packingListAmendment, packingListAmendment.requestedAt, and(inArray(packingListAmendment.organizationId, others), eq(packingListAmendment.status, "pending"), await notMine("packing-list:approve:centralized", packingListAmendment.requestedBy)));
+    } });
   add("packing-list:approve:centralized", { key: "packing-central", title: "Inspected items to approve — other companies", role: "Approver", href: "/dashboard/procurement/packing-list/centralized",
     run: async () => inspected((await getOrgGroupIds(orgId)).filter((id) => id !== orgId), "packing-list:approve:centralized") });
   add("payslip:approve", { key: "payroll-approve", title: "Payroll periods to approve", role: "Approver", href: "/dashboard/human-resources/payroll",

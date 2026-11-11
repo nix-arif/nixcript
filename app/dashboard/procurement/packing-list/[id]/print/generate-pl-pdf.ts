@@ -126,7 +126,7 @@ export async function generatePackingListPdf(
     wrap(text, font, size, w).filter(Boolean).map((t) => ({ text: t, font, size, color }));
 
   const groups: { poId: string; rows: Row[] }[] = [];
-  for (const item of pl.items) {
+  for (const item of pl.items.filter((i) => !i.removedAt)) { // removed lines are off the document
     let g = groups.find((x) => x.poId === item.purchaseOrderId);
     if (!g) { g = { poId: item.purchaseOrderId, rows: [] }; groups.push(g); }
     const iw = col("item").w - PAD * 2;

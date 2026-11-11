@@ -7,7 +7,9 @@ import {
   member,
   organization,
   packingList,
+  packingListAmendment,
   packingListItem,
+  packingListRevision,
   purchaseOrder,
   purchaseOrderItem,
   returnReplacementAttempt,
@@ -16,7 +18,7 @@ import {
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { and, asc, eq, ilike, inArray, or } from "drizzle-orm";
+import { and, asc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
 
 const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
 
@@ -115,7 +117,7 @@ export async function getPoForTracking(purchaseOrderId: string): Promise<TrackPo
       .select({ poItemId: packingListItem.purchaseOrderItemId })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
-      .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), inArray(packingList.status, ["pending", "completed"]))),
+      .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), inArray(packingList.status, ["pending", "completed"]), isNull(packingListItem.removedAt))),
     db.select({ name: organization.name }).from(organization).where(eq(organization.id, po.organizationId)),
   ]);
 
@@ -198,9 +200,13 @@ export async function getItemTrace(purchaseOrderItemId: string): Promise<ItemTra
       plNo: packingList.packingListNo,
       plStatus: packingList.status,
       plCreatedAt: packingList.createdAt,
+      removedAt: packingListItem.removedAt,
+      removedReason: packingListItem.removedReason,
     })
     .from(packingListItem)
     .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
+    // removed lines stay in: they're part of the history (shown as removed),
+    // just not counted in the summary below
     .where(eq(packingListItem.purchaseOrderItemId, item.id))
     .orderBy(asc(packingList.createdAt));
 
@@ -276,7 +282,25 @@ export async function getItemTrace(purchaseOrderItemId: string): Promise<ItemTra
     .where(inArray(goodsReceiptItem.id, otherReturnIds));
   const otherReturnMap = new Map(otherReturns.map((r) => [r.id, r]));
 
-  const userIds = [...new Set([...grs.map((g) => g.inspectedBy), ...grs.map((g) => g.resolvedBy)].filter((v): v is string => !!v))];
+  // Changes after the fact: corrections to completed lines (amendments) and
+  // lines added to an open packing list by an approved change (revisions)
+  const amendments = lineIds.length === 0 ? [] : await db
+    .select()
+    .from(packingListAmendment)
+    .where(inArray(packingListAmendment.packingListItemId, lineIds))
+    .orderBy(asc(packingListAmendment.requestedAt));
+  const plIds = [...new Set(pls.map((p) => p.plId))];
+  const revisions = plIds.length === 0 ? [] : (await db
+    .select()
+    .from(packingListRevision)
+    .where(and(inArray(packingListRevision.packingListId, plIds), eq(packingListRevision.status, "approved"))))
+    .filter((r) => r.addItems.some((a) => a.purchaseOrderItemId === item.id));
+  const amendedGri = new Set(amendments.filter((a) => a.status === "approved" && a.goodsReceiptItemId).map((a) => a.goodsReceiptItemId!));
+
+  const userIds = [...new Set([
+    ...grs.map((g) => g.inspectedBy), ...grs.map((g) => g.resolvedBy),
+    ...amendments.flatMap((a) => [a.requestedBy, a.decidedBy]), ...revisions.flatMap((r) => [r.requestedBy, r.decidedBy]),
+  ].filter((v): v is string => !!v))];
   const userRows = userIds.length === 0 ? [] : await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds));
   const userName = new Map(userRows.map((u) => [u.id, u.name]));
 
@@ -298,6 +322,14 @@ export async function getItemTrace(purchaseOrderItemId: string): Promise<ItemTra
       detail: p.plStatus === "cancelled" ? "Packing list was cancelled" : p.plStatus === "pending" ? "Not inspected yet" : undefined,
       ref: { kind: "packing-list", id: p.plId, no: p.plNo, organizationId: orgId },
     });
+    if (p.removedAt) {
+      events.push({
+        at: p.removedAt, tone: "warn",
+        title: `Removed from packing list ${p.plNo}`,
+        detail: p.removedReason ?? undefined,
+        ref: { kind: "packing-list", id: p.plId, no: p.plNo, organizationId: orgId },
+      });
+    }
   }
 
   for (const g of grs) {
@@ -316,7 +348,7 @@ export async function getItemTrace(purchaseOrderItemId: string): Promise<ItemTra
       at: g.inspectedAt ?? g.receivedDate,
       tone: recalled ? "warn" : ret > 0 || short > 0 ? "bad" : "good",
       title: `${recalled ? "Recalled receipt" : "Inspected"} ${g.grNo}${plNo ? ` (${plNo})` : ""}: ${parts.join(" · ")}`,
-      detail: [g.inspectedBy ? `by ${userName.get(g.inspectedBy) ?? "—"}` : null, g.returnNotes ? `return reason: ${g.returnNotes}` : null, g.repairNotes ? `repair: ${g.repairNotes}` : null].filter(Boolean).join(" · ") || undefined,
+      detail: [amendedGri.has(g.id) ? "figures as amended — see the amendment below" : null, g.inspectedBy ? `by ${userName.get(g.inspectedBy) ?? "—"}` : null, g.returnNotes ? `return reason: ${g.returnNotes}` : null, g.repairNotes ? `repair: ${g.repairNotes}` : null].filter(Boolean).join(" · ") || undefined,
       ref: { kind: "goods-receipt", id: g.grId, no: g.grNo, organizationId: orgId },
     });
     if (recalled) continue;
@@ -355,6 +387,40 @@ export async function getItemTrace(purchaseOrderItemId: string): Promise<ItemTra
     }
   }
 
+  for (const a of amendments) {
+    if (a.status === "cancelled") continue;
+    const plNo = pls.find((p) => p.lineId === a.packingListItemId)?.plNo ?? null;
+    const where = `${a.grNo ?? "the receipt"}${plNo ? ` (${plNo})` : ""}`;
+    const diff = (label: string, x: string, y: string) => (num(x) === num(y) ? null : `${label} ${num(x)} → ${num(y)}`);
+    const what = a.kind === "remove"
+      ? `take the line off ${where}`
+      : [diff("received", a.oldQtyReceived, a.newQtyReceived), diff("return", a.oldQtyReturn, a.newQtyReturn), diff("repair", a.oldQtyRepair, a.newQtyRepair)].filter(Boolean).join(" · ") || "notes";
+    const by = `asked by ${userName.get(a.requestedBy) ?? "—"}`;
+    const decider = a.decidedBy ? userName.get(a.decidedBy) ?? "—" : null;
+    if (a.status === "approved") {
+      const delta = num(a.stockDelta);
+      events.push({
+        at: a.decidedAt, tone: "warn",
+        title: a.kind === "remove" ? `Line removed from ${where} by an approved change` : `Amended ${where}: ${what}`,
+        detail: [`“${a.reason}”`, by, `approved by ${decider}`, delta !== 0 ? `stock ${delta > 0 ? "+" : ""}${delta} ${uom}`.trim() : null].filter(Boolean).join(" · "),
+      });
+    } else if (a.status === "rejected") {
+      events.push({ at: a.decidedAt, tone: "neutral", title: `Change to ${where} rejected (${what})`, detail: [`“${a.reason}”`, by, `rejected by ${decider}`, a.decisionNotes].filter(Boolean).join(" · ") });
+    } else {
+      events.push({ at: a.requestedAt, tone: "info", title: `Change to ${where} awaiting approval (${what})`, detail: [`“${a.reason}”`, by].join(" · ") });
+    }
+  }
+  for (const r of revisions) {
+    const plNo = pls.find((p) => p.plId === r.packingListId)?.plNo ?? "a packing list";
+    const qty = r.addItems.find((x) => x.purchaseOrderItemId === item.id)?.qty ?? 0;
+    events.push({
+      at: r.decidedAt, tone: "info",
+      title: `Added to packing list ${plNo} by an approved change: ${qty} ${uom}`.trim(),
+      detail: [`“${r.reason}”`, `asked by ${userName.get(r.requestedBy) ?? "—"}`, r.decidedBy ? `approved by ${userName.get(r.decidedBy) ?? "—"}` : null].filter(Boolean).join(" · "),
+      ref: { kind: "packing-list", id: r.packingListId, no: plNo, organizationId: orgId },
+    });
+  }
+
   if (item.shortfallClosedStatus && item.shortfallClosedAt) {
     events.push({ at: item.shortfallClosedAt, tone: "warn", title: `Shortfall ${item.shortfallClosedStatus === "written_off" ? "written off" : "closed as resolved"}` });
   }
@@ -363,9 +429,9 @@ export async function getItemTrace(purchaseOrderItemId: string): Promise<ItemTra
 
   const active = grs.filter((g) => g.grStatus === "confirmed");
   const accepted = active.reduce((s, g) => s + num(g.qtyGood ?? g.qtyReceived), 0);
-  const reserved = pls.filter((p) => p.plStatus === "pending").reduce((s, p) => s + num(p.qtyExpected), 0);
+  const reserved = pls.filter((p) => p.plStatus === "pending" && !p.removedAt).reduce((s, p) => s + num(p.qtyExpected), 0);
   const ordered = num(item.qty);
-  const live = pls.filter((p) => p.plStatus !== "cancelled");
+  const live = pls.filter((p) => p.plStatus !== "cancelled" && !p.removedAt);
   const last = live[live.length - 1];
 
   return {

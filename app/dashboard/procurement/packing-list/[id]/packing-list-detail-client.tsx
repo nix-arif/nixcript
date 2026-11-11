@@ -22,6 +22,8 @@ import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
 import { ReplacementChips } from "@/components/replacement-chips";
 import { ReceiptHistoryChips } from "@/components/receipt-history-chips";
+import { RequestAmendButton, AmendmentPanel, type AmendApproval } from "./amend-line";
+import { RequestRevisionButton, RevisionPanel } from "./revision-panel";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 import { DownloadMediaButton, InspectionMediaThumb, InspectionMediaView } from "@/components/inspection-media";
@@ -169,6 +171,12 @@ interface Props {
   // Overrides where "Start Inspection" goes — the centralized detail page
   // points this at its own cross-org inspect route instead of the plain one.
   inspectHref?: string;
+  // Whether the viewer may approve packing-list changes, and the org's
+  // self-approval setting — for the Approve / Reject on change requests
+  approval?: AmendApproval;
+  // May the viewer ask for changes to completed lines (own org: packing-list:amend;
+  // a sibling org's packing list: packing-list:amend:centralized) — worked out server-side
+  canRequestChange?: boolean;
 }
 
 export function PackingListDetailClient({
@@ -176,6 +184,8 @@ export function PackingListDetailClient({
   backHref = "/dashboard/procurement/packing-list",
   organizationName,
   inspectHref,
+  approval,
+  canRequestChange = false,
 }: Props) {
   const router = useRouter();
   const [cancelling, setCancelling] = useState(false);
@@ -250,7 +260,9 @@ export function PackingListDetailClient({
       photos: live.photos,
     };
   });
+  // Lines taken off the packing list by an approved removal don't count anywhere
   const hasDiscrepancies = items.some((item) => {
+    if (item.removedAt) return false;
     const expected = parseFloat(item.qtyExpected) || 0;
     const received = parseFloat(item.draftQtyReceived ?? item.qtyExpected) || 0;
     const returned = parseFloat(item.draftQtyReturn ?? "0") || 0;
@@ -267,6 +279,7 @@ export function PackingListDetailClient({
   const [flashId, setFlashId] = useState<string | null>(null);
   const shortItems = showInspectionResults
     ? Object.values(byPo).flat().flatMap((item) => {
+        if (item.removedAt) return [];
         const shortBy = Math.max(0, (parseFloat(item.qtyExpected) || 0) - (parseFloat(item.draftQtyReceived ?? item.qtyExpected) || 0));
         return shortBy > 0 ? [{ id: item.id, label: item.productCode || item.description || "item", shortBy, uom: item.uom || "" }] : [];
       })
@@ -301,6 +314,11 @@ export function PackingListDetailClient({
   // correction, optionally delete the recalled receipts).
   const activeGrs = pl.goodsReceipts.filter((g) => g.status !== "recalled");
   const canRecallInspection = isOwner && !organizationName && pl.status === "completed" && activeGrs.length > 0;
+  // Correct one line of a completed inspection without recalling all of it
+  const canAmend = canRequestChange && pl.status === "completed" && activeGrs.length > 0;
+  // An add/remove-lines request on the open packing list still waiting for an approver
+  const pendingRevision = (pl.revisions ?? []).find((r) => r.status === "pending");
+  const pendingRemoval = new Set(pendingRevision?.removeItemIds ?? []);
 
   async function handleRecallInspection() {
     setRecalling(true);
@@ -418,6 +436,9 @@ export function PackingListDetailClient({
                 <RotateCcwIcon className="w-3.5 h-3.5" /> Recall inspection
               </Button>
             )}
+            {isPending && canRequestChange && !pendingRevision && (
+              <RequestRevisionButton pl={pl} poLabel={poLabel} />
+            )}
             {isPending && can("packing-list:create") && (
               <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" disabled={cancelling} onClick={handleCancel}>
                 <XIcon className="w-3.5 h-3.5" /> Cancel
@@ -460,6 +481,8 @@ export function PackingListDetailClient({
           </div>
         }
       />
+
+      <RevisionPanel revisions={pl.revisions ?? []} approval={approval} />
 
       <section className="border border-border rounded-xl p-4">
         <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
@@ -527,9 +550,13 @@ export function PackingListDetailClient({
                         const ret = parseFloat(item.draftQtyReturn ?? "0") || 0;
                         const repair = parseFloat(item.draftQtyRepair ?? "0") || 0;
                         const accepted = Math.max(0, (parseFloat(received) || 0) - ret);
-                        const shortBy = showInspectionResults ? Math.max(0, (parseFloat(item.qtyExpected) || 0) - (parseFloat(received) || 0)) : 0;
-                        const retShown = showInspectionResults ? ret : 0;
-                        const repairShown = showInspectionResults ? repair : 0;
+                        const removed = !!item.removedAt;
+                        // a removed line raises no short / return / repair flags
+                        const showIssues = showInspectionResults && !removed;
+                        const shortBy = showIssues ? Math.max(0, (parseFloat(item.qtyExpected) || 0) - (parseFloat(received) || 0)) : 0;
+                        const retShown = showIssues ? ret : 0;
+                        const repairShown = showIssues ? repair : 0;
+                        const pendingChange = item.amendments?.some((a) => a.status === "pending") ?? false;
                         return (
                         <tr
                           key={item.id}
@@ -542,6 +569,7 @@ export function PackingListDetailClient({
                             !(shortBy > 0 || retShown > 0) && repairShown > 0 && "bg-orange-100/80 dark:bg-orange-950/35 border-l-[6px] border-l-orange-500",
                             highlightedItemIds.has(item.id) && "bg-blue-100! dark:bg-blue-900/40!",
                             flashId === item.id && "border-l-blue-500",
+                            removed && "opacity-60 bg-muted/40! border-l-0!",
                           )}
                         >
                           <td className="py-2 pl-3 pr-2 text-right text-muted-foreground/70 tabular-nums align-top">{item.poLineNo ?? itemIndex + 1}</td>
@@ -647,6 +675,16 @@ export function PackingListDetailClient({
                               </div>
                             )}
                             <div className="mb-1 flex flex-wrap items-center gap-1"><PoBadge label={poLabel(poId)} color={color} /><LineIssueChips short={shortBy} ret={retShown} repair={repairShown} /></div>
+                            {removed && (
+                              <span className="inline-flex mb-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-muted-foreground text-background" title={item.removedReason ?? undefined}>
+                                Removed from this packing list{item.removedReason ? ` — ${item.removedReason}` : ""}
+                              </span>
+                            )}
+                            {!removed && pendingRemoval.has(item.id) && (
+                              <span className="inline-flex mb-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-amber-500 text-white">
+                                Removal awaiting approval
+                              </span>
+                            )}
                             <ReplacementChips replacements={item.replacements ?? []} />
                             <ReceiptHistoryChips
                               history={item.history}
@@ -745,6 +783,8 @@ export function PackingListDetailClient({
                                   <span className="tabular-nums">{accepted}</span>
                                 </div>
                               )}
+                              {canAmend && !removed && !pendingChange && <RequestAmendButton item={item} poLabel={poLabel(poId)} />}
+                              <AmendmentPanel amendments={item.amendments ?? []} approval={approval} />
                             </div>
                           </td>
                           <td className="py-2 pr-3 align-top text-muted-foreground">{item.uom || "—"}</td>

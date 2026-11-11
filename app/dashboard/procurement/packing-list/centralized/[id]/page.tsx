@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getPackingListDetailCentralized } from "@/server/packing-list";
+import { getPackingListDetailCentralized, canApprovePackingListInspection, canAmendPackingList } from "@/server/packing-list";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { PackingListDetailClient } from "../../[id]/packing-list-detail-client";
 
@@ -21,6 +21,13 @@ export default async function CentralizedPackingListDetailPage({ params }: { par
     ? await getUserPermissions(session.user.id, session.session.activeOrganizationId!)
     : [];
   const permissions = canInspect ? [...ownOrgPermissions, "packing-list:inspect"] : ownOrgPermissions;
+  // Changes to completed lines: amend / approve evaluated against the packing
+  // list's own org, centralized grants included (see assertCanAmendPackingList
+  // and assertCanApprovePackingList)
+  const [approval, canRequestChange] = await Promise.all([
+    canApprovePackingListInspection(packingList.organizationId),
+    canAmendPackingList(packingList.organizationId),
+  ]);
 
   return (
     <PackingListDetailClient
@@ -30,6 +37,8 @@ export default async function CentralizedPackingListDetailPage({ params }: { par
       backHref="/dashboard/procurement/packing-list/centralized"
       organizationName={organizationName}
       inspectHref={`/dashboard/procurement/packing-list/centralized/${id}/inspect`}
+      approval={approval}
+      canRequestChange={canRequestChange}
     />
   );
 }

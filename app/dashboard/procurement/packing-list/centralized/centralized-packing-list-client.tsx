@@ -181,6 +181,11 @@ export function CentralizedPackingListClient({ initialLists }: Props) {
                           {p.itemCount} item{p.itemCount !== 1 ? "s" : ""}
                         </span>
                       )}
+                      {p.pendingChanges > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500 text-white" title="Changes to completed lines waiting for an approver">
+                          {p.pendingChanges} change{p.pendingChanges !== 1 ? "s" : ""} awaiting approval
+                        </span>
+                      )}
                       {p.createdByName && (
                         <span className="flex items-center gap-1 text-[11px] text-muted-foreground ml-auto">
                           <CalendarIcon className="w-3 h-3" />

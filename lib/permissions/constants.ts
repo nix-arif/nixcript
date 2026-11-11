@@ -71,6 +71,8 @@ export const ALL_PERMISSIONS = [
   // Packing List
   { key: "packing-list:create",  label: "Create Packing List" },
   { key: "packing-list:inspect", label: "Inspect Packing List / Record Condition" },
+  { key: "packing-list:amend",   label: "Amend Completed Packing List Inspection (correct a line)" },
+  { key: "packing-list:amend:centralized", label: "Amend Completed Packing Lists Across Owner's Organizations" },
   { key: "packing-list:read:centralized", label: "View All Packing Lists Across Owner's Organizations" },
   { key: "packing-list:inspect:centralized", label: "Inspect Packing Lists Across Owner's Organizations" },
 

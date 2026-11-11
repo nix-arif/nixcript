@@ -238,6 +238,11 @@ export function PackingListListClient({ initialLists, pendingPos, permissions }:
                             {pl.itemCount} item{pl.itemCount !== 1 ? "s" : ""}
                           </span>
                         )}
+                        {pl.pendingChanges > 0 && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500 text-white" title="Changes to completed lines waiting for an approver">
+                            {pl.pendingChanges} change{pl.pendingChanges !== 1 ? "s" : ""} awaiting approval
+                          </span>
+                        )}
                         {pl.expectedDate && (
                           <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                             <CalendarIcon className="w-3 h-3" />

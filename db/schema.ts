@@ -2771,6 +2771,13 @@ export const packingListItem = pgTable(
     draftApprovalNotes: text("draft_approval_notes"),
     draftApprovedBy: text("draft_approved_by").references(() => user.id),
     draftApprovedAt: timestamp("draft_approved_at"),
+
+    // Set when an approved "remove" amendment took this line off a completed
+    // packing list. The row is kept (photos, audit, history) but everything
+    // else — inspection, receipts, reservations, printouts — ignores it.
+    removedAt: timestamp("removed_at"),
+    removedBy: text("removed_by").references(() => user.id),
+    removedReason: text("removed_reason"),
   },
   (t) => [index("packing_list_item_pl_idx").on(t.packingListId)],
 );
@@ -5068,6 +5075,94 @@ export const brandConversion = pgTable(
 // (not the whole packing list) with an allocated qty, so a shipment mixing
 // replacement units with fresh PO stock (even for the same product) stays
 // separable. qtyGood/qtyFailed stay null until that packing list is inspected.
+// A correction to a packing-list line after its inspection was completed —
+// maker-checker: requested first, applied only when approved. See
+// requestPackingListAmendment / decidePackingListAmendment.
+// Migration: drizzle/0058_packing_list_amendment.sql
+export const packingListAmendment = pgTable(
+  "packing_list_amendment",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    packingListId: text("packing_list_id")
+      .notNull()
+      .references(() => packingList.id, { onDelete: "cascade" }),
+    packingListItemId: text("packing_list_item_id")
+      .notNull()
+      .references(() => packingListItem.id, { onDelete: "cascade" }),
+    goodsReceiptItemId: text("goods_receipt_item_id").references(() => goodsReceiptItem.id, { onDelete: "set null" }),
+    grNo: text("gr_no"),
+    kind: text("kind").notNull().default("amend"), // amend | remove
+    status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
+    oldQtyReceived: text("old_qty_received").notNull(),
+    oldQtyReturn: text("old_qty_return").notNull(),
+    oldQtyRepair: text("old_qty_repair").notNull(),
+    newQtyReceived: text("new_qty_received").notNull(),
+    newQtyReturn: text("new_qty_return").notNull(),
+    newQtyRepair: text("new_qty_repair").notNull(),
+    newReturnNotes: text("new_return_notes"),
+    newRepairNotes: text("new_repair_notes"),
+    stockDelta: text("stock_delta").notNull(),
+    reason: text("reason").notNull(),
+    requestedBy: text("requested_by")
+      .notNull()
+      .references(() => user.id),
+    requestedAt: timestamp("requested_at").defaultNow().notNull(),
+    decidedBy: text("decided_by").references(() => user.id),
+    decidedAt: timestamp("decided_at"),
+    decisionNotes: text("decision_notes"),
+  },
+  (t) => [
+    index("pla_plitem_idx").on(t.packingListItemId),
+    index("pla_pl_idx").on(t.packingListId),
+    index("pla_org_status_idx").on(t.organizationId, t.status),
+  ],
+);
+
+export type PackingListRevisionLine = {
+  poNo: string | null;
+  lineNo: number | null;
+  code: string | null;
+  description: string | null;
+  qty: number;
+  uom: string | null;
+};
+
+// Lines taken off / PO lines added to a packing list whose inspection is
+// still open — maker-checker, applied only when approved. See
+// requestPackingListRevision / decidePackingListRevision.
+// Migration: drizzle/0059_packing_list_revision.sql
+export const packingListRevision = pgTable(
+  "packing_list_revision",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    packingListId: text("packing_list_id")
+      .notNull()
+      .references(() => packingList.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
+    addItems: json("add_items").$type<{ purchaseOrderItemId: string; qty: number }[]>().notNull(),
+    removeItemIds: json("remove_item_ids").$type<string[]>().notNull(),
+    summary: json("summary").$type<{ add: PackingListRevisionLine[]; remove: PackingListRevisionLine[] }>().notNull(),
+    reason: text("reason").notNull(),
+    requestedBy: text("requested_by")
+      .notNull()
+      .references(() => user.id),
+    requestedAt: timestamp("requested_at").defaultNow().notNull(),
+    decidedBy: text("decided_by").references(() => user.id),
+    decidedAt: timestamp("decided_at"),
+    decisionNotes: text("decision_notes"),
+  },
+  (t) => [
+    index("plr_pl_idx").on(t.packingListId),
+    index("plr_org_status_idx").on(t.organizationId, t.status),
+  ],
+);
+
 export const returnReplacementAttempt = pgTable(
   "return_replacement_attempt",
   {

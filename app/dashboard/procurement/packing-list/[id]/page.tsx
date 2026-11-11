@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getPackingListDetail } from "@/server/packing-list";
+import { getPackingListDetail, canApprovePackingListInspection, canAmendPackingList } from "@/server/packing-list";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getOrganizationProfile } from "@/server/organization-profile";
@@ -21,11 +21,19 @@ export default async function PackingListDetailPage({
     getOrganizationProfile().catch(() => null),
   ]);
   if (!pl) notFound();
+  // Approve / Reject on change requests — same approvers and self-approval
+  // setting as the inspection itself
+  const [approval, canRequestChange] = await Promise.all([
+    canApprovePackingListInspection(pl.organizationId),
+    canAmendPackingList(pl.organizationId),
+  ]);
   return (
     <PackingListDetailClient
       packingList={pl}
       permissions={permissions}
       businessType={profile?.businessType ?? "trading"}
+      approval={approval}
+      canRequestChange={canRequestChange}
     />
   );
 }

@@ -896,8 +896,8 @@ export async function GET(req: Request, { params }: Props) {
     // forwards the request to.
     const baseUrl = publicBaseUrl(req);
     const ctx = { baseUrl, packingListNo: pl.packingListNo };
-    const returnIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "return", ctx);
-    const repairIssues = buildIssueItems(pl.items, poLabelById, poLineNoById, "repair", ctx);
+    const returnIssues = buildIssueItems(pl.items.filter((i) => !i.removedAt), poLabelById, poLineNoById, "return", ctx);
+    const repairIssues = buildIssueItems(pl.items.filter((i) => !i.removedAt), poLabelById, poLineNoById, "repair", ctx);
     const hasReturn = returnIssues.length > 0;
     const hasRepair = repairIssues.length > 0;
 

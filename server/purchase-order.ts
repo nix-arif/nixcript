@@ -32,7 +32,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, ne, desc, asc, inArray, notInArray, sql, ilike, isNotNull } from "drizzle-orm";
+import { eq, and, ne, desc, asc, inArray, notInArray, sql, ilike, isNotNull, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -915,7 +915,7 @@ async function getPackingListsByPo(poIds: string[]): Promise<Map<string, Purchas
     })
     .from(packingListItem)
     .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
-    .where(and(inArray(packingListItem.purchaseOrderId, poIds), ne(packingList.status, "cancelled")))
+    .where(and(inArray(packingListItem.purchaseOrderId, poIds), ne(packingList.status, "cancelled"), isNull(packingListItem.removedAt)))
     .orderBy(asc(packingList.createdAt));
   for (const r of rows) {
     const arr = map.get(r.purchaseOrderId) ?? [];
