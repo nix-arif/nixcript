@@ -131,14 +131,15 @@ export function PayslipSettingsClient({
   };
 
   const [applying, setApplying] = useState(false);
+  const [applyResult, setApplyResult] = useState<Awaited<ReturnType<typeof applyPayItemsToAll>> | null>(null);
   const applyAll = async () => {
     const names = siblingOrgs.map((o) => o.name).join(", ");
     if (!confirm(`Copy these pay items to ${names}?\n\nMatching items there are updated to the same settings, missing ones are added. Nothing is deleted, and salary structures are not copied.`)) return;
     setApplying(true);
     try {
       const r = await applyPayItemsToAll();
-      toast.success(`Applied to ${r.orgs} organization${r.orgs === 1 ? "" : "s"}: ${r.created} added, ${r.updated} updated`);
-      if (r.skipped.length) toast.warning(`${r.skipped.length} skipped: ${r.skipped.slice(0, 3).join("; ")}${r.skipped.length > 3 ? "…" : ""}`, { duration: 12000 });
+      if (r.skipped.length) setApplyResult(r);
+      else toast.success(`Applied to ${r.orgs} organization${r.orgs === 1 ? "" : "s"}: ${r.created} added, ${r.updated} updated`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not apply");
     } finally {
@@ -372,6 +373,36 @@ export function PayslipSettingsClient({
           <SalaryStructurePanel initialRows={structures} payItems={items} reliefTypes={reliefTypes} />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!applyResult} onOpenChange={(o) => !o && setApplyResult(null)}>
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Applied, but {applyResult?.skipped.length} item{applyResult?.skipped.length === 1 ? "" : "s"} could not be copied</DialogTitle>
+            <DialogDescription>
+              {applyResult?.created} added and {applyResult?.updated} updated across {applyResult?.orgs} organization
+              {applyResult?.orgs === 1 ? "" : "s"}. The items below were left out. Follow the steps under each one, then press
+              Apply to all again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {applyResult?.skipped.map((s, i) => (
+              <div key={i} className="rounded-lg border border-amber-200 bg-amber-50/60 dark:bg-amber-900/10 dark:border-amber-800 p-3 text-sm">
+                <div className="font-medium">
+                  {s.item} <span className="font-normal text-muted-foreground">· {s.org}</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">{s.reason}</p>
+                <p className="text-xs mt-2">
+                  <span className="font-semibold">What to do: </span>
+                  {s.fix}
+                </p>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setApplyResult(null)}>Got it</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!draft} onOpenChange={(o) => !o && setDraft(null)}>
         <DialogContent

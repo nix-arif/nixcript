@@ -1034,7 +1034,15 @@ async function ensureSystemPayItems(orgId: string) {
 export async function applyPayItemsToAll() {
   const { orgId, userId } = await requireAccess("payslip:create");
   const orgs = await siblingOrgs(orgId, userId, "payslip:create");
-  const result = { orgs: orgs.length, created: 0, updated: 0, skipped: [] as string[] };
+  const result = {
+    orgs: orgs.length,
+    created: 0,
+    updated: 0,
+    // Each skipped item says why and what the user should do about it
+    skipped: [] as { org: string; item: string; reason: string; fix: string }[],
+  };
+  const skip = (org: string, item: string, reason: string, fix: string) =>
+    result.skipped.push({ org, item, reason, fix });
   if (!orgs.length) return result;
 
   const src = await db.select().from(payItem).where(eq(payItem.organizationId, orgId));
@@ -1051,7 +1059,12 @@ export async function applyPayItemsToAll() {
           ? dst.find((d) => d.systemKey === it.systemKey)
           : dst.find((d) => !d.systemKey && d.name.toLowerCase() === it.name.toLowerCase());
         if (target && target.kind !== it.kind) {
-          result.skipped.push(`${o.name}: ${it.name} (already exists as a ${target.kind})`);
+          skip(
+            o.name,
+            it.name,
+            `${o.name} already has an item with this name, but it is a ${target.kind} and this one is an ${it.kind}.`,
+            `Switch to ${o.name}, open Payslip Settings and rename or delete its "${target.name}" ${target.kind}. Then come back here and press Apply to all again.`,
+          );
           continue;
         }
         let commissionTypeId: string | null = null;
@@ -1059,11 +1072,22 @@ export async function applyPayItemsToAll() {
           const typeName = srcTypes.find((t) => t.id === it.commissionTypeId)?.name;
           const t = dstTypes.find((x) => x.name.toLowerCase() === typeName?.toLowerCase());
           if (!t) {
-            result.skipped.push(`${o.name}: ${it.name} (no "${typeName ?? "?"}" commission type there)`);
+            skip(
+              o.name,
+              it.name,
+              `${o.name} has no commission type named "${typeName ?? "?"}", so this item cannot be linked to anything there.`,
+              `Switch to ${o.name} → Organization → Custom Commission and create a commission type named exactly "${typeName ?? "?"}". Then come back here and press Apply to all again.`,
+            );
             continue;
           }
           if (dst.some((d) => d.commissionTypeId === t.id && d.id !== target?.id)) {
-            result.skipped.push(`${o.name}: ${it.name} (that commission type is paid out by another item)`);
+            const other = dst.find((d) => d.commissionTypeId === t.id && d.id !== target?.id);
+            skip(
+              o.name,
+              it.name,
+              `In ${o.name}, the commission type "${t.name}" is already paid out by another item${other ? ` ("${other.name}")` : ""}. A commission type can be paid out by one item only.`,
+              `Switch to ${o.name} → Payslip Settings and change${other ? ` "${other.name}"` : " that item"} to Fixed amount or Quantity × rate (or delete it). Then come back here and press Apply to all again.`,
+            );
             continue;
           }
           commissionTypeId = t.id;
@@ -1091,7 +1115,12 @@ export async function applyPayItemsToAll() {
           result.created++;
         }
       } catch (e) {
-        result.skipped.push(`${o.name}: ${it.name} (${e instanceof Error ? e.message : "failed"})`);
+        skip(
+          o.name,
+          it.name,
+          e instanceof Error ? e.message : "Something went wrong",
+          `Try again. If it keeps failing, add or edit "${it.name}" in ${o.name} by hand.`,
+        );
       }
     }
   }
