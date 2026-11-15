@@ -134,13 +134,13 @@ export function PdfPanel({ initial, siblingOrgs }: { initial: PayslipPdfSettings
         </div>
         <textarea
           value={cfg.footerNote}
-          maxLength={200}
+          maxLength={300}
           rows={2}
           onChange={(e) => setCfg({ ...cfg, footerNote: e.target.value })}
           placeholder="This payslip is private and confidential."
           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
         />
-        <div className="text-right text-[11px] text-muted-foreground">{cfg.footerNote.length}/200</div>
+        <div className="text-right text-[11px] text-muted-foreground">{cfg.footerNote.length}/300</div>
       </section>
 
       <div className="sticky bottom-0 -mx-1 flex items-center justify-end gap-2 border-t border-border bg-background/95 px-1 py-3 backdrop-blur">

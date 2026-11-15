@@ -63,6 +63,9 @@ export type PayslipData = {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const n = (v: string | number | null | undefined) => Number(v ?? 0);
+
+// Standard PDF fonts only cover Latin-1; swap anything else so drawing never throws
+const safe = (s: string) => String(s ?? "").replace(/[\r\n\t]+/g, " ").replace(/[^\x20-\x7E\xA0-\xFF–—‘’“”•…]/g, "?");
 const fmt = (v: string | number | null | undefined) =>
   n(v).toLocaleString("en-MY", {
     minimumFractionDigits: 2,
@@ -108,7 +111,7 @@ export async function generatePayslipPdf(
     size: number,
     color: RGB = DARK,
     font = regular,
-  ) => page.drawText(String(str), { x, y, size, color, font });
+  ) => page.drawText(safe(str), { x, y, size, color, font });
 
   const TR = (
     str: string,
@@ -118,8 +121,9 @@ export async function generatePayslipPdf(
     color: RGB = DARK,
     font = regular,
   ) => {
-    const w = font.widthOfTextAtSize(String(str), size);
-    page.drawText(String(str), { x: rx - w, y, size, color, font });
+    const text = safe(str);
+    const w = font.widthOfTextAtSize(text, size);
+    page.drawText(text, { x: rx - w, y, size, color, font });
   };
 
   const HL = (
@@ -467,13 +471,31 @@ export async function generatePayslipPdf(
   HL(ML, y, ML + CW, BORDER);
 
   // ── FOOTER ─────────────────────────────────────────────────────────────
+  // Anchored to the bottom of the page. The note wraps (up to 3 lines) above the rule.
   const note = cfg.footerNote.trim();
+  // Keeps the line breaks HR typed (each one starts a new line), and wraps long lines
+  const wrapLines = (text: string, maxW: number, size: number) => {
+    const out: string[] = [];
+    for (const para of String(text).split(/\r?\n/)) {
+      let cur = "";
+      for (const word of safe(para).split(/\s+/).filter(Boolean)) {
+        const next = cur ? `${cur} ${word}` : word;
+        if (regular.widthOfTextAtSize(next, size) > maxW && cur) {
+          out.push(cur);
+          cur = word;
+        } else cur = next;
+      }
+      if (cur) out.push(cur);
+    }
+    return out;
+  };
   if (note) {
-    T(note.slice(0, 120), ML + 4, y - 14, 8, MUTED);
-    y -= 22;
+    const noteLines = wrapLines(note, CW - 8, 8).slice(0, 6);
+    noteLines.forEach((l, i) => T(l, ML + 4, 52 + (noteLines.length - 1 - i) * 10, 8, MUTED));
   }
-  T("Computer-generated document — no signature required", ML, y - 14, 7.5, LIGHT_MUTED);
-  TR(`${data.periodLabel}  ·  Page 1 of 1`, width - MR, y - 14, 7.5, LIGHT_MUTED);
+  HL(ML, 38, ML + CW, BORDER, 0.5);
+  T("Computer-generated document — no signature required", ML, 26, 7.5, LIGHT_MUTED);
+  TR(`${data.periodLabel}  ·  Page 1 of 1`, width - MR, 26, 7.5, LIGHT_MUTED);
 
   // ── DOWNLOAD ───────────────────────────────────────────────────────────
   const bytes = await pdfDoc.save();

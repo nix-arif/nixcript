@@ -4,7 +4,7 @@ import { useState } from "react";
 import { getMyPayslips } from "@/server/payroll";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
-import { DownloadIcon, EyeIcon, FileTextIcon } from "lucide-react";
+import { DownloadIcon, FileTextIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { downloadPayslipPdf } from "./download-payslip-pdf";
 import { splitLines, lineAmount } from "@/lib/payroll/build-lines";
@@ -176,17 +176,6 @@ export function MyPayslipsClient({ payslips }: Props) {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 justify-end">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 gap-1 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelected(p);
-                        }}
-                      >
-                        <EyeIcon className="w-3 h-3" /> View
-                      </Button>
                       <Button
                         variant="outline"
                         size="sm"

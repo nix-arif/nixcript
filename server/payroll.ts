@@ -1031,7 +1031,9 @@ async function ensureSystemPayItems(orgId: string) {
 // Items are matched by name (statutory ones by their key): matches are updated to the
 // same settings, missing ones are created. Nothing is deleted, and salary structures
 // are not copied. Commission items need a commission type with the same name there.
-export async function applyPayItemsToAll() {
+// With `force` ("Apply anyway"), commission items that can't be linked are copied as
+// plain Fixed amount items instead of being skipped.
+export async function applyPayItemsToAll(force = false) {
   const { orgId, userId } = await requireAccess("payslip:create");
   const orgs = await siblingOrgs(orgId, userId, "payslip:create");
   const result = {
@@ -1040,6 +1042,8 @@ export async function applyPayItemsToAll() {
     updated: 0,
     // Each skipped item says why and what the user should do about it
     skipped: [] as { org: string; item: string; reason: string; fix: string }[],
+    // Items copied anyway, but not as the same kind of item
+    forced: [] as { org: string; item: string; note: string }[],
   };
   const skip = (org: string, item: string, reason: string, fix: string) =>
     result.skipped.push({ org, item, reason, fix });
@@ -1068,10 +1072,14 @@ export async function applyPayItemsToAll() {
           continue;
         }
         let commissionTypeId: string | null = null;
+        let calcType = it.calcType;
         if (it.calcType === "invoice_allowance") {
           const typeName = srcTypes.find((t) => t.id === it.commissionTypeId)?.name;
           const t = dstTypes.find((x) => x.name.toLowerCase() === typeName?.toLowerCase());
-          if (!t) {
+          if (!t && force) {
+            calcType = "fixed";
+            result.forced.push({ org: o.name, item: it.name, note: `Copied as a Fixed amount item, because ${o.name} has no "${typeName ?? "?"}" commission type.` });
+          } else if (!t) {
             skip(
               o.name,
               it.name,
@@ -1080,7 +1088,10 @@ export async function applyPayItemsToAll() {
             );
             continue;
           }
-          if (dst.some((d) => d.commissionTypeId === t.id && d.id !== target?.id)) {
+          if (t && dst.some((d) => d.commissionTypeId === t.id && d.id !== target?.id) && force) {
+            calcType = "fixed";
+            result.forced.push({ org: o.name, item: it.name, note: `Copied as a Fixed amount item, because "${t.name}" is already paid out by another item in ${o.name}.` });
+          } else if (t && dst.some((d) => d.commissionTypeId === t.id && d.id !== target?.id)) {
             const other = dst.find((d) => d.commissionTypeId === t.id && d.id !== target?.id);
             skip(
               o.name,
@@ -1090,13 +1101,13 @@ export async function applyPayItemsToAll() {
             );
             continue;
           }
-          commissionTypeId = t.id;
+          commissionTypeId = calcType === "invoice_allowance" && t ? t.id : null;
         }
         if (target) {
           const set = it.systemKey
             ? { name: it.name, calcType: it.calcType, isActive: it.isActive }
             : {
-                calcType: it.calcType, unitLabel: it.unitLabel, rate: it.rate, commissionTypeId,
+                calcType, unitLabel: it.unitLabel, rate: it.rate, commissionTypeId,
                 inEpf: it.inEpf, inSocso: it.inSocso, inEis: it.inEis, inPcb: it.inPcb,
                 recurring: it.recurring, isActive: it.isActive,
               };
@@ -1106,7 +1117,7 @@ export async function applyPayItemsToAll() {
         } else {
           const row = {
             id: nanoid(), organizationId: o.id, name: it.name, kind: it.kind, systemKey: it.systemKey,
-            calcType: it.calcType, unitLabel: it.unitLabel, rate: it.rate, commissionTypeId,
+            calcType, unitLabel: it.unitLabel, rate: it.rate, commissionTypeId,
             inEpf: it.inEpf, inSocso: it.inSocso, inEis: it.inEis, inPcb: it.inPcb,
             recurring: it.recurring, isActive: it.isActive, sortOrder: dst.length,
           };

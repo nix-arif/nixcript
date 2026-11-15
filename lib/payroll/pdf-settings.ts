@@ -32,6 +32,6 @@ export function mergePdfSettings(raw: unknown): PayslipPdfSettings {
       if (typeof r[k] === typeof out[k]) (out as Record<string, unknown>)[k] = r[k];
     }
   }
-  out.footerNote = out.footerNote.slice(0, 200);
+  out.footerNote = out.footerNote.slice(0, 300);
   return out;
 }

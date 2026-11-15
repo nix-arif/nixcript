@@ -132,13 +132,16 @@ export function PayslipSettingsClient({
 
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<Awaited<ReturnType<typeof applyPayItemsToAll>> | null>(null);
-  const applyAll = async () => {
+  const applyAll = async (force = false) => {
     const names = siblingOrgs.map((o) => o.name).join(", ");
-    if (!confirm(`Copy these pay items to ${names}?\n\nMatching items there are updated to the same settings, missing ones are added. Nothing is deleted, and salary structures are not copied.`)) return;
+    const ok = force
+      ? confirm("Apply anyway?\n\nCommission items that cannot be linked are copied as plain Fixed amount items (no link to Custom Commission). You can change them later in that organization's Payslip Settings.\n\nItems with a name clash are still left out.")
+      : confirm(`Copy these pay items to ${names}?\n\nMatching items there are updated to the same settings, missing ones are added. Nothing is deleted, and salary structures are not copied.`);
+    if (!ok) return;
     setApplying(true);
     try {
-      const r = await applyPayItemsToAll();
-      if (r.skipped.length) setApplyResult(r);
+      const r = await applyPayItemsToAll(force);
+      if (r.skipped.length || r.forced.length) setApplyResult(r);
       else toast.success(`Applied to ${r.orgs} organization${r.orgs === 1 ? "" : "s"}: ${r.created} added, ${r.updated} updated`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not apply");
@@ -324,7 +327,7 @@ export function PayslipSettingsClient({
               Copy these pay items to {siblingOrgs.map((o) => o.name).join(", ")} (same owner). Items are matched by name.
             </p>
           </div>
-          <Button variant="outline" size="sm" className="h-8 shrink-0" disabled={applying} onClick={applyAll}>
+          <Button variant="outline" size="sm" className="h-8 shrink-0" disabled={applying} onClick={() => applyAll()}>
             {applying ? "Applying…" : "Apply to all"}
           </Button>
         </div>
@@ -377,11 +380,15 @@ export function PayslipSettingsClient({
       <Dialog open={!!applyResult} onOpenChange={(o) => !o && setApplyResult(null)}>
         <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Applied, but {applyResult?.skipped.length} item{applyResult?.skipped.length === 1 ? "" : "s"} could not be copied</DialogTitle>
+            <DialogTitle>
+              {applyResult?.skipped.length
+                ? `Applied, but ${applyResult.skipped.length} item${applyResult.skipped.length === 1 ? "" : "s"} could not be copied`
+                : "Applied, with changes to note"}
+            </DialogTitle>
             <DialogDescription>
               {applyResult?.created} added and {applyResult?.updated} updated across {applyResult?.orgs} organization
-              {applyResult?.orgs === 1 ? "" : "s"}. The items below were left out. Follow the steps under each one, then press
-              Apply to all again.
+              {applyResult?.orgs === 1 ? "" : "s"}.
+              {applyResult?.skipped.length ? " The items below were left out. Follow the steps under each one, then press Apply to all again, or use Apply anyway." : ""}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -398,7 +405,30 @@ export function PayslipSettingsClient({
               </div>
             ))}
           </div>
-          <DialogFooter>
+          {!!applyResult?.forced.length && (
+            <div className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Copied with changes</div>
+              {applyResult.forced.map((f, i) => (
+                <div key={i} className="rounded-lg border border-border p-3 text-xs">
+                  <span className="font-medium text-sm">{f.item}</span> <span className="text-muted-foreground">· {f.org}</span>
+                  <p className="text-muted-foreground mt-1">{f.note}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            {!!applyResult?.skipped.some((s) => /commission/i.test(s.reason)) && (
+              <Button
+                variant="outline"
+                disabled={applying}
+                onClick={async () => {
+                  setApplyResult(null);
+                  await applyAll(true);
+                }}
+              >
+                Apply anyway
+              </Button>
+            )}
             <Button onClick={() => setApplyResult(null)}>Got it</Button>
           </DialogFooter>
         </DialogContent>
