@@ -132,15 +132,23 @@ export function PayslipSettingsClient({
 
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<Awaited<ReturnType<typeof applyPayItemsToAll>> | null>(null);
-  const applyAll = async (force = false) => {
-    const names = siblingOrgs.map((o) => o.name).join(", ");
-    const ok = force
-      ? confirm("Apply anyway?\n\nCommission items that cannot be linked are copied as plain Fixed amount items (no link to Custom Commission). You can change them later in that organization's Payslip Settings.\n\nItems with a name clash are still left out.")
-      : confirm(`Copy these pay items to ${names}?\n\nMatching items there are updated to the same settings, missing ones are added. Nothing is deleted, and salary structures are not copied.`);
-    if (!ok) return;
+  // Step 1: check what would happen, without changing anything
+  const review = async () => {
     setApplying(true);
     try {
-      const r = await applyPayItemsToAll(force);
+      setApplyResult(await applyPayItemsToAll({ dryRun: true }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not check");
+    } finally {
+      setApplying(false);
+    }
+  };
+  // Step 2: really apply (after the user has seen the review)
+  const applyAll = async (force = false) => {
+    setApplyResult(null);
+    setApplying(true);
+    try {
+      const r = await applyPayItemsToAll({ force });
       if (r.skipped.length || r.forced.length) setApplyResult(r);
       else toast.success(`Applied to ${r.orgs} organization${r.orgs === 1 ? "" : "s"}: ${r.created} added, ${r.updated} updated`);
     } catch (e) {
@@ -327,8 +335,8 @@ export function PayslipSettingsClient({
               Copy these pay items to {siblingOrgs.map((o) => o.name).join(", ")} (same owner). Items are matched by name.
             </p>
           </div>
-          <Button variant="outline" size="sm" className="h-8 shrink-0" disabled={applying} onClick={() => applyAll()}>
-            {applying ? "Applying…" : "Apply to all"}
+          <Button variant="outline" size="sm" className="h-8 shrink-0" disabled={applying} onClick={review}>
+            {applying ? "Checking…" : "Apply to all"}
           </Button>
         </div>
       )}
@@ -381,14 +389,29 @@ export function PayslipSettingsClient({
         <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {applyResult?.skipped.length
-                ? `Applied, but ${applyResult.skipped.length} item${applyResult.skipped.length === 1 ? "" : "s"} could not be copied`
-                : "Applied, with changes to note"}
+              {applyResult?.dryRun
+                ? "Review before applying"
+                : applyResult?.skipped.length
+                  ? `Applied, but ${applyResult.skipped.length} item${applyResult.skipped.length === 1 ? "" : "s"} could not be copied`
+                  : "Applied, with changes to note"}
             </DialogTitle>
             <DialogDescription>
-              {applyResult?.created} added and {applyResult?.updated} updated across {applyResult?.orgs} organization
-              {applyResult?.orgs === 1 ? "" : "s"}.
-              {applyResult?.skipped.length ? " The items below were left out. Follow the steps under each one, then press Apply to all again, or use Apply anyway." : ""}
+              {applyResult?.dryRun ? (
+                <>
+                  Nothing has been changed yet. Applying will add {applyResult.created} and update {applyResult.updated} item
+                  {applyResult.created + applyResult.updated === 1 ? "" : "s"} across {applyResult.orgs} organization
+                  {applyResult.orgs === 1 ? "" : "s"}.
+                  {applyResult.skipped.length
+                    ? ` ${applyResult.skipped.length} item${applyResult.skipped.length === 1 ? "" : "s"} cannot be copied as they are. Fix them first (steps below), or apply without them, or use Apply anyway.`
+                    : ""}
+                </>
+              ) : (
+                <>
+                  {applyResult?.created} added and {applyResult?.updated} updated across {applyResult?.orgs} organization
+                  {applyResult?.orgs === 1 ? "" : "s"}.
+                  {applyResult?.skipped.length ? " The items below were left out. Follow the steps under each one, then press Apply to all again, or use Apply anyway." : ""}
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -417,19 +440,23 @@ export function PayslipSettingsClient({
             </div>
           )}
           <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            {applyResult?.dryRun && (
+              <Button variant="ghost" onClick={() => setApplyResult(null)}>
+                Cancel
+              </Button>
+            )}
             {!!applyResult?.skipped.some((s) => /commission/i.test(s.reason)) && (
-              <Button
-                variant="outline"
-                disabled={applying}
-                onClick={async () => {
-                  setApplyResult(null);
-                  await applyAll(true);
-                }}
-              >
+              <Button variant="outline" disabled={applying} onClick={() => applyAll(true)}>
                 Apply anyway
               </Button>
             )}
-            <Button onClick={() => setApplyResult(null)}>Got it</Button>
+            {applyResult?.dryRun ? (
+              <Button disabled={applying} onClick={() => applyAll(false)}>
+                {applyResult.skipped.length ? `Apply without ${applyResult.skipped.length} item${applyResult.skipped.length === 1 ? "" : "s"}` : "Apply"}
+              </Button>
+            ) : (
+              <Button onClick={() => setApplyResult(null)}>Got it</Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

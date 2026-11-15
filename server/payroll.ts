@@ -1031,12 +1031,16 @@ async function ensureSystemPayItems(orgId: string) {
 // Items are matched by name (statutory ones by their key): matches are updated to the
 // same settings, missing ones are created. Nothing is deleted, and salary structures
 // are not copied. Commission items need a commission type with the same name there.
+// With `dryRun` nothing is written: it only reports what would happen (shown before applying).
 // With `force` ("Apply anyway"), commission items that can't be linked are copied as
 // plain Fixed amount items instead of being skipped.
-export async function applyPayItemsToAll(force = false) {
+export async function applyPayItemsToAll(opts: { force?: boolean; dryRun?: boolean } = {}) {
+  const force = !!opts.force;
+  const dryRun = !!opts.dryRun;
   const { orgId, userId } = await requireAccess("payslip:create");
   const orgs = await siblingOrgs(orgId, userId, "payslip:create");
   const result = {
+    dryRun,
     orgs: orgs.length,
     created: 0,
     updated: 0,
@@ -1053,6 +1057,7 @@ export async function applyPayItemsToAll(force = false) {
   const srcTypes = await db.select({ id: commissionType.id, name: commissionType.name }).from(commissionType).where(eq(commissionType.organizationId, orgId));
 
   for (const o of orgs) {
+    // Seeding the default items is harmless (it happens on first visit anyway) and keeps the preview accurate
     await ensureSystemPayItems(o.id);
     const dst = await db.select().from(payItem).where(eq(payItem.organizationId, o.id));
     const dstTypes = await db.select({ id: commissionType.id, name: commissionType.name }).from(commissionType).where(eq(commissionType.organizationId, o.id));
@@ -1111,7 +1116,7 @@ export async function applyPayItemsToAll(force = false) {
                 inEpf: it.inEpf, inSocso: it.inSocso, inEis: it.inEis, inPcb: it.inPcb,
                 recurring: it.recurring, isActive: it.isActive,
               };
-          await db.update(payItem).set(set).where(eq(payItem.id, target.id));
+          if (!dryRun) await db.update(payItem).set(set).where(eq(payItem.id, target.id));
           Object.assign(target, set);
           result.updated++;
         } else {
@@ -1121,7 +1126,7 @@ export async function applyPayItemsToAll(force = false) {
             inEpf: it.inEpf, inSocso: it.inSocso, inEis: it.inEis, inPcb: it.inPcb,
             recurring: it.recurring, isActive: it.isActive, sortOrder: dst.length,
           };
-          await db.insert(payItem).values(row);
+          if (!dryRun) await db.insert(payItem).values(row);
           dst.push({ ...row, createdAt: new Date() } as (typeof dst)[number]);
           result.created++;
         }
