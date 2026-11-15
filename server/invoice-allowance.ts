@@ -4,10 +4,11 @@ import { db } from "@/db";
 import {
   invoice,
   invoiceAllowance,
-  categoryAllowanceRate,
-  memberAllowanceRate,
+  commissionType,
+  commissionRole,
+  commissionRate,
+  memberCommissionRate,
   documentCategory,
-  organizationProfile,
   publicHoliday,
   member,
   organization,
@@ -17,9 +18,8 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq, and, inArray, desc, getTableColumns } from "drizzle-orm";
+import { eq, and, inArray, desc, getTableColumns, isNotNull, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import type { MultiSalesPersonMode } from "./category-allowance-rate";
 
 async function requireAccess(permission: string) {
   const session = await getCachedSession();
@@ -105,7 +105,6 @@ async function getEffectiveOrgMemberships(orgIds: string[]): Promise<EffectiveMe
 }
 
 type DayType = "weekday" | "weekend" | "holiday";
-type Role = "sales_person" | "app_specialist";
 
 // Day-of-week from LOCAL calendar date components, not Date#getUTCDay() —
 // caseDate round-trips through a plain <input type="date"> as a local
@@ -121,60 +120,62 @@ function resolveDayType(d: Date, holidayDates: Set<string>): DayType {
   return dow === 0 || dow === 6 ? "weekend" : "weekday";
 }
 
-function rateForDayType(
-  dayType: DayType,
-  weekday: string | null,
-  weekend: string | null,
-  holiday: string | null,
-): string | null {
-  if (dayType === "holiday") return holiday;
-  if (dayType === "weekend") return weekend;
-  return weekday;
-}
-
 // Regenerates the pending invoice_allowance rows for one invoice from its
-// current category/sales-person/app-specialist/case-date. Internal engine —
-// not permission-gated itself, since it's only ever called from
-// server/invoice.ts after that code's own permission check has passed.
+// current category / people / case date, using every active commission type of
+// the invoice's org (Custom Commission). Internal engine — not
+// permission-gated itself, since it's only ever called from server/invoice.ts
+// after that code's own permission check has passed.
 export async function recomputeInvoiceAllowances(invoiceId: string): Promise<void> {
   const [inv] = await db.select().from(invoice).where(eq(invoice.id, invoiceId));
   if (!inv) return;
 
-  // Once any row for this invoice is paid, leave it alone entirely — a
-  // later edit shouldn't silently erase a real payment record.
-  const [paidRow] = await db
+  // Once any row for this invoice is paid — or already included in a payslip —
+  // leave it alone entirely: a later edit shouldn't silently erase a real
+  // payment record or pull an amount out from under a draft payslip.
+  const [lockedRow] = await db
     .select({ id: invoiceAllowance.id })
     .from(invoiceAllowance)
-    .where(and(eq(invoiceAllowance.invoiceId, invoiceId), eq(invoiceAllowance.status, "paid")))
+    .where(and(
+      eq(invoiceAllowance.invoiceId, invoiceId),
+      or(eq(invoiceAllowance.status, "paid"), isNotNull(invoiceAllowance.payslipId)),
+    ))
     .limit(1);
-  if (paidRow) return;
+  if (lockedRow) return;
 
   await db.delete(invoiceAllowance).where(and(eq(invoiceAllowance.invoiceId, invoiceId), eq(invoiceAllowance.status, "pending")));
 
   if (inv.status === "cancelled") return;
   if (!inv.categoryIds || inv.categoryIds.length === 0) return;
 
+  const roles = await db
+    .select({
+      id: commissionRole.id,
+      typeId: commissionRole.typeId,
+      name: commissionRole.name,
+      source: commissionRole.source,
+      multiMode: commissionRole.multiMode,
+    })
+    .from(commissionRole)
+    .innerJoin(commissionType, eq(commissionType.id, commissionRole.typeId))
+    .where(and(
+      eq(commissionRole.organizationId, inv.organizationId),
+      eq(commissionRole.isActive, true),
+      eq(commissionType.isActive, true),
+    ));
+  if (roles.length === 0) return;
+  const roleIds = roles.map((r) => r.id);
+
   const rates = await db
     .select()
-    .from(categoryAllowanceRate)
-    .where(and(
-      eq(categoryAllowanceRate.organizationId, inv.organizationId),
-      inArray(categoryAllowanceRate.categoryId, inv.categoryIds),
-      eq(categoryAllowanceRate.isActive, true),
-    ));
+    .from(commissionRate)
+    .where(and(inArray(commissionRate.roleId, roleIds), inArray(commissionRate.categoryId, inv.categoryIds)));
   if (rates.length === 0) return;
 
   const categories = await db
     .select({ id: documentCategory.id, name: documentCategory.name })
     .from(documentCategory)
-    .where(inArray(documentCategory.id, rates.map((r) => r.categoryId)));
+    .where(inArray(documentCategory.id, [...new Set(rates.map((r) => r.categoryId))]));
   const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
-
-  const [profile] = await db
-    .select({ mode: organizationProfile.allowanceMultiSalesPersonMode })
-    .from(organizationProfile)
-    .where(eq(organizationProfile.organizationId, inv.organizationId));
-  const multiMode = (profile?.mode as MultiSalesPersonMode) ?? "full_each";
 
   const holidays = await db
     .select({ date: publicHoliday.date })
@@ -194,44 +195,25 @@ export async function recomputeInvoiceAllowances(invoiceId: string): Promise<voi
   }
   const seen = new Set<string>();
   const salesEarners = rawSalesPersons.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
-
   const appSpecEarner = inv.applicationSpecialistId
     ? { id: inv.applicationSpecialistId, name: inv.applicationSpecialistName ?? "" }
     : null;
 
-  // Per-member rate overrides — bypass the category default entirely for
-  // whichever earner/category/role/day-type they're configured for. A null
-  // field on the override row falls back to the category default (the
-  // override table only ever narrows which rate applies, it never disables
-  // an allowance the way a null category rate does).
-  const overrideUserIds = [...new Set([...salesEarners.map((p) => p.id), ...(appSpecEarner ? [appSpecEarner.id] : [])])];
-  const overrides = overrideUserIds.length > 0
-    ? await db.select().from(memberAllowanceRate).where(and(
-        eq(memberAllowanceRate.organizationId, inv.organizationId),
-        inArray(memberAllowanceRate.categoryId, rates.map((r) => r.categoryId)),
-        inArray(memberAllowanceRate.userId, overrideUserIds),
-        eq(memberAllowanceRate.isActive, true),
+  // Per-person overrides for today's day type
+  const earnerIds = [...new Set([...salesEarners.map((p) => p.id), ...(appSpecEarner ? [appSpecEarner.id] : [])])];
+  const overrides = earnerIds.length > 0
+    ? await db.select().from(memberCommissionRate).where(and(
+        inArray(memberCommissionRate.roleId, roleIds),
+        inArray(memberCommissionRate.categoryId, inv.categoryIds),
+        inArray(memberCommissionRate.userId, earnerIds),
+        eq(memberCommissionRate.dayType, dayType),
       ))
     : [];
-  const overrideByUserCategory = new Map(overrides.map((o) => [`${o.userId}|${o.categoryId}`, o]));
-
-  function effectiveRate(userId: string, categoryId: string, defaultRow: typeof rates[number], role: Role): string | null {
-    const override = overrideByUserCategory.get(`${userId}|${categoryId}`);
-    if (override) {
-      const overrideVal = role === "sales_person"
-        ? rateForDayType(dayType, override.salesPersonWeekdayRate, override.salesPersonWeekendRate, override.salesPersonHolidayRate)
-        : rateForDayType(dayType, override.appSpecialistWeekdayRate, override.appSpecialistWeekendRate, override.appSpecialistHolidayRate);
-      if (overrideVal) return overrideVal;
-    }
-    return role === "sales_person"
-      ? rateForDayType(dayType, defaultRow.salesPersonWeekdayRate, defaultRow.salesPersonWeekendRate, defaultRow.salesPersonHolidayRate)
-      : rateForDayType(dayType, defaultRow.appSpecialistWeekdayRate, defaultRow.appSpecialistWeekendRate, defaultRow.appSpecialistHolidayRate);
-  }
+  const overrideRate = new Map(overrides.map((o) => [`${o.userId}|${o.roleId}|${o.categoryId}`, o.rate]));
 
   type NewRow = typeof invoiceAllowance.$inferInsert;
   const newRows: NewRow[] = [];
-
-  function pushRow(person: { id: string; name: string }, role: Role, categoryId: string, rate: string) {
+  const push = (person: { id: string; name: string }, role: (typeof roles)[number], categoryId: string, rate: string) => {
     newRows.push({
       id: nanoid(),
       organizationId: inv.organizationId,
@@ -239,7 +221,9 @@ export async function recomputeInvoiceAllowances(invoiceId: string): Promise<voi
       invoiceNo: inv.invoiceNo,
       userId: person.id,
       userName: person.name,
-      role,
+      role: role.name,
+      commissionTypeId: role.typeId,
+      commissionRoleId: role.id,
       categoryId,
       categoryName: categoryNameById.get(categoryId) ?? "",
       dayType,
@@ -248,42 +232,40 @@ export async function recomputeInvoiceAllowances(invoiceId: string): Promise<voi
       caseDate: inv.caseDate ?? inv.invoiceDate ?? null,
       status: "pending",
     });
-  }
+  };
 
-  for (const rate of rates) {
-    if (salesEarners.length > 0) {
-      if (multiMode === "primary_only") {
-        const primary = salesEarners.find((p) => p.id === inv.salesPersonId) ?? salesEarners[0];
-        const r = effectiveRate(primary.id, rate.categoryId, rate, "sales_person");
-        if (r) pushRow(primary, "sales_person", rate.categoryId, r);
-      } else if (multiMode === "split") {
-        // Only earners on the plain category default share the split; anyone
-        // with their own override keeps their full negotiated rate — it
-        // isn't diluted just because other sales persons are also listed.
-        const defaultRate = rateForDayType(dayType, rate.salesPersonWeekdayRate, rate.salesPersonWeekendRate, rate.salesPersonHolidayRate);
-        const defaultEarners = salesEarners.filter((p) => {
-          const o = overrideByUserCategory.get(`${p.id}|${rate.categoryId}`);
-          const overrideVal = o ? rateForDayType(dayType, o.salesPersonWeekdayRate, o.salesPersonWeekendRate, o.salesPersonHolidayRate) : null;
-          return !overrideVal;
-        });
-        const splitRate = defaultRate && defaultEarners.length > 0 ? (Number(defaultRate) / defaultEarners.length).toFixed(2) : null;
-        for (const p of salesEarners) {
-          const r = effectiveRate(p.id, rate.categoryId, rate, "sales_person");
-          const isDefault = defaultEarners.includes(p);
-          const finalRate = isDefault ? splitRate : r;
-          if (finalRate) pushRow(p, "sales_person", rate.categoryId, finalRate);
+  for (const role of roles) {
+    const people = role.source === "sales_person" ? salesEarners : appSpecEarner ? [appSpecEarner] : [];
+    if (people.length === 0) continue;
+
+    // A category counts for this role when the role has a default rate row for it
+    const roleRates = rates.filter((r) => r.roleId === role.id);
+    const categoryIds = [...new Set(roleRates.map((r) => r.categoryId))];
+
+    for (const categoryId of categoryIds) {
+      const def = roleRates.find((r) => r.categoryId === categoryId && r.dayType === dayType)?.rate ?? null;
+      const eff = (userId: string) => overrideRate.get(`${userId}|${role.id}|${categoryId}`) ?? def;
+
+      if (role.source === "sales_person" && role.multiMode === "primary_only") {
+        const primary = people.find((p) => p.id === inv.salesPersonId) ?? people[0];
+        const r = eff(primary.id);
+        if (r) push(primary, role, categoryId, Number(r).toFixed(2));
+      } else if (role.source === "sales_person" && role.multiMode === "split") {
+        // Only earners on the plain default share the split; anyone with their
+        // own override keeps their full negotiated rate.
+        const sharing = people.filter((p) => !overrideRate.has(`${p.id}|${role.id}|${categoryId}`));
+        const split = def && sharing.length > 0 ? (Number(def) / sharing.length).toFixed(2) : null;
+        for (const p of people) {
+          const own = overrideRate.get(`${p.id}|${role.id}|${categoryId}`);
+          const r = own ?? split;
+          if (r) push(p, role, categoryId, Number(r).toFixed(2));
         }
       } else {
-        for (const p of salesEarners) {
-          const r = effectiveRate(p.id, rate.categoryId, rate, "sales_person");
-          if (r) pushRow(p, "sales_person", rate.categoryId, r);
+        for (const p of people) {
+          const r = eff(p.id);
+          if (r) push(p, role, categoryId, Number(r).toFixed(2));
         }
       }
-    }
-
-    if (appSpecEarner) {
-      const r = effectiveRate(appSpecEarner.id, rate.categoryId, rate, "app_specialist");
-      if (r) pushRow(appSpecEarner, "app_specialist", rate.categoryId, r);
     }
   }
 

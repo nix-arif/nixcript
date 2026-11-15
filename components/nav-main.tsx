@@ -28,7 +28,7 @@ import {
 import { ChevronRightIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 
 // Returns true only if this url is the best match for pathname across ALL nav sub-items.
 // "Best match" means: no other registered url is a longer, more specific match.
@@ -55,6 +55,7 @@ export function NavMain({
       url: string;
       disabled?: boolean;
       hint?: string;
+      section?: string;
     }[];
   }[];
 }) {
@@ -159,11 +160,18 @@ export function NavMain({
                     </DropdownMenuLabel>
                     <DropdownMenuSeparator className="my-1" />
                     <div className="flex flex-col gap-0.5">
-                      {item.items?.map((subItem) => {
+                      {item.items?.map((subItem, idx) => {
                         const isActive = isActiveSub(subItem.url, allSubUrls, pathname);
+                        const heading = subItem.section && subItem.section !== item.items?.[idx - 1]?.section ? subItem.section : null;
                         return (
+                          <Fragment key={subItem.title}>
+                            {heading && (
+                              <>
+                                <DropdownMenuSeparator className="my-1" />
+                                <DropdownMenuLabel className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{heading}</DropdownMenuLabel>
+                              </>
+                            )}
                           <DropdownMenuItem
-                            key={subItem.title}
                             asChild
                             className={`h-8 rounded-md px-2 text-[13px] transition-colors
                               ${isActive
@@ -175,6 +183,7 @@ export function NavMain({
                               ? <span title={subItem.hint} className="opacity-40 cursor-not-allowed">{subItem.title}</span>
                               : <Link href={subItem.url} onClick={closeMobile}>{subItem.title}</Link>}
                           </DropdownMenuItem>
+                          </Fragment>
                         );
                       })}
                     </div>
@@ -214,10 +223,15 @@ export function NavMain({
 
                 <CollapsibleContent>
                   <SidebarMenuSub className="ml-5 border-l border-sidebar-border/60 pl-2 py-0.5 gap-0">
-                    {item.items?.map((subItem) => {
+                    {item.items?.map((subItem, idx) => {
                       const isActive = isActiveSub(subItem.url, allSubUrls, pathname);
+                      const heading = subItem.section && subItem.section !== item.items?.[idx - 1]?.section ? subItem.section : null;
                       return (
-                        <SidebarMenuSubItem key={subItem.title}>
+                        <Fragment key={subItem.title}>
+                        {heading && (
+                          <li className="px-2 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-sidebar-foreground/40 list-none">{heading}</li>
+                        )}
+                        <SidebarMenuSubItem>
                           <SidebarMenuSubButton
                             asChild
                             isActive={isActive}
@@ -232,6 +246,7 @@ export function NavMain({
                               : <Link href={subItem.url} onClick={closeMobile}>{subItem.title}</Link>}
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
+                        </Fragment>
                       );
                     })}
                   </SidebarMenuSub>

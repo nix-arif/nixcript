@@ -45,6 +45,7 @@ export const ALL_PERMISSIONS = [
   { key: "payslip:create", label: "Create payslip" },
   { key: "payslip:approve", label: "Approve payroll period" },
   { key: "payslip:publish", label: "Publish payslips" },
+  { key: "payslip:recall", label: "Recall published payroll" },
 
   { key: "organization-profile:create", label: "Organization Profile Create" },
   { key: "organization-profile:update", label: "Organization Profile Update" },

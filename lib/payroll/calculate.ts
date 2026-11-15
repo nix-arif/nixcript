@@ -1134,11 +1134,12 @@ export function calculatePcb(input: PcbInput): number {
 // ── Main calculate ─────────────────────────────────────────────────────────
 export function calculatePayslip(input: {
   basicSalary: number;
-  bonus?: number;
-  overtimePay?: number;
-  caseAllowancePay?: number;
-  petrolAllowancePay?: number;
   allowances?: number;
+  // Portion of `allowances` included in each statutory base (per pay item flags)
+  epfAllowances?: number;
+  socsoAllowances?: number;
+  eisAllowances?: number;
+  pcbAllowances?: number;
   otherDeductions?: number;
   manualLhdn?: number;
   ageAbove60?: boolean;
@@ -1150,6 +1151,11 @@ export function calculatePayslip(input: {
   spouseRelief?: number;
   childRelief?: number;
   includeEpfInPcb?: boolean; // default false — set true to deduct EPF in PCB
+  // HR-decided yearly relief. When given it replaces the built-in reliefs above:
+  // `reliefFixed` is the total of the fixed ones, `epfReliefCap` the cap for the
+  // EPF-linked one (the employee's actual yearly EPF up to this), null = none.
+  reliefFixed?: number;
+  epfReliefCap?: number | null;
   lifeInsuranceRelief?: number;
   medicalRelief?: number;
   otherReliefs?: number;
@@ -1157,11 +1163,11 @@ export function calculatePayslip(input: {
 }) {
   const {
     basicSalary,
-    bonus = 0,
-    overtimePay = 0,
-    caseAllowancePay = 0,
-    petrolAllowancePay = 0,
     allowances = 0,
+    epfAllowances = 0,
+    socsoAllowances = 0,
+    eisAllowances = 0,
+    pcbAllowances = 0,
     otherDeductions = 0,
     manualLhdn,
     ageAbove60 = false,
@@ -1172,28 +1178,26 @@ export function calculatePayslip(input: {
     spouseRelief = 0,
     childRelief = 0,
     includeEpfInPcb = false,
+    reliefFixed,
+    epfReliefCap = null,
     lifeInsuranceRelief = 0,
     medicalRelief = 0,
     otherReliefs = 0,
     zakatMonthly = 0,
   } = input;
 
-  // Petrol allowance: exempt up to RM500/month (RM6,000/year) per Schedule 6 para 25B
-  const petrolTaxable = Math.max(0, petrolAllowancePay - 500);
+  // Allowances (case, petrol, car…) are pay items: `allowances` is their total,
+  // the *Allowances inputs are the parts counted in each statutory base.
+  const gross = basicSalary + allowances;
+  const epfBase = basicSalary + epfAllowances;
+  const socsoBase = basicSalary + socsoAllowances;
+  const eisBase = basicSalary + eisAllowances;
+  const pcbBase = basicSalary + pcbAllowances;
 
-  const gross = basicSalary + bonus + overtimePay + caseAllowancePay + petrolAllowancePay + allowances;
-  // EPF/SOCSO/EIS base — travelling allowance (petrol) excluded by law
-  const grossWithoutAllowances = basicSalary + bonus + overtimePay + caseAllowancePay;
-  // PCB base — includes taxable petrol portion (excess over RM500/month)
-  const pcbBase = grossWithoutAllowances + petrolTaxable;
-
-  const epf = calculateEpf(grossWithoutAllowances, epfCategory);
-  const socso = calculateSocso(
-    Math.min(grossWithoutAllowances, 6000),
-    ageAbove60,
-  );
+  const epf = calculateEpf(epfBase, epfCategory);
+  const socso = calculateSocso(Math.min(socsoBase, 6000), ageAbove60);
   const eis = calculateEis(
-    Math.min(grossWithoutAllowances, 6000),
+    Math.min(eisBase, 6000),
     eisApplicable && !ageAbove60,
   );
 
@@ -1203,13 +1207,20 @@ export function calculatePayslip(input: {
       : calculatePcb({
           annualIncome: pcbBase * 12,
           currentMonth,
-          selfRelief,
-          spouseRelief,
-          childRelief,
-          epfRelief: includeEpfInPcb ? epf.employee : 0,
-          lifeInsuranceRelief,
-          medicalRelief,
-          otherReliefs,
+          selfRelief: reliefFixed ?? selfRelief,
+          spouseRelief: reliefFixed === undefined ? spouseRelief : 0,
+          childRelief: reliefFixed === undefined ? childRelief : 0,
+          epfRelief:
+            reliefFixed !== undefined
+              ? epfReliefCap !== null
+                ? Math.min(epf.employee * 12, epfReliefCap)
+                : 0
+              : includeEpfInPcb
+                ? epf.employee
+                : 0,
+          lifeInsuranceRelief: reliefFixed === undefined ? lifeInsuranceRelief : 0,
+          medicalRelief: reliefFixed === undefined ? medicalRelief : 0,
+          otherReliefs: reliefFixed === undefined ? otherReliefs : 0,
           zakatMonthly,
         });
 

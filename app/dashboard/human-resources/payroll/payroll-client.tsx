@@ -12,6 +12,7 @@ import {
 } from "@/server/payroll";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
+import { PayrollImportMenu } from "./payroll-import-menu";
 import {
   Dialog,
   DialogContent,
@@ -184,9 +185,12 @@ export function PayrollClient({ initialPeriods }: Props) {
         title="Payroll"
         description="Manage monthly payroll periods and employee payslips"
         action={
-          <Button onClick={() => setShowCreate(true)} className="gap-2">
-            <PlusIcon className="w-4 h-4" /> New period
-          </Button>
+          <div className="flex items-center gap-2">
+            <PayrollImportMenu onDone={refreshPeriods} />
+            <Button onClick={() => setShowCreate(true)} className="gap-2">
+              <PlusIcon className="w-4 h-4" /> New period
+            </Button>
+          </div>
         }
       />
 

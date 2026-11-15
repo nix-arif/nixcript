@@ -7,6 +7,7 @@ import {
   index,
   uniqueIndex,
   integer,
+  numeric,
   date,
   json,
   bigint,
@@ -1112,10 +1113,6 @@ export const organizationProfile = pgTable("organization_profile", {
     >()
     .default([]),
 
-  // Category allowance: how the rate is shared when an invoice lists more
-  // than one sales person — full_each | split | primary_only.
-  allowanceMultiSalesPersonMode: text("allowance_multi_sales_person_mode").default("full_each"),
-
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -1487,6 +1484,149 @@ export const payrollPeriod = pgTable(
   ],
 );
 
+// Tax relief types HR defines (self, spouse, medical…) and what each employee gets
+export const taxReliefType = pgTable(
+  "tax_relief_type",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    defaultAmount: numeric("default_amount", { precision: 12, scale: 2 }).notNull().default("0"), // yearly
+    maxAmount: numeric("max_amount", { precision: 12, scale: 2 }), // yearly cap, null = none
+    appliesToAll: boolean("applies_to_all").notNull().default(false), // every employee gets the default unless changed
+    linkEpf: boolean("link_epf").notNull().default(false), // amount = the employee's actual EPF (yearly), up to the cap
+    isActive: boolean("is_active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("tax_relief_type_org_name_uidx").on(t.organizationId, t.name)],
+);
+
+export const employeeTaxRelief = pgTable(
+  "employee_tax_relief",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    reliefTypeId: text("relief_type_id")
+      .notNull()
+      .references(() => taxReliefType.id, { onDelete: "cascade" }),
+    amount: numeric("amount", { precision: 12, scale: 2 }).notNull().default("0"), // yearly; 0 = excluded
+  },
+  (t) => [
+    uniqueIndex("employee_tax_relief_uidx").on(t.userId, t.reliefTypeId),
+    index("employee_tax_relief_org_idx").on(t.organizationId),
+  ],
+);
+
+// Audit log of published payroll periods taken back to draft
+export const payrollPeriodRecall = pgTable(
+  "payroll_period_recall",
+  {
+    id: text("id").primaryKey(),
+    periodId: text("period_id")
+      .notNull()
+      .references(() => payrollPeriod.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    recalledBy: text("recalled_by")
+      .notNull()
+      .references(() => user.id),
+    reason: text("reason").notNull(),
+    payslipCount: integer("payslip_count").notNull().default(0),
+    recalledAt: timestamp("recalled_at").defaultNow().notNull(),
+  },
+  (t) => [index("payroll_period_recall_period_idx").on(t.periodId)],
+);
+
+// What HR wants shown on the payslip PDF (see lib/payroll/pdf-settings.ts)
+export const payslipPdfSetting = pgTable("payslip_pdf_setting", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  settings: json("settings").notNull().default({}),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Pay items: HR-defined earning / deduction types with statutory flags
+export const payItem = pgTable(
+  "pay_item",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: text("kind").notNull().default("earning"), // earning | deduction
+    // Auto-calculated statutory deductions: epf | socso | eis | pcb. null = ordinary item.
+    systemKey: text("system_key"),
+    // fixed = type an amount; per_unit = quantity × rate (e.g. hours × RM20);
+    // invoice_allowance = sum of the employee's pending case allowances (Allowance module);
+    // auto = calculated by the payroll engine (statutory deductions)
+    calcType: text("calc_type").notNull().default("fixed"),
+    unitLabel: text("unit_label"), // per_unit: "case", "day", "hour"
+    // invoice_allowance items: which commission type's earnings this item pays out
+    commissionTypeId: text("commission_type_id"),
+    rate: text("rate"), // per_unit: default rate per unit
+    // Earnings: which statutory deductions this item is included in the base of
+    inEpf: boolean("in_epf").notNull().default(false),
+    inSocso: boolean("in_socso").notNull().default(false),
+    inEis: boolean("in_eis").notNull().default(false),
+    inPcb: boolean("in_pcb").notNull().default(false),
+    recurring: boolean("recurring").notNull().default(true), // fixed monthly vs filled each month
+    isActive: boolean("is_active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("pay_item_org_name_uidx").on(t.organizationId, t.name),
+    index("pay_item_org_idx").on(t.organizationId),
+  ],
+);
+
+// Per-employee salary structure: basic salary + recurring pay items
+export const salaryStructure = pgTable(
+  "salary_structure",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    basicSalary: text("basic_salary").notNull().default("0"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [uniqueIndex("salary_structure_org_user_uidx").on(t.organizationId, t.userId)],
+);
+
+export const salaryStructureItem = pgTable(
+  "salary_structure_item",
+  {
+    id: text("id").primaryKey(),
+    structureId: text("structure_id")
+      .notNull()
+      .references(() => salaryStructure.id, { onDelete: "cascade" }),
+    payItemId: text("pay_item_id")
+      .notNull()
+      .references(() => payItem.id, { onDelete: "cascade" }),
+    amount: text("amount").notNull().default("0"),
+  },
+  (t) => [uniqueIndex("salary_structure_item_uidx").on(t.structureId, t.payItemId)],
+);
+
 // Individual payslip per employee per period
 export const payslip = pgTable(
   "payslip",
@@ -1512,32 +1652,17 @@ export const payslip = pgTable(
     bankAccountNo: text("bank_account_no"),
     bankAccountHolder: text("bank_account_holder"),
 
-    // Earnings
+    // The only dedicated earning. Everything else (bonus, overtime, allowances,
+    // EPF/SOCSO/EIS/PCB, other deductions) is a row in payslip_line, driven by
+    // pay items (Payslip Settings).
     basicSalary: text("basic_salary").notNull(),
-    bonus: text("bonus").default("0"),
-    overtimePay: text("overtime_pay").default("0"),
-    caseAllowancePay: text("case_allowance_pay").default("0"),
-    petrolAllowancePay: text("petrol_allowance_pay").default("0"),
-    allowances: json("allowances")
-      .$type<{ label: string; amount: string }[]>()
-      .default([]),
-
-    // Deductions
-    epfEmployee: text("epf_employee").default("0"), // 11%
-    epfEmployer: text("epf_employer").default("0"), // 13% or 12%
-    socsoEmployee: text("socso_employee").default("0"),
-    socsoEmployer: text("socso_employer").default("0"),
-    eisEmployee: text("eis_employee").default("0"),
-    eisEmployer: text("eis_employer").default("0"),
-    lhdn: text("lhdn").default("0"), // PCB/MTD
-    otherDeductions: json("other_deductions")
-      .$type<{ label: string; amount: string }[]>()
-      .default([]),
 
     // Computed totals
     grossPay: text("gross_pay").notNull(),
     totalDeductions: text("total_deductions").notNull(),
     netPay: text("net_pay").notNull(),
+    // PCB base: basic salary + earnings marked for PCB (before tax relief)
+    taxableIncome: text("taxable_income"),
 
     // Status
     status: text("status").notNull().default("draft"), // draft | published
@@ -1553,6 +1678,31 @@ export const payslip = pgTable(
     uniqueIndex("payslip_period_user_uidx").on(t.periodId, t.userId),
     index("payslip_user_idx").on(t.userId),
     index("payslip_period_idx").on(t.periodId),
+  ],
+);
+
+// One row per earning / deduction / employer contribution on a payslip
+export const payslipLine = pgTable(
+  "payslip_line",
+  {
+    id: text("id").primaryKey(),
+    payslipId: text("payslip_id")
+      .notNull()
+      .references(() => payslip.id, { onDelete: "cascade" }),
+    // null when the pay item was deleted, or for a free-text line
+    payItemId: text("pay_item_id").references(() => payItem.id, { onDelete: "set null" }),
+    // epf | socso | eis | pcb for auto-calculated statutory lines, else null
+    code: text("code"),
+    kind: text("kind").notNull(), // earning | deduction | employer
+    label: text("label").notNull(), // snapshot of the pay item name
+    quantity: text("quantity"),
+    rate: text("rate"),
+    amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [
+    index("payslip_line_payslip_idx").on(t.payslipId),
+    index("payslip_line_pay_item_idx").on(t.payItemId),
   ],
 );
 
@@ -4372,57 +4522,84 @@ export const documentCategoryRelations = relations(documentCategory, ({ one }) =
    CATEGORY ALLOWANCE (sales person / application specialist)
 ========================= */
 
-// One row per (org, category) — the rate a sales person / application
-// specialist earns for a case tagged with this category. Null rate = that
-// role doesn't earn for this category. Separate weekday/weekend rates since
-// case work is commonly paid differently on weekends.
-export const categoryAllowanceRate = pgTable(
-  "category_allowance_rate",
+/* =========================
+   CUSTOM COMMISSION
+   HR-defined commission types (e.g. "Case commission"). A type has roles —
+   each mapped to a person on the invoice — and a rate per category × day type.
+   Earnings are generated per invoice into invoice_allowance.
+========================= */
+export const commissionType = pgTable(
+  "commission_type",
   {
     id: text("id").primaryKey(),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
-    categoryId: text("category_id")
-      .notNull()
-      .references(() => documentCategory.id, { onDelete: "cascade" }),
-
-    salesPersonWeekdayRate: text("sales_person_weekday_rate"),
-    salesPersonWeekendRate: text("sales_person_weekend_rate"),
-    salesPersonHolidayRate: text("sales_person_holiday_rate"),
-    appSpecialistWeekdayRate: text("app_specialist_weekday_rate"),
-    appSpecialistWeekendRate: text("app_specialist_weekend_rate"),
-    appSpecialistHolidayRate: text("app_specialist_holiday_rate"),
-
-    isActive: boolean("is_active").default(true).notNull(),
-
+    name: text("name").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at")
-      .defaultNow()
-      .$onUpdate(() => new Date())
-      .notNull(),
   },
   (t) => [
-    uniqueIndex("category_allowance_rate_org_cat_uidx").on(t.organizationId, t.categoryId),
-    index("category_allowance_rate_org_idx").on(t.organizationId),
+    uniqueIndex("commission_type_org_name_uidx").on(t.organizationId, t.name),
+    index("commission_type_org_idx").on(t.organizationId),
   ],
 );
 
-export const categoryAllowanceRateRelations = relations(categoryAllowanceRate, ({ one }) => ({
-  organization: one(organization, { fields: [categoryAllowanceRate.organizationId], references: [organization.id] }),
-  category: one(documentCategory, { fields: [categoryAllowanceRate.categoryId], references: [documentCategory.id] }),
-}));
+// A role within a commission type, e.g. "Sales Person" taking the invoice's sales
+// person(s). `source` says which person on the invoice earns it.
+export const commissionRole = pgTable(
+  "commission_role",
+  {
+    id: text("id").primaryKey(),
+    typeId: text("type_id")
+      .notNull()
+      .references(() => commissionType.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    source: text("source").notNull(), // sales_person | application_specialist
+    // When several people fill the source (sales person + associates):
+    // full_each | split | primary_only
+    multiMode: text("multi_mode").notNull().default("full_each"),
+    isActive: boolean("is_active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("commission_role_type_name_uidx").on(t.typeId, t.name),
+    index("commission_role_type_idx").on(t.typeId),
+  ],
+);
 
-// Per-member override of category_allowance_rate — some individuals are
-// paid a different rate than the org default for a given category (e.g. a
-// senior staff member on a higher rate). When a row exists here for the
-// earner, it entirely replaces the category default for that role/day-type
-// combination; a null field falls back to the category default rather than
-// meaning "earns nothing" (unlike category_allowance_rate, where null means
-// no allowance at all) — this table only ever narrows down to "which of
-// these two rates applies," it never disables an otherwise-earned allowance.
-export const memberAllowanceRate = pgTable(
-  "member_allowance_rate",
+// Default rate for (role, category, day type). No row = that role earns nothing there.
+export const commissionRate = pgTable(
+  "commission_rate",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => commissionRole.id, { onDelete: "cascade" }),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => documentCategory.id, { onDelete: "cascade" }),
+    dayType: text("day_type").notNull(), // weekday | weekend | holiday
+    rate: numeric("rate", { precision: 12, scale: 2 }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("commission_rate_role_cat_day_uidx").on(t.roleId, t.categoryId, t.dayType),
+    index("commission_rate_org_idx").on(t.organizationId),
+  ],
+);
+
+// Per-person override of commission_rate: replaces the default for that
+// (role, category, day type). Only ever narrows which rate applies — it never
+// disables a commission the default would pay.
+export const memberCommissionRate = pgTable(
+  "member_commission_rate",
   {
     id: text("id").primaryKey(),
     organizationId: text("organization_id")
@@ -4431,37 +4608,20 @@ export const memberAllowanceRate = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => commissionRole.id, { onDelete: "cascade" }),
     categoryId: text("category_id")
       .notNull()
       .references(() => documentCategory.id, { onDelete: "cascade" }),
-
-    salesPersonWeekdayRate: text("sales_person_weekday_rate"),
-    salesPersonWeekendRate: text("sales_person_weekend_rate"),
-    salesPersonHolidayRate: text("sales_person_holiday_rate"),
-    appSpecialistWeekdayRate: text("app_specialist_weekday_rate"),
-    appSpecialistWeekendRate: text("app_specialist_weekend_rate"),
-    appSpecialistHolidayRate: text("app_specialist_holiday_rate"),
-
-    isActive: boolean("is_active").default(true).notNull(),
-
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at")
-      .defaultNow()
-      .$onUpdate(() => new Date())
-      .notNull(),
+    dayType: text("day_type").notNull(),
+    rate: numeric("rate", { precision: 12, scale: 2 }).notNull(),
   },
   (t) => [
-    uniqueIndex("member_allowance_rate_org_user_cat_uidx").on(t.organizationId, t.userId, t.categoryId),
-    index("member_allowance_rate_org_idx").on(t.organizationId),
-    index("member_allowance_rate_user_idx").on(t.userId),
+    uniqueIndex("member_commission_rate_uidx").on(t.userId, t.roleId, t.categoryId, t.dayType),
+    index("member_commission_rate_org_idx").on(t.organizationId),
   ],
 );
-
-export const memberAllowanceRateRelations = relations(memberAllowanceRate, ({ one }) => ({
-  organization: one(organization, { fields: [memberAllowanceRate.organizationId], references: [organization.id] }),
-  user: one(user, { fields: [memberAllowanceRate.userId], references: [user.id] }),
-  category: one(documentCategory, { fields: [memberAllowanceRate.categoryId], references: [documentCategory.id] }),
-}));
 
 // Org-defined public holiday calendar — a case falling on one of these
 // dates earns the (optional, higher) holiday allowance rate instead of the
@@ -4508,7 +4668,10 @@ export const invoiceAllowance = pgTable(
 
     userId: text("user_id").notNull().references(() => user.id),
     userName: text("user_name").notNull(),
-    role: text("role").notNull(), // sales_person | app_specialist
+    role: text("role").notNull(), // snapshot of the commission role name
+
+    commissionTypeId: text("commission_type_id").references(() => commissionType.id, { onDelete: "set null" }),
+    commissionRoleId: text("commission_role_id").references(() => commissionRole.id, { onDelete: "set null" }),
 
     categoryId: text("category_id").references(() => documentCategory.id, { onDelete: "set null" }),
     categoryName: text("category_name").notNull(),
@@ -4521,6 +4684,8 @@ export const invoiceAllowance = pgTable(
     status: text("status").default("pending").notNull(), // pending | paid
     paidAt: timestamp("paid_at"),
     paidBy: text("paid_by").references(() => user.id),
+    // Payslip this allowance is included in; marked paid when its period is published
+    payslipId: text("payslip_id").references(() => payslip.id, { onDelete: "set null" }),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
@@ -4529,7 +4694,8 @@ export const invoiceAllowance = pgTable(
       .notNull(),
   },
   (t) => [
-    uniqueIndex("invoice_allowance_invoice_user_role_cat_uidx").on(t.invoiceId, t.userId, t.role, t.categoryId, t.dayType),
+    index("invoice_allowance_payslip_idx").on(t.payslipId),
+    uniqueIndex("invoice_allowance_invoice_user_role_cat_uidx").on(t.invoiceId, t.userId, t.commissionRoleId, t.categoryId, t.dayType),
     index("invoice_allowance_org_idx").on(t.organizationId),
     index("invoice_allowance_invoice_idx").on(t.invoiceId),
     index("invoice_allowance_user_idx").on(t.userId),
@@ -4541,6 +4707,7 @@ export const invoiceAllowanceRelations = relations(invoiceAllowance, ({ one }) =
   invoice: one(invoice, { fields: [invoiceAllowance.invoiceId], references: [invoice.id] }),
   user: one(user, { fields: [invoiceAllowance.userId], references: [user.id] }),
   category: one(documentCategory, { fields: [invoiceAllowance.categoryId], references: [documentCategory.id] }),
+  commissionType: one(commissionType, { fields: [invoiceAllowance.commissionTypeId], references: [commissionType.id] }),
   paidByUser: one(user, { fields: [invoiceAllowance.paidBy], references: [user.id], relationName: "invoiceAllowancePaidBy" }),
 }));
 

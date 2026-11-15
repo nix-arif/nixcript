@@ -4,7 +4,7 @@ import {
   ShoppingCartIcon,
   TruckIcon,
   ReceiptIcon,
-  UsersIcon,
+  ComponentIcon,
   ShieldIcon,
   WrenchIcon,
   UserIcon,
@@ -22,12 +22,15 @@ import {
 import React from "react";
 
 export type NavSubItem = {
+  // "{org}" is replaced by the active organization's name
   title: string;
   url: string;
   permission?: string;
   // Shown greyed out and not clickable, with `hint` as its tooltip
   disabled?: boolean;
   hint?: string;
+  // Optional heading shown above the first item of a run with this section
+  section?: string;
 };
 
 export type NavGroup = {
@@ -158,7 +161,7 @@ export const navConfig: NavGroup[] = [
   {
     title: "Organization",
     url: "#",
-    icon: React.createElement(UsersIcon),
+    icon: React.createElement(ComponentIcon),
     items: [
       { title: "Members",              url: "/dashboard/organization/members",              permission: "member:read"               },
       { title: "Departments",          url: "/dashboard/organization/departments",          permission: "department:read"           },
@@ -167,6 +170,9 @@ export const navConfig: NavGroup[] = [
       { title: "Document Settings",    url: "/dashboard/organization/document-settings",    permission: "document-settings:update" },
       { title: "Categories",           url: "/dashboard/organization/categories",           permission: "organization-profile:read" },
       { title: "Admin Invoices",       url: "/dashboard/organization/invoices",             permission: "organization-profile:update" },
+      { title: "{org} Calendar",         url: "/dashboard/organization/org-calendar",         permission: "public-holiday:read" },
+      { title: "Payslip Settings",     url: "/dashboard/human-resources/payslip-settings",  permission: "payslip:create", section: "Human Resources" },
+      { title: "Custom Commission",    url: "/dashboard/organization/custom-commission",    permission: "allowance:manage", section: "Human Resources" },
     ],
   },
   {
@@ -183,28 +189,26 @@ export const navConfig: NavGroup[] = [
     url: "#",
     icon: React.createElement(HardHat),
     items: [
-      { title: "Payroll",        url: "/dashboard/human-resources/payroll",              permission: "payslip:read:all" },
-      { title: "My Payslips",    url: "/dashboard/human-resources/payslips",             permission: "payslip:read:own" },
-      { title: "My Leave",       url: "/dashboard/human-resources/leave",                permission: "leave:read:own"   },
-      { title: "Leave Approvals",url: "/dashboard/human-resources/leave/approvals",      permission: "leave:approve"    },
-      { title: "Record Leave",   url: "/dashboard/human-resources/leave/approvals/record", permission: "leave:record"  },
-      { title: "Leave Types",    url: "/dashboard/human-resources/leave/types",          permission: "leave:manage"     },
-      { title: "Leave Balances", url: "/dashboard/human-resources/leave/balances",       permission: "leave:manage"     },
-      { title: "Leave Policy", url: "/dashboard/human-resources/leave/policy", permission: "leave:manage" },
-      { title: "Leave Report",   url: "/dashboard/human-resources/leave/report",         permission: "leave:read:all"   },
-      { title: "Leave Summary",  url: "/dashboard/human-resources/leave/summary",        permission: "leave:summary"    },
-      { title: "My Claims",      url: "/dashboard/human-resources/claim",               permission: "claim:read:own"   },
-      { title: "Claim Checker",  url: "/dashboard/human-resources/claim/checker",        permission: "claim:check"      },
-      { title: "Claim Approvals",url: "/dashboard/human-resources/claim/approvals",      permission: "claim:approve"    },
-      { title: "Claim Types",    url: "/dashboard/human-resources/claim/types",          permission: "claim:manage"     },
-      { title: "All Claims",     url: "/dashboard/human-resources/claim/all",            permission: "claim:read:all"   },
-      { title: "My Travel Forms",  url: "/dashboard/human-resources/travel",             permission: "travel:read:own"  },
-      { title: "Travel Approvals", url: "/dashboard/human-resources/travel/approvals",   permission: "travel:approve"   },
-      { title: "All Travel Forms", url: "/dashboard/human-resources/travel/all",         permission: "travel:read:all"  },
-      { title: "My Allowances",       url: "/dashboard/human-resources/allowance",       permission: "allowance:read:own" },
-      { title: "Allowance Statement", url: "/dashboard/human-resources/allowance/all",   permission: "allowance:read:all" },
-      { title: "Allowance Rates",     url: "/dashboard/human-resources/allowance/rates", permission: "allowance:manage"   },
-      { title: "Public Holidays",     url: "/dashboard/human-resources/public-holidays", permission: "public-holiday:read" },
+      { title: "Payroll",        url: "/dashboard/human-resources/payroll",              permission: "payslip:read:all", section: "Payroll" },
+      { title: "My Payslips",    url: "/dashboard/human-resources/payslips",             permission: "payslip:read:own", section: "Payroll" },
+      { title: "My Leave",       url: "/dashboard/human-resources/leave",                permission: "leave:read:own", section: "Leave" },
+      { title: "Leave Approvals",url: "/dashboard/human-resources/leave/approvals",      permission: "leave:approve", section: "Leave" },
+      { title: "Record Leave",   url: "/dashboard/human-resources/leave/approvals/record", permission: "leave:record", section: "Leave" },
+      { title: "Leave Types",    url: "/dashboard/human-resources/leave/types",          permission: "leave:manage", section: "Leave" },
+      { title: "Leave Balances", url: "/dashboard/human-resources/leave/balances",       permission: "leave:manage", section: "Leave" },
+      { title: "Leave Policy", url: "/dashboard/human-resources/leave/policy", permission: "leave:manage", section: "Leave" },
+      { title: "Leave Report",   url: "/dashboard/human-resources/leave/report",         permission: "leave:read:all", section: "Leave" },
+      { title: "Leave Summary",  url: "/dashboard/human-resources/leave/summary",        permission: "leave:summary", section: "Leave" },
+      { title: "My Claims",      url: "/dashboard/human-resources/claim",               permission: "claim:read:own", section: "Claims" },
+      { title: "Claim Checker",  url: "/dashboard/human-resources/claim/checker",        permission: "claim:check", section: "Claims" },
+      { title: "Claim Approvals",url: "/dashboard/human-resources/claim/approvals",      permission: "claim:approve", section: "Claims" },
+      { title: "Claim Types",    url: "/dashboard/human-resources/claim/types",          permission: "claim:manage", section: "Claims" },
+      { title: "All Claims",     url: "/dashboard/human-resources/claim/all",            permission: "claim:read:all", section: "Claims" },
+      { title: "My Travel Forms",  url: "/dashboard/human-resources/travel",             permission: "travel:read:own", section: "Travel" },
+      { title: "Travel Approvals", url: "/dashboard/human-resources/travel/approvals",   permission: "travel:approve", section: "Travel" },
+      { title: "All Travel Forms", url: "/dashboard/human-resources/travel/all",         permission: "travel:read:all", section: "Travel" },
+      { title: "My Allowances",       url: "/dashboard/human-resources/allowance",       permission: "allowance:read:own", section: "Allowance" },
+      { title: "Allowance Statement", url: "/dashboard/human-resources/allowance/all",   permission: "allowance:read:all", section: "Allowance" },
     ],
   },
   {

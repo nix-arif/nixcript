@@ -23,6 +23,7 @@ export const APPROVAL_MODULES = [
     permissions: [
       { key: "payslip:approve", label: "Approve Payroll Period" },
       { key: "payslip:publish", label: "Publish Payslips" },
+      { key: "payslip:recall", label: "Recall Published Payroll" },
     ],
   },
   {
@@ -91,6 +92,7 @@ export const DEFAULT_SELF_ACTION_ALLOWED: Record<string, boolean> = {
   "travel:approve": false,
   "payslip:approve": true,
   "payslip:publish": true,
+  "payslip:recall": true,
   "sales-order:approve": true,
   "purchase-requisition:approve": true,
   "purchase-order:approve": true,

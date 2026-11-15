@@ -178,7 +178,7 @@ export const ALL_PERMISSIONS = [
   // Allowance management (category-based sales person / app specialist allowance)
   { key: "allowance:read:own", label: "View Own Allowance Statement" },
   { key: "allowance:read:all", label: "View All Employees' Allowance Statements" },
-  { key: "allowance:manage",   label: "Manage Category Allowance Rates" },
+  { key: "allowance:manage",   label: "Manage Custom Commission" },
 
   // Public holiday calendar (used by allowance rates)
   { key: "public-holiday:read",   label: "View Public Holidays" },
@@ -201,6 +201,7 @@ export const APPROVAL_ONLY_KEYS = [
   "travel:approve",
   "payslip:approve",
   "payslip:publish",
+  "payslip:recall",
   "sales-order:approve",
   "purchase-requisition:approve",
   "purchase-order:approve",
@@ -355,7 +356,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "invoice:read", "invoice:create", "invoice:update", "invoice:delete",
       "accounts-receivable:read", "accounts-receivable:create",
       "consignment:read", "consignment:settle",
-      "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
+      "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish", "payslip:recall",
       "account:read", "account:create", "account:update", "account:delete",
       "sales-order:read",
       "delivery-order:read",
@@ -393,7 +394,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "member:read", "member:invite", "member:remove",
       "department:read", "department:create",
       "profile:read", "profile:update", "profile:read:all", "profile:update:all", "profile:delete:all",
-      "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish",
+      "payslip:read:own", "payslip:read:all", "payslip:create", "payslip:approve", "payslip:publish", "payslip:recall",
       "organization-profile:read",
       "claim:read:own", "claim:apply", "claim:check", "claim:approve", "claim:manage", "claim:read:all",
       "leave:read:own", "leave:apply", "leave:approve", "leave:manage", "leave:read:all", "leave:summary", "leave:record",

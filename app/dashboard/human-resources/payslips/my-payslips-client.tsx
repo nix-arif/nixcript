@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { DownloadIcon, EyeIcon, FileTextIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { generatePayslipPdf } from "./generate-payslip-pdf";
-import { getPayslipYtd } from "@/server/payroll";
+import { downloadPayslipPdf } from "./download-payslip-pdf";
+import { splitLines, lineAmount } from "@/lib/payroll/build-lines";
 import {
   getFullOrganizationProfile,
   getLogoAsBase64,
@@ -56,60 +56,7 @@ export function MyPayslipsClient({ payslips }: Props) {
   const handleDownload = async (p: Payslip) => {
     setGenerating(p.id);
     try {
-      const [ytd, org] = await Promise.all([
-        getPayslipYtd(p.userId, p.periodYear, p.periodMonth),
-        getFullOrganizationProfile(),
-      ]);
-
-      console.log("ytd:", ytd);
-      console.log("org.logo:", org.logo);
-      console.log("generating PDF...");
-
-      await generatePayslipPdf({
-        // Company
-        companyName: org.companyName ?? org.name,
-        companyAddress: org.companyAddress,
-        companyLogo: org.logo, // ← just pass the URL string
-        companySsmNo: org.newSsmNo ?? org.oldSsmNo,
-        companyTaxNo: org.taxNo,
-
-        // Employee
-        employeeName: p.employeeName,
-        jobTitle: p.jobTitle,
-        department: p.department,
-        icNumber: p.icNumber,
-        epfNo: p.epfNo ?? null,
-        socsoNo: p.socsoNo ?? null,
-        taxNo: p.employeeTaxNo ?? null,
-        bankName: p.bankName ?? null,
-        bankAccountHolder: p.bankAccountHolder ?? null,
-        bankAccountNo: p.bankAccountNo ?? null,
-
-        // Period
-        periodLabel: p.periodLabel,
-        periodMonth: p.periodMonth,
-        periodYear: p.periodYear,
-
-        // This month
-        basicSalary: p.basicSalary,
-        bonus: p.bonus,
-        overtimePay: p.overtimePay,
-        allowances: p.allowances as any,
-        grossPay: p.grossPay,
-        epfEmployee: p.epfEmployee,
-        epfEmployer: p.epfEmployer,
-        socsoEmployee: p.socsoEmployee,
-        socsoEmployer: p.socsoEmployer,
-        eisEmployee: p.eisEmployee,
-        eisEmployer: p.eisEmployer,
-        lhdn: p.lhdn,
-        otherDeductions: p.otherDeductions as any,
-        totalDeductions: p.totalDeductions,
-        netPay: p.netPay,
-
-        // YTD
-        ...ytd,
-      });
+      await downloadPayslipPdf(p, { label: p.periodLabel, month: p.periodMonth, year: p.periodYear });
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -300,30 +247,19 @@ export function MyPayslipsClient({ payslips }: Props) {
                   <span className="text-muted-foreground">Basic salary</span>
                   <span className="font-mono">{fmt(selected.basicSalary)}</span>
                 </div>
-                {Number(selected.bonus) > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Bonus</span>
-                    <span className="font-mono">{fmt(selected.bonus!)}</span>
-                  </div>
-                )}
-                {Number(selected.overtimePay) > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Overtime</span>
-                    <span className="font-mono">
-                      {fmt(selected.overtimePay!)}
+                {splitLines(selected.lines).earnings.map((l, i) => (
+                  <div key={i} className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      {l.label}
+                      {l.quantity && l.rate
+                        ? ` (${Number(l.quantity)} × ${fmt(l.rate)})`
+                        : l.quantity
+                          ? ` (${Number(l.quantity)})`
+                          : ""}
                     </span>
+                    <span className="font-mono">{fmt(l.amount)}</span>
                   </div>
-                )}
-                {(selected.allowances as any[])?.map((a: any, i: number) =>
-                  Number(a.amount) > 0 ? (
-                    <div key={i} className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">
-                        {a.label || "Allowance"}
-                      </span>
-                      <span className="font-mono">{fmt(a.amount)}</span>
-                    </div>
-                  ) : null,
-                )}
+                ))}
                 <div className="flex justify-between text-sm font-semibold border-t border-border pt-2 mt-1">
                   <span>Gross pay</span>
                   <span className="font-mono">{fmt(selected.grossPay)}</span>
@@ -337,45 +273,17 @@ export function MyPayslipsClient({ payslips }: Props) {
                 Deductions
               </div>
               <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">
-                    EPF (employee 11%)
-                  </span>
-                  <span className="font-mono text-red-600 dark:text-red-400">
-                    -{fmt(selected.epfEmployee)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">SOCSO</span>
-                  <span className="font-mono text-red-600 dark:text-red-400">
-                    -{fmt(selected.socsoEmployee)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">EIS</span>
-                  <span className="font-mono text-red-600 dark:text-red-400">
-                    -{fmt(selected.eisEmployee)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">PCB / LHDN</span>
-                  <span className="font-mono text-red-600 dark:text-red-400">
-                    -{fmt(selected.lhdn)}
-                  </span>
-                </div>
-                {(selected.otherDeductions as any[])?.map(
-                  (d: any, i: number) =>
-                    Number(d.amount) > 0 ? (
-                      <div key={i} className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">
-                          {d.label || "Deduction"}
-                        </span>
-                        <span className="font-mono text-red-600 dark:text-red-400">
-                          -{fmt(d.amount)}
-                        </span>
-                      </div>
-                    ) : null,
-                )}
+                {[
+                  ...splitLines(selected.lines).statutory,
+                  ...splitLines(selected.lines).deductions,
+                ].map((l, i) => (
+                  <div key={i} className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{l.label}</span>
+                    <span className="font-mono text-red-600 dark:text-red-400">
+                      -{fmt(l.amount)}
+                    </span>
+                  </div>
+                ))}
                 <div className="flex justify-between text-sm font-semibold border-t border-border pt-2 mt-1">
                   <span>Total deductions</span>
                   <span className="font-mono text-red-600 dark:text-red-400">
@@ -392,18 +300,12 @@ export function MyPayslipsClient({ payslips }: Props) {
               <div className="font-medium text-foreground mb-1.5">
                 Employer contributions (not deducted from salary)
               </div>
-              <div className="flex justify-between">
-                <span>EPF (employer)</span>
-                <span className="font-mono">{fmt(selected.epfEmployer)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>SOCSO (employer)</span>
-                <span className="font-mono">{fmt(selected.socsoEmployer)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>EIS (employer)</span>
-                <span className="font-mono">{fmt(selected.eisEmployer)}</span>
-              </div>
+              {splitLines(selected.lines).employer.map((l, i) => (
+                <div key={i} className="flex justify-between">
+                  <span>{l.label}</span>
+                  <span className="font-mono">{fmt(l.amount)}</span>
+                </div>
+              ))}
             </div>
           </div>
 

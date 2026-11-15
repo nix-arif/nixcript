@@ -16,6 +16,7 @@ import {
 import { FrameIcon, PieChartIcon, MapIcon } from "lucide-react";
 import { filterNav, lockInventoryNav, navConfig } from "@/lib/nav";
 import { useAppStore } from "@/lib/store/use-app-store";
+import { authClient } from "@/lib/auth-client";
 
 // const projects = [
 //   { name: "Design Engineering", url: "#", icon: <FrameIcon /> },
@@ -25,7 +26,12 @@ import { useAppStore } from "@/lib/store/use-app-store";
 
 export function AppSidebar({ navSections = {}, ...props }: React.ComponentProps<typeof Sidebar> & { navSections?: Record<string, boolean> }) {
   const { permissions, permissionsLoading, warehouseReady } = useAppStore();
-  const filteredNav = lockInventoryNav(filterNav(navConfig, permissions), warehouseReady, permissions);
+  const { data: activeOrganization } = authClient.useActiveOrganization();
+  const orgName = activeOrganization?.name?.trim() || "Org";
+  const filteredNav = lockInventoryNav(filterNav(navConfig, permissions), warehouseReady, permissions).map((g) => ({
+    ...g,
+    items: g.items.map((i) => (i.title.includes("{org}") ? { ...i, title: i.title.replace("{org}", orgName) } : i)),
+  }));
 
   // console.log("app-sidebar.tsx line 30", permissions);
   // console.log("app-sidebar.tsx line 31", filteredNav);

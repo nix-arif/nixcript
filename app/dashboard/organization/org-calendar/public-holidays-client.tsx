@@ -1,13 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CalendarDaysIcon, CheckIcon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { PageHeader } from "@/components/page-header";
-import { createPublicHoliday, deletePublicHoliday, updatePublicHoliday, type PublicHolidayRow } from "@/server/public-holiday";
+import { Switch } from "@/components/ui/switch";
+import {
+  copyCalendarToSiblings,
+  createPublicHoliday,
+  deletePublicHoliday,
+  updatePublicHoliday,
+  type ApplyResult,
+  type PublicHolidayRow,
+} from "@/server/public-holiday";
 
 const parse = (ymd: string) => { const [y, m, d] = ymd.split("-").map(Number); return new Date(y, m - 1, d); };
 const fmtDate = (ymd: string) => parse(ymd).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
@@ -16,14 +24,43 @@ const byDate = (a: PublicHolidayRow, b: PublicHolidayRow) => a.date.localeCompar
 const dateInput = "h-8 px-2 border border-input rounded-md text-sm bg-background outline-none focus:ring-1 focus:ring-ring";
 
 export function PublicHolidaysClient({
-  holidays: initial, canCreate, canUpdate, canDelete,
+  holidays: initial, canCreate, canUpdate, canDelete, orgName, siblingOrgs,
 }: {
+  orgName: string;
+  siblingOrgs: { id: string; name: string }[];
   holidays: PublicHolidayRow[];
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
 }) {
   const [holidays, setHolidays] = useState(initial);
+
+  // "Apply to all my organizations" — remembered on this device
+  const hasSiblings = siblingOrgs.length > 0;
+  const [applyAll, setApplyAll] = useState(false);
+  const [copying, setCopying] = useState(false);
+  useEffect(() => {
+    try { setApplyAll(localStorage.getItem("calendar-apply-all") === "1"); } catch { /* private mode */ }
+  }, []);
+  const toggleApplyAll = (v: boolean) => {
+    setApplyAll(v);
+    try { localStorage.setItem("calendar-apply-all", v ? "1" : "0"); } catch { /* ignore */ }
+  };
+  const doApply = hasSiblings && applyAll;
+  const applyNote = (r: ApplyResult, verb: string) =>
+    doApply ? ` · ${verb} in ${r.applied} other organization${r.applied === 1 ? "" : "s"}${r.skipped ? ` (${r.skipped} skipped)` : ""}` : "";
+
+  async function copyAll() {
+    setCopying(true);
+    try {
+      const r = await copyCalendarToSiblings();
+      toast.success(r.added ? `${r.added} holiday${r.added === 1 ? "" : "s"} added across ${r.orgs} organization${r.orgs === 1 ? "" : "s"}` : "The other organizations already have all of these dates");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't copy the calendar");
+    } finally {
+      setCopying(false);
+    }
+  }
   const thisYear = new Date().getFullYear();
   const years = useMemo(
     () => [...new Set([thisYear, ...holidays.map((h) => parseInt(h.date.slice(0, 4), 10))])].sort((a, b) => b - a),
@@ -46,11 +83,12 @@ export function PublicHolidaysClient({
   async function add() {
     setAdding(true);
     try {
-      const row = await createPublicHoliday({ date: newDate, name: newName });
+      const res = await createPublicHoliday({ date: newDate, name: newName }, doApply);
+      const row = res.row;
       setHolidays((p) => [...p, row].sort(byDate));
       setYear(parseInt(row.date.slice(0, 4), 10));
       setNewDate(""); setNewName("");
-      toast.success("Holiday added");
+      toast.success("Holiday added" + applyNote(res, "added"));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't add the holiday");
     } finally {
@@ -65,11 +103,12 @@ export function PublicHolidaysClient({
   async function saveEdit(id: string) {
     setBusyId(id);
     try {
-      const row = await updatePublicHoliday(id, { date: editDate, name: editName });
+      const res = await updatePublicHoliday(id, { date: editDate, name: editName }, doApply);
+      const row = res.row;
       setHolidays((p) => p.map((h) => (h.id === id ? row : h)).sort(byDate));
       setYear(parseInt(row.date.slice(0, 4), 10));
       setEditId(null);
-      toast.success("Holiday updated");
+      toast.success("Holiday updated" + applyNote(res, "updated"));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't update the holiday");
     } finally {
@@ -80,10 +119,10 @@ export function PublicHolidaysClient({
   async function remove(id: string) {
     setBusyId(id);
     try {
-      await deletePublicHoliday(id);
+      const res = await deletePublicHoliday(id, doApply);
       setHolidays((p) => p.filter((h) => h.id !== id));
       setConfirmDeleteId(null);
-      toast.success("Holiday deleted");
+      toast.success("Holiday deleted" + applyNote(res, "removed"));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't delete the holiday");
     } finally {
@@ -94,9 +133,30 @@ export function PublicHolidaysClient({
   return (
     <div className="p-6 space-y-5 max-w-3xl">
       <PageHeader
-        title="Public Holidays"
-        description="The company's public holiday calendar. A case that falls on one of these dates earns the holiday allowance rate."
+        title={orgName ? `${orgName} Calendar` : "Org Calendar"}
+        description="The organization's public holidays. A case that falls on one of these dates earns the holiday commission rate."
       />
+
+      {hasSiblings && (
+        <div className="rounded-xl border border-border p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">Apply changes to all group of companies</div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Adding, editing or deleting a holiday here is repeated in{" "}
+              {siblingOrgs.map((o) => o.name).join(", ")} (same owner). Dates they already have are left as they are.
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+            {applyAll ? "On" : "Off"}
+            <Switch size="sm" checked={applyAll} onCheckedChange={toggleApplyAll} aria-label="Apply changes to all organizations" />
+          </label>
+          {canCreate && (
+            <Button variant="outline" size="sm" className="h-8 shrink-0 gap-1.5" disabled={copying || holidays.length === 0} onClick={copyAll}>
+              {copying && <Spinner className="size-3.5" />} Copy this calendar to all
+            </Button>
+          )}
+        </div>
+      )}
 
       {canCreate && (
         <div className="rounded-xl border border-border p-4 space-y-2">
