@@ -1070,7 +1070,7 @@ export async function getQuotationForSO(id: string) {
         if (at >= 0) used.add(at);
         if (qtItem.setGroupId) return qtItem;
         const cpoItem = at >= 0 ? cpoItems[at] : undefined;
-        if (!cpoItem?.setGroupId || cpoItem.groupKind === "plain") return qtItem;
+        if (!cpoItem?.setGroupId) return qtItem;
         return { ...qtItem, setGroupId: cpoItem.setGroupId, setGroupLabel: cpoItem.setGroupLabel ?? null, setQty: cpoItem.setQty ?? null };
       });
       return { ...q, items: enriched };

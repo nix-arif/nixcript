@@ -655,13 +655,11 @@ function ItemsSection({ items, currency }: { items: CpoItemInput[]; currency: st
                       <div className="flex items-center gap-2 flex-wrap">
                         <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                         <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">
-                          {e.first.setGroupLabel || (e.first.groupKind === "plain" ? "Group" : "Set")}
+                          {e.first.setGroupLabel || "Set"}
                         </span>
-                        {e.first.groupKind !== "plain" && (
-                          <span className="text-[10px] text-muted-foreground">
-                            × {Number(e.first.setQty || 1)} {Number(e.first.setQty || 1) === 1 ? "set" : "sets"}
-                          </span>
-                        )}
+                        <span className="text-[10px] text-muted-foreground">
+                          × {Number(e.first.setQty || 1)} {Number(e.first.setQty || 1) === 1 ? "set" : "sets"}
+                        </span>
                       </div>
                     </td>
                     <td colSpan={4} />
@@ -713,12 +711,10 @@ function ItemsSection({ items, currency }: { items: CpoItemInput[]; currency: st
               <div key={`hdr-${e.gid}`} className="px-3 py-2 bg-blue-50/60 dark:bg-blue-900/10">
                 <div className="flex items-center gap-2 flex-wrap">
                   <LayersIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">{e.first.setGroupLabel || (e.first.groupKind === "plain" ? "Group" : "Set")}</span>
-                  {e.first.groupKind !== "plain" && (
-                    <span className="text-[10px] text-muted-foreground">
-                      × {Number(e.first.setQty || 1)} {Number(e.first.setQty || 1) === 1 ? "set" : "sets"}
-                    </span>
-                  )}
+                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">{e.first.setGroupLabel || "Set"}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    × {Number(e.first.setQty || 1)} {Number(e.first.setQty || 1) === 1 ? "set" : "sets"}
+                  </span>
                   <span className="ml-auto text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">{acct(e.groupTotal)}</span>
                 </div>
               </div>

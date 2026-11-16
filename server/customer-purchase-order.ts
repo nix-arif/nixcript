@@ -73,9 +73,8 @@ export type CpoItemInput = {
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
-  // "plain" = items are only grouped together (each keeps its own qty and price).
-  // Absent or "set" = sold as a set: set qty multiplies the lines.
-  groupKind?: "set" | "plain";
+  // Our quotation this line came from (so the "from quotation …" badge stays right after saving)
+  quotationNo?: string;
   _codeSource?: "quote" | "user" | null;
   _descriptionSource?: Array<"quote" | "catalog" | "user"> | null;
   _unitPriceSource?: "quote" | "user" | null;

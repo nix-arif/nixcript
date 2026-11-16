@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
-import { canMove, isSetItem, itemNumbers, moveItem } from "@/lib/customer-po/item-order";
+import { canMove, itemNumbers, moveItem } from "@/lib/customer-po/item-order";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
@@ -53,7 +53,7 @@ function calcItemTotal(item: EditableItem): EditableItem {
   const qty    = parseFloat(item.qty         || "0") || 0;
   const up     = parseFloat(item.unitPrice   || "0") || 0;
   const dPct   = parseFloat(item.discountPct || "0") || 0;
-  const setMul = isSetItem(item) ? (parseFloat(item.setQty || "1") || 1) : 1;
+  const setMul = item.setGroupId ? (parseFloat(item.setQty || "1") || 1) : 1;
   const gross  = qty * up * setMul;
   return { ...item, totalPrice: (gross - (gross * dPct) / 100).toFixed(2) };
 }
@@ -390,7 +390,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
       const next = prev.map((x) =>
         x._key === key
-          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, groupKind: existing?.groupKind, setQty: existing?.groupKind === "plain" ? "" : existing?.setQty || x.setQty || "1" })
+          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1" })
           : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
@@ -402,19 +402,6 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     setItems((prev) => {
       const next = prev.map((x) =>
         x.setGroupId === groupId ? calcItemTotal({ ...x, setQty: newQty }) : x,
-      );
-      if (!amountOverride) setAmount(sumItems(next));
-      return next;
-    });
-  }
-
-  // Switch a whole group between "set" (priced per set) and "plain" (just grouped together)
-  function handleGroupKindChange(groupId: string, kind: "set" | "plain") {
-    setItems((prev) => {
-      const next = prev.map((x) =>
-        x.setGroupId === groupId
-          ? calcItemTotal({ ...x, groupKind: kind === "plain" ? "plain" : undefined, setQty: kind === "plain" ? "" : x.setQty || "1" })
-          : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
       return next;
@@ -435,7 +422,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     setItems((prev) => {
       const next = prev.map((x) =>
         x.setGroupId === groupId
-          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "", groupKind: undefined })
+          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "" })
           : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
@@ -498,10 +485,10 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, ...rest }) => ({
               ...rest,
               rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
+              quotationNo:   _quotationNo || undefined,
               setGroupId:    rest.setGroupId    || undefined,
               setGroupLabel: rest.setGroupLabel || undefined,
-              setQty:        rest.setGroupId && rest.groupKind !== "plain" ? (rest.setQty || undefined) : undefined,
-              groupKind:     rest.setGroupId && rest.groupKind === "plain" ? "plain" : undefined,
+              setQty:        rest.setQty        || undefined,
               _codeSource:         rest._codeSource        || undefined,
               _descriptionSource:  rest._descriptionSource || undefined,
               _unitPriceSource:    rest._unitPriceSource   || undefined,
@@ -531,12 +518,6 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   const computedTotal = sumItems(items);
   const showSearch = isFirstQuotation || showAddSearch;
-
-  // Group items by source quotation for display
-  const quotationGroups = linkedQuotations.map((q) => ({
-    quotation: q,
-    items: items.filter((i) => i._quotationId === q.id),
-  }));
 
   return (
     <div className="p-6">
@@ -948,15 +929,6 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                       />
                     );
 
-                    // Quotation source label (only when multiple quotations)
-                    const renderQuotationHeader = (qtNo: string) => (
-                      <tr key={`qt-${qtNo}`}>
-                        <td colSpan={9} className="pt-3 pb-1 text-[10px] font-medium text-muted-foreground">
-                          from {qtNo}
-                        </td>
-                      </tr>
-                    );
-
                     // Render set group header row (editable label, editable qty, removable)
                     const renderGroupHeader = (gid: string) => {
                       const gItems     = items.filter((i) => i.setGroupId === gid && i.included);
@@ -971,34 +943,15 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                                 onChange={(e) => handleGroupLabelEdit(gid, e.target.value)}
                                 className="h-6 flex-1 min-w-0 bg-transparent border border-transparent hover:border-blue-200 focus:border-blue-300 focus:bg-background rounded px-1 text-[13px] md:text-[13px] font-bold text-blue-700 dark:text-blue-300 outline-none transition-colors"
                               />
-                              <button
-                                type="button"
-                                onClick={() => handleGroupKindChange(gid, first.groupKind === "plain" ? "set" : "plain")}
-                                className={cn(
-                                  "h-5 rounded border px-1.5 text-[10px] font-medium transition-colors",
-                                  first.groupKind === "plain"
-                                    ? "border-border text-muted-foreground hover:bg-muted"
-                                    : "border-blue-300 bg-blue-100/60 text-blue-700 hover:bg-blue-100",
-                                )}
-                                title={first.groupKind === "plain"
-                                  ? "Plain group: items only kept together, each with its own qty and price. Click to sell as a set instead."
-                                  : "Set: priced per set, set qty multiplies the lines. Click to make it a plain group instead."}
-                              >
-                                {first.groupKind === "plain" ? "Group" : "Set"}
-                              </button>
-                              {first.groupKind !== "plain" && (
-                                <>
-                                  <span className="text-[10px] text-muted-foreground">×</span>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    value={first.setQty || "1"}
-                                    onChange={(e) => handleSetQtyChange(gid, e.target.value)}
-                                    className="h-6 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
-                                  />
-                                  <span className="text-[10px] text-muted-foreground">sets</span>
-                                </>
-                              )}
+                              <span className="text-[10px] text-muted-foreground">×</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={first.setQty || "1"}
+                                onChange={(e) => handleSetQtyChange(gid, e.target.value)}
+                                className="h-6 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
+                              />
+                              <span className="text-[10px] text-muted-foreground">sets</span>
                               <button
                                 type="button"
                                 onClick={() => removeGroup(gid)}
@@ -1010,15 +963,11 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                             </div>
                           </td>
                           <td colSpan={2} className="py-1.5 pr-2 text-right tabular-nums text-[10px] text-muted-foreground">
-                            {first.groupKind !== "plain" && (
-                              <>
-                                {(() => {
-                                  const setQty = parseFloat(first.setQty || "1") || 1;
-                                  return (groupTotal / setQty).toLocaleString("en-MY", { minimumFractionDigits: 2 });
-                                })()}
-                                <div className="text-[9px] text-muted-foreground/60">/set</div>
-                              </>
-                            )}
+                            {(() => {
+                              const setQty = parseFloat(first.setQty || "1") || 1;
+                              return (groupTotal / setQty).toLocaleString("en-MY", { minimumFractionDigits: 2 });
+                            })()}
+                            <div className="text-[9px] text-muted-foreground/60">/set</div>
                           </td>
                           <td colSpan={2} className="py-1.5 text-right text-[10px] font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
                             {groupTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
@@ -1038,44 +987,18 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                       </tr>
                     );
 
-                    if (linkedQuotations.length > 1) {
-                      // Multi-quotation: show quotation headers, then render with set grouping per quotation
-                      for (const group of quotationGroups) {
-                        if (group.items.length === 0) continue;
-                        rows.push(renderQuotationHeader(group.quotation.quotationNo));
-
-                        const qtGroupIds: string[] = [];
-                        const seen = new Set<string>();
-                        for (const it of group.items) {
-                          if (it.setGroupId && !seen.has(it.setGroupId)) {
-                            seen.add(it.setGroupId);
-                            qtGroupIds.push(it.setGroupId);
-                          }
-                        }
-                        for (const gid of qtGroupIds) {
-                          rows.push(renderGroupHeader(gid));
-                          group.items.filter((i) => i.setGroupId === gid).forEach((i) => rows.push(renderRow(i, true)));
-                          rows.push(renderSpacer(`sp-${gid}`));
-                        }
-                        const ungrouped = group.items.filter((i) => !i.setGroupId);
-                        if (ungrouped.length > 0) {
-                          if (qtGroupIds.length > 0) rows.push(renderLooseHeader(`lh-${group.quotation.quotationNo}`));
-                          ungrouped.forEach((i) => rows.push(renderRow(i, false)));
-                          rows.push(renderSpacer(`sp-loose-${group.quotation.quotationNo}`));
-                        }
-                      }
-                    } else {
-                      // Single quotation: render set groups first, then standalone
-                      for (const gid of groupOrder) {
-                        rows.push(renderGroupHeader(gid));
-                        items.filter((i) => i.setGroupId === gid).forEach((i) => rows.push(renderRow(i, true)));
-                        rows.push(renderSpacer(`sp-${gid}`));
-                      }
-                      const ungrouped = items.filter((i) => !i.setGroupId);
-                      if (ungrouped.length > 0) {
-                        if (groupOrder.length > 0) rows.push(renderLooseHeader("lh-loose"));
-                        ungrouped.forEach((i) => rows.push(renderRow(i, false)));
-                      }
+                    // One combined list: sets first, then every item that is not in a set (across all
+                    // quotations), the same order the detail page shows and the # column follows.
+                    // Single quotation: render set groups first, then standalone
+                    for (const gid of groupOrder) {
+                      rows.push(renderGroupHeader(gid));
+                      items.filter((i) => i.setGroupId === gid).forEach((i) => rows.push(renderRow(i, true)));
+                      rows.push(renderSpacer(`sp-${gid}`));
+                    }
+                    const ungrouped = items.filter((i) => !i.setGroupId);
+                    if (ungrouped.length > 0) {
+                      if (groupOrder.length > 0) rows.push(renderLooseHeader("lh-loose"));
+                      ungrouped.forEach((i) => rows.push(renderRow(i, false)));
                     }
 
                     return rows;
@@ -1220,7 +1143,7 @@ function ItemRow({
         />
         {item._codeSource === "quote" && (
           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-            <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+            <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
           </span>
         )}
         {item._codeSource === "user" && (
@@ -1247,7 +1170,7 @@ function ItemRow({
           />
           {(item._descriptionSource ?? []).includes("quote") && (
             <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-              <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+              <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
             </span>
           )}
           {(item._descriptionSource ?? []).includes("catalog") && (
@@ -1262,7 +1185,7 @@ function ItemRow({
             </span>
           )}
           <div className="flex items-center gap-1">
-            <span className="text-[9px] text-muted-foreground">Group:</span>
+            <span className="text-[9px] text-muted-foreground">Set:</span>
             <input
               value={item.setGroupLabel}
               onChange={(e) => onSetLabelChange(item._key, e.target.value)}
@@ -1284,10 +1207,10 @@ function ItemRow({
             onKeyDown={(e) => onCellKeyDown(e, rowIdx, 2)}
             className="h-7 text-[11px] md:text-[11px] text-right tabular-nums w-20 ml-auto"
           />
-          {inSet && item.groupKind !== "plain" && <div className="text-[9px] text-muted-foreground text-right">/set</div>}
+          {inSet && <div className="text-[9px] text-muted-foreground text-right">/set</div>}
           {item._qtySource === "quote" && (
             <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-              <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+              <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
             </span>
           )}
           {item._qtySource === "user" && (
@@ -1302,7 +1225,7 @@ function ItemRow({
         <div className="h-7 flex items-center justify-end">
           {item.included ? (() => {
             const q = parseFloat(item.qty || "0") || 0;
-            const s = isSetItem(item) ? (parseFloat(item.setQty || "1") || 1) : 1;
+            const s = item.setGroupId ? (parseFloat(item.setQty || "1") || 1) : 1;
             return (q * s).toLocaleString("en-MY", { maximumFractionDigits: 4 });
           })() : "—"}
         </div>
@@ -1331,7 +1254,7 @@ function ItemRow({
         />
         {item._unitPriceSource === "quote" && (
           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-            <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+            <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
           </span>
         )}
         {item._unitPriceSource === "user" && (

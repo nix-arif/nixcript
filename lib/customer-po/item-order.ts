@@ -3,15 +3,10 @@
 // Items are shown grouped by set (sets in order of first appearance), followed by
 // the items that belong to no set. That is the order the CPO detail page shows and
 // the order the item numbers (#) follow. Moving an item only swaps it with its
-// neighbour inside the same block (same quotation, same set), so it can never
-// jump into another set or quotation by accident.
+// neighbour inside the same block (the same set, or the list of items not in a set),
+// so it can never jump into another set by accident.
 
 type Orderable = { _key: string; included: boolean; setGroupId?: string; _quotationId?: string };
-
-// A group is either a set (priced per set, set qty multiplies the lines) or a plain
-// group (items are only kept together; each keeps its own qty and price).
-export const isSetItem = (i: { setGroupId?: string; groupKind?: string }) => !!i.setGroupId && i.groupKind !== "plain";
-export const isPlainGroupItem = (i: { setGroupId?: string; groupKind?: string }) => !!i.setGroupId && i.groupKind === "plain";
 
 // Same grouping the detail page uses: set groups first, then everything else
 export function displayOrder<T extends Orderable>(items: T[]): T[] {
@@ -32,8 +27,9 @@ export function itemNumbers<T extends Orderable>(items: T[]): Map<string, number
   return out;
 }
 
-const sameBlock = (a: Orderable, b: Orderable) =>
-  (a.setGroupId || "") === (b.setGroupId || "") && (a._quotationId || "") === (b._quotationId || "");
+// Items inside a set move only within that set. Every item that is not in a set forms one
+// block, even across different quotations, so they can be ordered freely among themselves.
+const sameBlock = (a: Orderable, b: Orderable) => (a.setGroupId || "") === (b.setGroupId || "");
 
 // Whether the item has a neighbour above / below it in its block
 export function canMove<T extends Orderable>(items: T[], key: string): { up: boolean; down: boolean } {
