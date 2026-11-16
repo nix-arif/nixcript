@@ -23,6 +23,8 @@ import {
 } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { cn } from "@/lib/utils";
+import { DescriptionField } from "@/components/sales-order/description-field";
+import { useDbDescriptions } from "@/lib/sales-order/use-db-descriptions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -112,6 +114,8 @@ interface LineItem extends SalesOrderItemInput {
   _editedBy?: string | null;
   _soEditedBy?: string | null;
   _isAdditional?: boolean;
+  _dbDescription?: string | null; // description in the product database (see useDbDescriptions)
+  _dbRef?: string;
   _quotationNo?: string; // quotation number shown in the "from quotation …" badge (display only)
 }
 
@@ -372,6 +376,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   // Items — useId gives a stable ID consistent between SSR and client hydration
   const initialItemId = useId();
   const [items, setItems] = useState<LineItem[]>(() => [{ ...newLine(1), _key: initialItemId }]);
+  // Descriptions follow the product database (by design code for OEM items, else by code)
+  useDbDescriptions(items, setItems, { showSourcing, syncOnLoad: true });
   const itemsRef = useRef(items);
   useEffect(() => { itemsRef.current = items; }, [items]);
 
@@ -1028,6 +1034,13 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         await readSoItemsSheet(file),
       );
       if (!showSourcing) { sourcings.clear(); designs.clear(); } // trading-only businesses have no sourcing choice
+      // Descriptions come from the product database: changing them from the sheet needs the user's OK too
+      const differing = [...descriptions].filter(([k, v]) => {
+        const db = items.find((x) => x._key === k)?._dbDescription;
+        return !!db && db.trim().toUpperCase() !== v.trim().toUpperCase();
+      });
+      if (differing.length > 0 && !window.confirm(`${differing.length} description${differing.length === 1 ? "" : "s"} in the sheet differ${differing.length === 1 ? "s" : ""} from the product database.\n\nChange ${differing.length === 1 ? "it" : "them"} on this order? You can revert each one to the database text afterwards.`))
+        differing.forEach(([k]) => descriptions.delete(k));
       if (descriptions.size > 0 || qtys.size > 0 || sourcings.size > 0 || designs.size > 0 || additions.length > 0) {
         setItems((prev) => {
           // Same marking as typing in the field, so the "edit SO" badge shows what the sheet changed
@@ -1037,7 +1050,9 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               it = {
                 ...it,
                 description: descriptions.get(i._key)!.toUpperCase(),
-                _descriptionSource: [...new Set([...(it._descriptionSource ?? []).filter((x) => x !== "quote" && x !== "catalog"), "so"])] as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
+                _descriptionSource: (it._dbDescription && it._dbDescription.trim().toUpperCase() === descriptions.get(i._key)!.trim().toUpperCase()
+                  ? ["catalog"]
+                  : [...new Set([...(it._descriptionSource ?? []).filter((x) => x !== "quote" && x !== "catalog"), "so"])]) as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
                 _soEditedBy: currentUserName || "user",
               };
             // Same as clicking the Trading / OEM switch: OEM fills the Emboss Code from the Code, Trading clears it
@@ -1382,7 +1397,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       sstPct,
       sst: sstAmt.toFixed(2),
       grandTotal: grand.toFixed(2),
-      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, _codeSource, _descriptionSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _quotationNo, _designBrandSource, _privateLabelSource, ...rest }) => ({
+      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, _codeSource, _descriptionSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _dbDescription, _dbRef, _quotationNo, _designBrandSource, _privateLabelSource, ...rest }) => ({
         ...rest,
         unitPrice: soType === "proforma" ? "0" : rest.unitPrice,
         discountPct: soType === "proforma" ? "0" : rest.discountPct,
@@ -2828,16 +2843,13 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       </>
                     )}
                     <td className="py-1.5 pr-2 align-top">
-                      <Input
-                        data-row={rowIdx} data-col={firstEditableCol}
-                        value={item.description ?? ""}
-                        onChange={(e) => updateItem(item._key, {
-                          description: e.target.value.toUpperCase(),
-                          _descriptionSource: [...new Set([...(item._descriptionSource ?? []).filter(s => s !== "quote" && s !== "catalog"), "so"])] as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
-                          _soEditedBy: currentUserName || "user",
-                        })}
+                      <DescriptionField
+                        item={item}
+                        onUpdate={(k, patch) => updateItem(k, patch as Partial<LineItem>)}
+                        currentUserName={currentUserName}
+                        dataRow={rowIdx}
+                        dataCol={firstEditableCol}
                         onKeyDown={(e) => handleCellKeyDown(e, rowIdx, firstEditableCol)}
-                        className="h-7 text-[11px] md:text-[11px]"
                       />
                       {item._isAdditional && (
                         <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
@@ -2851,7 +2863,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       )}
                       {(item._descriptionSource ?? []).includes("catalog") && (
                         <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
-                          <DatabaseIcon className="w-3 h-3 shrink-0" />from product table
+                          <DatabaseIcon className="w-3 h-3 shrink-0" />{showSourcing && item.sourcingType === "oem" && item.designBrandCode?.trim() ? `from design code ${item.designBrandCode.trim()}` : "from product table"}
                         </span>
                       )}
                       {(item._descriptionSource ?? []).includes("cpo") && (

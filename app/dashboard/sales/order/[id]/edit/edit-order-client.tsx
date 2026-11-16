@@ -21,6 +21,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { isNotAsSetLabel } from "@/lib/customer-po/item-order";
+import { DescriptionField } from "@/components/sales-order/description-field";
+import { useDbDescriptions } from "@/lib/sales-order/use-db-descriptions";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import { uid } from "@/lib/uid";
@@ -77,6 +79,8 @@ interface LineItem extends SalesOrderItemInput {
   _editedBy?: string | null;
   _soEditedBy?: string | null;
   _isAdditional?: boolean;
+  _dbDescription?: string | null; // description in the product database (see useDbDescriptions)
+  _dbRef?: string;
 }
 
 const SO_STATUS_MAP: Record<string, { label: string; className: string }> = {
@@ -392,6 +396,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
   const [overallDiscPct, setOverallDiscPct] = useState(order.overallDiscountPct ?? "0");
 
   // ── Items ───────────────────────────────────────────────────────────────────
+  // (hook is wired right after the items state, below)
   const [items, setItems] = useState<LineItem[]>(
     order.items.length > 0
       ? order.items.map((i) => ({
@@ -452,6 +457,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
         }))
       : [newLine(1)],
   );
+  // Descriptions follow the product database; the saved description is kept, the database text is only there to revert to
+  useDbDescriptions(items, setItems, { showSourcing, syncOnLoad: false });
 
   const [saving, setSaving] = useState(false);
   const [cpoPicker, setCpoPicker] = useState<string | null>(null);
@@ -845,7 +852,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
         sstPct,
         sst: sstAmt.toFixed(2),
         grandTotal: grand.toFixed(2),
-        items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, _descriptionSource, _codeSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _designBrandSource, _privateLabelSource, ...rest }) => ({
+        items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, _descriptionSource, _codeSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _dbDescription, _dbRef, _designBrandSource, _privateLabelSource, ...rest }) => ({
           ...rest,
           sourceCustomerPoId: sourceCustomerPoId || undefined,
           sourceCustomerPoNo: sourceCustomerPoNo || undefined,
@@ -1812,11 +1819,14 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       </>
                     )}
                     <td className="py-1.5 pr-2 align-top">
-                      <Input data-row={rowIdx} data-col={firstEditableCol} value={item.description ?? ""} onChange={(e) => updateItem(item._key, {
-                        description: e.target.value.toUpperCase(),
-                        _descriptionSource: [...new Set([...(item._descriptionSource ?? []).filter(s => s !== "quote" && s !== "catalog"), "so"])] as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
-                        _soEditedBy: currentUserName || "user",
-                      })} onKeyDown={(e) => handleCellKeyDown(e, rowIdx, firstEditableCol)} className="h-7 text-[11px] md:text-[11px]" />
+                      <DescriptionField
+                        item={item}
+                        onUpdate={(k, patch) => updateItem(k, patch as Partial<LineItem>)}
+                        currentUserName={currentUserName}
+                        dataRow={rowIdx}
+                        dataCol={firstEditableCol}
+                        onKeyDown={(e) => handleCellKeyDown(e, rowIdx, firstEditableCol)}
+                      />
                       {item._isAdditional && (
                         <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
                           <PlusIcon className="w-3 h-3 shrink-0" />additional row
@@ -1834,7 +1844,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       )}
                       {(item._descriptionSource ?? []).includes("catalog") && (
                         <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800">
-                          <DatabaseIcon className="w-3 h-3 shrink-0" />from product table
+                          <DatabaseIcon className="w-3 h-3 shrink-0" />{showSourcing && item.sourcingType === "oem" && item.designBrandCode?.trim() ? `from design code ${item.designBrandCode.trim()}` : "from product table"}
                         </span>
                       )}
                       {(item._descriptionSource ?? []).includes("user") && (

@@ -1,0 +1,47 @@
+// Pure rules for keeping a sales order item's description in step with the product database.
+// (The hook that fetches the data is lib/sales-order/use-db-descriptions.ts.)
+type Source = "quote" | "catalog" | "user" | "cpo" | "so";
+
+export type DbDescItem = {
+  _key: string;
+  productCode?: string;
+  sourcingType?: "trading" | "oem" | null;
+  designBrandCode?: string | null;
+  description?: string;
+  _descriptionSource?: Source[] | null;
+  _isAdditional?: boolean;
+  _dbDescription?: string | null; // undefined = not looked up yet, null = no database description
+  _dbRef?: string; // the reference code the database description was looked up with
+};
+
+// The code the database description is looked up with ("" = nothing to look up).
+// An OEM item is described by its design code (the product code of the catalogue product it is made like),
+// every other item by its own code.
+export function refOf(i: DbDescItem, showSourcing: boolean): string {
+  if (i._isAdditional) return "";
+  if (showSourcing && i.sourcingType === "oem" && i.designBrandCode?.trim()) return i.designBrandCode.trim();
+  return (i.productCode ?? "").trim();
+}
+
+export const sameText = (a?: string | null, b?: string | null) => (a ?? "").trim().toUpperCase() === (b ?? "").trim().toUpperCase();
+
+// Apply looked-up database descriptions (reference code lowercased -> text) to the items.
+export function mergeDbDescriptions<T extends DbDescItem>(
+  prev: T[],
+  codes: string[],
+  byCode: Map<string, string>,
+  opts: { showSourcing: boolean; syncOnLoad: boolean },
+): T[] {
+  return prev.map((i) => {
+    const r = refOf(i, opts.showSourcing);
+    if (!r || i._dbRef === r || !codes.includes(r)) return i; // nothing to look up, already done, or it changed while we waited
+    const db = byCode.get(r.toLowerCase()) || null;
+    const firstTime = i._dbDescription === undefined;
+    const next: T = { ...i, _dbRef: r, _dbDescription: db ? db.toUpperCase() : null };
+    if (!db) return next;
+    // follow the database unless the user customised the text (on first load: unless this page keeps what was saved)
+    const inSync = firstTime ? opts.syncOnLoad : sameText(i.description, i._dbDescription);
+    if (inSync || sameText(i.description, db)) return { ...next, description: db.toUpperCase(), _descriptionSource: ["catalog"] };
+    return next;
+  });
+}

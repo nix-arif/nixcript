@@ -86,6 +86,11 @@ export async function buildSoItemsWorkbook(rows: SoSheetItem[], opts: { withPric
       ref: `${brandCol}2:${dCol}${last}`,
       rules: [{ type: "expression", priority: 2, formulae: [`$${sCol}2<>"oem"`], style: { fill: GREY } }],
     });
+    // Both are required for an OEM item: red while still empty
+    ws.addConditionalFormatting({
+      ref: `${brandCol}2:${brandCol}${last}`,
+      rules: [{ type: "expression", priority: 1, formulae: [`AND($${sCol}2="oem",LEN(${brandCol}2)=0)`], style: { fill: RED } }],
+    });
     ws.addConditionalFormatting({
       ref: `${dCol}2:${dCol}${last}`,
       rules: [{ type: "expression", priority: 1, formulae: [`AND($${sCol}2="oem",LEN(${dCol}2)=0)`], style: { fill: RED } }],
@@ -107,7 +112,7 @@ export async function buildSoItemsWorkbook(rows: SoSheetItem[], opts: { withPric
     ...(opts.withSourcing
       ? [
           `${SOURCING_LABEL}: only "oem" or "trading" is accepted. Leave it empty to keep what is already on the order.`,
-          `${DESIGN_BRAND_LABEL} and ${DESIGN_CODE_LABEL} can only be filled for OEM items (set ${SOURCING_LABEL} to oem first). ${DESIGN_CODE_LABEL} is required for every OEM item; the cell turns red while it is empty.`,
+          `${DESIGN_BRAND_LABEL} and ${DESIGN_CODE_LABEL} can only be filled for OEM items (set ${SOURCING_LABEL} to oem first). ${DESIGN_BRAND_LABEL} and ${DESIGN_CODE_LABEL} are both required for every OEM item; the cells turn red while empty.`,
           `${EMBOSS_CODE_LABEL} always follows the Code column and is locked. The sheet is protected without a password, only to lock that column.`,
         ]
       : []),

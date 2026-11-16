@@ -103,8 +103,11 @@ export function applySoSheet(
     }
     if (sourcingOk && (r.sourcing || r.designBrand || r.designCode)) {
       if (target === "oem") {
+        const brand = r.designBrand || hit.designBrand;
         const code = r.designCode || hit.designCode;
-        if (!code.trim()) skipped.push(`${label}: design code is required for an OEM item`);
+        // an OEM item needs both, as it does when the order is submitted
+        const missing = [!brand.trim() && "design brand", !code.trim() && "design code"].filter(Boolean) as string[];
+        if (missing.length > 0) skipped.push(`${label}: ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} required for an OEM item`);
         else {
           if (r.sourcing && target !== (hit.sourcing || "")) sourcings.set(hit.key, "oem");
           const d: { brand?: string; code?: string } = {};
