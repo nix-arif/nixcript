@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 import { PageHeader } from "@/components/page-header";
+import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
 import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
@@ -49,6 +50,9 @@ type EditableItem = CpoItemInput & {
   _unitPriceSource?: "quote" | "user" | null;
   _qtySource?: "quote" | "user" | null;
   _origCode?: string; // the code before it was edited (display only)
+  _origDescription?: string; // the description before the code was edited, to put back if the code is restored
+  _origDescSource?: Array<"quote" | "catalog" | "user"> | null;
+  _codeNotFound?: boolean; // the edited code is not in the product database
 };
 
 function calcItemTotal(item: EditableItem): EditableItem {
@@ -374,6 +378,57 @@ export function EditCustomerPoClient({
 
   // ── Item editing ──────────────────────────────────────────────────────────
 
+  // Changing the code reloads the description (and UOM) from the product database. If the code is not in
+  // the database the description is left as it was and the row says so. Typing the original code back
+  // restores the original description as well.
+  const lookupTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  useEffect(() => () => { Object.values(lookupTimers.current).forEach(clearTimeout); }, []);
+
+  function scheduleDescriptionLookup(key: string, code: string) {
+    clearTimeout(lookupTimers.current[key]);
+    const c = code.trim();
+    if (!c) return;
+    lookupTimers.current[key] = setTimeout(async () => {
+      let product: Awaited<ReturnType<typeof getProductByCode>> | undefined;
+      try { product = await getProductByCode(c); } catch { product = undefined; } // no permission to read products: leave it alone
+      if (product === undefined) return;
+      setItems((prev) => prev.map((i) => {
+        if (i._key !== key || (i.productCode ?? "").trim().toLowerCase() !== c.toLowerCase()) return i; // the code changed again meanwhile
+        if (!product) return { ...i, _codeNotFound: true };
+        return {
+          ...i,
+          description: product.description?.trim() ? product.description.trim() : i.description,
+          uom: product.uom ?? i.uom,
+          _descriptionSource: product.description?.trim() ? ["catalog"] : i._descriptionSource,
+          _codeNotFound: false,
+        };
+      }));
+    }, 450);
+  }
+
+  function handleCodeChange(key: string, v: string) {
+    setItems((prev) => prev.map((i) => {
+      if (i._key !== key) return i;
+      const origCode = i._origCode ?? (i._codeSource === "user" ? undefined : i.productCode);
+      if (origCode !== undefined && v.trim() === origCode.trim()) {
+        return {
+          ...i, productCode: v, _codeSource: "quote", _origCode: undefined, _codeNotFound: false,
+          description: i._origDescription ?? i.description,
+          _descriptionSource: i._origDescription !== undefined ? i._origDescSource : i._descriptionSource,
+          _origDescription: undefined, _origDescSource: undefined,
+        } as EditableItem;
+      }
+      const first = i._origDescription === undefined && origCode !== undefined;
+      return {
+        ...i, productCode: v, _codeSource: "user", _editedBy: currentUserName || null, _origCode: origCode,
+        _origDescription: first ? i.description : i._origDescription,
+        _origDescSource: first ? i._descriptionSource : i._origDescSource,
+        _codeNotFound: v.trim() ? i._codeNotFound : false,
+      } as EditableItem;
+    }));
+    scheduleDescriptionLookup(key, v);
+  }
+
   // Editable cells in tab order: code, qty, uom, unit price (the description is read-only text)
   const EDITABLE_COLS = [0, 2, 3, 4];
 
@@ -647,7 +702,7 @@ export function EditCustomerPoClient({
           ? linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo }))
           : undefined,
         items:           items.length > 0
-          ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, _origCode, ...rest }) => ({
+          ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, _origCode, _origDescription, _origDescSource, _codeNotFound, ...rest }) => ({
               ...rest,
               rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
               quotationNo:   _quotationNo || undefined,
@@ -1095,6 +1150,7 @@ export function EditCustomerPoClient({
                         key={item._key}
                         item={item}
                         no={numbers.get(item._key)}
+                        onCodeChange={handleCodeChange}
                         cpoDescError={showDescErrors}
                         move={canMove(items, item._key)}
                         onMove={handleMove}
@@ -1275,6 +1331,7 @@ export function EditCustomerPoClient({
 function ItemRow({
   item,
   no,
+  onCodeChange,
   cpoDescError,
   move,
   onMove,
@@ -1287,6 +1344,7 @@ function ItemRow({
 }: {
   item: EditableItem;
   no: number | undefined; // item number in display order (undefined = switched off)
+  onCodeChange: (key: string, value: string) => void;
   cpoDescError: boolean; // outline the CPO description in red when it is still empty
   move: { up: boolean; down: boolean };
   onMove: (key: string, dir: -1 | 1) => void;
@@ -1335,13 +1393,7 @@ function ItemRow({
           data-row={rowIdx}
           data-col={0}
           value={item.productCode || ""}
-          onChange={(e) => {
-            // The code the item had before the first change, so typing it back undoes the "edited" mark
-            const v = e.target.value;
-            const orig = item._origCode ?? (item._codeSource === "user" ? undefined : item.productCode);
-            if (orig !== undefined && v.trim() === orig.trim()) updateItem(item._key, { productCode: v, _codeSource: "quote", _origCode: undefined } as Partial<EditableItem>);
-            else updateItem(item._key, { productCode: v, _codeSource: "user", _editedBy: currentUserName || null, _origCode: orig } as Partial<EditableItem>);
-          }}
+          onChange={(e) => onCodeChange(item._key, e.target.value)}
           onKeyDown={(e) => onCellKeyDown(e, rowIdx, 0)}
           placeholder="code"
           className={cn(
@@ -1369,6 +1421,11 @@ function ItemRow({
       <td className="py-1.5 pr-2">
         <div className="space-y-0.5">
           <div className="min-h-7 flex items-center text-[11px] md:text-[11px] whitespace-pre-wrap break-words">{item.description || "—"}</div>
+          {item._codeNotFound && (
+            <div className="text-[10px] leading-snug text-amber-700 dark:text-amber-400">
+              Code not found in the product database. The description was not changed.
+            </div>
+          )}
           {(item._descriptionSource ?? []).includes("quote") && (
             <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
               <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
