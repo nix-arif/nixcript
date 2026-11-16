@@ -1985,6 +1985,9 @@ export const salesOrderItem = pgTable(
     setGroupId: text("set_group_id"),
     setGroupLabel: text("set_group_label"),
     setQty: text("set_qty"),
+    // As written on the customer's PO: this line's description, and the set's main title
+    cpoDescription: text("cpo_description"),
+    setCpoTitle: text("set_cpo_title"),
 
     sourceQuotationId: text("source_quotation_id"),
     sourceCustomerPoId: text("source_customer_po_id"),

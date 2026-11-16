@@ -648,6 +648,9 @@ export function SalesOrderDetailClient({
                                     </>
                                   )}
                                 </div>
+                                {(item as any).setCpoTitle && (
+                                  <div className="mt-1 text-[12px] font-semibold text-foreground whitespace-pre-line">{(item as any).setCpoTitle}</div>
+                                )}
                               </td>
                             </tr>,
                           );
@@ -773,6 +776,12 @@ export function SalesOrderDetailClient({
                               })()}
                               <div className={cn("flex flex-col gap-1", arCls)}>
                                 <span>{item.description || "—"}</span>
+                                {(item as any).cpoDescription && (
+                                  <div className="rounded-md bg-muted/40 px-2 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-line">
+                                    <span className="font-medium text-foreground/70">CPO description: </span>
+                                    {(item as any).cpoDescription}
+                                  </div>
+                                )}
                                 <div className="flex items-center gap-1 flex-wrap">
                                   {isAdditional && (
                                     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">

@@ -38,6 +38,8 @@ import {
   BuildingIcon,
   FileTextIcon,
   LinkIcon,
+  DownloadIcon,
+  UploadIcon,
   PencilIcon,
   DatabaseIcon,
   ChevronDownIcon,
@@ -45,7 +47,8 @@ import {
   AlertTriangleIcon,
 } from "lucide-react";
 import type { CustomerPoForSoCreate } from "@/server/customer-purchase-order";
-import { sourceQuotationNo } from "@/lib/customer-po/item-order";
+import { isNotAsSetLabel, sourceQuotationNo } from "@/lib/customer-po/item-order";
+import { applySoSheet, downloadSoItemsSheet, readSoItemsSheet } from "@/lib/sales-order/items-sheet";
 import { uid } from "@/lib/uid";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
@@ -450,6 +453,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 setGroupId: item.setGroupId ?? "",
                 setGroupLabel: item.setGroupLabel ?? "",
                 setQty: item.setQty ?? "",
+                cpoDescription: item.cpoDescription ?? "",
+                setCpoTitle: item.setCpoTitle ?? "",
                 sourceQuotationId: "",
                 sourceCustomerPoId: item._cpoId,
                 sourceCustomerPoNo: item._cpoNo,
@@ -644,6 +649,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   setGroupId: item.setGroupId ?? "",
                   setGroupLabel: item.setGroupLabel ?? "",
                   setQty: item.setQty ?? "",
+                  cpoDescription: item.cpoDescription ?? "",
+                  setCpoTitle: item.setCpoTitle ?? "",
                   sourceQuotationId: "",
                   _quotationNo: sourceQuotationNo(item, qLinks),
                   sourceCustomerPoId: data.id,
@@ -915,7 +922,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
       return prev.map((x) =>
         x._key === key
-          ? calcLine({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1" })
+          ? calcLine({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1", setCpoTitle: existing?.setCpoTitle ?? x.setCpoTitle })
           : x,
       );
     });
@@ -939,7 +946,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     setItems((prev) =>
       prev.map((x) =>
         x.setGroupId === groupId
-          ? calcLine({ ...x, setGroupId: "", setGroupLabel: "", setQty: "" })
+          ? calcLine({ ...x, setGroupId: "", setGroupLabel: "", setQty: "", setCpoTitle: "" })
           : x,
       ),
     );
@@ -974,6 +981,105 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         return ["qty", "unitPrice", "discountPct"].some((k) => k in patch) ? calcLine(updated) : updated;
       }),
     );
+  }
+
+  // Items spreadsheet: download the items, fill Description and Qty, upload it again to fill the form
+  const sheetRef = useRef<HTMLInputElement>(null);
+  async function handleDownloadSheet() {
+    try {
+      // a set's title goes on the first row of that set only
+      const titled = new Set<string>();
+      const titleRow = (i: LineItem) => {
+        if (!i.setGroupId || isNotAsSetLabel(i.setGroupLabel) || titled.has(i.setGroupId)) return "";
+        titled.add(i.setGroupId);
+        return i.setCpoTitle ?? "";
+      };
+      await downloadSoItemsSheet(
+        items.map((i) => ({
+          key: i._key,
+          no: i.rowNo,
+          productCode: i.productCode || "",
+          description: i.description || "",
+          qty: i.qty ?? "",
+          uom: i.uom || "",
+          unitPrice: i.unitPrice || "",
+          setGroupLabel: i.setGroupLabel || "",
+          setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "",
+          setCpoTitle: titleRow(i),
+          cpoDescription: i.cpoDescription ?? "",
+          cpoNo: i.sourceCustomerPoNo || "",
+        })),
+        `SO-items-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        soType !== "proforma",
+      );
+    } catch (e: any) {
+      toast.error(e.message || "Could not create the sheet");
+    }
+  }
+  async function handleUploadSheet(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const { descriptions, qtys, cpoDescriptions, setTitles, additions, skipped } = applySoSheet(
+        items.map((i) => ({
+          key: i._key, no: i.rowNo, productCode: i.productCode || "", description: i.description || "", qty: i.qty ?? "",
+          cpoDescription: i.cpoDescription ?? "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "",
+        })),
+        await readSoItemsSheet(file),
+      );
+      if (descriptions.size > 0 || qtys.size > 0 || cpoDescriptions.size > 0 || setTitles.size > 0 || additions.length > 0) {
+        setItems((prev) => {
+          // Same marking as typing in the field, so the "edit SO" badge shows what the sheet changed
+          const edited = prev.map((i) => {
+            let it = i;
+            if (descriptions.has(i._key))
+              it = {
+                ...it,
+                description: descriptions.get(i._key)!.toUpperCase(),
+                _descriptionSource: [...new Set([...(it._descriptionSource ?? []).filter((x) => x !== "quote" && x !== "catalog"), "so"])] as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
+                _soEditedBy: currentUserName || "user",
+              };
+            if (cpoDescriptions.has(i._key)) it = { ...it, cpoDescription: cpoDescriptions.get(i._key) };
+            if (qtys.has(i._key))
+              it = calcLine({
+                ...it,
+                qty: qtys.get(i._key)!,
+                _qtySource: [...new Set([...(it._qtySource ?? []).filter((x) => x !== "quotation"), "so" as const])],
+                _soEditedBy: currentUserName || "user",
+              });
+            return it;
+          });
+          // A set title belongs to the set the item is in
+          let titled = edited;
+          for (const [key, title] of setTitles) {
+            const gid = titled.find((i) => i._key === key)?.setGroupId;
+            if (gid) titled = titled.map((i) => (i.setGroupId === gid ? { ...i, setCpoTitle: title } : i));
+          }
+          const added = additions.map((a, k) =>
+            calcLine({ ...newLine(edited.length + k + 1), description: a.description.toUpperCase(), cpoDescription: a.cpoDescription, qty: a.qty, _descriptionSource: ["so"], _qtySource: ["so"], _soEditedBy: currentUserName || "user" }),
+          );
+          return [...titled, ...added];
+        });
+      }
+      const parts = [
+        ...(descriptions.size ? [`${descriptions.size} description${descriptions.size === 1 ? "" : "s"}`] : []),
+        ...(qtys.size ? [`${qtys.size} quantit${qtys.size === 1 ? "y" : "ies"}`] : []),
+        ...(cpoDescriptions.size ? [`${cpoDescriptions.size} CPO description${cpoDescriptions.size === 1 ? "" : "s"}`] : []),
+        ...(setTitles.size ? [`${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}`] : []),
+        ...(additions.length ? [`${additions.length} new row${additions.length === 1 ? "" : "s"}`] : []),
+      ];
+      if (parts.length === 0 && skipped.length === 0) toast.info("Nothing new found in the sheet");
+      else toast.success(`Updated ${parts.join(", ") || "nothing"}${skipped.length ? ` · ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped` : ""}`);
+      if (skipped.length) toast.warning(skipped.slice(0, 4).join("\n") + (skipped.length > 4 ? `\n…and ${skipped.length - 4} more` : ""), { duration: 12000 });
+    } catch (err: any) {
+      toast.error(err.message || "Could not read the sheet");
+    }
+  }
+
+  // The set's main title as written on the customer's PO (same on every item of the set)
+  function handleSetTitleChange(groupId: string, title: string) {
+    setItems((prev) => prev.map((x) => (x.setGroupId === groupId ? { ...x, setCpoTitle: title } : x)));
   }
 
   function addLine() {
@@ -2326,7 +2432,20 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
 
         {/* ── 4. Items table ── */}
         <section className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">Items</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold">Items</h2>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleDownloadSheet}
+                title="Download the items as a spreadsheet, fill the Description and Qty columns, then upload it again">
+                <DownloadIcon className="w-3 h-3" /> Download sheet
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => sheetRef.current?.click()}
+                title="Upload the filled spreadsheet to fill the description and qty of the items">
+                <UploadIcon className="w-3 h-3" /> Upload filled sheet
+              </Button>
+              <input ref={sheetRef} type="file" accept=".xlsx,.xls,.ods,.csv" className="hidden" onChange={handleUploadSheet} />
+            </div>
+          </div>
 
           <div ref={tableScrollRef} className="overflow-x-auto overflow-y-auto max-h-[55vh]">
             <table className="w-full text-xs" ref={tableRef}>
@@ -2500,6 +2619,14 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                               </>
                             )}
                           </div>
+                          {!isNotAsSetLabel(item.setGroupLabel) && (
+                            <input
+                              value={item.setCpoTitle ?? ""}
+                              onChange={(e) => handleSetTitleChange(item.setGroupId, e.target.value)}
+                              placeholder="Set title on the customer's PO, e.g. TOILET & SUTURE SET consist of:-"
+                              className="mt-1 h-6 w-full rounded border border-border/60 bg-background px-1.5 text-[11px] font-normal text-foreground placeholder:text-muted-foreground/70 outline-none focus:border-ring"
+                            />
+                          )}
                         </td>
                       </tr>,
                     );
@@ -2776,6 +2903,16 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           </button>
                         </div>
                       )}
+                      <div className="mt-1">
+                        <label className="text-[9px] text-muted-foreground">CPO description</label>
+                        <Textarea
+                          rows={2}
+                          value={item.cpoDescription ?? ""}
+                          onChange={(e) => updateItem(item._key, { cpoDescription: e.target.value })}
+                          placeholder="As written on the customer's PO"
+                          className="mt-0.5 min-h-0 py-1 text-[11px] md:text-[11px] leading-snug"
+                        />
+                      </div>
                     </td>
                     <td className="py-1.5 pr-2 align-top">
                       <Input

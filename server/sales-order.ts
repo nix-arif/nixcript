@@ -193,6 +193,8 @@ export interface SalesOrderItemInput {
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
+  cpoDescription?: string;
+  setCpoTitle?: string;
   sourceQuotationId?: string;
   sourceCustomerPoId?: string;
   sourceCustomerPoNo?: string;
@@ -661,6 +663,8 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
+        cpoDescription: item.cpoDescription?.trim() || null,
+        setCpoTitle: item.setCpoTitle?.trim() || null,
         sourceQuotationId: item.sourceQuotationId || null,
         sourceCustomerPoId: item.sourceCustomerPoId || null,
         sourceCustomerPoNo: item.sourceCustomerPoNo || null,
@@ -982,6 +986,8 @@ async function applySalesOrderUpdate(
         setGroupId: item.setGroupId ?? null,
         setGroupLabel: item.setGroupLabel ?? null,
         setQty: item.setQty ?? null,
+        cpoDescription: item.cpoDescription?.trim() || null,
+        setCpoTitle: item.setCpoTitle?.trim() || null,
         sourceQuotationId: item.sourceQuotationId || null,
         sourceCustomerPoId: item.sourceCustomerPoId || null,
         sourceCustomerPoNo: item.sourceCustomerPoNo || null,
