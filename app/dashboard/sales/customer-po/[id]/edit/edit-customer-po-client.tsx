@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
-import { canMove, displayOrder, isNotAsSetLabel, itemNumbers, moveItem, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
+import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
 import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
@@ -419,13 +419,11 @@ export function EditCustomerPoClient({
   async function handleDownloadSheet() {
     try {
       const numbers = itemNumbers(items);
-      const titled = new Set<string>();
+      const titles = titleBySet(items); // the same set title on every row of the set
       const rows = displayOrder(items)
         .filter((i) => i.included)
         .map((i) => {
           const gid = i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "";
-          const first = !!gid && !titled.has(gid);
-          if (gid) titled.add(gid);
           return {
             key: i._key,
             no: numbers.get(i._key)!,
@@ -435,7 +433,7 @@ export function EditCustomerPoClient({
             uom: i.uom || "",
             setGroupLabel: i.setGroupLabel || "",
             setGroupId: gid,
-            setCpoTitle: first ? (i.setCpoTitle ?? "") : "",
+            setCpoTitle: gid ? (titles.get(gid) ?? "") : "",
             cpoDescription: i.cpoDescription ?? "",
           };
         });
@@ -453,7 +451,7 @@ export function EditCustomerPoClient({
       const target = items
         .filter((i) => i.included)
         .map((i) => ({ key: i._key, no: numbers.get(i._key)!, productCode: i.productCode || "", qty: i.qty, setGroupLabel: i.setGroupLabel || "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "" }));
-      const { updates, setTitles, setLabels, qtys, filled, skipped } = applyCpoDescriptions(target, await readItemsSheet(file));
+      const { updates, setTitles, setLabels, qtys, filled, skipped, conflicts } = applyCpoDescriptions(target, await readItemsSheet(file));
       const changed = filled + setTitles.size + setLabels.size + qtys.size;
       if (changed > 0)
         setItems((prev) => {
@@ -488,8 +486,9 @@ export function EditCustomerPoClient({
         ...(setTitles.size ? [`${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}`] : []),
         ...(qtys.size ? [`${qtys.size} quantit${qtys.size === 1 ? "y" : "ies"}`] : []),
       ];
-      if (changed === 0 && skipped.length === 0) toast.info("Nothing new found in the sheet");
+      if (changed === 0 && skipped.length === 0 && conflicts.length === 0) toast.info("Nothing new found in the sheet");
       else toast.success(`Updated ${parts.join(", ") || "nothing"}${skipped.length ? ` · ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped` : ""}`);
+      if (conflicts.length) toast.error(conflicts.slice(0, 3).join("\n") + (conflicts.length > 3 ? `\n…and ${conflicts.length - 3} more` : ""), { duration: 15000 });
       if (skipped.length) toast.warning(skipped.slice(0, 4).join("\n") + (skipped.length > 4 ? `\n…and ${skipped.length - 4} more` : ""), { duration: 12000 });
     } catch (err: any) {
       toast.error(err.message || "Could not read the sheet");
@@ -610,10 +609,25 @@ export function EditCustomerPoClient({
 
   // ── Save ───────────────────────────────────────────────────────────────────
 
+  // After a failed save, items still missing their CPO description are outlined in red
+  const [showDescErrors, setShowDescErrors] = useState(false);
+
   async function handleSave() {
     if (!customerPoNo.trim()) { toast.error("Customer PO number is required"); return; }
     if (!deliveryDate) { toast.error("Due delivery date is required"); return; }
     if (salesPersons.length === 0) { toast.error("Sales person is required"); return; }
+    // CPO description is required on every selected item (a cancelled CPO is exempt)
+    const missing = items.length > 0 && status !== "cancelled" ? itemsMissingCpoDescription(items) : [];
+    if (missing.length > 0) {
+      setShowDescErrors(true);
+      toast.error(cpoDescriptionMessage(missing), { duration: 10000 });
+      setTimeout(() => {
+        const el = document.querySelector<HTMLTextAreaElement>(`[data-cpo-desc="${missing[0].key}"]`);
+        el?.scrollIntoView({ block: "center", behavior: "smooth" });
+        el?.focus({ preventScroll: true });
+      }, 0);
+      return;
+    }
     setSaving(true);
     try {
       const primary = linkedQuotations[0];
@@ -1074,6 +1088,7 @@ export function EditCustomerPoClient({
                         key={item._key}
                         item={item}
                         no={numbers.get(item._key)}
+                        cpoDescError={showDescErrors}
                         move={canMove(items, item._key)}
                         onMove={handleMove}
                         rowIdx={rowIdx++}
@@ -1253,6 +1268,7 @@ export function EditCustomerPoClient({
 function ItemRow({
   item,
   no,
+  cpoDescError,
   move,
   onMove,
   rowIdx,
@@ -1264,6 +1280,7 @@ function ItemRow({
 }: {
   item: EditableItem;
   no: number | undefined; // item number in display order (undefined = switched off)
+  cpoDescError: boolean; // outline the CPO description in red when it is still empty
   move: { up: boolean; down: boolean };
   onMove: (key: string, dir: -1 | 1) => void;
   rowIdx: number;
@@ -1349,13 +1366,15 @@ function ItemRow({
             />
           </div>
           <div>
-            <label className="text-[9px] text-muted-foreground">CPO description</label>
+            <label className="text-[9px] text-muted-foreground">CPO description <span className="text-destructive">*</span></label>
             <Textarea
               rows={2}
               value={item.cpoDescription ?? ""}
               onChange={(e) => updateItem(item._key, { cpoDescription: e.target.value } as Partial<EditableItem>)}
-              placeholder="As written on the customer's PO"
-              className="mt-0.5 min-h-0 py-1 text-[11px] md:text-[11px] leading-snug"
+              placeholder="As written on the customer's PO (required)"
+              data-cpo-desc={item._key}
+              aria-invalid={cpoDescError && item.included && !(item.cpoDescription ?? "").trim() ? true : undefined}
+              className={cn("mt-0.5 min-h-0 py-1 text-[11px] md:text-[11px] leading-snug", cpoDescError && item.included && !(item.cpoDescription ?? "").trim() && "border-destructive focus-visible:ring-destructive/30")}
             />
           </div>
         </div>

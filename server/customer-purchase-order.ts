@@ -333,8 +333,17 @@ export async function getCustomerPosByCustomer(customerId: string): Promise<Cust
     .orderBy(desc(customerPurchaseOrder.createdAt));
 }
 
+// Backstop for the form check: every item on a CPO needs its CPO description (a cancelled CPO is exempt)
+function assertCpoDescriptions(items: CpoItemInput[] | null | undefined, status?: string) {
+  if (!items || items.length === 0 || status === "cancelled") return;
+  const missing = items.filter((i) => !(i.cpoDescription ?? "").trim());
+  if (missing.length > 0)
+    throw new Error(`CPO description is required for every item (missing on ${missing.length} of ${items.length}).`);
+}
+
 export async function createCustomerPo(input: CreateCustomerPoInput): Promise<CustomerPo> {
   const { orgId, userId } = await requireAccess("customer-po:create");
+  assertCpoDescriptions(input.items, input.status);
 
   const customerSnapshot: CustomerPo["customerSnapshot"] = input.customerId
     ? await buildCustomerSnapshot(input.customerId, await getAllOwnerOrgIds(userId, orgId), input.customerOrgMemberId)
@@ -426,6 +435,7 @@ export async function updateCustomerPoCentralized(input: UpdateCustomerPoInput):
 }
 
 async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomerPoInput): Promise<CustomerPo> {
+  if (input.items !== undefined) assertCpoDescriptions(input.items, input.status ?? existing.status);
   if (input.documentKey !== undefined && existing.documentKey && existing.documentKey !== input.documentKey) {
     await deleteDocument(existing.documentKey);
   }

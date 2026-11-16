@@ -47,7 +47,7 @@ import {
   AlertTriangleIcon,
 } from "lucide-react";
 import type { CustomerPoForSoCreate } from "@/server/customer-purchase-order";
-import { isNotAsSetLabel, sourceQuotationNo } from "@/lib/customer-po/item-order";
+import { isNotAsSetLabel, sourceQuotationNo, titleBySet } from "@/lib/customer-po/item-order";
 import { applySoSheet, downloadSoItemsSheet, readSoItemsSheet } from "@/lib/sales-order/items-sheet";
 import { uid } from "@/lib/uid";
 
@@ -987,13 +987,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   const sheetRef = useRef<HTMLInputElement>(null);
   async function handleDownloadSheet() {
     try {
-      // a set's title goes on the first row of that set only
-      const titled = new Set<string>();
-      const titleRow = (i: LineItem) => {
-        if (!i.setGroupId || isNotAsSetLabel(i.setGroupLabel) || titled.has(i.setGroupId)) return "";
-        titled.add(i.setGroupId);
-        return i.setCpoTitle ?? "";
-      };
+      const titles = titleBySet(items);
       await downloadSoItemsSheet(
         items.map((i) => ({
           key: i._key,
@@ -1005,7 +999,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           unitPrice: i.unitPrice || "",
           setGroupLabel: i.setGroupLabel || "",
           setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "",
-          setCpoTitle: titleRow(i),
+          setCpoTitle: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? (titles.get(i.setGroupId) ?? "") : "", // reference only
           cpoDescription: i.cpoDescription ?? "",
           cpoNo: i.sourceCustomerPoNo || "",
           sourcing: i.sourcingType ?? "",
@@ -1024,10 +1018,9 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     e.target.value = "";
     if (!file) return;
     try {
-      const { descriptions, qtys, cpoDescriptions, setTitles, sourcings, designs, additions, skipped } = applySoSheet(
+      const { descriptions, qtys, sourcings, designs, additions, skipped } = applySoSheet(
         items.map((i) => ({
           key: i._key, no: i.rowNo, productCode: i.productCode || "", description: i.description || "", qty: i.qty ?? "",
-          cpoDescription: i.cpoDescription ?? "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "",
           sourcing: i.sourcingType ?? "",
           designBrand: i.designBrandName ?? "",
           designCode: i.designBrandCode ?? "",
@@ -1035,7 +1028,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         await readSoItemsSheet(file),
       );
       if (!showSourcing) { sourcings.clear(); designs.clear(); } // trading-only businesses have no sourcing choice
-      if (descriptions.size > 0 || qtys.size > 0 || cpoDescriptions.size > 0 || setTitles.size > 0 || sourcings.size > 0 || designs.size > 0 || additions.length > 0) {
+      if (descriptions.size > 0 || qtys.size > 0 || sourcings.size > 0 || designs.size > 0 || additions.length > 0) {
         setItems((prev) => {
           // Same marking as typing in the field, so the "edit SO" badge shows what the sheet changed
           const edited = prev.map((i) => {
@@ -1047,7 +1040,6 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 _descriptionSource: [...new Set([...(it._descriptionSource ?? []).filter((x) => x !== "quote" && x !== "catalog"), "so"])] as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
                 _soEditedBy: currentUserName || "user",
               };
-            if (cpoDescriptions.has(i._key)) it = { ...it, cpoDescription: cpoDescriptions.get(i._key) };
             // Same as clicking the Trading / OEM switch: OEM fills the Emboss Code from the Code, Trading clears it
             if (showSourcing && designs.has(i._key)) {
               const d = designs.get(i._key)!;
@@ -1075,23 +1067,15 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               });
             return it;
           });
-          // A set title belongs to the set the item is in
-          let titled = edited;
-          for (const [key, title] of setTitles) {
-            const gid = titled.find((i) => i._key === key)?.setGroupId;
-            if (gid) titled = titled.map((i) => (i.setGroupId === gid ? { ...i, setCpoTitle: title } : i));
-          }
           const added = additions.map((a, k) =>
-            calcLine({ ...newLine(edited.length + k + 1), description: a.description.toUpperCase(), cpoDescription: a.cpoDescription, qty: a.qty, _descriptionSource: ["so"], _qtySource: ["so"], _soEditedBy: currentUserName || "user" }),
+            calcLine({ ...newLine(edited.length + k + 1), description: a.description.toUpperCase(), qty: a.qty, _descriptionSource: ["so"], _qtySource: ["so"], _soEditedBy: currentUserName || "user" }),
           );
-          return [...titled, ...added];
+          return [...edited, ...added];
         });
       }
       const parts = [
         ...(descriptions.size ? [`${descriptions.size} description${descriptions.size === 1 ? "" : "s"}`] : []),
         ...(qtys.size ? [`${qtys.size} quantit${qtys.size === 1 ? "y" : "ies"}`] : []),
-        ...(cpoDescriptions.size ? [`${cpoDescriptions.size} CPO description${cpoDescriptions.size === 1 ? "" : "s"}`] : []),
-        ...(setTitles.size ? [`${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}`] : []),
         ...(sourcings.size ? [`${sourcings.size} sourcing`] : []),
         ...(designs.size ? [`${designs.size} design brand/code`] : []),
         ...(additions.length ? [`${additions.length} new row${additions.length === 1 ? "" : "s"}`] : []),
@@ -1102,11 +1086,6 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     } catch (err: any) {
       toast.error(err.message || "Could not read the sheet");
     }
-  }
-
-  // The set's main title as written on the customer's PO (same on every item of the set)
-  function handleSetTitleChange(groupId: string, title: string) {
-    setItems((prev) => prev.map((x) => (x.setGroupId === groupId ? { ...x, setCpoTitle: title } : x)));
   }
 
   function addLine() {
@@ -2646,13 +2625,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                               </>
                             )}
                           </div>
-                          {!isNotAsSetLabel(item.setGroupLabel) && (
-                            <input
-                              value={item.setCpoTitle ?? ""}
-                              onChange={(e) => handleSetTitleChange(item.setGroupId, e.target.value)}
-                              placeholder="Set title on the customer's PO, e.g. TOILET & SUTURE SET consist of:-"
-                              className="mt-1 h-6 w-full rounded border border-border/60 bg-background px-1.5 text-[11px] font-normal text-foreground placeholder:text-muted-foreground/70 outline-none focus:border-ring"
-                            />
+                          {item.setCpoTitle && !isNotAsSetLabel(item.setGroupLabel) && (
+                            <div className="mt-1 text-[12px] font-semibold text-foreground whitespace-pre-line">{item.setCpoTitle}</div>
                           )}
                         </td>
                       </tr>,
@@ -2930,16 +2904,12 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           </button>
                         </div>
                       )}
-                      <div className="mt-1">
-                        <label className="text-[9px] text-muted-foreground">CPO description</label>
-                        <Textarea
-                          rows={2}
-                          value={item.cpoDescription ?? ""}
-                          onChange={(e) => updateItem(item._key, { cpoDescription: e.target.value })}
-                          placeholder="As written on the customer's PO"
-                          className="mt-0.5 min-h-0 py-1 text-[11px] md:text-[11px] leading-snug"
-                        />
-                      </div>
+                      {item.cpoDescription?.trim() && (
+                        <div className="mt-1 rounded-md bg-muted/40 px-2 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-line">
+                          <span className="font-medium text-foreground/70">CPO description: </span>
+                          {item.cpoDescription}
+                        </div>
+                      )}
                     </td>
                     <td className="py-1.5 pr-2 align-top">
                       <Input

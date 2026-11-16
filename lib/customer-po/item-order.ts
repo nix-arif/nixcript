@@ -84,3 +84,33 @@ export function moveItem<T extends Orderable>(items: T[], key: string, dir: -1 |
   [next[a], next[b]] = [next[b], next[a]];
   return next;
 }
+
+// Every selected item must have its CPO description (the item as written on the customer's PO).
+// Returns the ones that don't, in display order, with the number shown on the page.
+export function itemsMissingCpoDescription<T extends Orderable & { cpoDescription?: string; productCode?: string }>(
+  items: T[],
+): { key: string; no: number; code: string }[] {
+  const numbers = itemNumbers(items);
+  return displayOrder(items)
+    .filter((i) => i.included && !(i.cpoDescription ?? "").trim())
+    .map((i) => ({ key: i._key, no: numbers.get(i._key)!, code: i.productCode || "" }));
+}
+
+export function cpoDescriptionMessage(missing: { no: number; code: string }[]): string {
+  const label = (m: { no: number; code: string }) => `#${m.no}${m.code ? ` (${m.code})` : ""}`;
+  const how = "Type it in, or download the sheet, fill the CPO description column and upload it again.";
+  if (missing.length === 1) return `CPO description is required for item ${label(missing[0])}. ${how}`;
+  const shown = missing.slice(0, 3).map(label).join(", ");
+  return `CPO description is required for ${missing.length} items (${shown}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}). ${how}`;
+}
+
+// The title of each set (group id -> title): the first non-empty one among the items of the set, so every
+// row of a set can show it even when only some of its items carry the value.
+export function titleBySet<T extends { setGroupId?: string; setCpoTitle?: string }>(items: T[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const i of items) {
+    const t = (i.setCpoTitle ?? "").trim();
+    if (i.setGroupId && t && !out.has(i.setGroupId)) out.set(i.setGroupId, t);
+  }
+  return out;
+}

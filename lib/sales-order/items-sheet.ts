@@ -1,10 +1,11 @@
 // Spreadsheet round trip for the items of a new Sales Order: download the items, fill in the
-// description, qty, CPO description and sourcing (handy for long government lists), upload it again
-// and the form is filled. Code, UOM, unit price, set and CPO are for reference only.
+// description, qty and sourcing (handy for long lists), upload it again and the form is filled.
+// Code, UOM, unit price, set, CPO, the CPO description and the set title are for reference only:
+// on a sales order the CPO description is read-only, it comes from the Customer PO.
 
 import { createSoItemsSheet } from "@/server/sales-order-sheet";
 import type { SoSheetItem } from "@/lib/sales-order/items-workbook";
-import { CPO_DESCRIPTION_LABEL, DESIGN_BRAND_LABEL, DESIGN_CODE_LABEL, SET_TITLE_LABEL, SOURCING_LABEL } from "@/lib/sales-order/sheet-labels";
+import { DESIGN_BRAND_LABEL, DESIGN_CODE_LABEL, SOURCING_LABEL } from "@/lib/sales-order/sheet-labels";
 
 export type { SoSheetItem };
 
@@ -19,7 +20,7 @@ export async function downloadSoItemsSheet(rows: SoSheetItem[], fileName: string
   URL.revokeObjectURL(url);
 }
 
-export type SoSheetRow = { no: number | null; code: string; description: string; qty: string; cpoDescription: string; setCpoTitle: string; sourcing: string; designBrand: string; designCode: string };
+export type SoSheetRow = { no: number | null; code: string; description: string; qty: string; sourcing: string; designBrand: string; designCode: string };
 
 export async function readSoItemsSheet(file: File): Promise<SoSheetRow[]> {
   const XLSX = await import("xlsx");
@@ -30,12 +31,10 @@ export async function readSoItemsSheet(file: File): Promise<SoSheetRow[]> {
   const col = (name: string) => Object.keys(raw[0]).find((h) => norm(h) === norm(name));
   const descCol = col("Description");
   const qtyCol = col("Qty");
-  const cpoDescCol = col(CPO_DESCRIPTION_LABEL);
-  const titleCol = col(SET_TITLE_LABEL);
   const sourcingCol = col(SOURCING_LABEL);
   const brandCol = col(DESIGN_BRAND_LABEL);
   const designCodeCol = col(DESIGN_CODE_LABEL);
-  if (!descCol && !qtyCol && !cpoDescCol) throw new Error('Could not find a "Description" or "Qty" column. Use the sheet downloaded from this page.');
+  if (!descCol && !qtyCol) throw new Error('Could not find a "Description" or "Qty" column. Use the sheet downloaded from this page.');
   const noCol = col("No");
   const codeCol = col("Code");
   return raw.map((r) => {
@@ -45,8 +44,6 @@ export async function readSoItemsSheet(file: File): Promise<SoSheetRow[]> {
       code: codeCol ? String(r[codeCol] ?? "").trim() : "",
       description: descCol ? String(r[descCol] ?? "").trim() : "",
       qty: qtyCol ? String(r[qtyCol] ?? "").replace(/,/g, "").trim() : "",
-      cpoDescription: cpoDescCol ? String(r[cpoDescCol] ?? "").trim() : "",
-      setCpoTitle: titleCol ? String(r[titleCol] ?? "").trim() : "",
       sourcing: sourcingCol ? String(r[sourcingCol] ?? "").trim() : "",
       designBrand: brandCol ? String(r[brandCol] ?? "").trim() : "",
       designCode: designCodeCol ? String(r[designCodeCol] ?? "").trim() : "",
@@ -58,30 +55,26 @@ export async function readSoItemsSheet(file: File): Promise<SoSheetRow[]> {
 // that code not already matched). Empty cells never overwrite anything, and a value equal to the
 // current one is not an edit. A row that matches nothing and has no code is a new additional row.
 export function applySoSheet(
-  items: Pick<SoSheetItem, "key" | "no" | "productCode" | "description" | "qty" | "cpoDescription" | "setGroupId" | "sourcing" | "designBrand" | "designCode">[],
+  items: Pick<SoSheetItem, "key" | "no" | "productCode" | "description" | "qty" | "sourcing" | "designBrand" | "designCode">[],
   rows: SoSheetRow[],
 ): {
   descriptions: Map<string, string>;
   qtys: Map<string, string>;
-  cpoDescriptions: Map<string, string>;
-  setTitles: Map<string, string>; // item key -> title of the set that item is in
   sourcings: Map<string, "oem" | "trading">;
   designs: Map<string, { brand?: string; code?: string }>;
-  additions: { description: string; qty: string; cpoDescription: string }[];
+  additions: { description: string; qty: string }[];
   skipped: string[];
 } {
   const descriptions = new Map<string, string>();
   const qtys = new Map<string, string>();
-  const cpoDescriptions = new Map<string, string>();
-  const setTitles = new Map<string, string>();
   const sourcings = new Map<string, "oem" | "trading">();
   const designs = new Map<string, { brand?: string; code?: string }>();
-  const additions: { description: string; qty: string; cpoDescription: string }[] = [];
+  const additions: { description: string; qty: string }[] = [];
   const skipped: string[] = [];
   const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
   const claimed = new Set<string>();
   rows.forEach((r, idx) => {
-    if (!r.description && !r.qty && !r.cpoDescription && !r.setCpoTitle && !r.sourcing && !r.designBrand && !r.designCode) return;
+    if (!r.description && !r.qty && !r.sourcing && !r.designBrand && !r.designCode) return;
     const label = `Row ${idx + 2}${r.code ? ` (${r.code})` : ""}`;
     const q = r.qty ? Number(r.qty) : null;
     if (r.qty && !(q! > 0)) {
@@ -91,15 +84,13 @@ export function applySoSheet(
     let hit = r.no != null ? items.find((i) => i.no === r.no && (!r.code || same(i.productCode, r.code)) && !claimed.has(i.key)) : undefined;
     if (!hit && r.code) hit = items.find((i) => same(i.productCode, r.code) && !claimed.has(i.key));
     if (!hit) {
-      if (!r.code && r.no == null && (r.description || r.cpoDescription)) additions.push({ description: r.description, qty: r.qty || "1", cpoDescription: r.cpoDescription });
+      if (!r.code && r.no == null && r.description) additions.push({ description: r.description, qty: r.qty || "1" });
       else skipped.push(`${label}: no matching item on this order`);
       return;
     }
     claimed.add(hit.key);
     if (r.description && r.description.trim().toUpperCase() !== hit.description.trim().toUpperCase()) descriptions.set(hit.key, r.description);
     if (q !== null && q !== Number(hit.qty)) qtys.set(hit.key, String(q));
-    if (r.cpoDescription && r.cpoDescription !== hit.cpoDescription) cpoDescriptions.set(hit.key, r.cpoDescription);
-    if (r.setCpoTitle && hit.setGroupId) setTitles.set(hit.key, r.setCpoTitle);
     // Sourcing, and the OEM fields that go with it
     let target: string = hit.sourcing || "";
     let sourcingOk = true;
@@ -128,5 +119,5 @@ export function applySoSheet(
       }
     }
   });
-  return { descriptions, qtys, cpoDescriptions, setTitles, sourcings, designs, additions, skipped };
+  return { descriptions, qtys, sourcings, designs, additions, skipped };
 }

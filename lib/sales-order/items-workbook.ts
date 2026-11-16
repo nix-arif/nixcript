@@ -102,8 +102,8 @@ export async function buildSoItemsWorkbook(rows: SoSheetItem[], opts: { withPric
   const notes = wb.addWorksheet("Notes");
   [
     "Sales order items sheet",
-    "Fill in the Description, Qty and CPO description columns, then upload the file again on the sales order page.",
-    `CPO description is the item description as written on the customer's PO. For a set, type its main title (e.g. TOILET & SUTURE SET consist of:-) in "${SET_TITLE_LABEL}" on any row of that set.`,
+    "Fill in the Description and Qty columns, then upload the file again on the sales order page.",
+    `CPO description and ${SET_TITLE_LABEL} are shown for reference. On a sales order they are read-only: they come from the Customer PO, and changes to them here are ignored.`,
     ...(opts.withSourcing
       ? [
           `${SOURCING_LABEL}: only "oem" or "trading" is accepted. Leave it empty to keep what is already on the order.`,
@@ -111,8 +111,8 @@ export async function buildSoItemsWorkbook(rows: SoSheetItem[], opts: { withPric
           `${EMBOSS_CODE_LABEL} always follows the Code column and is locked. The sheet is protected without a password, only to lock that column.`,
         ]
       : []),
-    `Only Description, Qty, ${opts.withSourcing ? `${SOURCING_LABEL}, ${DESIGN_BRAND_LABEL}, ${DESIGN_CODE_LABEL}, ` : ""}CPO description and Set title (CPO) are read back. Code, UOM, unit price, set and CPO are for reference and are ignored.`,
-    "Rows are matched by the No and Code columns, so do not renumber or change the codes.",
+    `Only Description, Qty${opts.withSourcing ? `, ${SOURCING_LABEL}, ${DESIGN_BRAND_LABEL} and ${DESIGN_CODE_LABEL}` : ""} are read back. Code, UOM, unit price, set and CPO are for reference and are ignored.`,
+    "Rows are matched by the No and Code columns, so do not renumber or change the codes. You can sort and filter freely.",
     "A row with a description and no code (and no matching No) is added to the order as an additional row.",
     "Leave a cell empty to keep what is already on the order.",
   ].forEach((t, i) => {

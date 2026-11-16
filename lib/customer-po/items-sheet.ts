@@ -15,7 +15,7 @@ export type SheetItem = {
   uom: string;
   setGroupLabel: string;
   setGroupId: string; // "" when the item is not in a set
-  setCpoTitle: string; // set title on the CPO; written on the first row of each set only
+  setCpoTitle: string; // set title on the CPO; written on every row of the set
   cpoDescription: string;
 };
 
@@ -32,11 +32,11 @@ export async function downloadItemsSheet(rows: SheetItem[], fileName: string) {
   const notes = XLSX.utils.aoa_to_sheet([
     ["CPO items sheet"],
     [`Type the description exactly as written on the customer's PO in the "${CPO_DESCRIPTION_LABEL}" column, then upload the file again on the CPO page.`],
-    [`For a set, type the main title as written on the customer's PO (e.g. TOILET & SUTURE SET consist of:-) in the "${SET_TITLE_LABEL}" column, on any row of that set.`],
+    [`For a set, the main title as written on the customer's PO (e.g. TOILET & SUTURE SET consist of:-) is in the "${SET_TITLE_LABEL}" column on every row of that set. Change it on any row, and keep it the same on all rows of the set: if the rows of a set have different titles, the first one is used and you are told.`],
     ["Qty is read back too: change a quantity here and it is applied to the item when you upload."],
     ["Set: type a set name to put the item in that set (items with the same name are grouped together). Use not-as-set for an item that is not in a set. An empty cell keeps the current set."],
     ["Only Set, Set title (CPO), Qty and CPO description are read back. Code and description are read-only here. Changes to other columns are ignored."],
-    ["Rows are matched by the No and Code columns, so do not renumber, re-sort or change the codes."],
+    ["Rows are matched by the No and Code columns, so do not renumber or change the codes. You can sort and filter freely."],
     ["Leave a cell empty to keep what is already on the CPO."],
   ]);
   const wb = XLSX.utils.book_new();
@@ -87,6 +87,7 @@ export function applyCpoDescriptions(
   updates: Map<string, string>;
   setTitles: Map<string, string>; // item key -> title of the set that item is in
   setLabels: Map<string, string>; // item key -> set name to move it to
+  conflicts: string[]; // problems the user must know about (different titles in one set, title on an item without a set)
   qtys: Map<string, string>;
   filled: number;
   skipped: string[];
@@ -96,6 +97,8 @@ export function applyCpoDescriptions(
   const setLabels = new Map<string, string>();
   const qtys = new Map<string, string>();
   const skipped: string[] = [];
+  const conflicts: string[] = [];
+  const titleOfSet = new Map<string, { title: string; key: string; name: string }>();
   const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
   const claimed = new Set<string>(); // items already matched by an earlier row
   rows.forEach((r, idx) => {
@@ -112,12 +115,24 @@ export function applyCpoDescriptions(
     if (r.set && !same(r.set, hit.setGroupLabel)) setLabels.set(hit.key, r.set);
     // is the item in a real set once this row is applied?
     const inRealSet = r.set ? !isNotAsSetLabel(r.set) : !!hit.setGroupId;
-    if (r.setCpoTitle && inRealSet) setTitles.set(hit.key, r.setCpoTitle);
+    if (r.setCpoTitle) {
+      if (!inRealSet) {
+        conflicts.push(`${label}: the set title was ignored because this item is not in a set.`);
+      } else {
+        // The title of a set is read from all its rows. If they disagree, the first one is used.
+        const name = (r.set || hit.setGroupLabel).trim();
+        const prev = titleOfSet.get(name.toLowerCase());
+        if (!prev) titleOfSet.set(name.toLowerCase(), { title: r.setCpoTitle, key: hit.key, name });
+        else if (prev.title !== r.setCpoTitle)
+          conflicts.push(`Set "${name}" has different titles on different rows ("${prev.title}" and "${r.setCpoTitle}"). The first one was used, please make them the same.`);
+      }
+    }
     if (r.qty) {
       const q = Number(r.qty);
       if (!(q > 0)) skipped.push(`${label}: quantity "${r.qty}" must be a number greater than 0`);
       else if (q !== Number(hit.qty)) qtys.set(hit.key, String(q));
     }
   });
-  return { updates, setTitles, setLabels, qtys, filled: updates.size, skipped };
+  for (const g of titleOfSet.values()) setTitles.set(g.key, g.title);
+  return { updates, setTitles, setLabels, qtys, filled: updates.size, skipped, conflicts };
 }

@@ -634,11 +634,6 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
 
   // ── Items ───────────────────────────────────────────────────────────────────
 
-  // The set's main title as written on the customer's PO (same on every item of the set)
-  function handleSetTitleChange(groupId: string, title: string) {
-    setItems((prev) => prev.map((x) => (x.setGroupId === groupId ? { ...x, setCpoTitle: title } : x)));
-  }
-
   function updateItem(key: string, patch: Partial<LineItem>) {
     setItems((prev) =>
       prev.map((i) => {
@@ -1668,13 +1663,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                               </>
                             )}
                           </div>
-                          {!isNotAsSetLabel((item as any).setGroupLabel) && (
-                            <input
-                              value={(item as any).setCpoTitle ?? ""}
-                              onChange={(e) => handleSetTitleChange((item as any).setGroupId, e.target.value)}
-                              placeholder="Set title on the customer's PO, e.g. TOILET & SUTURE SET consist of:-"
-                              className="mt-1 h-6 w-full rounded border border-border/60 bg-background px-1.5 text-[11px] font-normal text-foreground placeholder:text-muted-foreground/70 outline-none focus:border-ring"
-                            />
+                          {(item as any).setCpoTitle && !isNotAsSetLabel((item as any).setGroupLabel) && (
+                            <div className="mt-1 text-[12px] font-semibold text-foreground whitespace-pre-line">{(item as any).setCpoTitle}</div>
                           )}
                         </td>
                       </tr>,
@@ -1892,16 +1882,12 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           </button>
                         </div>
                       )}
-                      <div className="mt-1">
-                        <label className="text-[9px] text-muted-foreground">CPO description</label>
-                        <Textarea
-                          rows={2}
-                          value={item.cpoDescription ?? ""}
-                          onChange={(e) => updateItem(item._key, { cpoDescription: e.target.value })}
-                          placeholder="As written on the customer's PO"
-                          className="mt-0.5 min-h-0 py-1 text-[11px] md:text-[11px] leading-snug"
-                        />
-                      </div>
+                      {item.cpoDescription?.trim() && (
+                        <div className="mt-1 rounded-md bg-muted/40 px-2 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-line">
+                          <span className="font-medium text-foreground/70">CPO description: </span>
+                          {item.cpoDescription}
+                        </div>
+                      )}
                     </td>
                     <td className="py-1.5 pr-2 align-top">
                       <Input data-row={rowIdx} data-col={qtyCol} value={item.qty} onChange={(e) => updateItem(item._key, {
