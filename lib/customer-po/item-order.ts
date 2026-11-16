@@ -6,6 +6,19 @@
 // neighbour inside the same block (the same set, or the list of items not in a set),
 // so it can never jump into another set by accident.
 
+// Quotations name their "not a set" lines with the group label "not-as-set". When a CPO takes lines
+// from several quotations, each quotation brought its own group with that label. They are the same
+// thing, so they share one group id and sit together as a single "not-as-set" group.
+export const NOT_AS_SET_LABEL = "not-as-set";
+export const NOT_AS_SET_ID = "g-not-as-set";
+export const isNotAsSetLabel = (label?: string | null) => (label ?? "").trim().toLowerCase() === NOT_AS_SET_LABEL;
+
+// The quotation a CPO line came from, when its group id still carries it ("<quotationId>:<groupId>")
+export function quotationIdOfGroup(setGroupId?: string | null): string | null {
+  const i = (setGroupId ?? "").indexOf(":");
+  return i > 0 ? (setGroupId as string).slice(0, i) : null;
+}
+
 type Orderable = { _key: string; included: boolean; setGroupId?: string; _quotationId?: string };
 
 // Same grouping the detail page uses: set groups first, then everything else

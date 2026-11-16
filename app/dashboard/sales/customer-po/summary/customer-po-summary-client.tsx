@@ -89,7 +89,7 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
       const snap = r.cpo.customerSnapshot as any;
       return (
         r.cpo.customerPoNo.toLowerCase().includes(q) ||
-        snap?.name?.toLowerCase().includes(q) ||
+        [snap?.title, snap?.name].filter(Boolean).join(" ").toLowerCase().includes(q) ||
         snap?.organizationName?.toLowerCase().includes(q) ||
         r.soNo?.toLowerCase().includes(q) ||
         r.invoices.some((inv) => inv.invoiceNo.toLowerCase().includes(q)) ||
@@ -238,7 +238,7 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
                         <div className="min-w-0">
                           {snap?.name && (
                             <p className="truncate max-w-[140px]">
-                              <Highlight text={snap.name} query={search} />
+                              <Highlight text={[snap.title, snap.name].filter(Boolean).join(" ")} query={search} />
                             </p>
                           )}
                           {snap?.organizationName && (

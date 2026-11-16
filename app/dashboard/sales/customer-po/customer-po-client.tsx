@@ -26,6 +26,7 @@ import {
   Link2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CpoTrailHover } from "./cpo-trail-hover";
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -60,7 +61,7 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
     const snap = p.customerSnapshot as any;
     return (
       p.customerPoNo.toLowerCase().includes(s) ||
-      snap?.name?.toLowerCase().includes(s) ||
+      [snap?.title, snap?.name].filter(Boolean).join(" ").toLowerCase().includes(s) ||
       snap?.organizationName?.toLowerCase().includes(s) ||
       p.quotationNo?.toLowerCase().includes(s) ||
       p.salesOrderNo?.toLowerCase().includes(s)
@@ -132,8 +133,8 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
           {filtered.map((p) => {
             const snap = p.customerSnapshot as any;
             return (
+              <CpoTrailHover key={p.id} id={p.id} poNo={p.customerPoNo}>
               <div
-                key={p.id}
                 className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
                 onClick={() => router.push(`/dashboard/sales/customer-po/${p.id}`)}
               >
@@ -179,7 +180,7 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
                       {snap?.name && (
                         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                           <UserIcon className="w-3 h-3" />
-                          <Highlight text={snap.name} query={search} />
+                          <Highlight text={[snap.title, snap.name].filter(Boolean).join(" ")} query={search} />
                         </span>
                       )}
                       {snap?.organizationName && (
@@ -220,6 +221,7 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
                   </div>
                 </div>
               </div>
+              </CpoTrailHover>
             );
           })}
         </div>

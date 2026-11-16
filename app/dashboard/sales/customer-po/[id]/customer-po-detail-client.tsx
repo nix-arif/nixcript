@@ -4,13 +4,14 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeftIcon, CheckIcon, ClockIcon, AlertCircleIcon,
   FileTextIcon, PackageIcon, TruckIcon, ReceiptIcon,
-  BanknoteIcon, CircleIcon, PencilIcon, ExternalLinkIcon,
+  BanknoteIcon, CircleIcon, PencilIcon, ExternalLinkIcon, LinkIcon, DatabaseIcon,
   BuildingIcon, UserIcon, CalendarIcon, PaperclipIcon, PlusIcon,
   LayersIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CustomerPoTrackingData, CpoItemInput } from "@/server/customer-purchase-order";
+import { isNotAsSetLabel, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
 
 type Data = CustomerPoTrackingData;
 
@@ -261,7 +262,7 @@ export function CustomerPoDetailClient({
       </div>
 
       {/* ── Items ── */}
-      {cpo.items && cpo.items.length > 0 && <ItemsSection items={cpo.items} currency={cpo.currency} />}
+      {cpo.items && cpo.items.length > 0 && <ItemsSection items={cpo.items} currency={cpo.currency} quotations={cpo.quotationLinks ?? []} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ── Left: Fulfilment trail ── */}
@@ -584,7 +585,48 @@ function ProgressRow({
 }
 
 // ── Items ───────────────────────────────────────────────────────────────────
-function ItemsSection({ items, currency }: { items: CpoItemInput[]; currency: string }) {
+type SourceKind = "quote" | "catalog" | "user";
+type ViewItem = CpoItemInput & { _srcNo: string };
+
+const asSources = (v: unknown): SourceKind[] => (Array.isArray(v) ? v : v ? [v] : []).filter((x): x is SourceKind => x === "quote" || x === "catalog" || x === "user");
+
+// "from quotation AFF-QT-…", "from product table" or "<name> edited CPO", as saved with the line
+function SourceBadges({ sources, item }: { sources: SourceKind[]; item: ViewItem }) {
+  if (sources.length === 0) return null;
+  const base = "inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md border";
+  return (
+    <div className="flex flex-wrap gap-1 mt-0.5">
+      {sources.map((s) =>
+        s === "quote" ? (
+          <span key={s} className={cn(base, "bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800")}>
+            <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._srcNo ? ` ${item._srcNo}` : ""}
+          </span>
+        ) : s === "catalog" ? (
+          <span key={s} className={cn(base, "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800")}>
+            <DatabaseIcon className="w-3 h-3 shrink-0" />from product table
+          </span>
+        ) : (
+          <span key={s} className={cn(base, "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800")}>
+            <PencilIcon className="w-3 h-3 shrink-0" />{item._editedBy || "user"} edited CPO
+          </span>
+        ),
+      )}
+    </div>
+  );
+}
+
+function ItemsSection({ items: rawItems, currency, quotations }: { items: CpoItemInput[]; currency: string; quotations: { quotationId: string; quotationNo: string }[] }) {
+  // Older CPOs kept one "not-as-set" group per quotation; show them as the single group they are
+  // Which quotation each line came from: saved with the line, else read from its group id, else the CPO's only quotation.
+  // (Worked out before the groups are merged, because merging drops the quotation id from the group id.)
+  const sourceOf = (it: CpoItemInput) =>
+    it.quotationNo ?? quotations.find((q) => q.quotationId === quotationIdOfGroup(it.setGroupId))?.quotationNo ?? (quotations.length === 1 ? quotations[0].quotationNo : "");
+  const items: ViewItem[] = rawItems.map((it) => ({
+    ...it,
+    ...(isNotAsSetLabel(it.setGroupLabel) ? { setGroupId: NOT_AS_SET_ID, setQty: "1" } : {}),
+    _srcNo: sourceOf(it),
+  }));
+
   const acct = (v: number) =>
     v.toLocaleString("en-MY", { style: "currency", currency: currency || "MYR", minimumFractionDigits: 2 });
 
@@ -598,8 +640,8 @@ function ItemsSection({ items, currency }: { items: CpoItemInput[]; currency: st
   }
 
   type Entry =
-    | { kind: "group"; gid: string; first: CpoItemInput; groupTotal: number }
-    | { kind: "item"; item: CpoItemInput; inSet: boolean };
+    | { kind: "group"; gid: string; first: ViewItem; groupTotal: number }
+    | { kind: "item"; item: ViewItem; inSet: boolean };
 
   const entries: Entry[] = [];
   for (const gid of groupOrder) {
@@ -681,11 +723,23 @@ function ItemsSection({ items, currency }: { items: CpoItemInput[]; currency: st
                       <TypeBadge isRent={isRent} />
                     </div>
                   </td>
-                  <td className="px-3 py-2 font-mono text-[11px] align-top">{e.item.productCode || "—"}</td>
-                  <td className="px-3 py-2 align-top whitespace-normal">{e.item.description || "—"}</td>
-                  <td className="px-3 py-2 text-center tabular-nums align-top">{e.item.qty}</td>
+                  <td className="px-3 py-2 font-mono text-[11px] align-top">
+                    {e.item.productCode || "—"}
+                    <SourceBadges sources={asSources(e.item._codeSource)} item={e.item} />
+                  </td>
+                  <td className="px-3 py-2 align-top whitespace-normal">
+                    {e.item.description || "—"}
+                    <SourceBadges sources={asSources(e.item._descriptionSource)} item={e.item} />
+                  </td>
+                  <td className="px-3 py-2 text-center tabular-nums align-top">
+                    {e.item.qty}
+                    <SourceBadges sources={asSources(e.item._qtySource)} item={e.item} />
+                  </td>
                   <td className="px-3 py-2 text-center text-muted-foreground align-top">{e.item.uom || "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums align-top">{acct(Number(e.item.unitPrice ?? 0))}</td>
+                  <td className="px-3 py-2 text-right tabular-nums align-top">
+                    {acct(Number(e.item.unitPrice ?? 0))}
+                    <div className="flex justify-end"><SourceBadges sources={asSources(e.item._unitPriceSource)} item={e.item} /></div>
+                  </td>
                   <td className="px-3 py-2 text-center tabular-nums align-top">
                     {Number(e.item.discountPct ?? 0) > 0 ? `${e.item.discountPct}%` : "—"}
                   </td>
@@ -732,6 +786,10 @@ function ItemsSection({ items, currency }: { items: CpoItemInput[]; currency: st
                 <span className="font-medium tabular-nums">{acct(Number(e.item.totalPrice ?? 0))}</span>
               </div>
               <div className="text-foreground">{e.item.description || "—"}</div>
+              <SourceBadges
+                sources={[...new Set([...asSources(e.item._codeSource), ...asSources(e.item._descriptionSource), ...asSources(e.item._qtySource), ...asSources(e.item._unitPriceSource)])]}
+                item={e.item}
+              />
               <div className="flex items-center gap-3 text-muted-foreground">
                 <span>{e.item.qty} {e.item.uom}</span>
                 <span>{acct(Number(e.item.unitPrice ?? 0))}/unit</span>

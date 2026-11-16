@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
-import { canMove, itemNumbers, moveItem } from "@/lib/customer-po/item-order";
+import { canMove, isNotAsSetLabel, itemNumbers, moveItem, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
@@ -125,11 +125,18 @@ export function EditCustomerPoClient({
         _key: uid(),
         included: true,
         _quotationId: firstQtId,
-        // Lines saved before this was recorded only have a known source when the CPO has one quotation
-        _quotationNo: item.quotationNo ?? ((cpoAny.quotationLinks as { quotationNo: string }[] | null)?.length === 1 ? (cpoAny.quotationLinks as { quotationNo: string }[])[0].quotationNo : ""),
-        setGroupId:    item.setGroupId    ?? "",
+        // Which quotation the line came from: saved with the line, else read from its group id
+        // ("<quotationId>:…"), else known only when the CPO has a single quotation
+        _quotationNo: (() => {
+          const links = (cpoAny.quotationLinks as { quotationId: string; quotationNo: string }[] | null) ?? [];
+          return item.quotationNo
+            ?? links.find((l) => l.quotationId === quotationIdOfGroup(item.setGroupId))?.quotationNo
+            ?? (links.length === 1 ? links[0].quotationNo : "");
+        })(),
+        // Older CPOs kept one "not-as-set" group per quotation: merge them into one
+        setGroupId:    isNotAsSetLabel(item.setGroupLabel) ? NOT_AS_SET_ID : (item.setGroupId ?? ""),
         setGroupLabel: item.setGroupLabel ?? "",
-        setQty:        item.setQty        ?? "",
+        setQty:        isNotAsSetLabel(item.setGroupLabel) ? "1" : (item.setQty ?? ""),
         _codeSource:        raw._codeSource        ?? (hasQuotations ? "quote" : null),
         _descriptionSource: (() => {
           const s = raw._descriptionSource;
@@ -305,9 +312,11 @@ export function EditCustomerPoClient({
         // If the item already belongs to a named set, preserve it (scoped to avoid cross-quotation ID collisions).
         // Only fall back to the quotation-level auto-group for items that have no set assignment.
         const itemHasGroup = Boolean(item.setGroupId);
-        const resolvedGroupId    = itemHasGroup ? `${qt.id}:${item.setGroupId}` : autoGroupId;
         const resolvedGroupLabel = itemHasGroup ? (item.setGroupLabel ?? "") : autoGroupLabel;
-        const resolvedSetQty     = itemHasGroup ? (item.setQty ?? "1") : (autoGroup ? "1" : "");
+        // "not-as-set" lines from every quotation form ONE group, so they can be ordered together
+        const notAsSet           = itemHasGroup && isNotAsSetLabel(resolvedGroupLabel);
+        const resolvedGroupId    = notAsSet ? NOT_AS_SET_ID : itemHasGroup ? `${qt.id}:${item.setGroupId}` : autoGroupId;
+        const resolvedSetQty     = notAsSet ? "1" : itemHasGroup ? (item.setQty ?? "1") : (autoGroup ? "1" : "");
         const base: EditableItem = {
           _key:          uid(),
           _quotationId:  qt.id,

@@ -61,7 +61,7 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
     const snap = p.customerSnapshot;
     return (
       p.customerPoNo.toLowerCase().includes(s) ||
-      snap?.name?.toLowerCase().includes(s) ||
+      [snap?.title, snap?.name].filter(Boolean).join(" ").toLowerCase().includes(s) ||
       snap?.organizationName?.toLowerCase().includes(s) ||
       p.quotationNo?.toLowerCase().includes(s) ||
       p.salesOrderNo?.toLowerCase().includes(s) ||
@@ -203,7 +203,7 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
                       {snap?.name && (
                         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                           <UserIcon className="w-3 h-3" />
-                          <Highlight text={snap.name} query={search} />
+                          <Highlight text={[snap.title, snap.name].filter(Boolean).join(" ")} query={search} />
                         </span>
                       )}
                       {snap?.organizationName && (
