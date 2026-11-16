@@ -22,7 +22,7 @@ import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
   PencilIcon, DatabaseIcon, LinkIcon,
-  ChevronUpIcon, ChevronDownIcon, DownloadIcon, UploadIcon,
+  ChevronUpIcon, ChevronDownIcon, DownloadIcon, UploadIcon, AlertTriangleIcon,
 } from "lucide-react";
 
 type LinkedQuotation = {
@@ -1396,15 +1396,22 @@ function ItemRow({
           onChange={(e) => onCodeChange(item._key, e.target.value)}
           onKeyDown={(e) => onCellKeyDown(e, rowIdx, 0)}
           placeholder="code"
+          // A plain field until it is changed: the code normally should not be edited, so a change must be hard to miss
           className={cn(
-            "h-7 font-mono text-[11px] md:text-[11px] font-semibold",
+            "h-7 font-mono text-[11px] md:text-[11px]",
             item._codeSource === "user"
-              ? "border-amber-400 bg-amber-50 text-amber-950 ring-1 ring-amber-300/70 dark:bg-amber-950/30 dark:text-amber-100"
-              : "border-blue-300/80 bg-blue-50/50 ring-1 ring-blue-200/70 dark:bg-blue-950/20",
+              ? "border-2 border-amber-500 bg-amber-100 font-bold text-amber-950 ring-2 ring-amber-300/80 dark:border-amber-500 dark:bg-amber-900/40 dark:text-amber-50"
+              : "text-muted-foreground",
           )}
+          title={item._codeSource === "user" ? undefined : "The code comes from the quotation. Change it only if it is wrong."}
         />
-        {item._origCode !== undefined && item._origCode !== item.productCode && (
-          <div className="mt-0.5 font-mono text-[9px] text-muted-foreground line-through">{item._origCode}</div>
+        {item._codeSource === "user" && (
+          <div className="mt-1 flex items-start gap-1 text-[10px] font-medium leading-snug text-amber-700 dark:text-amber-400">
+            <AlertTriangleIcon className="mt-px h-3 w-3 shrink-0" />
+            <span>
+              Code changed{item._origCode !== undefined && item._origCode !== item.productCode ? <> from <span className="font-mono">{item._origCode}</span></> : ""}
+            </span>
+          </div>
         )}
         {item._codeSource === "quote" && (
           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
