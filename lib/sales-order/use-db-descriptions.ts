@@ -6,7 +6,7 @@
 // the catalogue product the item is made like), otherwise by the item's own Code. The database description
 // is stored on the item as `_dbDescription` so the user can revert to it. Typing a design code or switching
 // Trading/OEM changes the reference, and the description follows as long as the user has not customised it.
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { getProductsByCode } from "@/server/inventory";
 
@@ -41,4 +41,26 @@ export function useDbDescriptions<T extends DbDescItem>(
       clearTimeout(t);
     };
   }, [items, setItems, showSourcing, syncOnLoad]);
+}
+
+// Read-only lookup for pages that only need to compare: reference code (lowercase) -> database description (uppercase).
+// Empty when the user may not read the catalogue.
+export function useDbDescriptionLookup(refs: string[]): Map<string, string> {
+  const key = useMemo(() => [...new Set(refs.map((r) => r.trim()).filter(Boolean))].sort().join("\n"), [refs]);
+  const [found, setFound] = useState<Map<string, string>>(() => new Map());
+  useEffect(() => {
+    const codes = key ? key.split("\n") : [];
+    if (codes.length === 0) return;
+    let cancelled = false;
+    getProductsByCode(codes)
+      .catch(() => [] as { productCode: string; description: string | null }[])
+      .then((products) => {
+        if (cancelled) return;
+        setFound(new Map(products.filter((p) => p.description?.trim()).map((p) => [p.productCode.trim().toLowerCase(), p.description!.trim().toUpperCase()])));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
+  return found;
 }

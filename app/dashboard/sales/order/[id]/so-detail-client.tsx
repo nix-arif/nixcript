@@ -30,6 +30,8 @@ import {
   Loader2Icon, TruckIcon, LinkIcon, PlusIcon, DatabaseIcon, FileSpreadsheetIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { refOf, useDbDescriptionLookup, type DbDescItem } from "@/lib/sales-order/use-db-descriptions";
+import { sameText } from "@/lib/sales-order/db-description";
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -89,6 +91,8 @@ export function SalesOrderDetailClient({
   organizationName?: string;
   businessType?: string;
 }) {
+  // Product database descriptions, to point out items whose description was changed on the order
+  const dbLookup = useDbDescriptionLookup(order.items.map((i) => refOf(i as unknown as DbDescItem, businessType !== "trading")));
   const router = useRouter();
   const showSourcing = businessType !== "trading";
   const [deleting, setDeleting] = useState(false);
@@ -775,7 +779,23 @@ export function SalesOrderDetailClient({
                                 );
                               })()}
                               <div className={cn("flex flex-col gap-1", arCls)}>
-                                <span>{item.description || "—"}</span>
+                                {(() => {
+                                  // Eye-catching when the saved description is not the product database one
+                                  const ref = refOf(item as unknown as DbDescItem, businessType !== "trading");
+                                  const dbText = ref ? dbLookup.get(ref.toLowerCase()) : undefined;
+                                  const differs = !!dbText && !sameText(dbText, item.description);
+                                  return differs ? (
+                                    <div className="rounded-md border-l-4 border-amber-400 bg-amber-50 px-2 py-1.5 dark:bg-amber-950/30">
+                                      <div className="font-medium text-amber-950 dark:text-amber-100">{item.description || "—"}</div>
+                                      <div className="mt-1 flex items-start gap-1 text-[10px] leading-snug text-amber-700 dark:text-amber-400">
+                                        <AlertTriangleIcon className="mt-px h-3 w-3 shrink-0" />
+                                        <span><span className="font-semibold">Differs from the product database:</span> {dbText}</span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span>{item.description || "—"}</span>
+                                  );
+                                })()}
                                 {(item as any).cpoDescription && (
                                   <div className="rounded-md bg-muted/40 px-2 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-line">
                                     <span className="font-medium text-foreground/70">CPO description: </span>

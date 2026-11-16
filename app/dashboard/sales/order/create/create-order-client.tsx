@@ -25,6 +25,7 @@ import { type OrgMember } from "@/server/members";
 import { cn } from "@/lib/utils";
 import { DescriptionField } from "@/components/sales-order/description-field";
 import { useDbDescriptions } from "@/lib/sales-order/use-db-descriptions";
+import { sameText } from "@/lib/sales-order/db-description";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1037,7 +1038,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       // Descriptions come from the product database: changing them from the sheet needs the user's OK too
       const differing = [...descriptions].filter(([k, v]) => {
         const db = items.find((x) => x._key === k)?._dbDescription;
-        return !!db && db.trim().toUpperCase() !== v.trim().toUpperCase();
+        return !!db && !sameText(db, v);
       });
       if (differing.length > 0 && !window.confirm(`${differing.length} description${differing.length === 1 ? "" : "s"} in the sheet differ${differing.length === 1 ? "s" : ""} from the product database.\n\nChange ${differing.length === 1 ? "it" : "them"} on this order? You can revert each one to the database text afterwards.`))
         differing.forEach(([k]) => descriptions.delete(k));
@@ -1050,7 +1051,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               it = {
                 ...it,
                 description: descriptions.get(i._key)!.toUpperCase(),
-                _descriptionSource: (it._dbDescription && it._dbDescription.trim().toUpperCase() === descriptions.get(i._key)!.trim().toUpperCase()
+                _descriptionSource: (it._dbDescription && sameText(it._dbDescription, descriptions.get(i._key))
                   ? ["catalog"]
                   : [...new Set([...(it._descriptionSource ?? []).filter((x) => x !== "quote" && x !== "catalog"), "so"])]) as Array<"quote" | "catalog" | "user" | "cpo" | "so">,
                 _soEditedBy: currentUserName || "user",

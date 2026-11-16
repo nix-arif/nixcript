@@ -23,7 +23,10 @@ export function refOf(i: DbDescItem, showSourcing: boolean): string {
   return (i.productCode ?? "").trim();
 }
 
-export const sameText = (a?: string | null, b?: string | null) => (a ?? "").trim().toUpperCase() === (b ?? "").trim().toUpperCase();
+// Compared ignoring case and any difference in spacing or line breaks (a spreadsheet turns a line break into
+// "\r\n", collapses or adds spaces, and may swap a non-breaking space), so the same text is never "different".
+export const normText = (s?: string | null) => (s ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+export const sameText = (a?: string | null, b?: string | null) => normText(a) === normText(b);
 
 // Apply looked-up database descriptions (reference code lowercased -> text) to the items.
 export function mergeDbDescriptions<T extends DbDescItem>(

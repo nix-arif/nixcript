@@ -5,6 +5,7 @@
 
 import { createSoItemsSheet } from "@/server/sales-order-sheet";
 import type { SoSheetItem } from "@/lib/sales-order/items-workbook";
+import { sameText } from "@/lib/sales-order/db-description";
 import { DESIGN_BRAND_LABEL, DESIGN_CODE_LABEL, SOURCING_LABEL } from "@/lib/sales-order/sheet-labels";
 
 export type { SoSheetItem };
@@ -89,7 +90,7 @@ export function applySoSheet(
       return;
     }
     claimed.add(hit.key);
-    if (r.description && r.description.trim().toUpperCase() !== hit.description.trim().toUpperCase()) descriptions.set(hit.key, r.description);
+    if (r.description && !sameText(r.description, hit.description)) descriptions.set(hit.key, r.description);
     if (q !== null && q !== Number(hit.qty)) qtys.set(hit.key, String(q));
     // Sourcing, and the OEM fields that go with it
     let target: string = hit.sourcing || "";

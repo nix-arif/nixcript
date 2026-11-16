@@ -1,8 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { PencilIcon, Undo2Icon } from "lucide-react";
+import { AlertTriangleIcon, PencilIcon, Undo2Icon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { sameText } from "@/lib/sales-order/db-description";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -19,7 +20,7 @@ export type DescriptionItem = {
   _descriptionSource?: Source[] | null;
 };
 
-const same = (a?: string | null, b?: string | null) => (a ?? "").trim().toUpperCase() === (b ?? "").trim().toUpperCase();
+const same = sameText;
 
 // The description of a sales order item. When the product database has one, the field shows it locked:
 // the pencil asks for confirmation before it can be changed, and once it differs there is a button to
@@ -71,7 +72,13 @@ export function DescriptionField({
           readOnly={locked}
           onChange={(e) => change(e.target.value)}
           onKeyDown={onKeyDown}
-          className={`h-7 text-[11px] md:text-[11px] ${locked ? "bg-muted/40 cursor-default" : ""}`}
+          className={`h-7 text-[11px] md:text-[11px] ${
+            locked
+              ? "bg-muted/40 cursor-default"
+              : customised
+                ? "border-amber-400 bg-amber-50 font-medium text-amber-950 ring-1 ring-amber-300/70 dark:bg-amber-950/30 dark:text-amber-100"
+                : ""
+          }`}
           title={locked ? `Description from the product database (${ref}). Click the pencil to change it for this order.` : undefined}
         />
         {locked && (
@@ -80,11 +87,19 @@ export function DescriptionField({
           </Button>
         )}
         {customised && (
-          <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 gap-1 px-2 text-[10px]" title="Put the product database description back" onClick={revert}>
+          <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 gap-1 border-amber-300 px-2 text-[10px] text-amber-800 hover:bg-amber-50 dark:text-amber-300" title="Put the product database description back" onClick={revert}>
             <Undo2Icon className="w-3 h-3" /> Revert
           </Button>
         )}
       </div>
+      {customised && (
+        <div className="mt-1 flex items-start gap-1 text-[10px] leading-snug text-amber-700 dark:text-amber-400" title={db ?? undefined}>
+          <AlertTriangleIcon className="mt-px h-3 w-3 shrink-0" />
+          <span className="line-clamp-2">
+            <span className="font-semibold">Differs from the product database:</span> {db}
+          </span>
+        </div>
+      )}
 
       <Dialog open={confirm} onOpenChange={setConfirm}>
         <DialogContent className="sm:max-w-md">
