@@ -1312,6 +1312,66 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
     } finally { setCancelling(false); }
   }
 
+  // First amount the user typed that is 0 or invalid, or a row they started but left without an amount.
+  // Rows they never touched are ignored (they are simply not part of the claim).
+  function findAmountProblem(): string | null {
+    const typed = (v: string) => v.trim() !== "";
+    const bad = (v: string) => typed(v) && !(parseFloat(v) > 0);
+    const zero = (where: string, what: string) => `${where}: ${what} must be greater than 0. Enter the real amount, or clear the row if it is not part of this claim.`;
+    const missing = (where: string, what: string) => `${where}: enter the ${what}, or remove the row.`;
+
+    if (formType === CLAIM_FORM.LOCAL) {
+      for (const [i, r] of travelRows.entries()) {
+        const w = `Travel row ${i + 1}`;
+        if (bad(r.distanceKm)) return zero(w, "the distance (km)");
+        if (bad(r.accomAmount)) return zero(w, "the accommodation amount");
+        if ((r.accomFile || r.existingAccomFileName) && !typed(r.accomAmount)) return missing(w, "accommodation amount for the receipt you attached");
+        if (bad(r.tEntAmount)) return zero(w, "the entertainment amount");
+        if ((r.tEntFile || r.existingTEntFileName) && !typed(r.tEntAmount)) return missing(w, "entertainment amount for the receipt you attached");
+      }
+      for (const [i, r] of miscRows.entries()) {
+        const w = `Toll / Parking / Mobile row ${i + 1}`;
+        if (bad(r.amountMyr)) return zero(w, "the amount");
+        if ((r.description.trim() || r.file || r.existingFileName) && !typed(r.amountMyr)) return missing(w, "amount");
+      }
+      for (const [i, r] of inEntRows.entries()) {
+        const w = `In-base entertainment row ${i + 1}`;
+        if (bad(r.amountMyr)) return zero(w, "the amount");
+        if ((r.venue.trim() || r.description.trim() || r.file || r.existingFileName) && !typed(r.amountMyr)) return missing(w, "amount");
+      }
+      for (const [i, r] of otherRows.entries()) {
+        const w = `Other expenses row ${i + 1}`;
+        if (bad(r.amountMyr)) return zero(w, "the amount");
+        if ((r.description.trim() || r.file || r.existingFileName) && !typed(r.amountMyr)) return missing(w, "amount");
+      }
+    } else if (formType === CLAIM_FORM.OVERSEAS) {
+      for (const [i, r] of ovMyrRows.entries()) {
+        const w = `Overseas (MYR) row ${i + 1}`;
+        if (bad(r.amountMyr)) return zero(w, "the amount");
+        if ((r.destination.trim() || r.description.trim()) && !typed(r.amountMyr)) return missing(w, "amount");
+      }
+      for (const [i, r] of ovFxRows.entries()) {
+        const w = `Overseas (foreign currency) row ${i + 1}`;
+        if (bad(r.amountForeign)) return zero(w, "the amount");
+        if (bad(r.exchangeRate)) return zero(w, "the exchange rate");
+        if (r.destination.trim() && !typed(r.amountForeign)) return missing(w, "amount");
+        if (r.destination.trim() && !typed(r.exchangeRate)) return missing(w, "exchange rate");
+      }
+      for (const [i, r] of ovOtherRows.entries()) {
+        const w = `Overseas other row ${i + 1}`;
+        if (bad(r.amountMyr)) return zero(w, "the amount");
+        if (r.description.trim() && !typed(r.amountMyr)) return missing(w, "amount");
+      }
+    } else {
+      for (const [i, r] of entRows.entries()) {
+        const w = `Entertainment detail ${i + 1}`;
+        if (bad(r.amount)) return zero(w, "the amount");
+        if ((r.restaurantName.trim() || r.customerName.trim() || r.purpose.trim()) && !typed(r.amount)) return missing(w, "amount");
+      }
+    }
+    return null;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedType || !formType) { toast.error("This claim's type is no longer available — contact HR"); return; }
@@ -1320,6 +1380,8 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
       toast.error("Claim period is invalid — please re-select it");
       return;
     }
+    const amountProblem = findAmountProblem();
+    if (amountProblem) { toast.error(amountProblem); return; }
     setSubmitting(true);
     try {
       let lineItems: ClaimLineItemInput[] | undefined;
