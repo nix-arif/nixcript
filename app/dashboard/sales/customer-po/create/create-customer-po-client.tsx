@@ -47,6 +47,7 @@ type EditableItem = CpoItemInput & {
   _codeSource?: "quote" | "user" | null;
   _unitPriceSource?: "quote" | "user" | null;
   _qtySource?: "quote" | "user" | null;
+  _origCode?: string; // the code before it was edited (display only)
 };
 
 function calcItemTotal(item: EditableItem): EditableItem {
@@ -298,8 +299,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   // ── Item editing ──────────────────────────────────────────────────────────
 
-  const TOTAL_COLS = 5; // columns 0 and 1 (code, description) are read-only text now
-  const FIRST_COL = 2; // qty, uom, unit price are the editable cells
+  // Editable cells in tab order: code, qty, uom, unit price (the description is read-only text)
+  const EDITABLE_COLS = [0, 2, 3, 4];
 
   function handleCellKeyDown(
     e: React.KeyboardEvent<HTMLInputElement>,
@@ -314,22 +315,28 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       el?.select();
     }
     const mod = e.metaKey || e.ctrlKey;
+    const at = EDITABLE_COLS.indexOf(colIdx);
+    const last = EDITABLE_COLS[EDITABLE_COLS.length - 1];
+    const next = () => {
+      if (at < EDITABLE_COLS.length - 1) focus(rowIdx, EDITABLE_COLS[at + 1]);
+      else if (rowIdx < items.length - 1) focus(rowIdx + 1, EDITABLE_COLS[0]);
+    };
+    const prev = () => {
+      if (at > 0) focus(rowIdx, EDITABLE_COLS[at - 1]);
+      else if (rowIdx > 0) focus(rowIdx - 1, last);
+    };
     if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
-      if (colIdx < TOTAL_COLS - 1) focus(rowIdx, colIdx + 1);
-      else if (rowIdx < items.length - 1) focus(rowIdx + 1, FIRST_COL);
+      next();
     } else if (e.key === "Tab" && e.shiftKey) {
       e.preventDefault();
-      if (colIdx > FIRST_COL) focus(rowIdx, colIdx - 1);
-      else if (rowIdx > 0) focus(rowIdx - 1, TOTAL_COLS - 1);
+      prev();
     } else if (mod && e.key === "ArrowRight") {
       e.preventDefault();
-      if (colIdx < TOTAL_COLS - 1) focus(rowIdx, colIdx + 1);
-      else if (rowIdx < items.length - 1) focus(rowIdx + 1, FIRST_COL);
+      next();
     } else if (mod && e.key === "ArrowLeft") {
       e.preventDefault();
-      if (colIdx > FIRST_COL) focus(rowIdx, colIdx - 1);
-      else if (rowIdx > 0) focus(rowIdx - 1, TOTAL_COLS - 1);
+      prev();
     } else if (mod && e.key === "ArrowDown") {
       e.preventDefault();
       focus(rowIdx + 1, colIdx);
@@ -564,7 +571,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         customerOrgMemberId: primary.customerOrgMemberId ?? undefined,
         quotationLinks:  linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo })),
         items:           items.length > 0
-          ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, ...rest }) => ({
+          ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, _origCode, ...rest }) => ({
               ...rest,
               rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
               quotationNo:   _quotationNo || undefined,
@@ -1234,7 +1241,29 @@ function ItemRow({
         </div>
       </td>
       <td className="py-1.5 pr-2">
-        <div className="min-h-7 flex items-center font-mono text-[11px] md:text-[11px] break-all">{item.productCode || "—"}</div>
+        <Input
+          data-row={rowIdx}
+          data-col={0}
+          value={item.productCode || ""}
+          onChange={(e) => {
+            // The code the item had before the first change, so typing it back undoes the "edited" mark
+            const v = e.target.value;
+            const orig = item._origCode ?? (item._codeSource === "user" ? undefined : item.productCode);
+            if (orig !== undefined && v.trim() === orig.trim()) updateItem(item._key, { productCode: v, _codeSource: "quote", _origCode: undefined } as Partial<EditableItem>);
+            else updateItem(item._key, { productCode: v, _codeSource: "user", _editedBy: currentUserName || null, _origCode: orig } as Partial<EditableItem>);
+          }}
+          onKeyDown={(e) => onCellKeyDown(e, rowIdx, 0)}
+          placeholder="code"
+          className={cn(
+            "h-7 font-mono text-[11px] md:text-[11px] font-semibold",
+            item._codeSource === "user"
+              ? "border-amber-400 bg-amber-50 text-amber-950 ring-1 ring-amber-300/70 dark:bg-amber-950/30 dark:text-amber-100"
+              : "border-blue-300/80 bg-blue-50/50 ring-1 ring-blue-200/70 dark:bg-blue-950/20",
+          )}
+        />
+        {item._origCode !== undefined && item._origCode !== item.productCode && (
+          <div className="mt-0.5 font-mono text-[9px] text-muted-foreground line-through">{item._origCode}</div>
+        )}
         {item._codeSource === "quote" && (
           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
             <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
@@ -1243,7 +1272,7 @@ function ItemRow({
         {item._codeSource === "user" && (
           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
             <PencilIcon className="w-3 h-3 shrink-0" />
-            {currentUserName || "user"} edited CPO
+            {item._editedBy || currentUserName || "user"} edited CPO
           </span>
         )}
       </td>
