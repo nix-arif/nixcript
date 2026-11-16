@@ -16,12 +16,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
-import { canMove, isNotAsSetLabel, itemNumbers, moveItem, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
+import { canMove, displayOrder, isNotAsSetLabel, itemNumbers, moveItem, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
+import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
   PencilIcon, DatabaseIcon, LinkIcon,
-  ChevronUpIcon, ChevronDownIcon,
+  ChevronUpIcon, ChevronDownIcon, DownloadIcon, UploadIcon,
 } from "lucide-react";
 
 type LinkedQuotation = {
@@ -360,6 +361,60 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     }
   }
 
+  // CPO description spreadsheet: download the items, fill the column, upload it again
+  const sheetRef = useRef<HTMLInputElement>(null);
+  async function handleDownloadSheet() {
+    try {
+      const numbers = itemNumbers(items);
+      const titled = new Set<string>();
+      const rows = displayOrder(items)
+        .filter((i) => i.included)
+        .map((i) => {
+          const gid = i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "";
+          const first = !!gid && !titled.has(gid);
+          if (gid) titled.add(gid);
+          return {
+            key: i._key,
+            no: numbers.get(i._key)!,
+            productCode: i.productCode || "",
+            description: i.description || "",
+            qty: i.qty,
+            uom: i.uom || "",
+            setGroupLabel: i.setGroupLabel || "",
+            setGroupId: gid,
+            setCpoTitle: first ? (i.setCpoTitle ?? "") : "",
+            cpoDescription: i.cpoDescription ?? "",
+          };
+        });
+      await downloadItemsSheet(rows, `CPO-items-${(customerPoNo || "new").replace(/[^\w.-]+/g, "_")}.xlsx`);
+    } catch (e: any) {
+      toast.error(e.message || "Could not create the sheet");
+    }
+  }
+  async function handleUploadSheet(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const numbers = itemNumbers(items);
+      const target = items
+        .filter((i) => i.included)
+        .map((i) => ({ key: i._key, no: numbers.get(i._key)!, productCode: i.productCode || "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "" }));
+      const { updates, setTitles, filled, skipped } = applyCpoDescriptions(target, await readItemsSheet(file));
+      if (filled > 0 || setTitles.size > 0)
+        setItems((prev) => prev.map((i) => ({
+          ...i,
+          ...(updates.has(i._key) ? { cpoDescription: updates.get(i._key) } : {}),
+          ...(i.setGroupId && setTitles.has(i.setGroupId) ? { setCpoTitle: setTitles.get(i.setGroupId) } : {}),
+        })));
+      if (filled === 0 && setTitles.size === 0 && skipped.length === 0) toast.info("No CPO descriptions found in the sheet");
+      else toast.success(`CPO description filled for ${filled} item${filled === 1 ? "" : "s"}${setTitles.size ? ` and ${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}` : ""}${skipped.length ? ` · ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped` : ""}`);
+      if (skipped.length) toast.warning(skipped.slice(0, 4).join("\n") + (skipped.length > 4 ? `\n…and ${skipped.length - 4} more` : ""), { duration: 12000 });
+    } catch (err: any) {
+      toast.error(err.message || "Could not read the sheet");
+    }
+  }
+
   // Move an item up/down inside its own block (same quotation and set). Numbers (#) follow the new order.
   function handleMove(key: string, dir: -1 | 1) {
     setItems((prev) => moveItem(prev, key, dir));
@@ -392,7 +447,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
       const next = prev.map((x) =>
         x._key === key
-          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1" })
+          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1", setCpoTitle: existing?.setCpoTitle ?? x.setCpoTitle })
           : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
@@ -410,6 +465,11 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     });
   }
 
+  // The set's main title as written on the customer's PO (same on every item of the set)
+  function handleSetTitleChange(groupId: string, title: string) {
+    setItems((prev) => prev.map((x) => (x.setGroupId === groupId ? { ...x, setCpoTitle: title } : x)));
+  }
+
   function handleGroupLabelEdit(groupId: string, newLabel: string) {
     setItems((prev) => {
       const next = prev.map((x) =>
@@ -424,7 +484,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     setItems((prev) => {
       const next = prev.map((x) =>
         x.setGroupId === groupId
-          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "" })
+          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "", setCpoTitle: "" })
           : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
@@ -488,6 +548,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
               ...rest,
               rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
               quotationNo:   _quotationNo || undefined,
+              cpoDescription: rest.cpoDescription?.trim() || undefined,
+              setCpoTitle:   rest.setGroupId && !isNotAsSetLabel(rest.setGroupLabel) ? (rest.setCpoTitle?.trim() || undefined) : undefined,
               setGroupId:    rest.setGroupId    || undefined,
               setGroupLabel: rest.setGroupLabel || undefined,
               setQty:        rest.setQty        || undefined,
@@ -870,9 +932,20 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           <div className="border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold">Items</h2>
-              <span className="text-[11px] md:text-[11px] text-muted-foreground">
-                {items.filter((i) => i.included).length} of {items.length} selected · edit qty/price to match customer PO
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] md:text-[11px] text-muted-foreground">
+                  {items.filter((i) => i.included).length} of {items.length} selected · edit qty/price to match customer PO
+                </span>
+                <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleDownloadSheet}
+                  title="Download the items as a spreadsheet, fill the CPO description column, then upload it again">
+                  <DownloadIcon className="w-3 h-3" /> Download sheet
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => sheetRef.current?.click()}
+                  title="Upload the filled spreadsheet to fill the CPO description of the items">
+                  <UploadIcon className="w-3 h-3" /> Upload filled sheet
+                </Button>
+                <input ref={sheetRef} type="file" accept=".xlsx,.xls,.ods,.csv" className="hidden" onChange={handleUploadSheet} />
+              </div>
             </div>
             <div className="overflow-x-auto" ref={tableRef}>
               <table className="w-full text-xs">
@@ -963,6 +1036,16 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                                 <XIcon className="w-3 h-3" />
                               </button>
                             </div>
+                            {!isNotAsSetLabel(first.setGroupLabel) && (
+                              <div className="pl-6 pt-1">
+                                <input
+                                  value={first.setCpoTitle ?? ""}
+                                  onChange={(e) => handleSetTitleChange(gid, e.target.value)}
+                                  placeholder="Set title on the customer's PO, e.g. TOILET & SUTURE SET consist of:-"
+                                  className="h-6 w-full bg-background border border-blue-200/70 rounded px-1.5 text-[11px] md:text-[11px] text-foreground placeholder:text-muted-foreground/70 outline-none focus:border-blue-300"
+                                />
+                              </div>
+                            )}
                           </td>
                           <td colSpan={2} className="py-1.5 pr-2 text-right tabular-nums text-[10px] text-muted-foreground">
                             {(() => {
@@ -1193,6 +1276,16 @@ function ItemRow({
               onChange={(e) => onSetLabelChange(item._key, e.target.value)}
               placeholder="(none)"
               className="h-5 w-72 border border-border rounded px-1 text-[9px] bg-background text-muted-foreground"
+            />
+          </div>
+          <div>
+            <label className="text-[9px] text-muted-foreground">CPO description</label>
+            <Textarea
+              rows={2}
+              value={item.cpoDescription ?? ""}
+              onChange={(e) => updateItem(item._key, { cpoDescription: e.target.value } as Partial<EditableItem>)}
+              placeholder="As written on the customer's PO"
+              className="mt-0.5 min-h-0 py-1 text-[11px] md:text-[11px] leading-snug"
             />
           </div>
         </div>

@@ -73,6 +73,10 @@ export type CpoItemInput = {
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
+  // The item description exactly as written on the customer's PO (e.g. long government PO text)
+  cpoDescription?: string;
+  // For a set: the main title as written on the customer's PO, e.g. "TOILET & SUTURE SET consist of:-" (same on every item of the set)
+  setCpoTitle?: string;
   // Our quotation this line came from (so the "from quotation …" badge stays right after saving)
   quotationNo?: string;
   _codeSource?: "quote" | "user" | null;

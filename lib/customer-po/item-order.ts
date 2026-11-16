@@ -19,6 +19,16 @@ export function quotationIdOfGroup(setGroupId?: string | null): string | null {
   return i > 0 ? (setGroupId as string).slice(0, i) : null;
 }
 
+// Which quotation a CPO line came from: saved with the line, else read from its group id,
+// else the CPO's only quotation. Empty when it can't be told.
+export function sourceQuotationNo(
+  item: { quotationNo?: string | null; setGroupId?: string | null },
+  links: { quotationId: string; quotationNo: string }[] | null | undefined,
+): string {
+  const l = links ?? [];
+  return item.quotationNo ?? l.find((x) => x.quotationId === quotationIdOfGroup(item.setGroupId))?.quotationNo ?? (l.length === 1 ? l[0].quotationNo : "");
+}
+
 type Orderable = { _key: string; included: boolean; setGroupId?: string; _quotationId?: string };
 
 // Same grouping the detail page uses: set groups first, then everything else

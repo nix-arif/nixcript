@@ -45,6 +45,7 @@ import {
   AlertTriangleIcon,
 } from "lucide-react";
 import type { CustomerPoForSoCreate } from "@/server/customer-purchase-order";
+import { sourceQuotationNo } from "@/lib/customer-po/item-order";
 import { uid } from "@/lib/uid";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
@@ -108,6 +109,7 @@ interface LineItem extends SalesOrderItemInput {
   _editedBy?: string | null;
   _soEditedBy?: string | null;
   _isAdditional?: boolean;
+  _quotationNo?: string; // quotation number shown in the "from quotation …" badge (display only)
 }
 
 const newLine = (rowNo: number): LineItem => ({
@@ -412,7 +414,12 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     }
 
     // Import all items from all CPOs
-    const allItems = initialCpos.flatMap((c) => (c.items ?? []).map((i) => ({ ...i, _cpoId: c.id, _cpoNo: c.customerPoNo })));
+    const allItems = initialCpos.flatMap((c) => {
+      const links = (c.quotationLinks && c.quotationLinks.length > 0)
+        ? c.quotationLinks
+        : c.quotationId && c.quotationNo ? [{ quotationId: c.quotationId, quotationNo: c.quotationNo }] : [];
+      return (c.items ?? []).map((i) => ({ ...i, _cpoId: c.id, _cpoNo: c.customerPoNo, _qtNo: sourceQuotationNo(i, links) }));
+    });
     if (allItems.length > 0) {
       const codes = [...new Set(allItems.map((i) => i.productCode).filter(Boolean) as string[])];
       getProductsByCode(codes)
@@ -446,6 +453,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 sourceQuotationId: "",
                 sourceCustomerPoId: item._cpoId,
                 sourceCustomerPoNo: item._cpoNo,
+                _quotationNo: item._qtNo,
                 _codeSource: [item._codeSource === "user" ? "user" : item._codeSource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,
                 _descriptionSource: item._descriptionSource ?? null,
                 _qtySource: [item._qtySource === "user" ? "user" : item._qtySource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,
@@ -637,6 +645,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   setGroupLabel: item.setGroupLabel ?? "",
                   setQty: item.setQty ?? "",
                   sourceQuotationId: "",
+                  _quotationNo: sourceQuotationNo(item, qLinks),
                   sourceCustomerPoId: data.id,
                   sourceCustomerPoNo: data.customerPoNo,
                   _codeSource: [item._codeSource === "user" ? "user" : item._codeSource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,
@@ -825,6 +834,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           setGroupLabel: item.setGroupLabel ?? "",
           setQty: item.setQty ?? "",
           sourceQuotationId: qt.id,
+          _quotationNo: qt.quotationNo,
           sourceCustomerPoId: "",
           sourceCustomerPoNo: "",
           _codeSource: ["quotation"] as Array<"cpo" | "quotation" | "user" | "so">,
@@ -1260,7 +1270,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       sstPct,
       sst: sstAmt.toFixed(2),
       grandTotal: grand.toFixed(2),
-      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, _codeSource, _descriptionSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _designBrandSource, _privateLabelSource, ...rest }) => ({
+      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, _codeSource, _descriptionSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _quotationNo, _designBrandSource, _privateLabelSource, ...rest }) => ({
         ...rest,
         unitPrice: soType === "proforma" ? "0" : rest.unitPrice,
         discountPct: soType === "proforma" ? "0" : rest.discountPct,
@@ -2518,7 +2528,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       <>
                         {src.includes("quotation") && (
                           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-                            <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+                            <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
                           </span>
                         )}
                         {src.includes("cpo") && (
@@ -2708,7 +2718,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       )}
                       {(item._descriptionSource ?? []).includes("quote") && (
                         <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
-                          <LinkIcon className="w-3 h-3 shrink-0" />from quotation
+                          <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
                         </span>
                       )}
                       {(item._descriptionSource ?? []).includes("catalog") && (

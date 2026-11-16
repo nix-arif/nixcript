@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CustomerPoTrackingData, CpoItemInput } from "@/server/customer-purchase-order";
-import { isNotAsSetLabel, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
+import { isNotAsSetLabel, NOT_AS_SET_ID, sourceQuotationNo } from "@/lib/customer-po/item-order";
 
 type Data = CustomerPoTrackingData;
 
@@ -615,12 +615,21 @@ function SourceBadges({ sources, item }: { sources: SourceKind[]; item: ViewItem
   );
 }
 
+// The description as written on the customer's PO
+function CpoDescription({ text }: { text: string }) {
+  return (
+    <div className="mt-1 rounded-md bg-muted/40 px-2 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-line">
+      <span className="font-medium text-foreground/70">CPO description: </span>
+      {text}
+    </div>
+  );
+}
+
 function ItemsSection({ items: rawItems, currency, quotations }: { items: CpoItemInput[]; currency: string; quotations: { quotationId: string; quotationNo: string }[] }) {
   // Older CPOs kept one "not-as-set" group per quotation; show them as the single group they are
   // Which quotation each line came from: saved with the line, else read from its group id, else the CPO's only quotation.
   // (Worked out before the groups are merged, because merging drops the quotation id from the group id.)
-  const sourceOf = (it: CpoItemInput) =>
-    it.quotationNo ?? quotations.find((q) => q.quotationId === quotationIdOfGroup(it.setGroupId))?.quotationNo ?? (quotations.length === 1 ? quotations[0].quotationNo : "");
+  const sourceOf = (it: CpoItemInput) => sourceQuotationNo(it, quotations);
   const items: ViewItem[] = rawItems.map((it) => ({
     ...it,
     ...(isNotAsSetLabel(it.setGroupLabel) ? { setGroupId: NOT_AS_SET_ID, setQty: "1" } : {}),
@@ -703,6 +712,9 @@ function ItemsSection({ items: rawItems, currency, quotations }: { items: CpoIte
                           × {Number(e.first.setQty || 1)} {Number(e.first.setQty || 1) === 1 ? "set" : "sets"}
                         </span>
                       </div>
+                      {e.first.setCpoTitle && (
+                        <div className="mt-1 pl-5 text-[12px] font-semibold text-foreground whitespace-pre-line">{e.first.setCpoTitle}</div>
+                      )}
                     </td>
                     <td colSpan={4} />
                     <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
@@ -729,6 +741,7 @@ function ItemsSection({ items: rawItems, currency, quotations }: { items: CpoIte
                   </td>
                   <td className="px-3 py-2 align-top whitespace-normal">
                     {e.item.description || "—"}
+                    {e.item.cpoDescription && <CpoDescription text={e.item.cpoDescription} />}
                     <SourceBadges sources={asSources(e.item._descriptionSource)} item={e.item} />
                   </td>
                   <td className="px-3 py-2 text-center tabular-nums align-top">
@@ -771,6 +784,9 @@ function ItemsSection({ items: rawItems, currency, quotations }: { items: CpoIte
                   </span>
                   <span className="ml-auto text-xs font-semibold text-blue-700 dark:text-blue-300 tabular-nums">{acct(e.groupTotal)}</span>
                 </div>
+                {e.first.setCpoTitle && (
+                  <div className="mt-1 text-[12px] font-semibold text-foreground whitespace-pre-line">{e.first.setCpoTitle}</div>
+                )}
               </div>
             );
           }
@@ -786,6 +802,7 @@ function ItemsSection({ items: rawItems, currency, quotations }: { items: CpoIte
                 <span className="font-medium tabular-nums">{acct(Number(e.item.totalPrice ?? 0))}</span>
               </div>
               <div className="text-foreground">{e.item.description || "—"}</div>
+              {e.item.cpoDescription && <CpoDescription text={e.item.cpoDescription} />}
               <SourceBadges
                 sources={[...new Set([...asSources(e.item._codeSource), ...asSources(e.item._descriptionSource), ...asSources(e.item._qtySource), ...asSources(e.item._unitPriceSource)])]}
                 item={e.item}

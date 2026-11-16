@@ -3096,6 +3096,8 @@ export const customerPurchaseOrder = pgTable(
       setGroupLabel?: string;
       setQty?: string;
       quotationNo?: string;
+      cpoDescription?: string;
+      setCpoTitle?: string;
     }[]>(),
 
     amount: text("amount").notNull().default("0"),
