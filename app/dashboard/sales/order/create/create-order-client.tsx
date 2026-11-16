@@ -1008,9 +1008,12 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           setCpoTitle: titleRow(i),
           cpoDescription: i.cpoDescription ?? "",
           cpoNo: i.sourceCustomerPoNo || "",
+          sourcing: i.sourcingType ?? "",
+          designBrand: i.designBrandName ?? "",
+          designCode: i.designBrandCode ?? "",
         })),
         `SO-items-${new Date().toISOString().slice(0, 10)}.xlsx`,
-        soType !== "proforma",
+        { withPrice: soType !== "proforma", withSourcing: showSourcing },
       );
     } catch (e: any) {
       toast.error(e.message || "Could not create the sheet");
@@ -1021,14 +1024,18 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     e.target.value = "";
     if (!file) return;
     try {
-      const { descriptions, qtys, cpoDescriptions, setTitles, additions, skipped } = applySoSheet(
+      const { descriptions, qtys, cpoDescriptions, setTitles, sourcings, designs, additions, skipped } = applySoSheet(
         items.map((i) => ({
           key: i._key, no: i.rowNo, productCode: i.productCode || "", description: i.description || "", qty: i.qty ?? "",
           cpoDescription: i.cpoDescription ?? "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "",
+          sourcing: i.sourcingType ?? "",
+          designBrand: i.designBrandName ?? "",
+          designCode: i.designBrandCode ?? "",
         })),
         await readSoItemsSheet(file),
       );
-      if (descriptions.size > 0 || qtys.size > 0 || cpoDescriptions.size > 0 || setTitles.size > 0 || additions.length > 0) {
+      if (!showSourcing) { sourcings.clear(); designs.clear(); } // trading-only businesses have no sourcing choice
+      if (descriptions.size > 0 || qtys.size > 0 || cpoDescriptions.size > 0 || setTitles.size > 0 || sourcings.size > 0 || designs.size > 0 || additions.length > 0) {
         setItems((prev) => {
           // Same marking as typing in the field, so the "edit SO" badge shows what the sheet changed
           const edited = prev.map((i) => {
@@ -1041,6 +1048,24 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 _soEditedBy: currentUserName || "user",
               };
             if (cpoDescriptions.has(i._key)) it = { ...it, cpoDescription: cpoDescriptions.get(i._key) };
+            // Same as clicking the Trading / OEM switch: OEM fills the Emboss Code from the Code, Trading clears it
+            if (showSourcing && designs.has(i._key)) {
+              const d = designs.get(i._key)!;
+              it = {
+                ...it,
+                ...(d.brand !== undefined ? { designBrandName: d.brand, _designBrandSource: "user" as const } : {}),
+                ...(d.code !== undefined ? { designBrandCode: d.code } : {}),
+                _soEditedBy: currentUserName || "user",
+              };
+            }
+            if (showSourcing && sourcings.has(i._key)) {
+              it = sourcings.get(i._key) === "oem"
+                ? { ...it, sourcingType: "oem", privateLabelCode: it.privateLabelCode?.trim() ? it.privateLabelCode : (it.productCode ?? ""), _privateLabelSource: it.privateLabelCode?.trim() ? it._privateLabelSource : "auto" }
+                : { ...it, sourcingType: "trading", privateLabelCode: "", _privateLabelSource: null };
+            }
+            // Emboss Code always follows Code on an OEM item
+            if (showSourcing && it.sourcingType === "oem" && !it.privateLabelCode?.trim() && (designs.has(i._key) || sourcings.has(i._key)))
+              it = { ...it, privateLabelCode: it.productCode ?? "", _privateLabelSource: "auto" };
             if (qtys.has(i._key))
               it = calcLine({
                 ...it,
@@ -1067,6 +1092,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         ...(qtys.size ? [`${qtys.size} quantit${qtys.size === 1 ? "y" : "ies"}`] : []),
         ...(cpoDescriptions.size ? [`${cpoDescriptions.size} CPO description${cpoDescriptions.size === 1 ? "" : "s"}`] : []),
         ...(setTitles.size ? [`${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}`] : []),
+        ...(sourcings.size ? [`${sourcings.size} sourcing`] : []),
+        ...(designs.size ? [`${designs.size} design brand/code`] : []),
         ...(additions.length ? [`${additions.length} new row${additions.length === 1 ? "" : "s"}`] : []),
       ];
       if (parts.length === 0 && skipped.length === 0) toast.info("Nothing new found in the sheet");

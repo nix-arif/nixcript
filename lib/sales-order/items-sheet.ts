@@ -1,49 +1,25 @@
 // Spreadsheet round trip for the items of a new Sales Order: download the items, fill in the
-// description and qty (handy for long government lists), upload it again and the form is filled.
-// Only Description and Qty are read back. Code, UOM, unit price, set and CPO are for reference.
+// description, qty, CPO description and sourcing (handy for long government lists), upload it again
+// and the form is filled. Code, UOM, unit price, set and CPO are for reference only.
 
-export const CPO_DESCRIPTION_LABEL = "CPO description";
-export const SET_TITLE_LABEL = "Set title (CPO)";
+import { createSoItemsSheet } from "@/server/sales-order-sheet";
+import type { SoSheetItem } from "@/lib/sales-order/items-workbook";
+import { CPO_DESCRIPTION_LABEL, DESIGN_BRAND_LABEL, DESIGN_CODE_LABEL, SET_TITLE_LABEL, SOURCING_LABEL } from "@/lib/sales-order/sheet-labels";
 
-export type SoSheetItem = {
-  key: string;
-  no: number;
-  productCode: string;
-  description: string;
-  qty: string;
-  uom: string;
-  unitPrice: string;
-  setGroupLabel: string;
-  setGroupId: string; // "" when the item is not in a set
-  setCpoTitle: string; // the set's title on the CPO; written on the first row of each set only
-  cpoDescription: string;
-  cpoNo: string;
-};
+export type { SoSheetItem };
 
-export async function downloadSoItemsSheet(rows: SoSheetItem[], fileName: string, withPrice: boolean) {
-  const XLSX = await import("xlsx");
-  const headers = ["No", "Code", "Description", "Qty", "UOM", ...(withPrice ? ["Unit price"] : []), "Set", "CPO", SET_TITLE_LABEL, CPO_DESCRIPTION_LABEL];
-  const ws = XLSX.utils.aoa_to_sheet([
-    headers,
-    ...rows.map((r) => [r.no, r.productCode, r.description, r.qty, r.uom, ...(withPrice ? [r.unitPrice] : []), r.setGroupLabel, r.cpoNo, r.setCpoTitle, r.cpoDescription]),
-  ]);
-  ws["!cols"] = [{ wch: 6 }, { wch: 16 }, { wch: 60 }, { wch: 8 }, { wch: 8 }, ...(withPrice ? [{ wch: 12 }] : []), { wch: 18 }, { wch: 20 }, { wch: 44 }, { wch: 70 }];
-  const notes = XLSX.utils.aoa_to_sheet([
-    ["Sales order items sheet"],
-    ["Fill in the Description, Qty and CPO description columns, then upload the file again on the sales order page."],
-    [`CPO description is the item description as written on the customer's PO. For a set, type its main title (e.g. TOILET & SUTURE SET consist of:-) in "${SET_TITLE_LABEL}" on any row of that set.`],
-    ["Only Description, Qty, CPO description and Set title (CPO) are read back. Code, UOM, unit price, set and CPO are for reference and are ignored."],
-    ["Rows are matched by the No and Code columns, so do not renumber or change the codes."],
-    ["A row with a description and no code (and no matching No) is added to the order as an additional row."],
-    ["Leave a cell empty to keep what is already on the order."],
-  ]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Items");
-  XLSX.utils.book_append_sheet(wb, notes, "Notes");
-  XLSX.writeFile(wb, fileName);
+export async function downloadSoItemsSheet(rows: SoSheetItem[], fileName: string, opts: { withPrice: boolean; withSourcing: boolean }) {
+  const b64 = await createSoItemsSheet(rows, opts);
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
-export type SoSheetRow = { no: number | null; code: string; description: string; qty: string; cpoDescription: string; setCpoTitle: string };
+export type SoSheetRow = { no: number | null; code: string; description: string; qty: string; cpoDescription: string; setCpoTitle: string; sourcing: string; designBrand: string; designCode: string };
 
 export async function readSoItemsSheet(file: File): Promise<SoSheetRow[]> {
   const XLSX = await import("xlsx");
@@ -56,6 +32,9 @@ export async function readSoItemsSheet(file: File): Promise<SoSheetRow[]> {
   const qtyCol = col("Qty");
   const cpoDescCol = col(CPO_DESCRIPTION_LABEL);
   const titleCol = col(SET_TITLE_LABEL);
+  const sourcingCol = col(SOURCING_LABEL);
+  const brandCol = col(DESIGN_BRAND_LABEL);
+  const designCodeCol = col(DESIGN_CODE_LABEL);
   if (!descCol && !qtyCol && !cpoDescCol) throw new Error('Could not find a "Description" or "Qty" column. Use the sheet downloaded from this page.');
   const noCol = col("No");
   const codeCol = col("Code");
@@ -68,6 +47,9 @@ export async function readSoItemsSheet(file: File): Promise<SoSheetRow[]> {
       qty: qtyCol ? String(r[qtyCol] ?? "").replace(/,/g, "").trim() : "",
       cpoDescription: cpoDescCol ? String(r[cpoDescCol] ?? "").trim() : "",
       setCpoTitle: titleCol ? String(r[titleCol] ?? "").trim() : "",
+      sourcing: sourcingCol ? String(r[sourcingCol] ?? "").trim() : "",
+      designBrand: brandCol ? String(r[brandCol] ?? "").trim() : "",
+      designCode: designCodeCol ? String(r[designCodeCol] ?? "").trim() : "",
     };
   });
 }
@@ -76,13 +58,15 @@ export async function readSoItemsSheet(file: File): Promise<SoSheetRow[]> {
 // that code not already matched). Empty cells never overwrite anything, and a value equal to the
 // current one is not an edit. A row that matches nothing and has no code is a new additional row.
 export function applySoSheet(
-  items: Pick<SoSheetItem, "key" | "no" | "productCode" | "description" | "qty" | "cpoDescription" | "setGroupId">[],
+  items: Pick<SoSheetItem, "key" | "no" | "productCode" | "description" | "qty" | "cpoDescription" | "setGroupId" | "sourcing" | "designBrand" | "designCode">[],
   rows: SoSheetRow[],
 ): {
   descriptions: Map<string, string>;
   qtys: Map<string, string>;
   cpoDescriptions: Map<string, string>;
   setTitles: Map<string, string>; // item key -> title of the set that item is in
+  sourcings: Map<string, "oem" | "trading">;
+  designs: Map<string, { brand?: string; code?: string }>;
   additions: { description: string; qty: string; cpoDescription: string }[];
   skipped: string[];
 } {
@@ -90,12 +74,14 @@ export function applySoSheet(
   const qtys = new Map<string, string>();
   const cpoDescriptions = new Map<string, string>();
   const setTitles = new Map<string, string>();
+  const sourcings = new Map<string, "oem" | "trading">();
+  const designs = new Map<string, { brand?: string; code?: string }>();
   const additions: { description: string; qty: string; cpoDescription: string }[] = [];
   const skipped: string[] = [];
   const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
   const claimed = new Set<string>();
   rows.forEach((r, idx) => {
-    if (!r.description && !r.qty && !r.cpoDescription && !r.setCpoTitle) return;
+    if (!r.description && !r.qty && !r.cpoDescription && !r.setCpoTitle && !r.sourcing && !r.designBrand && !r.designCode) return;
     const label = `Row ${idx + 2}${r.code ? ` (${r.code})` : ""}`;
     const q = r.qty ? Number(r.qty) : null;
     if (r.qty && !(q! > 0)) {
@@ -114,6 +100,33 @@ export function applySoSheet(
     if (q !== null && q !== Number(hit.qty)) qtys.set(hit.key, String(q));
     if (r.cpoDescription && r.cpoDescription !== hit.cpoDescription) cpoDescriptions.set(hit.key, r.cpoDescription);
     if (r.setCpoTitle && hit.setGroupId) setTitles.set(hit.key, r.setCpoTitle);
+    // Sourcing, and the OEM fields that go with it
+    let target: string = hit.sourcing || "";
+    let sourcingOk = true;
+    if (r.sourcing) {
+      // Excel blocks anything else, but a pasted value can get through, so it is checked here too
+      const v = r.sourcing.trim().toLowerCase();
+      if (v !== "oem" && v !== "trading") { skipped.push(`${label}: sourcing "${r.sourcing}" must be oem or trading`); sourcingOk = false; }
+      else if (!hit.productCode.trim()) { skipped.push(`${label}: sourcing can only be set on an item that has a code`); sourcingOk = false; }
+      else target = v;
+    }
+    if (sourcingOk && (r.sourcing || r.designBrand || r.designCode)) {
+      if (target === "oem") {
+        const code = r.designCode || hit.designCode;
+        if (!code.trim()) skipped.push(`${label}: design code is required for an OEM item`);
+        else {
+          if (r.sourcing && target !== (hit.sourcing || "")) sourcings.set(hit.key, "oem");
+          const d: { brand?: string; code?: string } = {};
+          if (r.designBrand && r.designBrand !== hit.designBrand) d.brand = r.designBrand;
+          if (r.designCode && r.designCode !== hit.designCode) d.code = r.designCode;
+          if (d.brand !== undefined || d.code !== undefined) designs.set(hit.key, d);
+        }
+      } else {
+        // an untouched sheet still carries the catalogue values of trading items: only a changed value is a problem
+        if ((r.designBrand && r.designBrand !== hit.designBrand) || (r.designCode && r.designCode !== hit.designCode)) skipped.push(`${label}: design brand and design code can only be filled for an OEM item (set sourcing to oem)`);
+        if (r.sourcing && target !== (hit.sourcing || "")) sourcings.set(hit.key, "trading");
+      }
+    }
   });
-  return { descriptions, qtys, cpoDescriptions, setTitles, additions, skipped };
+  return { descriptions, qtys, cpoDescriptions, setTitles, sourcings, designs, additions, skipped };
 }
