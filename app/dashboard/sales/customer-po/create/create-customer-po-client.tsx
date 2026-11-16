@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
-import { canMove, itemNumbers, moveItem } from "@/lib/customer-po/item-order";
+import { canMove, isSetItem, itemNumbers, moveItem } from "@/lib/customer-po/item-order";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
@@ -53,7 +53,7 @@ function calcItemTotal(item: EditableItem): EditableItem {
   const qty    = parseFloat(item.qty         || "0") || 0;
   const up     = parseFloat(item.unitPrice   || "0") || 0;
   const dPct   = parseFloat(item.discountPct || "0") || 0;
-  const setMul = item.setGroupId ? (parseFloat(item.setQty || "1") || 1) : 1;
+  const setMul = isSetItem(item) ? (parseFloat(item.setQty || "1") || 1) : 1;
   const gross  = qty * up * setMul;
   return { ...item, totalPrice: (gross - (gross * dPct) / 100).toFixed(2) };
 }
@@ -390,7 +390,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
       const next = prev.map((x) =>
         x._key === key
-          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1" })
+          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, groupKind: existing?.groupKind, setQty: existing?.groupKind === "plain" ? "" : existing?.setQty || x.setQty || "1" })
           : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
@@ -402,6 +402,19 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     setItems((prev) => {
       const next = prev.map((x) =>
         x.setGroupId === groupId ? calcItemTotal({ ...x, setQty: newQty }) : x,
+      );
+      if (!amountOverride) setAmount(sumItems(next));
+      return next;
+    });
+  }
+
+  // Switch a whole group between "set" (priced per set) and "plain" (just grouped together)
+  function handleGroupKindChange(groupId: string, kind: "set" | "plain") {
+    setItems((prev) => {
+      const next = prev.map((x) =>
+        x.setGroupId === groupId
+          ? calcItemTotal({ ...x, groupKind: kind === "plain" ? "plain" : undefined, setQty: kind === "plain" ? "" : x.setQty || "1" })
+          : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
       return next;
@@ -422,7 +435,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     setItems((prev) => {
       const next = prev.map((x) =>
         x.setGroupId === groupId
-          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "" })
+          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "", groupKind: undefined })
           : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
@@ -487,7 +500,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
               rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
               setGroupId:    rest.setGroupId    || undefined,
               setGroupLabel: rest.setGroupLabel || undefined,
-              setQty:        rest.setQty        || undefined,
+              setQty:        rest.setGroupId && rest.groupKind !== "plain" ? (rest.setQty || undefined) : undefined,
+              groupKind:     rest.setGroupId && rest.groupKind === "plain" ? "plain" : undefined,
               _codeSource:         rest._codeSource        || undefined,
               _descriptionSource:  rest._descriptionSource || undefined,
               _unitPriceSource:    rest._unitPriceSource   || undefined,
@@ -957,15 +971,34 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                                 onChange={(e) => handleGroupLabelEdit(gid, e.target.value)}
                                 className="h-6 flex-1 min-w-0 bg-transparent border border-transparent hover:border-blue-200 focus:border-blue-300 focus:bg-background rounded px-1 text-[13px] md:text-[13px] font-bold text-blue-700 dark:text-blue-300 outline-none transition-colors"
                               />
-                              <span className="text-[10px] text-muted-foreground">×</span>
-                              <input
-                                type="number"
-                                min="1"
-                                value={first.setQty || "1"}
-                                onChange={(e) => handleSetQtyChange(gid, e.target.value)}
-                                className="h-6 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
-                              />
-                              <span className="text-[10px] text-muted-foreground">sets</span>
+                              <button
+                                type="button"
+                                onClick={() => handleGroupKindChange(gid, first.groupKind === "plain" ? "set" : "plain")}
+                                className={cn(
+                                  "h-5 rounded border px-1.5 text-[10px] font-medium transition-colors",
+                                  first.groupKind === "plain"
+                                    ? "border-border text-muted-foreground hover:bg-muted"
+                                    : "border-blue-300 bg-blue-100/60 text-blue-700 hover:bg-blue-100",
+                                )}
+                                title={first.groupKind === "plain"
+                                  ? "Plain group: items only kept together, each with its own qty and price. Click to sell as a set instead."
+                                  : "Set: priced per set, set qty multiplies the lines. Click to make it a plain group instead."}
+                              >
+                                {first.groupKind === "plain" ? "Group" : "Set"}
+                              </button>
+                              {first.groupKind !== "plain" && (
+                                <>
+                                  <span className="text-[10px] text-muted-foreground">×</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={first.setQty || "1"}
+                                    onChange={(e) => handleSetQtyChange(gid, e.target.value)}
+                                    className="h-6 w-12 border border-blue-200 rounded px-1 text-[10px] bg-background text-right"
+                                  />
+                                  <span className="text-[10px] text-muted-foreground">sets</span>
+                                </>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => removeGroup(gid)}
@@ -977,11 +1010,15 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                             </div>
                           </td>
                           <td colSpan={2} className="py-1.5 pr-2 text-right tabular-nums text-[10px] text-muted-foreground">
-                            {(() => {
-                              const setQty = parseFloat(first.setQty || "1") || 1;
-                              return (groupTotal / setQty).toLocaleString("en-MY", { minimumFractionDigits: 2 });
-                            })()}
-                            <div className="text-[9px] text-muted-foreground/60">/set</div>
+                            {first.groupKind !== "plain" && (
+                              <>
+                                {(() => {
+                                  const setQty = parseFloat(first.setQty || "1") || 1;
+                                  return (groupTotal / setQty).toLocaleString("en-MY", { minimumFractionDigits: 2 });
+                                })()}
+                                <div className="text-[9px] text-muted-foreground/60">/set</div>
+                              </>
+                            )}
                           </td>
                           <td colSpan={2} className="py-1.5 text-right text-[10px] font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
                             {groupTotal.toLocaleString("en-MY", { minimumFractionDigits: 2 })}
@@ -1225,7 +1262,7 @@ function ItemRow({
             </span>
           )}
           <div className="flex items-center gap-1">
-            <span className="text-[9px] text-muted-foreground">Set:</span>
+            <span className="text-[9px] text-muted-foreground">Group:</span>
             <input
               value={item.setGroupLabel}
               onChange={(e) => onSetLabelChange(item._key, e.target.value)}
@@ -1247,7 +1284,7 @@ function ItemRow({
             onKeyDown={(e) => onCellKeyDown(e, rowIdx, 2)}
             className="h-7 text-[11px] md:text-[11px] text-right tabular-nums w-20 ml-auto"
           />
-          {inSet && <div className="text-[9px] text-muted-foreground text-right">/set</div>}
+          {inSet && item.groupKind !== "plain" && <div className="text-[9px] text-muted-foreground text-right">/set</div>}
           {item._qtySource === "quote" && (
             <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
               <LinkIcon className="w-3 h-3 shrink-0" />from quotation
@@ -1265,7 +1302,7 @@ function ItemRow({
         <div className="h-7 flex items-center justify-end">
           {item.included ? (() => {
             const q = parseFloat(item.qty || "0") || 0;
-            const s = item.setGroupId ? (parseFloat(item.setQty || "1") || 1) : 1;
+            const s = isSetItem(item) ? (parseFloat(item.setQty || "1") || 1) : 1;
             return (q * s).toLocaleString("en-MY", { maximumFractionDigits: 4 });
           })() : "—"}
         </div>

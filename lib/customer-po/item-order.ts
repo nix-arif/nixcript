@@ -8,6 +8,11 @@
 
 type Orderable = { _key: string; included: boolean; setGroupId?: string; _quotationId?: string };
 
+// A group is either a set (priced per set, set qty multiplies the lines) or a plain
+// group (items are only kept together; each keeps its own qty and price).
+export const isSetItem = (i: { setGroupId?: string; groupKind?: string }) => !!i.setGroupId && i.groupKind !== "plain";
+export const isPlainGroupItem = (i: { setGroupId?: string; groupKind?: string }) => !!i.setGroupId && i.groupKind === "plain";
+
 // Same grouping the detail page uses: set groups first, then everything else
 export function displayOrder<T extends Orderable>(items: T[]): T[] {
   const groupIds: string[] = [];
