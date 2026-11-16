@@ -358,7 +358,7 @@ export function LabelsClient({
             <label className="space-y-1">
               <span className="block text-xs text-muted-foreground">Preview with item</span>
               <select className="h-8 rounded-md border bg-background px-2 max-w-56" value={previewIdx} onChange={(e) => setPreviewIdx(Number(e.target.value))}>
-                {labels.map((l, i) => <option key={l.itemId} value={i}>{l.data.code || `Item ${i + 1}`}</option>)}
+                {labels.map((l, i) => <option key={l.itemId} value={i}>{l.poLabel} #{l.no} · {l.data.code || `Item ${i + 1}`}</option>)}
               </select>
             </label>
           )}
@@ -506,8 +506,12 @@ export function LabelsClient({
       <div className="rounded-md border divide-y">
         {labels.map((l) => (
           <div key={l.itemId} className="flex items-center gap-3 p-3 text-sm">
+            <div className="w-8 shrink-0 text-right tabular-nums text-xs text-muted-foreground" title="Line number on the packing list">{l.no}</div>
             <div className="flex-1 min-w-0">
-              <div className="font-medium truncate">{l.data.code || "—"}</div>
+              <div className="flex items-baseline gap-2">
+                <span className="font-medium truncate">{l.data.code || "—"}</span>
+                <span className="font-mono text-[10px] text-muted-foreground shrink-0">{l.poLabel}</span>
+              </div>
               <div className="text-muted-foreground truncate">{l.data.description || "No description"}</div>
               <div className={l.data.mda ? "text-xs" : "text-xs text-destructive"}>
                 {l.data.mda ? `MDA: ${l.data.mda}` : "No MDA registration no. on product"}

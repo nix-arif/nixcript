@@ -2,6 +2,7 @@
 
 import { extOf, mediaKindOf, inspectionMediaFilename, IMAGE_EXTS, VIDEO_EXTS, type InspectionMediaKind } from "@/lib/inspection-media";
 import { db } from "@/db";
+import { comparePoNo } from "@/lib/po-sort";
 import {
   packingList,
   packingListItem,
@@ -1076,6 +1077,8 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
 
 export type PackingListLabel = {
   itemId: string;
+  no: number; // the line number shown on the packing list page
+  poLabel: string; // the PO the line is grouped under on the packing list page
   qty: number;
   data: LabelItemData;
 };
@@ -1091,7 +1094,24 @@ export async function getPackingListLabels(id: string): Promise<{ packingListNo:
     .from(packingList)
     .where(and(eq(packingList.id, id), eq(packingList.organizationId, orgId)));
   if (!pl) return null;
-  const items = await db.select().from(packingListItem).where(and(eq(packingListItem.packingListId, id), isNull(packingListItem.removedAt))).orderBy(asc(packingListItem.rowNo));
+  const allItems = await db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo));
+
+  // Same sequence as the packing list page: lines grouped by PO (POs in natural PO-number order),
+  // lines in row order inside each PO. Removed lines are left out of the labels but still count in the numbering.
+  const poIds = [...new Set(allItems.map((i) => i.purchaseOrderId))];
+  const poRows = poIds.length > 0
+    ? await db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo }).from(purchaseOrder).where(inArray(purchaseOrder.id, poIds))
+    : [];
+  const poLabelOf = (poId: string) => {
+    const p = poRows.find((x) => x.id === poId);
+    return p?.poNo ?? p?.prNo ?? poId;
+  };
+  const poOrder = [...poIds].sort((a, b) => comparePoNo(poLabelOf(a), poLabelOf(b)));
+  const items = poOrder.flatMap((poId) => allItems.filter((i) => i.purchaseOrderId === poId && !i.removedAt));
+  const poLineByItem = await getPoLineContext(id, items.map((i) => i.purchaseOrderItemId));
+  // the number shown on the page: the PO's own line number, else the position inside the PO group
+  const lineNo = (i: (typeof allItems)[number]) =>
+    poLineByItem.get(i.purchaseOrderItemId)?.rowNo ?? allItems.filter((x) => x.purchaseOrderId === i.purchaseOrderId).findIndex((x) => x.id === i.id) + 1;
   const productIds = [...new Set(items.map((i) => i.productId).filter((v): v is string => !!v))];
   const codes = [...new Set(items.flatMap((i) => [i.productCode, i.privateLabelCode]).filter((v): v is string => !!v))];
   // Match by id first; lines without a productId fall back to the product code
@@ -1133,6 +1153,8 @@ export async function getPackingListLabels(id: string): Promise<{ packingListNo:
       const qty = Math.max(1, Math.ceil(parseFloat(i.qtyExpected) || 1));
       return {
         itemId: i.id,
+        no: lineNo(i),
+        poLabel: poLabelOf(i.purchaseOrderId),
         qty,
         data: {
           code: i.privateLabelCode || i.productCode || "",
