@@ -117,7 +117,7 @@ export function LabelsClient({
 
   const sample: LabelItemData = labels[Math.min(previewIdx, labels.length - 1)]?.data ?? {
     code: "CODE-123", description: "Sample description", mda: "GB1234567-123456", qty: "1", uom: "pcs", brand: "Brand",
-    supplier: "Supplier", plNo: packingListNo, company: "Company", address: "Address", establishment: "", date: "00.00.0000",
+    supplier: "Supplier", plNo: packingListNo, poNo: "PO/000-26", company: "Company", address: "Address", establishment: "", date: "00.00.0000",
   };
   const sel = design.elements.find((e) => e.id === selectedId) ?? null;
 

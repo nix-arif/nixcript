@@ -1165,6 +1165,8 @@ export async function getPackingListLabels(id: string): Promise<{ packingListNo:
           brand: p?.brand ?? "",
           supplier: pl.supplierSnapshot?.name ?? "",
           plNo: pl.packingListNo,
+          // the PO this line is on (each line can come from a different PO)
+          poNo: poRows.find((x) => x.id === i.purchaseOrderId)?.poNo ?? poRows.find((x) => x.id === i.purchaseOrderId)?.prNo ?? "",
           company: o?.companyName || o?.name || "",
           address: o?.companyAddress ?? "",
           establishment: o?.mdaEstablishmentNo ?? "",
