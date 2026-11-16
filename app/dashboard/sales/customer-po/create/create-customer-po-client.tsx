@@ -7,7 +7,6 @@ import { createCustomerPo, getNextCashSaleNo, type CpoItemInput } from "@/server
 import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
 import { searchQuotationsByNo, getQuotationForSO } from "@/server/quotation";
-import { getProductByCode } from "@/server/products";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -299,29 +298,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   // ── Item editing ──────────────────────────────────────────────────────────
 
-  const TOTAL_COLS = 5; // code, description, qty, uom, unit price
-
-  async function handleProductCodeBlur(key: string, code: string, prevCode: string) {
-    const trimmed = code.trim();
-    if (!trimmed || trimmed.toLowerCase() === prevCode.trim().toLowerCase()) return;
-    setItems((prev) => prev.map((i) => i._key === key
-      ? { ...i, _codeSource: "user", _editedBy: currentUserName || null } as EditableItem
-      : i,
-    ));
-    const product = await getProductByCode(trimmed);
-    if (!product) {
-      setItems((prev) => prev.map((i) => i._key === key
-        ? { ...i, description: "N/A", _descriptionSource: ["user"], _editedBy: currentUserName || null } as EditableItem
-        : i,
-      ));
-      return;
-    }
-    if (!product.description) return;
-    setItems((prev) => prev.map((i) => i._key === key
-      ? { ...i, description: product.description!, uom: product.uom ?? i.uom, _descriptionSource: ["catalog"], _editedBy: null }
-      : i,
-    ));
-  }
+  const TOTAL_COLS = 5; // columns 0 and 1 (code, description) are read-only text now
+  const FIRST_COL = 2; // qty, uom, unit price are the editable cells
 
   function handleCellKeyDown(
     e: React.KeyboardEvent<HTMLInputElement>,
@@ -339,18 +317,18 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       if (colIdx < TOTAL_COLS - 1) focus(rowIdx, colIdx + 1);
-      else if (rowIdx < items.length - 1) focus(rowIdx + 1, 0);
+      else if (rowIdx < items.length - 1) focus(rowIdx + 1, FIRST_COL);
     } else if (e.key === "Tab" && e.shiftKey) {
       e.preventDefault();
-      if (colIdx > 0) focus(rowIdx, colIdx - 1);
+      if (colIdx > FIRST_COL) focus(rowIdx, colIdx - 1);
       else if (rowIdx > 0) focus(rowIdx - 1, TOTAL_COLS - 1);
     } else if (mod && e.key === "ArrowRight") {
       e.preventDefault();
       if (colIdx < TOTAL_COLS - 1) focus(rowIdx, colIdx + 1);
-      else if (rowIdx < items.length - 1) focus(rowIdx + 1, 0);
+      else if (rowIdx < items.length - 1) focus(rowIdx + 1, FIRST_COL);
     } else if (mod && e.key === "ArrowLeft") {
       e.preventDefault();
-      if (colIdx > 0) focus(rowIdx, colIdx - 1);
+      if (colIdx > FIRST_COL) focus(rowIdx, colIdx - 1);
       else if (rowIdx > 0) focus(rowIdx - 1, TOTAL_COLS - 1);
     } else if (mod && e.key === "ArrowDown") {
       e.preventDefault();
@@ -399,16 +377,44 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       const numbers = itemNumbers(items);
       const target = items
         .filter((i) => i.included)
-        .map((i) => ({ key: i._key, no: numbers.get(i._key)!, productCode: i.productCode || "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "" }));
-      const { updates, setTitles, filled, skipped } = applyCpoDescriptions(target, await readItemsSheet(file));
-      if (filled > 0 || setTitles.size > 0)
-        setItems((prev) => prev.map((i) => ({
-          ...i,
-          ...(updates.has(i._key) ? { cpoDescription: updates.get(i._key) } : {}),
-          ...(i.setGroupId && setTitles.has(i.setGroupId) ? { setCpoTitle: setTitles.get(i.setGroupId) } : {}),
-        })));
-      if (filled === 0 && setTitles.size === 0 && skipped.length === 0) toast.info("No CPO descriptions found in the sheet");
-      else toast.success(`CPO description filled for ${filled} item${filled === 1 ? "" : "s"}${setTitles.size ? ` and ${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}` : ""}${skipped.length ? ` · ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped` : ""}`);
+        .map((i) => ({ key: i._key, no: numbers.get(i._key)!, productCode: i.productCode || "", qty: i.qty, setGroupLabel: i.setGroupLabel || "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "" }));
+      const { updates, setTitles, setLabels, qtys, filled, skipped } = applyCpoDescriptions(target, await readItemsSheet(file));
+      const changed = filled + setTitles.size + setLabels.size + qtys.size;
+      if (changed > 0)
+        setItems((prev) => {
+          // Sets that exist (or are being created by this upload), found by name regardless of case
+          const groups = new Map<string, { id: string; label: string; setQty: string }>();
+          for (const i of prev) if (i.setGroupId && i.setGroupLabel) groups.set(i.setGroupLabel.trim().toLowerCase(), { id: i.setGroupId, label: i.setGroupLabel, setQty: i.setQty || "1" });
+          let next = prev.map((i) => {
+            let it: EditableItem = { ...i, ...(updates.has(i._key) ? { cpoDescription: updates.get(i._key) } : {}) };
+            const lbl = setLabels.get(i._key);
+            if (lbl !== undefined) {
+              const notSet = isNotAsSetLabel(lbl);
+              const key = lbl.trim().toLowerCase();
+              const g = groups.get(key) ?? { id: notSet ? NOT_AS_SET_ID : `g-${lbl.trim()}`, label: notSet ? "not-as-set" : lbl.trim(), setQty: "1" };
+              groups.set(key, g);
+              it = calcItemTotal({ ...it, setGroupLabel: g.label, setGroupId: g.id, setQty: notSet ? "1" : g.setQty });
+            }
+            // A quantity typed in the sheet goes into the qty field (and the line total follows)
+            if (qtys.has(i._key)) it = calcItemTotal({ ...it, qty: qtys.get(i._key)!, _qtySource: "user", _editedBy: currentUserName || null });
+            return it;
+          });
+          // A set title belongs to the set the item ended up in
+          for (const [key, title] of setTitles) {
+            const gid = next.find((i) => i._key === key)?.setGroupId;
+            if (gid) next = next.map((i) => (i.setGroupId === gid && !isNotAsSetLabel(i.setGroupLabel) ? { ...i, setCpoTitle: title } : i));
+          }
+          if ((qtys.size > 0 || setLabels.size > 0) && !amountOverride) setAmount(sumItems(next));
+          return next;
+        });
+      const parts = [
+        ...(filled ? [`${filled} CPO description${filled === 1 ? "" : "s"}`] : []),
+        ...(setLabels.size ? [`${setLabels.size} set assignment${setLabels.size === 1 ? "" : "s"}`] : []),
+        ...(setTitles.size ? [`${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}`] : []),
+        ...(qtys.size ? [`${qtys.size} quantit${qtys.size === 1 ? "y" : "ies"}`] : []),
+      ];
+      if (changed === 0 && skipped.length === 0) toast.info("Nothing new found in the sheet");
+      else toast.success(`Updated ${parts.join(", ") || "nothing"}${skipped.length ? ` · ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped` : ""}`);
       if (skipped.length) toast.warning(skipped.slice(0, 4).join("\n") + (skipped.length > 4 ? `\n…and ${skipped.length - 4} more` : ""), { duration: 12000 });
     } catch (err: any) {
       toast.error(err.message || "Could not read the sheet");
@@ -999,7 +1005,6 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                         updateItem={updateItem}
                         onSetLabelChange={handleSetLabelChange}
                         onCellKeyDown={handleCellKeyDown}
-                        onCodeBlur={handleProductCodeBlur}
                         currentUserName={currentUserName}
                       />
                     );
@@ -1165,7 +1170,6 @@ function ItemRow({
   updateItem,
   onSetLabelChange,
   onCellKeyDown,
-  onCodeBlur,
   currentUserName,
 }: {
   item: EditableItem;
@@ -1177,10 +1181,8 @@ function ItemRow({
   updateItem: (key: string, patch: Partial<EditableItem>) => void;
   onSetLabelChange: (key: string, newLabel: string) => void;
   onCellKeyDown: (e: React.KeyboardEvent<HTMLInputElement>, row: number, col: number) => void;
-  onCodeBlur: (key: string, code: string, prevCode: string) => void;
   currentUserName: string;
 }) {
-  const codeOnFocus = useRef("");
   return (
     <tr className={cn(
       "border-b border-border/40 last:border-0 transition-opacity [&>td]:align-top",
@@ -1215,17 +1217,7 @@ function ItemRow({
         </div>
       </td>
       <td className="py-1.5 pr-2">
-        <Input
-          data-row={rowIdx}
-          data-col={0}
-          value={item.productCode || ""}
-          onChange={(e) => updateItem(item._key, { productCode: e.target.value } as Partial<EditableItem>)}
-          onFocus={(e) => { codeOnFocus.current = e.target.value; }}
-          onBlur={(e) => onCodeBlur(item._key, e.target.value, codeOnFocus.current)}
-          onKeyDown={(e) => onCellKeyDown(e, rowIdx, 0)}
-          placeholder="—"
-          className="h-7 text-[11px] md:text-[11px] font-mono"
-        />
+        <div className="min-h-7 flex items-center font-mono text-[11px] md:text-[11px] break-all">{item.productCode || "—"}</div>
         {item._codeSource === "quote" && (
           <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
             <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}
@@ -1240,19 +1232,7 @@ function ItemRow({
       </td>
       <td className="py-1.5 pr-2">
         <div className="space-y-0.5">
-          <Input
-            data-row={rowIdx}
-            data-col={1}
-            value={item.description || ""}
-            onChange={(e) => {
-              const prev = item._descriptionSource ?? [];
-              const next: typeof prev = [...prev.filter(s => s !== "catalog" && s !== "quote" && s !== "user"), "user"];
-              updateItem(item._key, { description: e.target.value, _descriptionSource: next, _editedBy: currentUserName || null } as Partial<EditableItem>);
-            }}
-            onKeyDown={(e) => onCellKeyDown(e, rowIdx, 1)}
-            placeholder="—"
-            className="h-7 text-[11px] md:text-[11px]"
-          />
+          <div className="min-h-7 flex items-center text-[11px] md:text-[11px] whitespace-pre-wrap break-words">{item.description || "—"}</div>
           {(item._descriptionSource ?? []).includes("quote") && (
             <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
               <LinkIcon className="w-3 h-3 shrink-0" />from quotation{item._quotationNo ? ` ${item._quotationNo}` : ""}

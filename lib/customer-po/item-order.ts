@@ -54,20 +54,27 @@ export function itemNumbers<T extends Orderable>(items: T[]): Map<string, number
 // block, even across different quotations, so they can be ordered freely among themselves.
 const sameBlock = (a: Orderable, b: Orderable) => (a.setGroupId || "") === (b.setGroupId || "");
 
-// Whether the item has a neighbour above / below it in its block
+// The items an item can swap with: its block, and for a selected item only the other selected
+// ones, so moving skips over the items that are switched off (they are not part of the CPO).
+function neighbours<T extends Orderable>(items: T[], me: T): T[] {
+  const block = items.filter((i) => sameBlock(i, me));
+  return me.included ? block.filter((i) => i.included) : block;
+}
+
+// Whether the item has a neighbour above / below it
 export function canMove<T extends Orderable>(items: T[], key: string): { up: boolean; down: boolean } {
   const me = items.find((i) => i._key === key);
   if (!me) return { up: false, down: false };
-  const block = items.filter((i) => sameBlock(i, me));
+  const block = neighbours(items, me);
   const at = block.findIndex((i) => i._key === key);
   return { up: at > 0, down: at < block.length - 1 };
 }
 
-// Swap the item with the neighbour above (-1) or below (+1) in its block
+// Swap the item with the neighbour above (-1) or below (+1)
 export function moveItem<T extends Orderable>(items: T[], key: string, dir: -1 | 1): T[] {
   const me = items.find((i) => i._key === key);
   if (!me) return items;
-  const block = items.filter((i) => sameBlock(i, me));
+  const block = neighbours(items, me);
   const at = block.findIndex((i) => i._key === key);
   const other = block[at + dir];
   if (!other) return items;
