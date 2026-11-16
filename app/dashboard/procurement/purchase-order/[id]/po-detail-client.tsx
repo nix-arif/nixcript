@@ -343,7 +343,7 @@ export function PurchaseOrderDetailClient({
   const snap = order.supplierSnapshot as any;
 
   async function handleDelete() {
-    if (!confirm(`Permanently delete ${order.poNo ?? order.prNo ?? "this purchase order"}? This removes the record entirely and can't be undone.`)) return;
+    if (!confirm(`Permanently delete ${order.poNo ?? order.prNo ?? "this supplier PO"}? This removes the record entirely and can't be undone.`)) return;
     setDeleting(true);
     try {
       await deletePurchaseOrder(order.id);
@@ -428,7 +428,7 @@ export function PurchaseOrderDetailClient({
     <div className="p-6 space-y-6">
       <PageHeader
         title={order.poNo ?? order.prNo ?? order.id}
-        description={`Supplier Purchase Order${organizationName ? ` · ${organizationName}` : ""} · ${fmtDate(order.createdAt)}`}
+        description={`Supplier PO${organizationName ? ` · ${organizationName}` : ""} · ${fmtDate(order.createdAt)}`}
         action={
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">

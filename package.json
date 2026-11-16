@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db-prod:push": "drizzle-kit push",
+    "db-prod:push": "echo 'Refused: prod uses the SQL files in drizzle/ (applied in order, with data steps). drizzle-kit push would diff the schema and skip them.' && exit 1",
     "db-dev:push": "dotenv -e .env.local -- drizzle-kit push",
     "db-dev:migrate": "tsx db/apply-pending-migrations.ts",
     "audit:permissions": "tsx scripts/audit-permissions.ts",

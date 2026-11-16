@@ -18,6 +18,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { and, asc, eq, inArray, ne } from "drizzle-orm";
 
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 async function requireRead(permission = "purchase-order:read") {
   const session = await getCachedSession();
   if (!session) throw new Error("You must be signed in to continue");
@@ -28,15 +29,6 @@ async function requireRead(permission = "purchase-order:read") {
   return { orgId };
 }
 
-// Every org owned by the same owner as the caller's active org (same pattern
-// as server/goods-receipt.ts).
-async function getOwnerOrgIds(orgId: string): Promise<string[]> {
-  const [ownerMember] = await db.select().from(member).where(and(eq(member.organizationId, orgId), eq(member.role, "owner"))).limit(1);
-  if (!ownerMember) return [orgId];
-  const owned = await db.select({ organizationId: member.organizationId }).from(member).where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
-  const ids = [...new Set(owned.map((m) => m.organizationId))];
-  return ids.length > 0 ? ids : [orgId];
-}
 
 async function orgNames(orgIds: string[]): Promise<Map<string, string>> {
   const rows = await db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, orgIds));

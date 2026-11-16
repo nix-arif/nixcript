@@ -573,7 +573,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   return (
     <div className="p-6">
       <PageHeader
-        title="Create Purchase Order"
+        title="Create Supplier PO"
         description={
           isPrMode
             ? `Converting ${prData!.prNo} to a supplier purchase order`
@@ -994,7 +994,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
           <Button onClick={handleCreatePo} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
-            {saving ? "Creating…" : "Create Purchase Order"}
+            {saving ? "Creating…" : "Create Supplier PO"}
           </Button>
           <Button variant="outline" onClick={() => router.push(backHref)}>Cancel</Button>
         </div>

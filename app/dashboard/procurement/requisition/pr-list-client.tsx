@@ -74,7 +74,7 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
     <div className="p-6 space-y-5">
       <PageHeader
         title="Purchase Requisitions"
-        description="Internal requests for procurement. Approved PRs are converted to Purchase Orders."
+        description="Internal requests for procurement. Approved PRs are converted to Supplier POs."
         action={
           canCreate && (
             <Button size="sm" className="gap-1.5" onClick={() => router.push("/dashboard/procurement/requisition/create")}>
@@ -123,7 +123,7 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
                   {counts.approved} approved — ready to order
                 </p>
                 <p className="text-[11px] text-blue-700 dark:text-blue-400 mt-0.5">
-                  Convert these to Purchase Orders to place with suppliers.
+                  Convert these to Supplier POs to place with suppliers.
                 </p>
               </div>
             </div>

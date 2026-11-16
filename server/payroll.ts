@@ -3,7 +3,6 @@
 import { db } from "@/db";
 import { payrollPeriod, payslip, member, profile, user, payItem, payslipLine, salaryStructure, salaryStructureItem, invoiceAllowance, commissionType, payrollPeriodRecall, employeeTaxRelief, taxReliefType } from "@/db/schema";
 import { revalidatePath } from "next/cache";
-import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, or, desc, sql, asc, lte, inArray, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
@@ -15,6 +14,7 @@ import { resolveReliefs } from "@/lib/payroll/relief";
 import { siblingOrgs } from "@/lib/org/sibling-orgs";
 import { listAllowanceCandidates, linkAllowancesToPayslip, matchingCommissionTypeIds } from "@/lib/payroll/allowance-source";
 
+import { getSession, requireAccess } from "@/lib/auth/require-access";
 async function linesFor(payslipIds: string[]) {
   if (!payslipIds.length) return new Map<string, (typeof payslipLine.$inferSelect)[]>();
   const rows = await db
@@ -91,20 +91,7 @@ async function resolveAllowanceInputs(args: {
   return { inputs, allowanceIds };
 }
 
-async function getSession() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  return { session, orgId, userId: session.user.id };
-}
 
-async function requireAccess(permission: string) {
-  const { session, orgId, userId } = await getSession();
-  const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
-  return { session, orgId, userId };
-}
 
 const MONTHS = [
   "January",
@@ -835,31 +822,6 @@ export async function getMyPayslips() {
 
   const lineMap = await linesFor(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, lines: lineMap.get(r.id) ?? [] }));
-}
-
-// Helper to get owner org id — reuse from products
-async function getOwnerOrgId(
-  userId: string,
-  currentOrgId: string,
-): Promise<string> {
-  const [ownerMember] = await db
-    .select()
-    .from(member)
-    .where(
-      and(eq(member.organizationId, currentOrgId), eq(member.role, "owner")),
-    )
-    .limit(1);
-
-  if (!ownerMember) return currentOrgId;
-
-  const [primaryOrg] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")))
-    .orderBy(asc(member.createdAt))
-    .limit(1);
-
-  return primaryOrg?.organizationId ?? currentOrgId;
 }
 
 export async function getPayslipYtd(

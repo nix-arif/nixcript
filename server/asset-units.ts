@@ -13,6 +13,7 @@ import { getWarehouses } from "@/server/inventory";
 import { getFieldLocations } from "@/server/field-stock";
 import { revalidatePath } from "next/cache";
 
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 async function requireAccess(permission: string) {
   const session = await getCachedSession();
   if (!session) throw new Error("Unauthorized");
@@ -23,23 +24,6 @@ async function requireAccess(permission: string) {
   return { orgId, userId: session.user.id };
 }
 
-// Every org owned by the same owner as orgId — same "owner org group"
-// pattern duplicated across server/inventory.ts, server/supplier.ts,
-// server/field-stock.ts, server/delivery-order.ts, server/document-category.ts etc.
-async function getOwnerOrgIds(orgId: string): Promise<string[]> {
-  const [ownerMember] = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner"), isNull(member.deletedAt)))
-    .limit(1);
-  if (!ownerMember) return [orgId];
-  const owned = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
-  const ids = [...new Set(owned.map((m) => m.organizationId))];
-  return ids.length > 0 ? ids : [orgId];
-}
 
 export type AssetUnitRow = typeof assetUnit.$inferSelect;
 

@@ -9,6 +9,7 @@ import { nanoid } from "nanoid";
 import { eq, and, asc, sql, inArray, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 async function requireReadAccess() {
   const session = await getCachedSession();
   if (!session?.session?.activeOrganizationId) throw new Error("Unauthorized");
@@ -38,23 +39,6 @@ async function requireWriteAccess() {
 
 export type DocumentCategoryRow = typeof documentCategory.$inferSelect;
 
-// Every org owned by the same owner as orgId — same "owner org group"
-// pattern duplicated across server/inventory.ts, server/supplier.ts,
-// server/field-stock.ts, server/delivery-order.ts etc.
-async function getOwnerOrgIds(orgId: string): Promise<string[]> {
-  const [ownerMember] = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner"), isNull(member.deletedAt)))
-    .limit(1);
-  if (!ownerMember) return [orgId];
-  const owned = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
-  const ids = [...new Set(owned.map((m) => m.organizationId))];
-  return ids.length > 0 ? ids : [orgId];
-}
 
 // The caller's sibling orgs (same owner, excluding the active one) — for
 // populating the "bill this category to" picker on the intercompany PO rule.

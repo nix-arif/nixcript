@@ -14,6 +14,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, inArray, asc } from "drizzle-orm";
 
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 async function getSession() {
   const session = await getCachedSession();
   if (!session) throw new Error("You must be signed in to continue");
@@ -37,22 +38,6 @@ async function requireOwner() {
   return { session, orgId, userId };
 }
 
-// Every org owned by the same owner as the given org (includes the org
-// itself) — identical pattern to the 6 other per-file copies in this codebase.
-async function getOwnerOrgIds(orgId: string): Promise<string[]> {
-  const [ownerRow] = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
-    .limit(1);
-  if (!ownerRow) return [orgId];
-
-  const rows = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerRow.userId), eq(member.role, "owner")));
-  return rows.map((r) => r.organizationId);
-}
 
 // The userId that owns orgId (the member row with role "owner" there) —
 // null if that org has no owner on record, which means no restriction rule

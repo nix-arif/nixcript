@@ -21,6 +21,13 @@ import { nanoid } from "nanoid";
 import { eq, and, inArray, desc, getTableColumns, isNotNull, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
+// A case's sales person / application specialist is often someone from a
+// sibling organization covering for that org (the FK is to a global user
+// account, not scoped to org membership — see recomputeInvoiceAllowances).
+// So the earner may have no membership in the org whose invoice generated the
+// allowance, and can't switch their active org to it. Statements must
+// therefore span every org sharing the same owner, not just the active org.
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 async function requireAccess(permission: string) {
   const session = await getCachedSession();
   if (!session?.session?.activeOrganizationId) throw new Error("Unauthorized");
@@ -31,27 +38,6 @@ async function requireAccess(permission: string) {
   return { orgId, userId };
 }
 
-// A case's sales person / application specialist is often someone from a
-// sibling organization covering for that org (the FK is to a global user
-// account, not scoped to org membership — see recomputeInvoiceAllowances).
-// So the earner may have no membership in the org whose invoice generated
-// the allowance, and can't switch their active org to it. Statements must
-// therefore span every org sharing the same owner, not just the caller's
-// single active org — same "resolve every org sharing the owner" pattern
-// used elsewhere in the app (e.g. app/api/products/picture-ref/route.ts).
-async function getOwnerOrgIds(orgId: string): Promise<string[]> {
-  const [ownerRow] = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
-    .limit(1);
-  if (!ownerRow) return [orgId];
-  const rows = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerRow.userId), eq(member.role, "owner")));
-  return [...new Set([orgId, ...rows.map((r) => r.organizationId)])];
-}
 
 // Resolves which org each user "belongs to" for allowance purposes: anyone
 // with a currently-active membership counts for that org (and only that

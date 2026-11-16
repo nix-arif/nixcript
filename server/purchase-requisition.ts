@@ -18,8 +18,6 @@ import {
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, notInArray, isNotNull, isNull, ne, ilike, or } from "drizzle-orm";
-import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
-import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
@@ -30,6 +28,11 @@ import { redirect } from "next/navigation";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+import { requireAccess } from "@/lib/auth/require-access";
+// Owner org group: a supplier created under a sibling org owned by the same
+// person otherwise never shows up here, since supplier.organizationId is
+// strictly per-org.
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT!,
@@ -65,41 +68,8 @@ export async function deleteProcurementImages(keys: string[]): Promise<void> {
   );
 }
 
-async function getSession() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  return { session, orgId, userId: session.user.id };
-}
 
-async function requireAccess(permission: string) {
-  const { session, orgId, userId } = await getSession();
-  const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
-  return { session, orgId, userId };
-}
 
-// Every org owned by the same owner as the given org (includes the org
-// itself) — mirrors the identical helper in server/supplier.ts. A supplier
-// created under a sibling org owned by the same person otherwise never
-// shows up here, since supplier.organizationId is strictly per-org.
-async function getOwnerOrgIds(orgId: string): Promise<string[]> {
-  const [ownerRow] = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
-    .limit(1);
-
-  if (!ownerRow) return [orgId];
-
-  const rows = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerRow.userId), eq(member.role, "owner")));
-
-  return rows.map((r) => r.organizationId);
-}
 
 async function generatePrNo(orgId: string): Promise<string> {
   const cfg = await getNumberingConfig(orgId, "pr");

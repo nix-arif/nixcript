@@ -16,10 +16,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
+import { canMove, itemNumbers, moveItem } from "@/lib/customer-po/item-order";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
   PencilIcon, DatabaseIcon, LinkIcon,
+  ChevronUpIcon, ChevronDownIcon,
 } from "lucide-react";
 
 type LinkedQuotation = {
@@ -423,6 +425,11 @@ export function EditCustomerPoClient({
     }
   }
 
+  // Move an item up/down inside its own block (same quotation and set). Numbers (#) follow the new order.
+  function handleMove(key: string, dir: -1 | 1) {
+    setItems((prev) => moveItem(prev, key, dir));
+  }
+
   function updateItem(key: string, patch: Partial<EditableItem>) {
     setItems((prev) => {
       const next = prev.map((i) => {
@@ -545,6 +552,7 @@ export function EditCustomerPoClient({
         items:           items.length > 0
           ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, ...rest }) => ({
               ...rest,
+              rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
               setGroupId:    rest.setGroupId    || undefined,
               setGroupLabel: rest.setGroupLabel || undefined,
               setQty:        rest.setQty        || undefined,
@@ -951,7 +959,7 @@ export function EditCustomerPoClient({
                         title="Select all / none"
                       />
                     </th>
-                    <th className="text-left pb-2 pr-2 w-6">#</th>
+                    <th className="text-left pb-2 pr-2 w-14">#</th>
                     <th className="text-left pb-2 pr-2 w-20">Code</th>
                     <th className="text-left pb-2 pr-2">Description</th>
                     <th className="text-right pb-2 pr-2 w-20">Qty</th>
@@ -964,6 +972,7 @@ export function EditCustomerPoClient({
                 <tbody>
                   {(() => {
                     const rows: React.ReactNode[] = [];
+                    const numbers = itemNumbers(items);
                     const seenGroupIds = new Set<string>();
                     let rowIdx = 0;
 
@@ -980,6 +989,9 @@ export function EditCustomerPoClient({
                       <ItemRow
                         key={item._key}
                         item={item}
+                        no={numbers.get(item._key)}
+                        move={canMove(items, item._key)}
+                        onMove={handleMove}
                         rowIdx={rowIdx++}
                         inSet={inSet}
                         updateItem={updateItem}
@@ -1182,6 +1194,9 @@ export function EditCustomerPoClient({
 
 function ItemRow({
   item,
+  no,
+  move,
+  onMove,
   rowIdx,
   inSet,
   updateItem,
@@ -1191,6 +1206,9 @@ function ItemRow({
   currentUserName,
 }: {
   item: EditableItem;
+  no: number | undefined; // item number in display order (undefined = switched off)
+  move: { up: boolean; down: boolean };
+  onMove: (key: string, dir: -1 | 1) => void;
   rowIdx: number;
   inSet: boolean;
   updateItem: (key: string, patch: Partial<EditableItem>) => void;
@@ -1217,7 +1235,21 @@ function ItemRow({
         </div>
       </td>
       <td className="py-1.5 pr-2 text-muted-foreground">
-        <div className="h-7 flex items-center">{item.rowNo}</div>
+        <div className="h-7 flex items-center gap-0.5">
+          <span className="w-5 tabular-nums">{no ?? "–"}</span>
+          <span className="flex flex-col -space-y-1">
+            <button type="button" aria-label="Move up" title="Move up" disabled={!move.up}
+              onClick={() => onMove(item._key, -1)}
+              className="text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-default">
+              <ChevronUpIcon className="w-3.5 h-3.5" />
+            </button>
+            <button type="button" aria-label="Move down" title="Move down" disabled={!move.down}
+              onClick={() => onMove(item._key, 1)}
+              className="text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-default">
+              <ChevronDownIcon className="w-3.5 h-3.5" />
+            </button>
+          </span>
+        </div>
       </td>
       <td className="py-1.5 pr-2">
         <Input

@@ -46,3 +46,8 @@ next-env.d.ts
 e2e/.auth/
 
 .db-backups/
+
+# shared env + database dumps (never commit)
+share.env
+prod_backup.sql
+*.sql.gz

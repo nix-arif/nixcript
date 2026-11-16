@@ -13,6 +13,12 @@ import { nonMemberFieldHolders } from "@/lib/inventory/field-holder";
 import { applyToLot } from "@/lib/inventory/apply-to-lot";
 import { revalidatePath } from "next/cache";
 
+// Product catalogues and physical stock can live under different sibling orgs
+// in the same ownership group (e.g. products catalogued under one org, all
+// physical stock centralized under another). The product lookup in
+// transferToRep/returnFromRep therefore matches products across the group,
+// which is what product search already lets the user find and select.
+import { getOwnerOrgIds as getOwnerOrgIdsInternal } from "@/lib/org/owner-orgs";
 async function getSession() {
   const session = await getCachedSession();
   if (!session?.session?.activeOrganizationId) throw new Error("No active organization");
@@ -641,30 +647,6 @@ async function getMainWarehouseLabelInternal(orgId: string): Promise<string> {
   return addresses.find((w) => w.label?.trim())?.label ?? "Default";
 }
 
-// Product catalogues and physical stock can live under different sibling
-// orgs in the same ownership group (e.g. products catalogued under one org,
-// all physical stock centralized under another) — same "owner org group"
-// concept searchProducts()/getInventory() already use in server/inventory.ts.
-// Duplicated here (rather than importing that file's private helper) so the
-// product lookup in transferToRep/returnFromRep can match products across
-// the group instead of only the active org, which is what search already
-// lets the user find and select in the first place.
-async function getOwnerOrgIdsInternal(currentOrgId: string): Promise<string[]> {
-  const [ownerMember] = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner"), isNull(member.deletedAt)))
-    .limit(1);
-  if (!ownerMember) return [currentOrgId];
-
-  const ownedOrgs = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
-
-  const ids = ownedOrgs.map((o) => o.organizationId);
-  return ids.length ? ids : [currentOrgId];
-}
 
 async function updateStockLevel(orgId: string, productId: string, warehouseLabel: string, delta: number, unitCost: string | null, now: Date) {
   const [existing] = await db.select().from(stockLevel)

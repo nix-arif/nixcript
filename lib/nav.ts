@@ -52,18 +52,6 @@ export const navConfig: NavGroup[] = [
     ],
   },
   {
-    title: "Sales",
-    url: "#",
-    icon: React.createElement(ShoppingCartIcon),
-    items: [
-      { title: "Customers",    url: "/dashboard/sales/customer",      permission: "customer:read"    },
-      { title: "Quotations",   url: "/dashboard/sales/quotation",     permission: "quotation:read"   },
-      { title: "Customer POs", url: "/dashboard/sales/customer-po",   permission: "customer-po:read" },
-      { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
-      { title: "Activity Log", url: "/dashboard/sales/activity",      permission: "customer:read"    },
-    ],
-  },
-  {
     title: "Centralize",
     url: "#",
     icon: React.createElement(LayersIcon),
@@ -78,13 +66,25 @@ export const navConfig: NavGroup[] = [
     ],
   },
   {
+    title: "Sales",
+    url: "#",
+    icon: React.createElement(ShoppingCartIcon),
+    items: [
+      { title: "Customers",    url: "/dashboard/sales/customer",      permission: "customer:read"    },
+      { title: "Quotations",   url: "/dashboard/sales/quotation",     permission: "quotation:read"   },
+      { title: "Customer POs", url: "/dashboard/sales/customer-po",   permission: "customer-po:read" },
+      { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
+      { title: "Activity Log", url: "/dashboard/sales/activity",      permission: "customer:read"    },
+    ],
+  },
+  {
     title: "Procurement",
     url: "#",
     icon: React.createElement(ProcurementIcon),
     items: [
       { title: "Suppliers",            url: "/dashboard/procurement/supplier",        permission: "supplier:read"       },
       { title: "Purchase Requisition", url: "/dashboard/procurement/requisition",   permission: "purchase-requisition:read" },
-      { title: "Purchase Orders",      url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
+      { title: "Supplier POs",         url: "/dashboard/procurement/purchase-order", permission: "purchase-order:read" },
       { title: "Packing Lists",        url: "/dashboard/procurement/packing-list",   permission: "purchase-order:read" },
       { title: "Goods Receipts",       url: "/dashboard/procurement/goods-receipt",  permission: "purchase-order:read" },
       { title: "Returns & Surplus",    url: "/dashboard/procurement/receiving-issues", permission: "purchase-order:read" },

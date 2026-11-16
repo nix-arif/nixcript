@@ -268,7 +268,7 @@ export function EditPurchaseOrderClient({
     <div className="p-6">
       <PageHeader
         title={`Edit ${order.poNo}`}
-        description="Update draft purchase order"
+        description="Update draft supplier PO"
         action={
           <Button variant="outline" size="sm" onClick={() => router.push(backUrl)} className="gap-2">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back

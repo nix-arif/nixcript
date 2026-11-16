@@ -27,7 +27,6 @@ import {
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { getOrganizationProfile } from "@/server/organization-profile";
-import { getCachedSession } from "@/lib/auth/cached-session";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, isNotNull, isNull, notExists, ne, sql, or, count, like } from "drizzle-orm";
@@ -47,21 +46,14 @@ import { draftDoNo, isDraftDoNo } from "@/lib/delivery/draft-no";
 import { isOrgMember } from "@/lib/inventory/field-holder";
 import { exemptProducts, getStockRules, modeNow, type StockRuleMode } from "@/lib/inventory/stock-rules";
 
-async function getSession() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  return { session, orgId, userId: session.user.id };
-}
 
-async function requireAccess(permission: string) {
-  const { session, orgId, userId } = await getSession();
-  const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
-  return { session, orgId, userId };
-}
 
+import { getSession, requireAccess } from "@/lib/auth/require-access";
+// Owner org group is needed because a Case DO's application specialist is
+// sometimes a person whose real field stock for the case's products was
+// transferred to them under a SIBLING org (e.g. the org responsible for that
+// product category), not necessarily the org the DO is being filed under.
+import { getOwnerOrgIds as getOwnerOrgIdsInternal } from "@/lib/org/owner-orgs";
 // For actions restricted to the organization owner regardless of any
 // individually granted permission — e.g. correcting the DO number.
 async function requireOwner() {
@@ -92,29 +84,6 @@ async function resolveMainWarehouseLabel(orgId: string): Promise<string> {
   return addresses.find((w) => w.label?.trim())?.label ?? "Default";
 }
 
-// Every org owned by the same owner as currentOrgId — same "owner org group"
-// concept duplicated across server/inventory.ts, server/field-stock.ts,
-// lib/inventory/create-movement.ts etc. Needed below because a Case DO's
-// application specialist is sometimes a person whose real field stock for
-// the case's products was transferred to them under a SIBLING org (e.g. the
-// org that's actually responsible for that product category), not
-// necessarily the org the DO itself is being filed under.
-async function getOwnerOrgIdsInternal(currentOrgId: string): Promise<string[]> {
-  const [ownerMember] = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner"), isNull(member.deletedAt)))
-    .limit(1);
-  if (!ownerMember) return [currentOrgId];
-
-  const ownedOrgs = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
-
-  const ids = ownedOrgs.map((o) => o.organizationId);
-  return ids.length ? ids : [currentOrgId];
-}
 
 // A Case DO deducts from the application specialist's OWN field stock, which
 // may have been transferred to them under a different sibling org than the

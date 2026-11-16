@@ -14,15 +14,13 @@ import {
   organization,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
-import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, ilike, inArray, or, isNull, notInArray } from "drizzle-orm";
-import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
-import { hasAccess } from "@/lib/permissions/has-access";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+import { requireAccess } from "@/lib/auth/require-access";
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT!,
@@ -57,20 +55,7 @@ async function deleteDocument(key: string | null | undefined) {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }
 
-async function getSession() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  return { session, orgId, userId: session.user.id };
-}
 
-async function requireAccess(permission: string) {
-  const { session, orgId, userId } = await getSession();
-  const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
-  return { session, orgId, userId };
-}
 
 
 export type CustomerPo = typeof customerPurchaseOrder.$inferSelect;

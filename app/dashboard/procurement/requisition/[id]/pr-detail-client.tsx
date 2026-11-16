@@ -771,15 +771,15 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
       {/* Convert to PO (when approved) */}
       {pr.status === "approved" && can("purchase-order:create") && (
         <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-5 space-y-2">
-          <h2 className="text-sm font-semibold text-blue-800 dark:text-blue-300">Ready to Convert to Purchase Order</h2>
+          <h2 className="text-sm font-semibold text-blue-800 dark:text-blue-300">Ready to Convert to Supplier PO</h2>
           <p className="text-xs text-blue-700 dark:text-blue-400">
-            This requisition has been approved. The procurement team can now create Purchase Orders per supplier.
+            This requisition has been approved. The procurement team can now create Supplier POs per supplier.
           </p>
           <Button
             size="sm"
             onClick={() => router.push(`/dashboard/procurement/purchase-order/create?prId=${pr.id}&from=${encodeURIComponent(`/dashboard/procurement/requisition/${pr.id}`)}`)}
           >
-            Create Purchase Order
+            Create Supplier PO
           </Button>
         </div>
       )}

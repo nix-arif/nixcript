@@ -28,6 +28,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+import { getSession, requireAccess } from "@/lib/auth/require-access";
 // ── R2 private bucket client (for presigned cert URLs) ─────────────────────
 const s3Cert = new S3Client({
   region: "auto",
@@ -68,20 +69,7 @@ function randomWeekdaysBack(from: Date, min: number, max: number): Date {
   return subtractWeekdays(from, days);
 }
 
-async function getSession() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  return { session, orgId, userId: session.user.id };
-}
 
-async function requireAccess(permission: string) {
-  const { session, orgId, userId } = await getSession();
-  const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
-  return { session, orgId, userId };
-}
 
 async function getOwnerOrgId(
   userId: string,
@@ -1069,9 +1057,19 @@ export async function getQuotationForSO(id: string) {
 
     const cpoItems = cpoRow?.items;
     if (cpoItems && cpoItems.length === items.length) {
+      // The CPO can list items in a different order from the quotation, so pair each
+      // quotation item with the CPO item for the same product first, and fall back
+      // to the same position (the previous behaviour) when nothing matches.
+      const used = new Set<number>();
+      const same = (a: { productCode?: string | null; description?: string | null }, b: { productCode?: string | null; description?: string | null }) =>
+        (a.productCode ?? "").trim().toLowerCase() === (b.productCode ?? "").trim().toLowerCase() &&
+        (a.description ?? "").trim().toLowerCase() === (b.description ?? "").trim().toLowerCase();
       const enriched = items.map((qtItem, idx) => {
+        let at = cpoItems.findIndex((c, i) => !used.has(i) && same(c, qtItem));
+        if (at < 0 && !used.has(idx)) at = idx;
+        if (at >= 0) used.add(at);
         if (qtItem.setGroupId) return qtItem;
-        const cpoItem = cpoItems[idx];
+        const cpoItem = at >= 0 ? cpoItems[at] : undefined;
         if (!cpoItem?.setGroupId) return qtItem;
         return { ...qtItem, setGroupId: cpoItem.setGroupId, setGroupLabel: cpoItem.setGroupLabel ?? null, setQty: cpoItem.setQty ?? null };
       });

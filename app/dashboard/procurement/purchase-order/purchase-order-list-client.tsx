@@ -142,12 +142,12 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
   return (
     <div className="p-6">
       <PageHeader
-        title="Purchase Orders"
+        title="Supplier POs"
         description="Supplier POs issued from approved purchase requisitions"
         action={
           can("purchase-order:create") && (
             <Button onClick={() => router.push("/dashboard/procurement/purchase-order/create")} className="gap-2">
-              <PlusIcon className="w-4 h-4" /> New PO
+              <PlusIcon className="w-4 h-4" /> New Supplier PO
             </Button>
           )
         }
@@ -266,7 +266,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
           <div className="text-xs text-muted-foreground mb-3 tabular-nums">0 records</div>
           <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
             <TruckIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-            <div className="text-sm font-medium mb-1">No purchase orders yet</div>
+            <div className="text-sm font-medium mb-1">No supplier POs yet</div>
             {search ? (
               <div className="text-xs">No results match your search</div>
             ) : (

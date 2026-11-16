@@ -20,11 +20,8 @@ import {
   member,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
-import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
-import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
-import { hasAccess } from "@/lib/permissions/has-access";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -40,6 +37,7 @@ import { createNotification, getSoApprovers } from "@/server/notifications";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import SoNotificationEmail from "@/components/emails/so-notification";
 
+import { requireAccess } from "@/lib/auth/require-access";
 const resend = new Resend(process.env.RESEND_API_KEY as string);
 const baseUrl = process.env.NODE_ENV === "production"
   ? process.env.APP_DOMAIN!
@@ -83,20 +81,7 @@ async function deleteSupplierQuotationFile(key: string | null | undefined) {
 
 // ── Auth helpers ───────────────────────────────────────────────────────────
 
-async function getSession() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  return { session, orgId, userId: session.user.id };
-}
 
-async function requireAccess(permission: string) {
-  const { session, orgId, userId } = await getSession();
-  const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
-  return { session, orgId, userId };
-}
 
 // Returns every org owned by the same owner as the caller's active org (the
 // caller need not be a member of those other orgs themselves — only the

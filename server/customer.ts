@@ -14,27 +14,13 @@ import {
   deliveryOrder,
   invoice,
 } from "@/db/schema";
-import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, ilike, or, desc, asc, inArray, sql } from "drizzle-orm";
-import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
-import { hasAccess } from "@/lib/permissions/has-access";
 
-async function getSession() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  return { session, orgId, userId: session.user.id };
-}
 
-async function requireAccess(permission: string) {
-  const { session, orgId, userId } = await getSession();
-  const perms = await getUserPermissions(userId, orgId);
-  if (!hasAccess(perms, permission)) throw new Error("You don't have permission to do this");
-  return { session, orgId, userId };
-}
 
+import { requireAccess } from "@/lib/auth/require-access";
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export type CustomerCompany = {
@@ -597,20 +583,6 @@ export async function createCustomerOrganization(data: {
   return { row, existed: false };
 }
 
-async function getOwnerOrgIds(orgId: string): Promise<string[]> {
-  const [ownerMember] = await db
-    .select()
-    .from(member)
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
-    .limit(1);
-  if (!ownerMember) return [orgId];
-  const owned = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner")));
-  const ids = [...new Set(owned.map((m) => m.organizationId))];
-  return ids.length > 0 ? ids : [orgId];
-}
 
 export async function updateCustomerOrganization(
   id: string,

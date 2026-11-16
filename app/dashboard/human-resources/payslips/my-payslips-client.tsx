@@ -8,10 +8,6 @@ import { DownloadIcon, FileTextIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { downloadPayslipPdf } from "./download-payslip-pdf";
 import { splitLines, lineAmount } from "@/lib/payroll/build-lines";
-import {
-  getFullOrganizationProfile,
-  getLogoAsBase64,
-} from "@/server/organization-profile";
 import { toast } from "sonner";
 
 type Payslip = Awaited<ReturnType<typeof getMyPayslips>>[number];
@@ -31,27 +27,6 @@ export function MyPayslipsClient({ payslips }: Props) {
 
   const latest = payslips[0];
   const ytd = payslips.reduce((s, p) => s + Number(p.netPay), 0);
-
-  // const handleDownload = async (p: Payslip) => {
-  //   setGenerating(p.id);
-  //   try {
-  //     // Fetch YTD up to this payslip's month
-  //     const [ytd, org, logoData] = await Promise.all([
-  //       getPayslipYtd(p.userId, p.periodYear, p.periodMonth),
-  //       getFullOrganizationProfile(),
-  //       getLogoAsBase64(),
-  //     ]);
-
-  //     // Find primary bank
-  //     const primaryBank =
-  //       org.bankingInfo.find((b) => b.isPrimary) ?? org.bankingInfo[0];
-
-  //   } catch (err: any) {
-  //     toast.error(err.message);
-  //   } finally {
-  //     setGenerating(null);
-  //   }
-  // };
 
   const handleDownload = async (p: Payslip) => {
     setGenerating(p.id);

@@ -4,6 +4,12 @@ import { nanoid } from "nanoid";
 import { eq, and, inArray, isNull } from "drizzle-orm";
 import { MOVEMENT_TYPE } from "./constants";
 
+// A product's catalogue entry and its physical stock can live under different
+// sibling orgs sharing the same owner (e.g. products catalogued under one org,
+// all stock centralized under another). Scoping the product lookup to only
+// `orgId` broke DO delivery/return/delete for any such product, so lookups
+// use the whole owner group, matching product search.
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 interface MovementParams {
   orgId: string;
   userId: string;
@@ -18,28 +24,6 @@ interface MovementParams {
   notes?: string;
 }
 
-// A product's catalogue entry and its physical stock can live under
-// different sibling orgs sharing the same owner (e.g. products catalogued
-// under one org, all stock centralized under another — see the equivalent
-// resolver in server/field-stock.ts for the full story). Scoping the
-// product lookup to only `orgId` broke DO delivery/return/delete for any
-// such product; matching product search's own owner-group scope fixes it.
-async function getOwnerOrgIds(currentOrgId: string): Promise<string[]> {
-  const [ownerMember] = await db
-    .select({ userId: member.userId })
-    .from(member)
-    .where(and(eq(member.organizationId, currentOrgId), eq(member.role, "owner"), isNull(member.deletedAt)))
-    .limit(1);
-  if (!ownerMember) return [currentOrgId];
-
-  const ownedOrgs = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)));
-
-  const ids = ownedOrgs.map((o) => o.organizationId);
-  return ids.length ? ids : [currentOrgId];
-}
 
 async function resolveProductCode(productId: string, orgId: string): Promise<string> {
   const ownerOrgIds = await getOwnerOrgIds(orgId);
