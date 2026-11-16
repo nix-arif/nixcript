@@ -645,7 +645,38 @@ export async function setClaimCategoryAccount(
    SUBMIT / APPROVE / REJECT / CANCEL
 ========================= */
 
-export async function submitClaim(data: ApplyClaimInput): Promise<string> {
+// Problems the user can fix themselves (empty claim, over the limit, …) are RETURNED, not thrown:
+// the message of an error thrown from a server action is hidden in production builds, so the user
+// would only see a generic "an error occurred". Permission and unexpected errors still throw.
+export type ClaimResult<T = void> = { ok: true; value: T } | { ok: false; error: string };
+
+class ClaimInputError extends Error {}
+
+async function claimGuard<T>(run: () => Promise<T>): Promise<ClaimResult<T>> {
+  try {
+    return { ok: true, value: await run() };
+  } catch (e) {
+    if (e instanceof ClaimInputError) return { ok: false, error: e.message };
+    throw e;
+  }
+}
+
+const TYPE_GONE = "This claim type is no longer available (it may have been deactivated). Please contact HR.";
+const NO_ENTERTAINMENT = "Add at least one complete entertainment detail (date, venue, customer, purpose and amount) before submitting.";
+const NO_ITEMS = "Add at least one expense item before submitting.";
+const ZERO_TOTAL = "The claim total is RM 0.00. Enter an amount greater than zero (distance, meal days, accommodation or another expense) before submitting.";
+
+export async function submitClaim(data: ApplyClaimInput): Promise<ClaimResult<string>> {
+  return claimGuard(() => submitClaimImpl(data));
+}
+export async function finalizeDraftClaim(draftId: string, data: ApplyClaimInput): Promise<ClaimResult> {
+  return claimGuard(() => finalizeDraftClaimImpl(draftId, data));
+}
+export async function resubmitRejectedClaim(appId: string, data: ApplyClaimInput): Promise<ClaimResult> {
+  return claimGuard(() => resubmitRejectedClaimImpl(appId, data));
+}
+
+async function submitClaimImpl(data: ApplyClaimInput): Promise<string> {
   const { orgId, userId, userName } = await requireAccess("claim:apply");
 
   const type = await db
@@ -653,27 +684,27 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
     .from(claimType)
     .where(and(eq(claimType.id, data.claimTypeId), eq(claimType.organizationId, orgId)))
     .limit(1);
-  if (!type[0] || !type[0].isActive) throw new Error("Claim type not found or inactive");
+  if (!type[0] || !type[0].isActive) throw new ClaimInputError(TYPE_GONE);
   const ct = type[0];
   const formType = ct.category as ClaimFormType;
 
   // ── Compute total amount ──────────────────────────────────────────────────
   let totalAmount: number;
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
-    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new Error("At least one entertainment detail is required");
+    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new ClaimInputError(NO_ENTERTAINMENT);
     totalAmount = data.entertainmentDetails.reduce((s, ed) => s + parseFloat(ed.amount), 0);
   } else {
     if (!data.lineItems || data.lineItems.length === 0)
-      throw new Error("At least one expense line item is required");
+      throw new ClaimInputError(NO_ITEMS);
     totalAmount = data.lineItems.reduce((sum, li) => sum + parseFloat(li.amountMyr), 0);
   }
-  if (isNaN(totalAmount) || totalAmount <= 0) throw new Error("Total amount must be greater than 0");
+  if (isNaN(totalAmount) || totalAmount <= 0) throw new ClaimInputError(ZERO_TOTAL);
 
   // ── Cap checks ────────────────────────────────────────────────────────────
   if (ct.maxAmountPerClaim) {
     const cap = parseFloat(ct.maxAmountPerClaim);
     if (totalAmount > cap)
-      throw new Error(`Maximum claim amount per application is RM ${ct.maxAmountPerClaim}`);
+      throw new ClaimInputError(`This claim is RM ${totalAmount.toFixed(2)}, but "${ct.name}" allows at most RM ${ct.maxAmountPerClaim} per claim. Reduce the amount or split it into separate claims.`);
   }
   if (ct.maxAmountPerYear) {
     const yearCap = parseFloat(ct.maxAmountPerYear);
@@ -693,7 +724,7 @@ export async function submitClaim(data: ApplyClaimInput): Promise<string> {
     const ytdTotal = ytdRows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
     if (ytdTotal + totalAmount > yearCap) {
       const remaining = yearCap - ytdTotal;
-      throw new Error(`Annual cap of RM ${ct.maxAmountPerYear} exceeded. Remaining: RM ${remaining.toFixed(2)}`);
+      throw new ClaimInputError(`This claim (RM ${totalAmount.toFixed(2)}) would take your ${year} total for "${ct.name}" over its yearly limit of RM ${ct.maxAmountPerYear}. You have RM ${Math.max(0, remaining).toFixed(2)} left for ${year}.`);
     }
   }
 
@@ -1288,24 +1319,24 @@ export async function updateDraftClaim(draftId: string, data: ApplyClaimInput): 
   }).where(eq(claimApplication.id, draftId));
 }
 
-export async function finalizeDraftClaim(draftId: string, data: ApplyClaimInput): Promise<void> {
+async function finalizeDraftClaimImpl(draftId: string, data: ApplyClaimInput): Promise<void> {
   const { orgId, userId, userName } = await requireAccess("claim:apply");
   const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, draftId), eq(claimApplication.organizationId, orgId))).limit(1);
-  if (!app[0] || app[0].userId !== userId) throw new Error("Draft not found");
-  if (app[0].status !== "DRAFT") throw new Error("Only drafts can be finalized");
+  if (!app[0] || app[0].userId !== userId) throw new ClaimInputError("This draft no longer exists. It may have been deleted or already submitted. Please refresh the page.");
+  if (app[0].status !== "DRAFT") throw new ClaimInputError("This claim has already been submitted, so it can no longer be submitted as a draft. Please refresh the page.");
   const type = await db.select().from(claimType).where(and(eq(claimType.id, data.claimTypeId), eq(claimType.organizationId, orgId))).limit(1);
-  if (!type[0] || !type[0].isActive) throw new Error("Claim type not found or inactive");
+  if (!type[0] || !type[0].isActive) throw new ClaimInputError(TYPE_GONE);
   const ct = type[0];
   const formType = ct.category as ClaimFormType;
   let totalAmount: number;
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
-    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new Error("At least one entertainment detail required");
+    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new ClaimInputError(NO_ENTERTAINMENT);
     totalAmount = data.entertainmentDetails.reduce((s, ed) => s + parseFloat(ed.amount), 0);
   } else {
-    if (!data.lineItems || data.lineItems.length === 0) throw new Error("At least one expense item required");
+    if (!data.lineItems || data.lineItems.length === 0) throw new ClaimInputError(NO_ITEMS);
     totalAmount = data.lineItems.reduce((s, li) => s + parseFloat(li.amountMyr), 0);
   }
-  if (isNaN(totalAmount) || totalAmount <= 0) throw new Error("Total amount must be greater than 0");
+  if (isNaN(totalAmount) || totalAmount <= 0) throw new ClaimInputError(ZERO_TOTAL);
   const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
   const totalAmountFinal = await replaceClaimItems(draftId, orgId, userId, data, ct);
   await db.update(claimApplication).set({
@@ -1334,24 +1365,24 @@ export async function finalizeDraftClaim(draftId: string, data: ApplyClaimInput)
   }
 }
 
-export async function resubmitRejectedClaim(appId: string, data: ApplyClaimInput): Promise<void> {
+async function resubmitRejectedClaimImpl(appId: string, data: ApplyClaimInput): Promise<void> {
   const { orgId, userId, userName } = await requireAccess("claim:apply");
   const app = await db.select().from(claimApplication).where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId))).limit(1);
-  if (!app[0] || app[0].userId !== userId) throw new Error("Application not found");
-  if (app[0].status !== "REJECTED") throw new Error("Only rejected claims can be resubmitted");
+  if (!app[0] || app[0].userId !== userId) throw new ClaimInputError("This claim could not be found. It may have been deleted. Please refresh the page.");
+  if (app[0].status !== "REJECTED") throw new ClaimInputError("Only a rejected claim can be resubmitted. This claim has changed status, please refresh the page.");
   const type = await db.select().from(claimType).where(and(eq(claimType.id, data.claimTypeId), eq(claimType.organizationId, orgId))).limit(1);
-  if (!type[0] || !type[0].isActive) throw new Error("Claim type not found or inactive");
+  if (!type[0] || !type[0].isActive) throw new ClaimInputError(TYPE_GONE);
   const ct = type[0];
   const formType = ct.category as ClaimFormType;
   let totalAmount: number;
   if (formType === CLAIM_FORM.ENTERTAINMENT_FORM) {
-    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new Error("At least one entertainment detail required");
+    if (!data.entertainmentDetails || data.entertainmentDetails.length === 0) throw new ClaimInputError(NO_ENTERTAINMENT);
     totalAmount = data.entertainmentDetails.reduce((s, ed) => s + parseFloat(ed.amount), 0);
   } else {
-    if (!data.lineItems || data.lineItems.length === 0) throw new Error("At least one expense item required");
+    if (!data.lineItems || data.lineItems.length === 0) throw new ClaimInputError(NO_ITEMS);
     totalAmount = data.lineItems.reduce((s, li) => s + parseFloat(li.amountMyr), 0);
   }
-  if (isNaN(totalAmount) || totalAmount <= 0) throw new Error("Total amount must be greater than 0");
+  if (isNaN(totalAmount) || totalAmount <= 0) throw new ClaimInputError(ZERO_TOTAL);
   const claimDate = /^\d{4}-\d{2}$/.test(data.claimPeriod) ? `${data.claimPeriod}-01` : data.claimPeriod;
   const totalAmountFinal = await replaceClaimItems(appId, orgId, userId, data, ct);
   await db.update(claimApplication).set({

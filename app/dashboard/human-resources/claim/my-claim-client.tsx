@@ -1414,6 +1414,17 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
         entertainmentDetails = validEnt.map(r => ({ eventDate: r.eventDate, restaurantName: r.restaurantName, customerName: r.customerName, departmentOrganization: r.departmentOrganization, purpose: r.purpose, amount: r.amount }));
       }
 
+      // A travel row always adds a TRAVEL line, even at RM 0.00 (e.g. a flight or company car with no
+      // mileage), so "at least one item" is not enough: the server rejects a claim that totals nothing.
+      if (lineItems) {
+        const total = lineItems.reduce((sum, li) => sum + (parseFloat(li.amountMyr) || 0), 0);
+        if (!(total > 0)) {
+          toast.error("The claim total is RM 0.00. Enter a distance, meal days, accommodation or another expense amount before submitting.");
+          setSubmitting(false);
+          return;
+        }
+      }
+
       const periodLabel = /^\d{4}-\d{2}$/.test(claimPeriod)
         ? new Date(claimPeriod + "-02").toLocaleDateString("en-MY", { month: "long", year: "numeric" })
         : null;
@@ -1425,15 +1436,20 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
 
       const claimData = { claimTypeId: selectedType.id, claimPeriod, description: autoDesc, lineItems, entertainmentDetails };
 
+      // Fixable problems (empty claim, over the limit…) come back as { ok: false, error }, so the user sees the real reason
       let appId: string;
       if (editingApp?.status === "DRAFT") {
-        await finalizeDraftClaim(editingApp.id, claimData);
+        const r = await finalizeDraftClaim(editingApp.id, claimData);
+        if (!r.ok) { toast.error(r.error); return; }
         appId = editingApp.id;
       } else if (editingApp?.status === "REJECTED") {
-        await resubmitRejectedClaim(editingApp.id, claimData);
+        const r = await resubmitRejectedClaim(editingApp.id, claimData);
+        if (!r.ok) { toast.error(r.error); return; }
         appId = editingApp.id;
       } else {
-        appId = await submitClaim(claimData);
+        const r = await submitClaim(claimData);
+        if (!r.ok) { toast.error(r.error); return; }
+        appId = r.value;
       }
 
       // Build upload queue — skip files already uploaded via immediate upload.
