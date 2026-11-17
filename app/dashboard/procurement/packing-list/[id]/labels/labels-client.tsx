@@ -14,6 +14,7 @@ import {
   type LabelDesign, type LabelElement, type LabelElementKind, type LabelFieldKey, type LabelItemData,
 } from "@/lib/label-design";
 import { generateLabelsPdf } from "./generate-labels-pdf";
+import { lotWithPiece, pieceNo } from "@/lib/lot-no";
 
 const PX_PER_MM = 5; // designer zoom
 const PT_TO_PX = PX_PER_MM / 2.8346; // 1pt = 0.3528mm
@@ -28,8 +29,8 @@ const MIN_SIZE: Record<LabelElementKind, { w: number; h: number }> = {
   barcode: { w: 15, h: 4 }, line: { w: 2, h: 0.2 }, box: { w: 3, h: 3 },
 };
 
-// Quick-add text snippets common on medical-device labels. LOT/expiry are
-// typed by hand (they aren't stored on the packing list).
+// Quick-add text snippets common on medical-device labels. The lot number is a data field ("Lot no.",
+// or "Lot no. + piece no." for the number of each piece); expiry is typed by hand.
 const PRESETS: { label: string; text: string }[] = [
   { label: "LOT", text: "LOT: " },
   { label: "Expiry", text: "EXP: " },
@@ -91,11 +92,12 @@ function ElementView({ el, data }: { el: LabelElement; data: LabelItemData }) {
 }
 
 export function LabelsClient({
-  packingListId, packingListNo, labels, templates: initialTemplates, canCreateTemplate, canUpdateTemplate, canDeleteTemplate,
+  packingListId, packingListNo, labels, lotProblem, templates: initialTemplates, canCreateTemplate, canUpdateTemplate, canDeleteTemplate,
 }: {
   packingListId: string;
   packingListNo: string;
   labels: PackingListLabel[];
+  lotProblem: string | null; // why the lot numbers could not be made (e.g. no company code yet)
   templates: LabelTemplateRow[];
   canCreateTemplate: boolean;
   canUpdateTemplate: boolean;
@@ -115,8 +117,13 @@ export function LabelsClient({
   const [saving, setSaving] = useState(false);
   const [addField, setAddField] = useState<LabelFieldKey>("qty");
 
-  const sample: LabelItemData = labels[Math.min(previewIdx, labels.length - 1)]?.data ?? {
+  const previewData = labels[Math.min(previewIdx, labels.length - 1)]?.data;
+  const sample: LabelItemData = previewData
+    // the preview shows the first piece's number
+    ? { ...previewData, piece: pieceNo(1), lotPiece: previewData.lot ? lotWithPiece(previewData.lot, 1) : "" }
+    : {
     code: "CODE-123", description: "Sample description", mda: "GB1234567-123456", qty: "1", uom: "pcs", brand: "Brand",
+    lot: "LOT-01-260005-052-24", piece: "001", lotPiece: "LOT-01-260005-052-24-001",
     supplier: "Supplier", plNo: packingListNo, poNo: "PO/000-26", company: "Company", address: "Address", establishment: "", date: "00.00.0000",
   };
   const sel = design.elements.find((e) => e.id === selectedId) ?? null;
@@ -160,7 +167,12 @@ export function LabelsClient({
     window.addEventListener("pointerup", up);
   };
 
-  const sheet = labels.flatMap((l) => Array.from({ length: copies[l.itemId] ?? 0 }, () => l.data));
+  // one sticker per piece: each carries its own number (001, 002 …) after the lot
+  const sheet = labels.flatMap((l) => Array.from({ length: copies[l.itemId] ?? 0 }, (_, n) => ({
+    ...l.data,
+    piece: pieceNo(n + 1),
+    lotPiece: l.data.lot ? lotWithPiece(l.data.lot, n + 1) : "",
+  })));
 
   async function handleDownload() {
     setGenerating(true);
@@ -291,6 +303,12 @@ export function LabelsClient({
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
+      {lotProblem && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+          <span className="font-semibold">No lot numbers yet:</span>
+          <span>{lotProblem}. Lot fields on the stickers stay empty until this is fixed{/company code/.test(lotProblem) ? " (set it under Organization → Organization profile → Company code)" : ""}.</span>
+        </div>
+      )}
       <PageHeader
         title="Label Stickers"
         description={`${packingListNo} · ${sheet.length} sticker${sheet.length === 1 ? "" : "s"}`}

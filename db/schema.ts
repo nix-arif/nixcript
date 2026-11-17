@@ -1069,6 +1069,8 @@ export const organizationProfile = pgTable("organization_profile", {
 
   // MDA
   mdaEstablishmentNo: text("mda_establishment_no"),
+  // Two digits, unique inside the owner's group of organizations: the company part of lot numbers (LOT-01-…)
+  companyCode: text("company_code"),
   mdaEstablishmentValidity: timestamp("mda_establishment_validity", {
     mode: "string",
   }),
@@ -2926,6 +2928,8 @@ export const packingListItem = pgTable(
     designBrandName: text("design_brand_name"),
     designBrandCode: text("design_brand_code"),
     privateLabelCode: text("private_label_code"),
+    // LOT-<company code>-<YY><packing list no>-<PO no>-<PO line>: set once when the goods are received (lib/lot-no.ts)
+    lotNo: text("lot_no"),
     imageKey: text("image_key"),
     // Provenance — same meaning as on purchaseOrderItem, carried through so
     // the same badges ("from catalogue", "{username} edited SPO", etc.) can

@@ -6,6 +6,7 @@ import QRCode from "qrcode";
 
 export type LabelFieldKey =
   | "code" | "description" | "mda" | "qty" | "uom" | "brand" | "supplier"
+  | "lot" | "piece" | "lotPiece"
   | "plNo" | "poNo" | "company" | "address" | "establishment" | "date";
 
 export const FIELD_LABEL: Record<LabelFieldKey, string> = {
@@ -14,6 +15,9 @@ export const FIELD_LABEL: Record<LabelFieldKey, string> = {
   mda: "MDA reg. no.",
   qty: "Packed qty",
   uom: "UOM",
+  lot: "Lot no.",
+  piece: "Piece no.",
+  lotPiece: "Lot no. + piece no.",
   brand: "Brand",
   supplier: "Supplier",
   plNo: "Packing list no.",

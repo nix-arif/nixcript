@@ -26,6 +26,7 @@ import {
 } from "@/db/schema";
 import { nanoid } from "nanoid";
 import type { LabelItemData } from "@/lib/label-design";
+import { buildLotNo, lotProblem } from "@/lib/lot-no";
 import { eq, and, or, asc, desc, inArray, ne, isNull, sql } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -1075,11 +1076,58 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
   };
 }
 
+// ── Lot numbers (lib/lot-no.ts) ────────────────────────────────────────────
+// The lot of a line is built from the company code, the packing list's number, the PO's number and the PO line.
+// It is stored on the line when the goods are received and never changed after; before that it is only worked out.
+const acceptedQty = (i: PackingListItemRow) =>
+  Math.max(0, (parseFloat(i.draftQtyReceived ?? i.qtyExpected) || 0) - (parseFloat(i.draftQtyReturn ?? "0") || 0));
+
+async function lotNumbersFor(
+  pl: { organizationId: string; packingListNo: string },
+  items: PackingListItemRow[],
+): Promise<{ lots: Map<string, string>; problem: string | null }> {
+  const lots = new Map<string, string>();
+  if (items.length === 0) return { lots, problem: null };
+  const [[profile], poRows, lineRows] = await Promise.all([
+    db.select({ code: organizationProfile.companyCode }).from(organizationProfile).where(eq(organizationProfile.organizationId, pl.organizationId)).limit(1),
+    db.select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo }).from(purchaseOrder).where(inArray(purchaseOrder.id, [...new Set(items.map((i) => i.purchaseOrderId))])),
+    db.select({ id: purchaseOrderItem.id, rowNo: purchaseOrderItem.rowNo }).from(purchaseOrderItem).where(inArray(purchaseOrderItem.id, [...new Set(items.map((i) => i.purchaseOrderItemId))])),
+  ]);
+  let problem: string | null = null;
+  for (const i of items) {
+    if (i.lotNo) { lots.set(i.id, i.lotNo); continue; } // already issued: never recomputed
+    const po = poRows.find((p) => p.id === i.purchaseOrderId);
+    const parts = {
+      companyCode: profile?.code ?? "",
+      packingListNo: pl.packingListNo,
+      poNo: po?.poNo ?? po?.prNo ?? "",
+      poLine: lineRows.find((l) => l.id === i.purchaseOrderItemId)?.rowNo ?? 0,
+    };
+    const lot = buildLotNo(parts);
+    if (lot) lots.set(i.id, lot);
+    else problem ??= lotProblem(parts);
+  }
+  return { lots, problem };
+}
+
+// Stores the lot on every received line that has none yet. Safe to run again: lines that have one are left alone.
+async function assignLotNumbers(packingListId: string): Promise<{ assigned: number; problem: string | null }> {
+  const [pl] = await db.select({ organizationId: packingList.organizationId, packingListNo: packingList.packingListNo }).from(packingList).where(eq(packingList.id, packingListId));
+  if (!pl) return { assigned: 0, problem: null };
+  const items = (await db.select().from(packingListItem).where(and(eq(packingListItem.packingListId, packingListId), isNull(packingListItem.removedAt))))
+    .filter((i) => !i.lotNo && acceptedQty(i) > 0);
+  const { lots, problem } = await lotNumbersFor(pl, items);
+  for (const [itemId, lot] of lots) {
+    await db.update(packingListItem).set({ lotNo: lot }).where(and(eq(packingListItem.id, itemId), isNull(packingListItem.lotNo)));
+  }
+  return { assigned: lots.size, problem };
+}
+
 export type PackingListLabel = {
   itemId: string;
   no: number; // the line number shown on the packing list page
   poLabel: string; // the PO the line is grouped under on the packing list page
-  qty: number;
+  qty: number; // the accepted quantity once the goods are inspected, else the expected quantity
   data: LabelItemData;
 };
 
@@ -1087,13 +1135,15 @@ export type PackingListLabel = {
 // label element can show or encode. The emboss code is the line's private-
 // label code when it has one, else the plain product code; the MDA
 // registration no. lives on the product, so it's looked up from the DB.
-export async function getPackingListLabels(id: string): Promise<{ packingListNo: string; labels: PackingListLabel[] } | null> {
+export async function getPackingListLabels(id: string): Promise<{ packingListNo: string; labels: PackingListLabel[]; lotProblem: string | null } | null> {
   const { orgId } = await requireAccess("label:read");
   const [pl] = await db
-    .select({ id: packingList.id, packingListNo: packingList.packingListNo, supplierSnapshot: packingList.supplierSnapshot })
+    .select({ id: packingList.id, packingListNo: packingList.packingListNo, supplierSnapshot: packingList.supplierSnapshot, status: packingList.status, organizationId: packingList.organizationId })
     .from(packingList)
     .where(and(eq(packingList.id, id), eq(packingList.organizationId, orgId)));
   if (!pl) return null;
+  // a list that was received before lot numbers existed gets its lots the first time the labels are opened
+  if (pl.status === "completed") await assignLotNumbers(id).catch((e) => console.error("assignLotNumbers failed:", e));
   const allItems = await db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo));
 
   // Same sequence as the packing list page: lines grouped by PO (POs in natural PO-number order),
@@ -1109,6 +1159,7 @@ export async function getPackingListLabels(id: string): Promise<{ packingListNo:
   const poOrder = [...poIds].sort((a, b) => comparePoNo(poLabelOf(a), poLabelOf(b)));
   const items = poOrder.flatMap((poId) => allItems.filter((i) => i.purchaseOrderId === poId && !i.removedAt));
   const poLineByItem = await getPoLineContext(id, items.map((i) => i.purchaseOrderItemId));
+  const { lots, problem: lotIssue } = await lotNumbersFor(pl, items);
   // the number shown on the page: the PO's own line number, else the position inside the PO group
   const lineNo = (i: (typeof allItems)[number]) =>
     poLineByItem.get(i.purchaseOrderItemId)?.rowNo ?? allItems.filter((x) => x.purchaseOrderId === i.purchaseOrderId).findIndex((x) => x.id === i.id) + 1;
@@ -1148,9 +1199,12 @@ export async function getPackingListLabels(id: string): Promise<{ packingListNo:
 
   return {
     packingListNo: pl.packingListNo,
+    lotProblem: lotIssue,
     labels: items.map((i) => {
       const p = prodFor(i);
-      const qty = Math.max(1, Math.ceil(parseFloat(i.qtyExpected) || 1));
+      // once inspected, one sticker per accepted piece (a returned piece gets none); before that, the expected quantity
+      const inspected = i.draftQtyReceived != null;
+      const qty = Math.max(inspected ? 0 : 1, Math.ceil(inspected ? acceptedQty(i) : (parseFloat(i.qtyExpected) || 1)));
       return {
         itemId: i.id,
         no: lineNo(i),
@@ -1161,6 +1215,9 @@ export async function getPackingListLabels(id: string): Promise<{ packingListNo:
           description: i.description ?? "",
           mda: p?.mda ?? "",
           qty: String(qty),
+          lot: lots.get(i.id) ?? "",
+          piece: "", // filled in per sticker (001, 002 …) on the labels page
+          lotPiece: "",
           uom: i.uom ?? "",
           brand: p?.brand ?? "",
           supplier: pl.supplierSnapshot?.name ?? "",
@@ -2163,6 +2220,8 @@ async function applyPackingListInspection(
   if (!anyReceived) throw new Error("At least one item must have a quantity received greater than 0");
 
   await db.update(packingList).set({ status: "completed" }).where(eq(packingList.id, id));
+  // the goods are in: issue the lot numbers (a problem, e.g. no company code yet, must not undo the receipt)
+  try { await assignLotNumbers(id); } catch (e) { console.error("assignLotNumbers failed:", e); }
 
   // Score any replacement attempts linked to this packing list's lines and close
   // the returns they fully cover.

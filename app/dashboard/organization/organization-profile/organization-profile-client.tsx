@@ -220,6 +220,13 @@ export function OrganizationProfileClient({ data }: Props) {
   const [mofValidity, setMofValidity] = useState(data.mofValidity?.slice(0, 10) ?? "");
   const [pkkNo, setPkkNo] = useState(data.pkkNo ?? "");
 
+  // Company code (the 01 in lot numbers LOT-01-…)
+  const [companyCode, setCompanyCode] = useState(data.companyCode ?? "");
+  const codeTakenBy = data.siblingCompanyCodes.find((c) => c.code === companyCode.trim());
+  const codeProblem = companyCode.trim() && !/^\d{2}$/.test(companyCode.trim())
+    ? "Two digits, for example 01"
+    : codeTakenBy ? `Already used by ${codeTakenBy.name}` : "";
+
   // MDA
   const [mdaEstablishmentNo, setMdaEstablishmentNo] = useState(
     data.mdaEstablishmentNo ?? "",
@@ -315,9 +322,11 @@ export function OrganizationProfileClient({ data }: Props) {
       toast.error("Give each warehouse a name (e.g. Main Warehouse) — a warehouse without a name can't be used for stock");
       return;
     }
+    if (codeProblem) { toast.error(`Company code: ${codeProblem}`); return; }
     setSaving(true);
     try {
       await upsertOrganizationProfile({
+        companyCode: companyCode.trim() || null,
         companyName,
         businessType,
         companyAddress,
@@ -658,6 +667,33 @@ export function OrganizationProfileClient({ data }: Props) {
               onRemove={() => handleRemoveCert("pkkCertUrl")}
               onView={() => pkkCertUrl && handleViewCert(pkkCertUrl)}
             />
+          </div>
+        </div>
+
+        {/* ── Company code ─────────────────────────────────────────────── */}
+        <div className="bg-background border border-border rounded-xl overflow-hidden">
+          <SectionHeader icon={FileTextIcon} title="Company code" />
+          <div className="p-4 space-y-3">
+            <div className="bg-muted/30 border border-border rounded-lg p-3 text-xs text-muted-foreground leading-relaxed">
+              A two-digit code for this company, used in lot numbers (LOT-<span className="font-semibold">01</span>-260005-052-24). It must be different for each of your organizations, and it is fixed into the lot numbers already issued, so choose it once.
+            </div>
+            <Field label="Company code">
+              <Input
+                value={companyCode}
+                onChange={(e) => setCompanyCode(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                placeholder="e.g. 01"
+                inputMode="numeric"
+                maxLength={2}
+                aria-invalid={!!codeProblem}
+                className="h-9 w-24 text-sm font-mono"
+              />
+              {codeProblem && <p className="mt-1 text-xs text-destructive">{codeProblem}</p>}
+              {!codeProblem && data.siblingCompanyCodes.length > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Used by your other organizations: {data.siblingCompanyCodes.map((c) => `${c.code} (${c.name})`).join(", ")}
+                </p>
+              )}
+            </Field>
           </div>
         </div>
 

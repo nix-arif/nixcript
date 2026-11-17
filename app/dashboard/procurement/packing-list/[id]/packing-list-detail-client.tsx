@@ -608,6 +608,9 @@ export function PackingListDetailClient({
                                   {item.sourcingType === "oem" ? "OEM" : "Trading"}
                                 </span>
                               )}
+                              {item.lotNo && (
+                                <span className="font-mono text-[10px] text-muted-foreground" title="Lot number of this line. Each piece's sticker adds -001, -002 … after it.">{item.lotNo}</span>
+                              )}
                               {showSourcing && item.sourcingType === "oem" && (
                                 item.privateLabelCode?.trim() && item.privateLabelCode !== item.productCode ? (
                                   <div className="flex flex-col gap-0.5">

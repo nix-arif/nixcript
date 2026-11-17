@@ -25,6 +25,7 @@ export default async function PackingListLabelsPage({
       packingListId={id}
       packingListNo={data.packingListNo}
       labels={data.labels}
+      lotProblem={data.lotProblem}
       templates={templates}
       canCreateTemplate={hasAccess(permissions, "label:create")}
       canUpdateTemplate={hasAccess(permissions, "label:update")}

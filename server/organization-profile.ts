@@ -6,7 +6,9 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
+import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
+import { isCompanyCode } from "@/lib/lot-no";
 import {
   S3Client,
   PutObjectCommand,
@@ -113,7 +115,26 @@ type OrganizationProfileData = Partial<
   >
 >;
 
+// Other organizations of the same owner that already use a company code, so a code stays unique inside the group
+async function getSiblingCompanyCodes(orgId: string): Promise<{ code: string; name: string }[]> {
+  const ownerOrgIds = (await getOwnerOrgIds(orgId)).filter((id) => id !== orgId);
+  if (ownerOrgIds.length === 0) return [];
+  const rows = await db
+    .select({ code: organizationProfile.companyCode, name: organization.name })
+    .from(organizationProfile)
+    .innerJoin(organization, eq(organization.id, organizationProfile.organizationId))
+    .where(inArray(organizationProfile.organizationId, ownerOrgIds));
+  return rows.filter((r): r is { code: string; name: string } => !!r.code);
+}
+
 async function doUpsertOrganizationProfile(orgId: string, data: OrganizationProfileData) {
+  if (data.companyCode !== undefined) {
+    const code = (data.companyCode ?? "").trim();
+    if (code && !isCompanyCode(code)) throw new Error("The company code is two digits, for example 01.");
+    const taken = code ? (await getSiblingCompanyCodes(orgId)).find((c) => c.code === code) : undefined;
+    if (taken) throw new Error(`Company code ${code} is already used by ${taken.name}.`);
+    data = { ...data, companyCode: code || null };
+  }
   await db
     .insert(organizationProfile)
     .values({
@@ -356,6 +377,8 @@ export async function getFullOrganizationProfile() {
     mofValidity: profile.mofValidity ?? null,
     pkkNo: profile.pkkNo ?? null,
     mdaEstablishmentNo: profile.mdaEstablishmentNo ?? null,
+    companyCode: profile.companyCode ?? null,
+    siblingCompanyCodes: await getSiblingCompanyCodes(orgId),
     mdaEstablishmentValidity: profile.mdaEstablishmentValidity ?? null,
     attentionNameSize: profile.attentionNameSize ?? "medium",
     attentionNameBold: profile.attentionNameBold ?? 1,
