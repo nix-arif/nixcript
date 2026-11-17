@@ -7,9 +7,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { setClaimPaid, type ClaimApplicationWithDetails } from "@/server/claim";
+import { setClaimPaid, recallApprovedClaim, type ClaimApplicationWithDetails } from "@/server/claim";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { CLAIM_FORM } from "@/lib/claim/constants";
-import { ClipboardListIcon, PrinterIcon, SearchIcon, ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon, CheckCircle2Icon, CircleIcon } from "lucide-react";
+import { AlertTriangleIcon, ClipboardListIcon, PrinterIcon, Undo2Icon, SearchIcon, ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon, CheckCircle2Icon, CircleIcon } from "lucide-react";
 
 const FORM_LABELS: Record<string, string> = {
   LOCAL: "Local Reimbursement",
@@ -91,9 +93,10 @@ const STATUS_FILTER_LABELS: Record<string, string> = {
 interface Props {
   applications: ClaimApplicationWithDetails[];
   currentUserName?: string;
+  isOwner?: boolean;
 }
 
-export function AllClaimsClient({ applications: initialApplications, currentUserName }: Props) {
+export function AllClaimsClient({ applications: initialApplications, currentUserName, isOwner = false }: Props) {
   const [applications, setApplications] = useState(initialApplications);
   // Server data re-sent (live refresh / router.refresh): show it
   const [seenInitialApplications, setSeenInitialApplications] = useState(initialApplications);
@@ -102,6 +105,10 @@ export function AllClaimsClient({ applications: initialApplications, currentUser
   const [statusFilter, setStatusFilter] = useState<typeof STATUS_FILTERS[number]>("APPROVED");
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
   const [togglingPaidId, setTogglingPaidId] = useState<string | null>(null);
+  // owner: recall an approved claim
+  const [recalling, setRecalling] = useState<ClaimApplicationWithDetails | null>(null);
+  const [recallReason, setRecallReason] = useState("");
+  const [recallBusy, setRecallBusy] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -149,6 +156,25 @@ export function AllClaimsClient({ applications: initialApplications, currentUser
       toast.error(err instanceof Error ? err.message : "Failed to update paid status");
     } finally {
       setTogglingPaidId(null);
+    }
+  }
+
+  async function handleRecall() {
+    if (!recalling) return;
+    setRecallBusy(true);
+    try {
+      const r = await recallApprovedClaim(recalling.id, recallReason);
+      if (!r.ok) { toast.error(r.error, { duration: 10000 }); return; }
+      setApplications((prev) => prev.map((a) => a.id === recalling.id
+        ? { ...a, status: r.value.status, journalEntryId: null, paidAt: null, recalledAt: new Date(), recallReason: recallReason.trim() }
+        : a));
+      toast.success(`${recalling.applicationNo} was taken back and is waiting for approval again`);
+      setRecalling(null);
+      setRecallReason("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not recall the claim");
+    } finally {
+      setRecallBusy(false);
     }
   }
 
@@ -223,6 +249,7 @@ export function AllClaimsClient({ applications: initialApplications, currentUser
                 <TableHead className="w-44">Bank Account</TableHead>
                 <TableHead className="w-32">Paid</TableHead>
                 <TableHead className="w-16 text-right">PDF</TableHead>
+                {isOwner && <TableHead className="w-24 text-right">Recall</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -241,7 +268,17 @@ export function AllClaimsClient({ applications: initialApplications, currentUser
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{fmtClaimDate(app.claimDate, ft)}</TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">{fmtSubmittedDate(app.createdAt)}</TableCell>
                     <TableCell className="text-right text-sm font-semibold">{fmtAmount(app.amount)}</TableCell>
-                    <TableCell><StatusBadge status={app.status} /></TableCell>
+                    <TableCell>
+                      <StatusBadge status={app.status} />
+                      {app.status === "APPROVED" && !app.journalEntryId && (
+                        <div className="mt-1 flex items-center gap-1 text-[10px] font-medium text-amber-700 dark:text-amber-400" title="The approval did not post a journal entry (no Staff Claims Payable account, or no account mapped for the expense). Recall and approve again after fixing the accounts, or post it manually.">
+                          <AlertTriangleIcon className="h-3 w-3" />No journal entry
+                        </div>
+                      )}
+                      {app.recalledAt && (app.status === "CHECKED" || app.status === "PENDING") && (
+                        <div className="mt-1 text-[10px] text-muted-foreground" title={app.recallReason ?? undefined}>Approval recalled</div>
+                      )}
+                    </TableCell>
                     <TableCell className="text-xs">
                       {app.applicantBankAccountNo ? (
                         <div className="flex flex-col">
@@ -294,6 +331,20 @@ export function AllClaimsClient({ applications: initialApplications, currentUser
                         </Button>
                       )}
                     </TableCell>
+                    {isOwner && (
+                      <TableCell className="text-right">
+                        {app.status === "APPROVED" && (
+                          <Button
+                            variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs"
+                            disabled={!!app.paidAt}
+                            title={app.paidAt ? "Marked as paid: mark it unpaid first to recall it" : "Take this approval back for re-approval"}
+                            onClick={() => { setRecalling(app); setRecallReason(""); }}
+                          >
+                            <Undo2Icon className="h-3 w-3" />Recall
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })}
@@ -301,6 +352,30 @@ export function AllClaimsClient({ applications: initialApplications, currentUser
           </Table>
         </div>
       )}
+
+      <Dialog open={!!recalling} onOpenChange={(o) => { if (!o && !recallBusy) setRecalling(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Recall approval of {recalling?.applicationNo}</DialogTitle>
+            <DialogDescription>
+              {recalling?.applicantName ? `${recalling.applicantName}'s ` : ""}{recalling?.claimTypeName} ({recalling ? fmtAmount(recalling.amount) : ""}) goes back for approval.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+            <li>The claim returns to {recalling?.checkedBy ? "Checked" : "Pending"} and approvers are notified to approve it again.</li>
+            <li>{recalling?.journalEntryId ? "The journal entry posted by the approval is voided (it stays on record), so approving again does not post it twice." : "No journal entry was posted for this approval, so nothing needs voiding."}</li>
+            <li>The applicant is told the approval was withdrawn, with your reason.</li>
+          </ul>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="recall-reason">Reason <span className="text-destructive">*</span></label>
+            <Textarea id="recall-reason" rows={3} value={recallReason} onChange={(e) => setRecallReason(e.target.value)} placeholder="e.g. Wrong amount approved, or the journal entry did not post" autoFocus />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRecalling(null)} disabled={recallBusy}>Cancel</Button>
+            <Button onClick={handleRecall} disabled={recallBusy || recallReason.trim().length < 3}>{recallBusy ? "Recalling…" : "Recall approval"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

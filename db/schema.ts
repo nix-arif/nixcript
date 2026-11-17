@@ -4242,6 +4242,10 @@ export const claimApplication = pgTable(
     // Independent of `status` (stays APPROVED); absence of paidAt means unpaid.
     paidAt: timestamp("paid_at"),
     paidBy: text("paid_by").references(() => user.id),
+    // Owner recall of an approval (the latest one): the claim went back for re-approval
+    recalledBy: text("recalled_by").references(() => user.id),
+    recalledAt: timestamp("recalled_at"),
+    recallReason: text("recall_reason"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },

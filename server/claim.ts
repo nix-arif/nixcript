@@ -1015,6 +1015,68 @@ export async function approveClaim(appId: string, comment?: string): Promise<voi
   });
 }
 
+// Owner-only: takes an APPROVED claim back for re-approval (an approval that was a mistake, or whose journal entry
+// failed to post). The claim returns to CHECKED (or PENDING if it was never checked), the review is cleared, and the
+// journal entry its approval posted is voided so approving it again does not post a second one. A claim that is marked
+// paid cannot be recalled: the bank transfer has happened, so mark it unpaid first. Problems come back as a readable
+// message, not a thrown error (those are hidden in production).
+export async function recallApprovedClaim(appId: string, reason: string): Promise<ClaimResult<{ status: string }>> {
+  const { orgId, userId } = await getSession();
+  const [m] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId), isNull(member.deletedAt)))
+    .limit(1);
+  if (!m || m.role !== "owner") return { ok: false, error: "Only the organization owner can recall an approved claim." };
+
+  const why = reason?.trim() ?? "";
+  if (why.length < 3) return { ok: false, error: "Enter the reason for recalling this approval (it is recorded on the claim)." };
+
+  const [app] = await db
+    .select()
+    .from(claimApplication)
+    .where(and(eq(claimApplication.id, appId), eq(claimApplication.organizationId, orgId)))
+    .limit(1);
+  if (!app) return { ok: false, error: "Claim not found." };
+  if (app.status !== "APPROVED") return { ok: false, error: `Only an approved claim can be recalled (this one is ${app.status.toLowerCase().replace("_", " ")}).` };
+  if (app.paidAt) return { ok: false, error: "This claim is marked as paid. If the bank transfer did not happen, mark it as unpaid in the Paid column first, then recall it." };
+
+  const nextStatus = app.checkedBy ? "CHECKED" : "PENDING";
+  const queries: Parameters<typeof db.batch>[0][number][] = [
+    db.update(claimApplication).set({
+      status: nextStatus,
+      reviewedBy: null, reviewedAt: null, reviewComment: null,
+      journalEntryId: null,
+      recalledBy: userId, recalledAt: new Date(), recallReason: why,
+      updatedAt: new Date(),
+    }).where(and(eq(claimApplication.id, appId), eq(claimApplication.status, "APPROVED"))),
+  ];
+  // the journal entry the approval posted: void it (it stays on record, marked void, with the reason)
+  if (app.journalEntryId) {
+    queries.push(
+      db.update(ledgerEntry).set({ status: "VOID", voidReason: `Claim approval recalled: ${why}`, updatedAt: new Date() })
+        .where(and(eq(ledgerEntry.id, app.journalEntryId), eq(ledgerEntry.organizationId, orgId), sql`${ledgerEntry.status} <> 'VOID'`)),
+    );
+  }
+  await db.batch(queries as unknown as [(typeof queries)[0], ...(typeof queries)[number][]]);
+
+  // tell the applicant, and whoever must approve it again
+  await notifyUser(orgId, app.userId, {
+    type: "claim:recalled",
+    title: `Claim approval withdrawn: ${app.claimTypeName}`,
+    body: `The approval of your ${app.claimTypeName} (RM ${parseFloat(app.amount).toFixed(2)}) was withdrawn and it is being reviewed again. Reason: ${why}`,
+    link: `/dashboard/human-resources/claim`,
+  });
+  await notifyUsersWithPermission(orgId, "claim:approve", {
+    type: "claim:submitted",
+    title: `Claim back for approval: ${app.claimTypeName}`,
+    body: `${app.applicationNo} (RM ${parseFloat(app.amount).toFixed(2)}) was recalled by the owner and needs approval again. Reason: ${why}`,
+    link: `/dashboard/human-resources/claim/approvals`,
+  });
+
+  return { ok: true, value: { status: nextStatus } };
+}
+
 // Not a final rejection — an approver's reject is now a proposal that goes
 // to the checker for confirmation before the submitter is ever told. Status
 // only reaches REJECTED via confirmClaimRejection below; if the checker
