@@ -21,6 +21,7 @@ import {
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
+import { uniqueCpoNoFor } from "@/lib/customer-po/unique-no";
 import { eq, and, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -783,12 +784,14 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
     // that ("the PO number on customer's document"). Creating this keeps
     // the auto-created SO inside the normal CPO → SO → PR → SPO → Packing
     // List → GR traceability chain instead of skipping it.
+    // (the number must be unique in the receiving org, so a clash with one of its own CPOs gets a -2, -3 … suffix)
+    const cpoNoForTarget = await uniqueCpoNoFor(targetOrgId, po.poNo ?? po.id);
     const [cpo] = await db
       .insert(customerPurchaseOrder)
       .values({
         id: nanoid(),
         organizationId: targetOrgId,
-        customerPoNo: po.poNo ?? po.id,
+        customerPoNo: cpoNoForTarget,
         customerId: cust.id,
         customerSnapshot: { name: cust.name },
         items: poItems.map((item) => ({

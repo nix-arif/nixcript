@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { updateCustomerPo, getNextCashSaleNo, getNextPoTbcNo, type CpoItemInput, type CustomerPo } from "@/server/customer-purchase-order";
+import { updateCustomerPo, getNextCashSaleNo, getNextPoTbcNo, checkCustomerPoNo, type CpoItemInput, type CustomerPo } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
 import { searchQuotationsByNo, getQuotationForSO } from "@/server/quotation";
@@ -16,7 +16,7 @@ import { PageHeader } from "@/components/page-header";
 import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
-import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
+import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, sinkUnselected, isSettled, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
 import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
@@ -188,6 +188,16 @@ export function EditCustomerPoClient({
 
   const [cashSaleLoading, setCashSaleLoading] = useState(false);
   const [poTbcLoading, setPoTbcLoading] = useState(false);
+  // the number must be unique: told as soon as the field is left, and again before saving
+  const [noTaken, setNoTaken] = useState<{ message: string; existingId?: string } | null>(null);
+  async function checkNo(no: string): Promise<boolean> {
+    if (!no.trim()) { setNoTaken(null); return true; }
+    try {
+      const r = await checkCustomerPoNo(no.trim(), cpo.id);
+      setNoTaken(r.available ? null : { message: r.message ?? "This customer PO number is already used.", existingId: r.existingId });
+      return r.available;
+    } catch { return true; } // the server checks again when saving
+  }
 
   // ── PDF ────────────────────────────────────────────────────────────────────
   const [existingDocKey, setExistingDocKey] = useState<string | null>(cpo.documentKey ?? null);
@@ -559,12 +569,29 @@ export function EditCustomerPoClient({
     }
   }
 
-  // Move an item up/down inside its own block (same quotation and set). Numbers (#) follow the new order.
+  // Ticked items stay together in order and the unticked ones sit below the last ticked one (inside each set).
+  // This runs after every change, so a tick, a spreadsheet upload or a load all end up in the same tidy order.
+  useEffect(() => {
+    setItems((prev) => (isSettled(prev) ? prev : sinkUnselected(prev)));
+  }, [items]);
+
+  // The row that was just ticked or moved is highlighted for a moment and scrolled into view, so it is easy to follow
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!flashKey) return;
+    const t = setTimeout(() => document.querySelector(`[data-item-row="${flashKey}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
+    const clear = setTimeout(() => setFlashKey(null), 1600);
+    return () => { clearTimeout(t); clearTimeout(clear); };
+  }, [flashKey]);
+
+  // Move an item up/down among the ticked items of its own block (same quotation and set). Numbers (#) follow the new order.
   function handleMove(key: string, dir: -1 | 1) {
     setItems((prev) => moveItem(prev, key, dir));
+    setFlashKey(key);
   }
 
   function updateItem(key: string, patch: Partial<EditableItem>) {
+    if ("included" in patch) setFlashKey(key);
     setItems((prev) => {
       const next = prev.map((i) => {
         if (i._key !== key) return i;
@@ -690,6 +717,7 @@ export function EditCustomerPoClient({
 
   async function handleSave() {
     if (!customerPoNo.trim()) { toast.error("Customer PO number is required"); return; }
+    if (status !== "cancelled" && !(await checkNo(customerPoNo))) { toast.error("This customer PO number is already used. Each one must be unique."); return; }
     if (!deliveryDate) { toast.error("Due delivery date is required"); return; }
     if (salesPersons.length === 0) { toast.error("Sales person is required"); return; }
     // CPO description is required on every selected item (a cancelled CPO is exempt)
@@ -955,10 +983,17 @@ export function EditCustomerPoClient({
             </div>
             <Input
               value={customerPoNo}
-              onChange={(e) => setCustomerPoNo(e.target.value)}
+              onChange={(e) => { setCustomerPoNo(e.target.value); setNoTaken(null); }}
+              onBlur={(e) => checkNo(e.target.value)}
+              aria-invalid={!!noTaken}
               placeholder="e.g. HOSPITAL-PO-2025-001"
               className="h-9"
             />
+            {noTaken && (
+              <p className="text-[11px] leading-snug text-destructive">
+                {noTaken.message}{noTaken.existingId && <> <a className="underline" href={`/dashboard/sales/customer-po/${noTaken.existingId}`} target="_blank" rel="noreferrer">Open it</a></>}
+              </p>
+            )}
             {/^PO-TBC-/i.test(customerPoNo.trim()) && (
               <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
                 Temporary number: the customer&apos;s PO has not arrived yet. Replace it with the real PO number when it does (edit this CPO; documents already made from it are renamed too).
@@ -1192,6 +1227,7 @@ export function EditCustomerPoClient({
                         onCodeChange={handleCodeChange}
                         cpoDescError={showDescErrors}
                         move={canMove(items, item._key)}
+                        flash={flashKey === item._key}
                         onMove={handleMove}
                         rowIdx={rowIdx++}
                         inSet={inSet}
@@ -1259,6 +1295,27 @@ export function EditCustomerPoClient({
                       );
                     };
 
+                    // one block of rows (a set, or the items not in a set): the ticked ones, then a divider and the unticked ones
+                    const renderBlock = (list: EditableItem[], inSet: boolean) => {
+                      const anyOn = list.some((i) => i.included);
+                      let divided = false;
+                      for (const i of list) {
+                        if (!i.included && anyOn && !divided) {
+                          divided = true;
+                          rows.push(
+                            <tr key={`nx-${i._key}`}>
+                              <td colSpan={9} className="pb-1 pt-2.5 pl-7">
+                                <span className="rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                  Not included ({list.filter((x) => !x.included).length}) · tick to add to the CPO
+                                </span>
+                              </td>
+                            </tr>,
+                          );
+                        }
+                        rows.push(renderRow(i, inSet));
+                      }
+                    };
+
                     const renderSpacer = (key: string) => (
                       <tr key={key}><td colSpan={9} className="h-2" /></tr>
                     );
@@ -1275,13 +1332,13 @@ export function EditCustomerPoClient({
                     // Single quotation: render set groups first, then standalone
                     for (const gid of groupOrder) {
                       rows.push(renderGroupHeader(gid));
-                      items.filter((i) => i.setGroupId === gid).forEach((i) => rows.push(renderRow(i, true)));
+                      renderBlock(items.filter((i) => i.setGroupId === gid), true);
                       rows.push(renderSpacer(`sp-${gid}`));
                     }
                     const ungrouped = items.filter((i) => !i.setGroupId);
                     if (ungrouped.length > 0) {
                       if (groupOrder.length > 0) rows.push(renderLooseHeader("lh-loose"));
-                      ungrouped.forEach((i) => rows.push(renderRow(i, false)));
+                      renderBlock(ungrouped, false);
                     }
 
                     return rows;
@@ -1376,6 +1433,7 @@ function ItemRow({
   onMove,
   rowIdx,
   inSet,
+  flash,
   updateItem,
   onSetLabelChange,
   onCellKeyDown,
@@ -1386,6 +1444,7 @@ function ItemRow({
   onCodeChange: (key: string, value: string) => void;
   cpoDescError: boolean; // outline the CPO description in red when it is still empty
   move: { up: boolean; down: boolean };
+  flash?: boolean; // just ticked or moved
   onMove: (key: string, dir: -1 | 1) => void;
   rowIdx: number;
   inSet: boolean;
@@ -1395,10 +1454,11 @@ function ItemRow({
   currentUserName: string;
 }) {
   return (
-    <tr className={cn(
-      "border-b border-border/40 last:border-0 transition-opacity [&>td]:align-top",
+    <tr data-item-row={item._key} className={cn(
+      "border-b border-border/40 last:border-0 transition-[opacity,background-color] [&>td]:align-top",
       !item.included && "opacity-40",
       inSet && "bg-blue-50/20 dark:bg-blue-900/5",
+      flash && "bg-indigo-100/70 ring-2 ring-inset ring-indigo-300 dark:bg-indigo-900/30",
     )}>
       <td className="py-1.5 pr-2">
         <div className="h-7 flex items-center">

@@ -3365,7 +3365,11 @@ export const customerPurchaseOrder = pgTable(
       .$onUpdate(() => new Date())
       .notNull(),
   },
-  (t) => [index("customer_po_org_idx").on(t.organizationId)],
+  (t) => [
+    index("customer_po_org_idx").on(t.organizationId),
+    // the number is unique inside the organization; a cancelled CPO does not hold it (lib/customer-po/unique-no.ts)
+    uniqueIndex("customer_po_org_no_uidx").on(t.organizationId, sql`lower(btrim(${t.customerPoNo}))`).where(sql`${t.status} <> 'cancelled'`),
+  ],
 );
 
 export const customerPurchaseOrderRelations = relations(customerPurchaseOrder, ({ one }) => ({

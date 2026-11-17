@@ -50,6 +50,32 @@ export function itemNumbers<T extends Orderable>(items: T[]): Map<string, number
   return out;
 }
 
+// Inside every block (each set, and the items that are not in a set) the selected items come first, in their
+// current order, and the switched-off ones follow. So the ticked items always stay together, the arrows never
+// have to step over a switched-off item, and an item that is ticked becomes the last of the ticked ones while an
+// item that is unticked drops just below them. Blocks keep their place; only the order inside a block changes.
+export function sinkUnselected<T extends Orderable>(items: T[]): T[] {
+  const blocks = new Map<string, T[]>();
+  const order: string[] = [];
+  for (const it of items) {
+    const id = it.setGroupId || "";
+    if (!blocks.has(id)) { blocks.set(id, []); order.push(id); }
+    blocks.get(id)!.push(it);
+  }
+  // each block takes the array slots its own items had, in the new order
+  const next = [...items];
+  for (const id of order) {
+    const list = blocks.get(id)!;
+    const slots = items.map((it, i) => ((it.setGroupId || "") === id ? i : -1)).filter((i) => i >= 0);
+    const sorted = [...list.filter((i) => i.included), ...list.filter((i) => !i.included)];
+    slots.forEach((slot, n) => { next[slot] = sorted[n]; });
+  }
+  return next;
+}
+
+// true when nothing would move (used to avoid pointless state updates)
+export const isSettled = <T extends Orderable>(items: T[]) => sinkUnselected(items).every((it, i) => it === items[i]);
+
 // Items inside a set move only within that set. Every item that is not in a set forms one
 // block, even across different quotations, so they can be ordered freely among themselves.
 const sameBlock = (a: Orderable, b: Orderable) => (a.setGroupId || "") === (b.setGroupId || "");

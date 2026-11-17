@@ -27,6 +27,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { requireAccess } from "@/lib/auth/require-access";
 import { PO_TBC_PREFIX } from "@/lib/customer-po/po-number";
+import { findCpoNoClash, clashMessage } from "@/lib/customer-po/unique-no";
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT!,
@@ -118,6 +119,13 @@ export interface CreateCustomerPoInput {
 
 export interface UpdateCustomerPoInput extends CreateCustomerPoInput {
   id: string;
+}
+
+// For the forms: is this number free? Returns a message to show when it is not (thrown errors are hidden in production)
+export async function checkCustomerPoNo(no: string, excludeId?: string): Promise<{ available: boolean; message?: string; existingId?: string }> {
+  const { orgId } = await requireAccess("customer-po:read");
+  const clash = await findCpoNoClash(orgId, no, excludeId);
+  return clash ? { available: false, message: clashMessage(clash), existingId: clash.id } : { available: true };
 }
 
 export async function getNextCashSaleNo(): Promise<string> {
@@ -380,6 +388,10 @@ function assertCpoDescriptions(items: CpoItemInput[] | null | undefined, status?
 export async function createCustomerPo(input: CreateCustomerPoInput): Promise<CustomerPo> {
   const { orgId, userId } = await requireAccess("customer-po:create");
   assertCpoDescriptions(input.items, input.status);
+  if (input.status !== "cancelled") {
+    const clash = await findCpoNoClash(orgId, input.customerPoNo);
+    if (clash) throw new Error(clashMessage(clash));
+  }
 
   const customerSnapshot: CustomerPo["customerSnapshot"] = input.customerId
     ? await buildCustomerSnapshot(input.customerId, await getAllOwnerOrgIds(userId, orgId), input.customerOrgMemberId)
@@ -472,6 +484,10 @@ export async function updateCustomerPoCentralized(input: UpdateCustomerPoInput):
 
 async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomerPoInput): Promise<CustomerPo> {
   if (input.items !== undefined) assertCpoDescriptions(input.items, input.status ?? existing.status);
+  if ((input.status ?? existing.status) !== "cancelled") {
+    const clash = await findCpoNoClash(existing.organizationId, input.customerPoNo, existing.id);
+    if (clash) throw new Error(clashMessage(clash));
+  }
   if (input.documentKey !== undefined && existing.documentKey && existing.documentKey !== input.documentKey) {
     await deleteDocument(existing.documentKey);
   }
