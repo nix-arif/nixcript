@@ -96,6 +96,8 @@ export type CpoItemInput = {
   // The description differs from the product database and the user confirmed that is intended: it stays as written
   descAccepted?: boolean;
   descAcceptedBy?: string;
+  // The description the user replaced with the database one, kept so they can go back to it
+  prevDescription?: string;
   // A draft keeps the lines the user had switched off, so they can be switched on again later
   _excluded?: boolean;
   _codeSource?: "quote" | "user" | null;

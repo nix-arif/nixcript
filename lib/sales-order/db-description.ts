@@ -12,7 +12,7 @@ export type DbDescItem = {
   _isAdditional?: boolean;
   _dbDescription?: string | null; // undefined = not looked up yet, null = no database description
   _dbRef?: string; // the reference code the database description was looked up with
-  _descKeep?: boolean; // the description differs from the database and was accepted as intended on the Customer PO: never overwritten
+  _descKeep?: boolean; // the description differs from the database and was accepted as intended on the Customer PO: not overwritten by the first automatic sync
 };
 
 // The code the database description is looked up with ("" = nothing to look up).
@@ -43,7 +43,9 @@ export function mergeDbDescriptions<T extends DbDescItem>(
     const firstTime = i._dbDescription === undefined;
     const next: T = { ...i, _dbRef: r, _dbDescription: db ? db.toUpperCase() : null };
     if (!db) return next;
-    if (i._descKeep) return next; // accepted at the Customer PO: the text stays, the database text is only kept for comparing
+    // accepted at the Customer PO: the automatic sync on first load leaves the text alone (the database text is only kept for
+    // comparing). After that the user is in charge: whatever they type or revert to is the newest description.
+    if (i._descKeep && firstTime) return next;
     // follow the database unless the user customised the text (on first load: unless this page keeps what was saved)
     const inSync = firstTime ? opts.syncOnLoad : sameText(i.description, i._dbDescription);
     if (inSync || sameText(i.description, db)) return { ...next, description: db.toUpperCase(), _descriptionSource: ["catalog"] };

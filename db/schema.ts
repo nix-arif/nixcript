@@ -3353,6 +3353,7 @@ export const customerPurchaseOrder = pgTable(
       _excluded?: boolean;
       descAccepted?: boolean;
       descAcceptedBy?: string;
+      prevDescription?: string;
       cpoDescription?: string;
       setCpoTitle?: string;
     }[]>(),
