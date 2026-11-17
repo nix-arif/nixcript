@@ -14,6 +14,7 @@ export type IntercompanyTab = "suppliers" | "pricing" | "prices";
 export type PricingData = Awaited<ReturnType<typeof getPricingAdminData>>;
 
 interface Props {
+  canManage: boolean;
   initialTab: IntercompanyTab;
   initialRules: RestrictedSupplierRule[];
   ownerOrganizations: { id: string; name: string }[];
@@ -25,7 +26,7 @@ function Count({ n }: { n: number }) {
   return <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-semibold tabular-nums text-muted-foreground">{n}</span>;
 }
 
-export function SupplierRulesClient({ initialTab, initialRules, ownerOrganizations, supplierNames, initialPricing }: Props) {
+export function SupplierRulesClient({ canManage, initialTab, initialRules, ownerOrganizations, supplierNames, initialPricing }: Props) {
   const [tab, setTab] = useState<IntercompanyTab>(initialTab);
   const [rules, setRules] = useState(initialRules);
   const [pricing, setPricing] = useState(initialPricing);
@@ -42,6 +43,7 @@ export function SupplierRulesClient({ initialTab, initialRules, ownerOrganizatio
       <PageHeader
         title="Intercompany Purchasing"
         description="How your organizations buy from shared suppliers and from each other"
+        action={!canManage ? <span className="rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">View only</span> : undefined}
       />
 
       {ownerOrganizations.length < 2 ? (
@@ -75,13 +77,13 @@ export function SupplierRulesClient({ initialTab, initialRules, ownerOrganizatio
             </TabsList>
 
             <TabsContent value="suppliers">
-              <HandlingPanel rules={rules} orgs={ownerOrganizations} supplierNames={supplierNames} reload={reloadRules} />
+              <HandlingPanel canManage={canManage} rules={rules} orgs={ownerOrganizations} supplierNames={supplierNames} reload={reloadRules} />
             </TabsContent>
             <TabsContent value="pricing">
-              <PricingRulesPanel data={pricing} supplierRules={rules} reload={reloadPricing} goToPrices={() => changeTab("prices")} />
+              <PricingRulesPanel canManage={canManage} data={pricing} supplierRules={rules} reload={reloadPricing} goToPrices={() => changeTab("prices")} />
             </TabsContent>
             <TabsContent value="prices">
-              <PriceListPanel data={pricing} reload={reloadPricing} />
+              <PriceListPanel canManage={canManage} data={pricing} reload={reloadPricing} />
             </TabsContent>
           </Tabs>
         </>

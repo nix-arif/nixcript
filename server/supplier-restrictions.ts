@@ -10,35 +10,11 @@
 
 import { db } from "@/db";
 import { restrictedSupplier, member, organization, supplier } from "@/db/schema";
-import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
 import { eq, and, inArray, asc } from "drizzle-orm";
 
 import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
-async function getSession() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  return { session, orgId, userId: session.user.id };
-}
-
-// For actions restricted to the organization owner regardless of any
-// individually granted permission — same restriction/shape as the identical
-// helper duplicated per-file elsewhere (server/goods-receipt.ts,
-// server/purchase-order.ts, etc.).
-async function requireOwner() {
-  const { session, orgId, userId } = await getSession();
-  const [m] = await db
-    .select({ role: member.role })
-    .from(member)
-    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
-    .limit(1);
-  if (!m || m.role !== "owner") throw new Error("Only the organization owner can do this");
-  return { session, orgId, userId };
-}
-
-
+import { requireIntercompany } from "@/lib/auth/intercompany-access";
 // The userId that owns orgId (the member row with role "owner" there) —
 // null if that org has no owner on record, which means no restriction rule
 // could possibly apply to it.
@@ -58,7 +34,7 @@ function normalize(name: string): string {
 export type RestrictedSupplierRule = typeof restrictedSupplier.$inferSelect & { designatedOrganizationName: string | null };
 
 export async function getRestrictedSupplierRules(): Promise<RestrictedSupplierRule[]> {
-  const { orgId } = await requireOwner();
+  const { orgId } = await requireIntercompany("read");
   const ownerUserId = await getOwnerUserId(orgId);
   if (!ownerUserId) return [];
 
@@ -77,7 +53,7 @@ export async function getRestrictedSupplierRules(): Promise<RestrictedSupplierRu
 // which excludes the active org for the "link a supplier to..." picker, a
 // designation rule can legitimately point at the caller's current org too.
 export async function getOwnerOrganizationsForRules(): Promise<{ id: string; name: string }[]> {
-  const { orgId } = await requireOwner();
+  const { orgId } = await requireIntercompany("read");
   const ownerOrgIds = await getOwnerOrgIds(orgId);
   return db
     .select({ id: organization.id, name: organization.name })
@@ -92,7 +68,7 @@ export async function getOwnerOrganizationsForRules(): Promise<{ id: string; nam
 // Freeform names are still allowed (a rule can pre-empt a supplier no org
 // has added yet), so this is a suggestion list, not a closed set.
 export async function getSupplierNamesForRules(): Promise<string[]> {
-  const { orgId } = await requireOwner();
+  const { orgId } = await requireIntercompany("read");
   const ownerOrgIds = await getOwnerOrgIds(orgId);
   const rows = await db
     .selectDistinct({ name: supplier.name })
@@ -109,7 +85,7 @@ export interface CreateRestrictedSupplierRuleInput {
 }
 
 export async function createRestrictedSupplierRule(input: CreateRestrictedSupplierRuleInput): Promise<void> {
-  const { orgId, userId } = await requireOwner();
+  const { orgId, userId } = await requireIntercompany("manage");
 
   const supplierName = input.supplierName.trim();
   if (!supplierName) throw new Error("Supplier name is required");
@@ -141,7 +117,7 @@ export async function createRestrictedSupplierRule(input: CreateRestrictedSuppli
 }
 
 export async function deleteRestrictedSupplierRule(id: string): Promise<void> {
-  const { orgId } = await requireOwner();
+  const { orgId } = await requireIntercompany("manage");
   const ownerUserId = await getOwnerUserId(orgId);
   if (!ownerUserId) throw new Error("No owner found for this organization");
 

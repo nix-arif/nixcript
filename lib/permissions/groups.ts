@@ -53,6 +53,7 @@ export const KEY_GROUP: Record<string, string> = {
   "organization-profile:read": "org", "organization-profile:create": "org",
   "organization-profile:update": "org", "organization-profile:delete": "org",
   "document-settings:update": "org",
+  "intercompany:read": "org", "intercompany:manage": "org",
   "organization-role:create": "org", "organization-role:update": "org", "organization-role:delete": "org",
   "permission:read": "org", "permission:create": "org", "permission:update": "org", "permission:delete": "org",
 };

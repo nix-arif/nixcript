@@ -1,4 +1,6 @@
-import { requireOwner } from "@/lib/auth/require-permission";
+import { requireAnyPermission } from "@/lib/auth/require-permission";
+import { hasAccess } from "@/lib/permissions/has-access";
+import { INTERCOMPANY_MANAGE, INTERCOMPANY_READ } from "@/lib/auth/intercompany-access";
 import {
   getRestrictedSupplierRules,
   getOwnerOrganizationsForRules,
@@ -10,7 +12,7 @@ import { SupplierRulesClient, type IntercompanyTab } from "./supplier-rules-clie
 const TABS: IntercompanyTab[] = ["suppliers", "pricing", "prices"];
 
 export default async function SupplierRulesPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
-  await requireOwner();
+  const { perms } = await requireAnyPermission([INTERCOMPANY_READ, INTERCOMPANY_MANAGE]);
   const { tab } = await searchParams;
 
   const [rules, ownerOrganizations, supplierNames, pricing] = await Promise.all([
@@ -22,6 +24,7 @@ export default async function SupplierRulesPage({ searchParams }: { searchParams
 
   return (
     <SupplierRulesClient
+      canManage={hasAccess(perms, INTERCOMPANY_MANAGE)}
       initialTab={TABS.includes(tab as IntercompanyTab) ? (tab as IntercompanyTab) : "suppliers"}
       initialRules={rules}
       ownerOrganizations={ownerOrganizations}

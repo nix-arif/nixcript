@@ -5,30 +5,15 @@
 
 import { db } from "@/db";
 import { intercompanyPrice, intercompanyPricingRule, member, organization, product, restrictedSupplier, supplier } from "@/db/schema";
-import { getCachedSession } from "@/lib/auth/cached-session";
 import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 import { requireAccess } from "@/lib/auth/require-access";
+import { requireIntercompany } from "@/lib/auth/intercompany-access";
 import { resolvePricingMethod } from "@/lib/intercompany/pricing";
 import { routeRestrictedSupplier } from "@/lib/org/supplier-routing";
 import { isPricingMethod, usesPercent, type PricingMethod } from "@/lib/intercompany/methods";
 import { buildPriceListWorkbook, type PriceTemplateRow } from "@/lib/intercompany/price-list-workbook";
 import { nanoid } from "nanoid";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
-
-async function requireOwner() {
-  const session = await getCachedSession();
-  if (!session) throw new Error("You must be signed in to continue");
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) throw new Error("No active organization");
-  const userId = session.user.id;
-  const [m] = await db
-    .select({ role: member.role })
-    .from(member)
-    .where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
-    .limit(1);
-  if (!m || m.role !== "owner") throw new Error("Only the organization owner can do this");
-  return { orgId, userId, ownerOrgIds: await getOwnerOrgIds(orgId) };
-}
 
 export type PricingRuleRow = typeof intercompanyPricingRule.$inferSelect & { sellerName: string; buyerName: string | null };
 export type PriceRow = typeof intercompanyPrice.$inferSelect;
@@ -38,7 +23,7 @@ export async function getPricingAdminData(): Promise<{
   rules: PricingRuleRow[];
   prices: PriceRow[];
 }> {
-  const { ownerOrgIds } = await requireOwner();
+  const { ownerOrgIds } = await requireIntercompany("read");
   const orgs = await db.select({ id: organization.id, name: organization.name }).from(organization)
     .where(inArray(organization.id, ownerOrgIds)).orderBy(asc(organization.name));
   const nameOf = new Map(orgs.map((o) => [o.id, o.name]));
@@ -76,7 +61,7 @@ export async function saveIntercompanyPricingRule(input: {
   method: string;
   marginPct?: string;
 }): Promise<void> {
-  const { userId, ownerOrgIds } = await requireOwner();
+  const { userId, ownerOrgIds } = await requireIntercompany("manage");
   if (!isPricingMethod(input.method)) throw new Error("Choose a pricing method");
   if (!ownerOrgIds.includes(input.sellerOrganizationId)) throw new Error("The seller must be one of your organizations");
   if (input.buyerOrganizationId && !ownerOrgIds.includes(input.buyerOrganizationId)) throw new Error("The buyer must be one of your organizations");
@@ -127,7 +112,7 @@ export async function applyIntercompanyPricingRules(input: {
   method: string;
   marginPct?: string;
 }): Promise<{ added: number; replaced: number }> {
-  const { userId, ownerOrgIds } = await requireOwner();
+  const { userId, ownerOrgIds } = await requireIntercompany("manage");
   if (!isPricingMethod(input.method)) throw new Error("Choose a pricing method");
   const marginPct = parseMargin(input.method, input.marginPct);
   if (ownerOrgIds.length < 2) throw new Error("This applies when you own more than one organization");
@@ -173,7 +158,7 @@ export async function applyIntercompanyPricingRules(input: {
 }
 
 export async function deleteIntercompanyPricingRule(id: string): Promise<void> {
-  const { ownerOrgIds } = await requireOwner();
+  const { ownerOrgIds } = await requireIntercompany("manage");
   await db.delete(intercompanyPricingRule).where(and(eq(intercompanyPricingRule.id, id), inArray(intercompanyPricingRule.sellerOrganizationId, ownerOrgIds)));
 }
 
@@ -181,7 +166,7 @@ export type PriceListEntry = { productCode: string; unitPrice: string; currency?
 
 // Adds or updates prices (same product code replaces the price). Returns what was skipped and why.
 export async function saveIntercompanyPrices(sellerOrganizationId: string, entries: PriceListEntry[]): Promise<{ saved: number; skipped: string[] }> {
-  const { userId, ownerOrgIds } = await requireOwner();
+  const { userId, ownerOrgIds } = await requireIntercompany("manage");
   if (!ownerOrgIds.includes(sellerOrganizationId)) throw new Error("The seller must be one of your organizations");
   const skipped: string[] = [];
   const byCode = new Map<string, { productCode: string; unitPrice: string; currency: string }>();
@@ -208,7 +193,7 @@ export async function saveIntercompanyPrices(sellerOrganizationId: string, entri
 }
 
 export async function deleteIntercompanyPrice(id: string): Promise<void> {
-  const { ownerOrgIds } = await requireOwner();
+  const { ownerOrgIds } = await requireIntercompany("manage");
   await db.delete(intercompanyPrice).where(and(eq(intercompanyPrice.id, id), inArray(intercompanyPrice.sellerOrganizationId, ownerOrgIds)));
 }
 
@@ -242,7 +227,7 @@ export async function getIntercompanyPricingDefault(supplierId: string, knownOri
 
 // The price list template: every product of the seller (so the user only fills in prices) plus anything already on the list
 export async function createIntercompanyPriceTemplate(sellerOrganizationId: string): Promise<string> {
-  const { ownerOrgIds } = await requireOwner();
+  const { ownerOrgIds } = await requireIntercompany("read");
   if (!ownerOrgIds.includes(sellerOrganizationId)) throw new Error("The seller must be one of your organizations");
   const [seller] = await db.select({ name: organization.name }).from(organization).where(eq(organization.id, sellerOrganizationId));
   const products = await db

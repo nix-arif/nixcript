@@ -137,6 +137,10 @@ export const ALL_PERMISSIONS = [
   // Document settings (PDF template/branding + document numbering)
   { key: "document-settings:update", label: "Update Document Settings" },
 
+  // Intercompany purchasing (supplier handling, pricing between organizations, price list): covers every organization of the owner
+  { key: "intercompany:read",   label: "View Intercompany Purchasing Across Owner's Organizations (supplier rules, pricing rules, price list)" },
+  { key: "intercompany:manage", label: "Manage Intercompany Purchasing Across Owner's Organizations (change rules, prices, upload price list)" },
+
   // Organization roles (custom role management)
   { key: "organization-role:create", label: "Create Organization Role" },
   { key: "organization-role:update", label: "Update Organization Role" },
@@ -587,6 +591,18 @@ export const BASIC_PERMISSIONS: PermissionKey[] = [
 ];
 
 export const PERMISSION_BUNDLES: PermissionBundle[] = [
+  {
+    id: "intercompany-viewer",
+    label: "Intercompany Purchasing Viewer",
+    description: "See which organization handles each supplier, the pricing rules between organizations and the price list. Cannot change anything.",
+    permissions: ["intercompany:read"],
+  },
+  {
+    id: "intercompany-manager",
+    label: "Intercompany Purchasing Manager",
+    description: "View and change supplier handling, pricing rules and the price list for all of the owner's organizations.",
+    permissions: ["intercompany:read", "intercompany:manage"],
+  },
   {
     id: "basic-employee-access",
     label: "Basic Employee Access",

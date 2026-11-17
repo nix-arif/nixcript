@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { DownloadIcon, PlusIcon, SearchIcon, TagsIcon, TrashIcon, UploadIcon } from "lucide-react";
 
-export function PriceListPanel({ data, reload }: { data: PricingData; reload: () => Promise<void> }) {
+export function PriceListPanel({ canManage, data, reload }: { canManage: boolean; data: PricingData; reload: () => Promise<void> }) {
   const { orgs, prices } = data;
   const [seller, setSeller] = useState(orgs[0]?.id ?? "");
   const [filter, setFilter] = useState("");
@@ -96,8 +96,8 @@ export function PriceListPanel({ data, reload }: { data: PricingData; reload: ()
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" className="gap-1.5" disabled={busy !== null} onClick={download}><DownloadIcon className="h-3.5 w-3.5" />{busy === "down" ? "Preparing…" : "Download template"}</Button>
-          <Button variant="outline" size="sm" className="gap-1.5" disabled={busy !== null} onClick={() => fileRef.current?.click()}><UploadIcon className="h-3.5 w-3.5" />{busy === "up" ? "Uploading…" : "Upload filled sheet"}</Button>
-          <Button size="sm" className="gap-1.5" onClick={() => setPasteOpen(true)}><PlusIcon className="h-3.5 w-3.5" />Add prices</Button>
+          {canManage && <Button variant="outline" size="sm" className="gap-1.5" disabled={busy !== null} onClick={() => fileRef.current?.click()}><UploadIcon className="h-3.5 w-3.5" />{busy === "up" ? "Uploading…" : "Upload filled sheet"}</Button>}
+          {canManage && <Button size="sm" className="gap-1.5" onClick={() => setPasteOpen(true)}><PlusIcon className="h-3.5 w-3.5" />Add prices</Button>}
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }} />
         </div>
       </div>
@@ -107,7 +107,9 @@ export function PriceListPanel({ data, reload }: { data: PricingData; reload: ()
           <TagsIcon className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
           <div className="mb-1 text-sm font-medium">No prices for {nameOf(seller)} yet</div>
           <p className="mx-auto mb-4 max-w-md text-xs text-muted-foreground">
-            Download the template, which lists every product of {nameOf(seller)}, fill in the Unit price column and upload it. Or paste codes and prices with Add prices.
+            {canManage
+              ? <>Download the template, which lists every product of {nameOf(seller)}, fill in the Unit price column and upload it. Or paste codes and prices with Add prices.</>
+              : <>No price list has been set up for {nameOf(seller)}.</>}
           </p>
           <Button variant="outline" size="sm" className="gap-1.5" disabled={busy !== null} onClick={download}><DownloadIcon className="h-3.5 w-3.5" />Download template</Button>
         </div>
@@ -126,7 +128,7 @@ export function PriceListPanel({ data, reload }: { data: PricingData; reload: ()
                     <td className="px-4 py-1.5 font-mono text-xs">{p.productCode}</td>
                     <td className="px-4 py-1.5 text-right tabular-nums">{p.currency} {Number(p.unitPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
                     <td className="px-1 py-1.5 text-right">
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => remove(p.id)} aria-label={`Remove price for ${p.productCode}`}><TrashIcon className="h-3.5 w-3.5" /></Button>
+                      {canManage && <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => remove(p.id)} aria-label={`Remove price for ${p.productCode}`}><TrashIcon className="h-3.5 w-3.5" /></Button>}
                     </td>
                   </tr>
                 ))}

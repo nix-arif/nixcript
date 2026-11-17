@@ -14,8 +14,9 @@ import { BuildingIcon, FactoryIcon, PlusIcon, SearchIcon, TrashIcon } from "luci
 const EMPTY = { supplierName: "", designatedOrganizationId: "", notes: "" };
 
 export function HandlingPanel({
-  rules, orgs, supplierNames, reload,
+  canManage, rules, orgs, supplierNames, reload,
 }: {
+  canManage: boolean;
   rules: RestrictedSupplierRule[];
   orgs: { id: string; name: string }[];
   supplierNames: string[];
@@ -69,7 +70,7 @@ export function HandlingPanel({
         <p className="max-w-xl text-sm text-muted-foreground">
           Choose which organization deals with a supplier. A PO or PR line for that supplier from any other organization is issued to the one you choose, and it orders from the supplier itself.
         </p>
-        <Button onClick={openCreate} className="gap-2"><PlusIcon className="h-4 w-4" />Add supplier rule</Button>
+        {canManage && <Button onClick={openCreate} className="gap-2"><PlusIcon className="h-4 w-4" />Add supplier rule</Button>}
       </div>
 
       {rules.length > 4 && (
@@ -83,8 +84,8 @@ export function HandlingPanel({
         <div className="rounded-xl border border-dashed border-border py-14 text-center">
           <FactoryIcon className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
           <div className="mb-1 text-sm font-medium">No supplier rules yet</div>
-          <p className="mx-auto mb-4 max-w-sm text-xs text-muted-foreground">Every organization can order from any supplier directly until you add a rule.</p>
-          <Button variant="outline" size="sm" className="gap-2" onClick={openCreate}><PlusIcon className="h-3.5 w-3.5" />Add the first rule</Button>
+          <p className="mx-auto mb-4 max-w-sm text-xs text-muted-foreground">Every organization can order from any supplier directly until a rule is added.</p>
+          {canManage && <Button variant="outline" size="sm" className="gap-2" onClick={openCreate}><PlusIcon className="h-3.5 w-3.5" />Add the first rule</Button>}
         </div>
       ) : grouped.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No rule matches &ldquo;{q}&rdquo;.</p>
@@ -105,9 +106,11 @@ export function HandlingPanel({
                       {r.notes && <p className="mt-0.5 text-xs text-muted-foreground">{r.notes}</p>}
                     </div>
                     <span className="hidden pt-0.5 text-[11px] text-muted-foreground sm:block">Added {new Date(r.createdAt).toLocaleDateString()}</span>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" disabled={deleting === r.id} onClick={() => remove(r)} aria-label={`Remove rule for ${r.supplierName}`}>
-                      <TrashIcon className="h-3.5 w-3.5" />
-                    </Button>
+                    {canManage && (
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" disabled={deleting === r.id} onClick={() => remove(r)} aria-label={`Remove rule for ${r.supplierName}`}>
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>

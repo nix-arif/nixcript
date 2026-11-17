@@ -22,8 +22,9 @@ const TAG_EXCEPTION = "border-amber-300 bg-amber-50 font-medium text-amber-800 d
 const TAG_PLAIN = "border-dashed border-border text-muted-foreground";
 
 export function PricingRulesPanel({
-  data, supplierRules, reload, goToPrices,
+  canManage, data, supplierRules, reload, goToPrices,
 }: {
+  canManage: boolean;
   data: PricingData;
   supplierRules: RestrictedSupplierRule[];
   reload: () => Promise<void>;
@@ -113,7 +114,7 @@ export function PricingRulesPanel({
   return (
     <div className="space-y-6 pt-1">
       <p className="max-w-2xl text-sm text-muted-foreground">
-        When one of your organizations raises a PO to another, the user can pick the price method on the PO. If they don&apos;t, the rules below apply. Click a row to change what a seller charges a buyer.
+        When one of your organizations raises a PO to another, the user can pick the price method on the PO. If they don&apos;t, the rules below apply. {canManage ? "Click a row to change what a seller charges a buyer." : "You can view these rules but not change them."}
       </p>
 
       {/* ── the general rule of each seller ── */}
