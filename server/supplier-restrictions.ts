@@ -148,7 +148,9 @@ export async function deleteRestrictedSupplierRule(id: string): Promise<void> {
 // record, before saving a PR line's preferred supplier, and before saving a
 // PO's supplier. Pure read + validate, no side effects, safe to export and
 // call from any of those files.
-export async function assertSupplierAllowed(orgId: string, supplierName: string | null | undefined): Promise<void> {
+// asOf: the date of the document (a PO dated before a handover follows the organization that handled the supplier then);
+// default today.
+export async function assertSupplierAllowed(orgId: string, supplierName: string | null | undefined, asOf?: string): Promise<void> {
   const name = supplierName?.trim();
   if (!name) return; // nothing to check
 
@@ -160,7 +162,7 @@ export async function assertSupplierAllowed(orgId: string, supplierName: string 
     .select({ designatedOrganizationId: restrictedSupplier.designatedOrganizationId, effectiveFrom: restrictedSupplier.effectiveFrom })
     .from(restrictedSupplier)
     .where(and(eq(restrictedSupplier.ownerUserId, ownerUserId), eq(restrictedSupplier.supplierNameNormalized, normalize(name))));
-  const rule = activeRule(rules, todayKL());
+  const rule = activeRule(rules, asOf ?? todayKL());
   if (!rule || rule.designatedOrganizationId === orgId) return; // no rule, or this is the designated org
 
   const [designatedOrg] = await db.select({ name: organization.name }).from(organization).where(eq(organization.id, rule.designatedOrganizationId));

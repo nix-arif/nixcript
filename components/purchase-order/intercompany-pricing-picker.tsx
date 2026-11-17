@@ -12,9 +12,11 @@ export type PricingPick = { method: "" | PricingMethod; marginPct: string };
 export function IntercompanyPricingPicker({
   supplierId,
   originalSupplier,
+  poDate,
   value,
   onChange,
 }: {
+  poDate?: string; // the date of the PO: the organization handling the supplier on it applies
   supplierId: string;
   originalSupplier?: string | null; // edit page: the supplier a routed PO was really for
   value: PricingPick;
@@ -27,9 +29,9 @@ export function IntercompanyPricingPicker({
     setDflt(null);
     if (!supplierId) return;
     // null when the supplier is neither a sibling organization nor one a sibling handles: nothing to show then
-    getIntercompanyPricingDefault(supplierId, originalSupplier).then((d) => { if (!cancelled) setDflt(d); }).catch(() => {});
+    getIntercompanyPricingDefault(supplierId, originalSupplier, poDate).then((d) => { if (!cancelled) setDflt(d); }).catch(() => {});
     return () => { cancelled = true; };
-  }, [supplierId, originalSupplier]);
+  }, [supplierId, originalSupplier, poDate]);
 
   if (!supplierId || !dflt) return null;
 
@@ -49,7 +51,7 @@ export function IntercompanyPricingPicker({
       </div>
       <p className="text-[11px] leading-snug text-muted-foreground">
         {dflt.routedFrom
-          ? <>{dflt.routedFrom} is handled by {dflt.sellerName}, so this PO is issued to {dflt.sellerName}.</>
+          ? <>{dflt.routedFrom} is handled by {dflt.sellerName}{poDate ? ` on ${new Date(`${poDate}T00:00:00`).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" })}` : ""}, so this PO is issued to {dflt.sellerName}.</>
           : <>{dflt.sellerName} is one of your organizations.</>}
       </p>
       <div className="flex flex-wrap items-center gap-2">

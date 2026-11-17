@@ -520,6 +520,10 @@ export function PurchaseOrderDetailClient({
                 {snap.email && <p className="text-xs text-muted-foreground pl-5">{snap.email}</p>}
                 {snap.contactNo && <p className="text-xs text-muted-foreground pl-5">{snap.contactNo}</p>}
                 {snap.address && <p className="text-xs text-muted-foreground pl-5 whitespace-pre-wrap">{snap.address}</p>}
+                <p className="text-xs pl-5 pt-1 text-muted-foreground">
+                  PO date: <span className="font-medium text-foreground">{new Date(`${order.poDate ?? new Date(order.createdAt).toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" })}T00:00:00`).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" })}</span>
+                  {order.poDate && order.poDate !== new Date(order.createdAt).toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" }) && <span className="ml-1.5 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400">Backdated</span>}
+                </p>
                 {order.originalSupplierName && (
                   <p className="text-xs pl-5 pt-1 text-muted-foreground">
                     For supplier: <span className="font-medium text-foreground">{order.originalSupplierName}</span>

@@ -199,7 +199,7 @@ export async function deleteIntercompanyPrice(id: string): Promise<void> {
 
 // For the PO form (any PO creator, not just the owner): when the chosen supplier is a sibling organization, or a supplier
 // that a sibling handles (so the PO will be routed to it), which method applies by default.
-export async function getIntercompanyPricingDefault(supplierId: string, knownOriginalSupplier?: string | null): Promise<{
+export async function getIntercompanyPricingDefault(supplierId: string, knownOriginalSupplier?: string | null, asOf?: string): Promise<{
   sellerName: string; method: PricingMethod; marginPct: string | null;
   source: "supplier_rule" | "buyer_rule" | "seller_rule" | "default"; routedFrom: string | null;
 } | null> {
@@ -213,7 +213,7 @@ export async function getIntercompanyPricingDefault(supplierId: string, knownOri
     sellerId = sup.linked;
     routedFrom = knownOriginalSupplier?.trim() || null; // a PO already routed: the supplier it was really for
   } else {
-    const route = await routeRestrictedSupplier(orgId, sup.name, userId, { dryRun: true });
+    const route = await routeRestrictedSupplier(orgId, sup.name, userId, { dryRun: true, asOf });
     if (route) { sellerId = route.designatedOrgId; routedFrom = route.originalName; }
   }
   if (!sellerId) return null;

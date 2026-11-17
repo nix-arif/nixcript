@@ -51,6 +51,7 @@ import { priceIntercompanyLines, intercompanyPricingNote, sumTotals, stripPricin
 
 import { getSession, requireAccess } from "@/lib/auth/require-access";
 import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
+import { todayKL, toBusinessDate } from "@/lib/org/handling-periods";
 // ── R2 supplier-quotation bucket ───────────────────────────────────────────
 const s3 = new S3Client({
   region: "auto",
@@ -379,6 +380,10 @@ export interface CreatePurchaseOrderInput {
   // Overrides the auto-generated PO number — for backfilling a PO that was
   // already manually issued to the supplier under its own number.
   manualPoNo?: string;
+  // The date the PO is made out (YYYY-MM-DD, not after today). Decides which organization handles a restricted
+  // supplier: a PO dated before a handover follows the organization that handled the supplier on that date.
+  // Left out = today.
+  poDate?: string;
   // Only used when the supplier is one of the owner's other organizations: how the lines are priced.
   // Left out, the default rule applies (see lib/intercompany/pricing.ts).
   pricingMethod?: string;
@@ -1410,16 +1415,21 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
 
   if (!input.supplierId) throw new Error("Supplier is required");
 
+  const today = todayKL();
+  const poDate = input.poDate?.trim() || today;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(poDate) || Number.isNaN(Date.parse(poDate))) throw new Error("Enter a valid PO date");
+  if (poDate > today) throw new Error("The PO date cannot be after today");
+
   let supplierId = input.supplierId;
   let [sup] = await db.select().from(supplier).where(eq(supplier.id, supplierId));
-  // a supplier that only a sibling organization may deal with: issue the PO to that organization instead
-  const route = await routeRestrictedSupplier(orgId, sup?.name, userId);
+  // a supplier that only a sibling organization may deal with on the PO's date: issue the PO to that organization instead
+  const route = await routeRestrictedSupplier(orgId, sup?.name, userId, { asOf: poDate });
   if (route) {
     supplierId = route.supplierId;
     [sup] = await db.select().from(supplier).where(eq(supplier.id, supplierId));
   }
   let notes = joinNotes(stripPricingNote(input.notes), route?.note);
-  await assertSupplierAllowed(orgId, sup?.name);
+  await assertSupplierAllowed(orgId, sup?.name, poDate);
 
   // A sibling organization as the supplier: price the lines by the chosen method (or the default rule)
   let poItems = input.items;
@@ -1482,6 +1492,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
       pricingMethod: pricing?.method ?? null,
       pricingMarginPct: pricing?.marginPct ?? null,
       originalSupplierName: route?.originalName ?? null,
+      poDate,
       notes: notes || null,
       expectedDeliveryDate: input.expectedDeliveryDate ?? null,
       deliveryAddress: input.deliveryAddress ?? null,
@@ -1663,14 +1674,15 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
     originalSupplierName = null;
     let [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
     // a supplier that only a sibling organization may deal with: issue the PO to that organization instead
-    const route = await routeRestrictedSupplier(existing.organizationId, sup?.name, existing.createdBy, { asOf: existing.createdAt });
+    const poAsOf = existing.poDate ?? toBusinessDate(existing.createdAt); // the date of the PO is fixed when it is made
+    const route = await routeRestrictedSupplier(existing.organizationId, sup?.name, existing.createdBy, { asOf: poAsOf });
     if (route) {
       supplierId = route.supplierId;
       originalSupplierName = route.originalName;
       notes = joinNotes(input.notes, route.note) || null;
       [sup] = await db.select().from(supplier).where(eq(supplier.id, supplierId));
     }
-    await assertSupplierAllowed(existing.organizationId, sup?.name);
+    await assertSupplierAllowed(existing.organizationId, sup?.name, poAsOf);
     if (sup) {
       supplierSnapshot = {
         name: sup.name,

@@ -13,6 +13,7 @@ import {
 import { getProductDetailsByCodes } from "@/server/products";
 import type { Supplier } from "@/server/supplier";
 import { usesPercent } from "@/lib/intercompany/methods";
+import { todayKL } from "@/lib/org/handling-periods";
 import { IntercompanyPricingPicker, type PricingPick } from "@/components/purchase-order/intercompany-pricing-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -107,6 +108,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   })();
 
   const [supplierId, setSupplierId] = useState(initialSupplierId);
+  // the date the PO is made out: it decides which organization handles a supplier that changed hands on a date
+  const today = todayKL();
+  const [poDate, setPoDate] = useState(today);
   const [pricing, setPricing] = useState<PricingPick>({ method: "", marginPct: "" });
 
   // Linked SO (direct mode only)
@@ -510,6 +514,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
 
   async function buildAndCreate() {
     if (!supplierId) { toast.error("Supplier is required"); return null; }
+    if (!poDate) { toast.error("PO date is required"); return null; }
+    if (poDate > today) { toast.error("The PO date cannot be after today"); return null; }
     if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
     if (items.some((i) => i._imageUploading)) { toast.error("Please wait for image uploads to finish"); return null; }
     if (useManualPoNo && !manualPoNo.trim()) { toast.error("Enter the existing PO number, or turn that off to auto-generate one"); return null; }
@@ -535,6 +541,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     return createPurchaseOrder({
       purchaseRequisitionId: prData?.id,
       supplierId,
+      poDate: poDate || undefined,
       pricingMethod: pricing.method || undefined,
       pricingMarginPct: usesPercent(pricing.method) ? pricing.marginPct : undefined,
       salesOrderId: isPrMode ? (prData?.salesOrderId ?? undefined) : selectedSo?.id,
@@ -697,6 +704,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
           )}
           <IntercompanyPricingPicker
             supplierId={supplierId}
+            poDate={poDate}
             value={pricing}
             onChange={setPricing}
           />
@@ -891,6 +899,19 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
               )}
             </div>
           )}
+          <div className="mb-3 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Label className="text-xs">PO date</Label>
+              {poDate !== today && <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400">Backdated</span>}
+            </div>
+            <input
+              type="date" max={today} value={poDate} onChange={(e) => setPoDate(e.target.value)}
+              className="h-9 w-44 rounded-md border border-border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Today unless the order was made out earlier. If a supplier is handled by different organizations over time, the one handling it on this date applies.
+            </p>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">

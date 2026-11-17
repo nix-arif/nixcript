@@ -316,6 +316,7 @@ export function EditPurchaseOrderClient({
           <IntercompanyPricingPicker
             supplierId={supplierId}
             originalSupplier={supplierId === order.supplierId ? order.originalSupplierName : null}
+            poDate={order.poDate ?? new Date(order.createdAt).toLocaleDateString("en-CA", { timeZone: "Asia/Kuala_Lumpur" })}
             value={pricing}
             onChange={setPricing}
           />

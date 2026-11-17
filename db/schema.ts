@@ -2491,6 +2491,7 @@ export const purchaseOrder = pgTable(
     // Intercompany pricing used when the supplier is a sibling organization (see lib/intercompany/pricing.ts)
     pricingMethod: text("pricing_method"), // manual | selling_price | cost_plus | price_list
     pricingMarginPct: text("pricing_margin_pct"),
+    poDate: date("po_date"), // the date the PO is made out (may be before the day it was entered); null = the creation date
     originalSupplierName: text("original_supplier_name"), // the supplier this PO was really for, when it was routed to a sibling organization
     status: text("status").notNull().default("draft"), // draft | submitted | confirmed | fulfilled | cancelled
 
