@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
+import { mergeUploadedItems, repeatedCodes, isBlankRow } from "@/lib/quotation/merge-items";
 import {
   matchSpreadsheetToProducts,
   createQuotation,
@@ -194,6 +195,11 @@ export function NewQuotationClient({
 
   // Step 3 state
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>(editData?.items ?? []);
+  // The items keyed in by hand and the ones from a spreadsheet live in the same list. A spreadsheet that is read while
+  // there are already items waits here until the user chooses to add it to them or to replace them.
+  const reviewItemsRef = useRef(reviewItems);
+  useEffect(() => { reviewItemsRef.current = reviewItems; }, [reviewItems]);
+  const [pendingUpload, setPendingUpload] = useState<{ items: ReviewItem[]; fileName: string; repeated: string[] } | null>(null);
   const [matching, setMatching] = useState(false);
   const [autoMatching, setAutoMatching] = useState(false);
 
@@ -458,7 +464,7 @@ export function NewQuotationClient({
 
         // Auto-populate title when all rows share a single set name
         const uniqueSetNames = new Set(rows.map((r) => r.setGroupLabel));
-        if (uniqueSetNames.size === 1) {
+        if (uniqueSetNames.size === 1 && reviewItemsRef.current.every(isBlankRow)) {
           const [onlyName] = uniqueSetNames;
           if (onlyName) setTitle(onlyName === "not-as-set" ? "Loose Items" : onlyName);
         }
@@ -468,7 +474,9 @@ export function NewQuotationClient({
         setAutoMatching(true);
         matchSpreadsheetToProducts(rows)
           .then((items) => {
-            setReviewItems(items);
+            const have = reviewItemsRef.current.filter((r) => !isBlankRow(r));
+            if (have.length > 0) setPendingUpload({ items, fileName: file.name, repeated: repeatedCodes(have, items) });
+            else setReviewItems(items);
           })
           .catch((e: any) => toast.error(e?.message ?? "Failed to match products"))
           .finally(() => setAutoMatching(false));
@@ -546,6 +554,29 @@ export function NewQuotationClient({
       }),
     };
     setReviewItems((prev) => [...prev, newItem]);
+  };
+
+  // The spreadsheet's items go after the ones already in the list, or replace them
+  const applyPendingUpload = (mode: "add" | "replace") => {
+    if (!pendingUpload) return;
+    const n = pendingUpload.items.length;
+    setReviewItems((prev) => (mode === "add" ? mergeUploadedItems(prev.filter((r) => !isBlankRow(r)), pendingUpload.items) : pendingUpload.items));
+    setPendingUpload(null);
+    toast.success(mode === "add" ? `${n} items added to your list` : `List replaced with the ${n} items from the spreadsheet`);
+  };
+
+  // Start keying in items: the first empty row, with the cursor in its product code
+  const startTyping = () => {
+    addRow();
+    setTimeout(() => document.querySelector<HTMLElement>('[data-row="0"][data-col="0"]')?.focus(), 80);
+  };
+
+  // Leaving the items step: a row left empty, or a spreadsheet still waiting for a decision, would be lost or confusing
+  const goToReview = () => {
+    if (pendingUpload) { toast.error("Choose what to do with the spreadsheet you just uploaded: add its items to your list, or replace the list."); return; }
+    const blank = reviewItems.findIndex(isBlankRow);
+    if (blank >= 0) { toast.error(`Row ${blank + 1} has no product code or description. Fill it in, or remove it.`); return; }
+    setStep(3);
   };
 
   const removeItem = (i: number) => {
@@ -1443,10 +1474,48 @@ export function NewQuotationClient({
       {/* ── STEP 2: Upload ─────────────────────────────────────────────────── */}
       {step === 2 && (
         <div className="space-y-4">
+          {pendingUpload && (
+            <div className="rounded-xl border-2 border-primary/40 bg-primary/5 p-4 space-y-3">
+              <div>
+                <div className="text-sm font-semibold">{pendingUpload.items.length} items read from {pendingUpload.fileName}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  You already have {reviewItems.filter((r) => !isBlankRow(r)).length} items in the list. Add the spreadsheet&apos;s items after them, or replace what you have?
+                </div>
+                {pendingUpload.repeated.length > 0 && (
+                  <div className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">
+                    {pendingUpload.repeated.length} product code{pendingUpload.repeated.length === 1 ? " is" : "s are"} already in your list ({pendingUpload.repeated.slice(0, 4).join(", ")}{pendingUpload.repeated.length > 4 ? ", …" : ""}). Adding would list {pendingUpload.repeated.length === 1 ? "it" : "them"} twice.
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => applyPendingUpload("add")} className="gap-1.5"><PlusIcon className="w-3.5 h-3.5" />Add to my list</Button>
+                <Button variant="outline" onClick={() => applyPendingUpload("replace")}>Replace my list</Button>
+                <Button variant="ghost" onClick={() => setPendingUpload(null)}>Discard the spreadsheet</Button>
+              </div>
+            </div>
+          )}
+
+          {reviewItems.length === 0 && !autoMatching && !parsing && (
+            <>
+              <div className="bg-background border border-border rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">Key in the items yourself</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Add items one by one: type a product code and the details fill in. You can still upload a spreadsheet afterwards and add its items to yours.
+                  </div>
+                </div>
+                <Button onClick={startTyping} className="gap-2"><PlusIcon className="w-4 h-4" />Start typing items</Button>
+              </div>
+              <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-muted-foreground">
+                <span className="h-px flex-1 bg-border" />or upload a spreadsheet<span className="h-px flex-1 bg-border" />
+              </div>
+            </>
+          )}
+
           <div className="bg-background border border-border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-muted/20 border-b border-border">
               <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Upload spreadsheet
+                {reviewItems.length > 0 ? "Add more items from a spreadsheet" : "Upload spreadsheet"}
               </div>
             </div>
             <div className="p-4 space-y-4">
@@ -1458,7 +1527,7 @@ export function NewQuotationClient({
                       {reviewItems.length} items loaded
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      Upload a new spreadsheet below to replace all items, or continue to review.
+                      Upload a spreadsheet below to add its items to these (or replace them), or continue to review.
                     </div>
                   </div>
                 </div>
@@ -2146,7 +2215,7 @@ export function NewQuotationClient({
               <ChevronLeftIcon className="w-4 h-4" /> Back
             </Button>
             {step === 2 ? (
-              <Button onClick={() => setStep(3)} className="gap-2">
+              <Button onClick={goToReview} className="gap-2">
                 Next: Review <ChevronRightIcon className="w-4 h-4" />
               </Button>
             ) : (
