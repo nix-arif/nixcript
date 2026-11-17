@@ -46,6 +46,8 @@ import { createNotification, getPoApprovers } from "@/server/notifications";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import { maybeCreateIntercompanySalesOrder } from "@/server/sales-order";
 import { assertSupplierAllowed } from "@/server/supplier-restrictions";
+import { routeRestrictedSupplier, joinNotes } from "@/lib/org/supplier-routing";
+import { priceIntercompanyLines, intercompanyPricingNote, sumTotals, stripPricingNote } from "@/lib/intercompany/pricing";
 
 import { getSession, requireAccess } from "@/lib/auth/require-access";
 import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
@@ -377,6 +379,10 @@ export interface CreatePurchaseOrderInput {
   // Overrides the auto-generated PO number — for backfilling a PO that was
   // already manually issued to the supplier under its own number.
   manualPoNo?: string;
+  // Only used when the supplier is one of the owner's other organizations: how the lines are priced.
+  // Left out, the default rule applies (see lib/intercompany/pricing.ts).
+  pricingMethod?: string;
+  pricingMarginPct?: string;
   items: PurchaseOrderItemInput[];
 }
 
@@ -1404,8 +1410,30 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
 
   if (!input.supplierId) throw new Error("Supplier is required");
 
-  const [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
+  let supplierId = input.supplierId;
+  let [sup] = await db.select().from(supplier).where(eq(supplier.id, supplierId));
+  // a supplier that only a sibling organization may deal with: issue the PO to that organization instead
+  const route = await routeRestrictedSupplier(orgId, sup?.name, userId);
+  if (route) {
+    supplierId = route.supplierId;
+    [sup] = await db.select().from(supplier).where(eq(supplier.id, supplierId));
+  }
+  let notes = joinNotes(stripPricingNote(input.notes), route?.note);
   await assertSupplierAllowed(orgId, sup?.name);
+
+  // A sibling organization as the supplier: price the lines by the chosen method (or the default rule)
+  let poItems = input.items;
+  let totals = { subtotal: input.subtotal ?? "0", sst: input.sst ?? "0", grandTotal: input.grandTotal ?? "0" };
+  let pricing: { method: string; marginPct: string | null } | null = null;
+  if (sup?.linkedOrganizationId && (await getOwnerOrgIds(orgId)).includes(sup.linkedOrganizationId)) {
+    const priced = await priceIntercompanyLines(sup.linkedOrganizationId, orgId, input.items, { method: input.pricingMethod, marginPct: input.pricingMarginPct }, input.customerPoIds ?? [], route?.originalName);
+    pricing = { method: priced.method, marginPct: priced.marginPct };
+    if (priced.method !== "manual") {
+      poItems = priced.lines;
+      totals = sumTotals(poItems, input.sstPct);
+      notes = joinNotes(notes, intercompanyPricingNote(priced.method, priced.marginPct, priced.source, priced.kept, route?.originalName));
+    }
+  }
   const supplierSnapshot: PurchaseOrderRow["supplierSnapshot"] = sup ? {
     name: sup.name,
     registrationNo: sup.registrationNo ?? undefined,
@@ -1443,15 +1471,18 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
       prNo,
       poNo,
       salesOrderId: input.salesOrderId ?? null,
-      supplierId: input.supplierId,
+      supplierId,
       supplierSnapshot: supplierSnapshot ?? null,
       supplierQuotationKey: input.supplierQuotationKey ?? null,
       currency: input.currency ?? "MYR",
-      subtotal: input.subtotal ?? "0",
-      sst: input.sst ?? "0",
+      subtotal: totals.subtotal,
+      sst: totals.sst,
       sstPct: input.sstPct ?? "0",
-      grandTotal: input.grandTotal ?? "0",
-      notes: input.notes ?? null,
+      grandTotal: totals.grandTotal,
+      pricingMethod: pricing?.method ?? null,
+      pricingMarginPct: pricing?.marginPct ?? null,
+      originalSupplierName: route?.originalName ?? null,
+      notes: notes || null,
       expectedDeliveryDate: input.expectedDeliveryDate ?? null,
       deliveryAddress: input.deliveryAddress ?? null,
       status,
@@ -1460,9 +1491,9 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
     })
     .returning();
 
-  if (input.items.length > 0) {
+  if (poItems.length > 0) {
     await db.insert(purchaseOrderItem).values(
-      input.items.map((item) => ({
+      poItems.map((item) => ({
         id: nanoid(),
         purchaseOrderId: row.id,
         rowNo: item.rowNo,
@@ -1625,8 +1656,20 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
 
   // Rebuild supplier snapshot if supplier changed
   let supplierSnapshot = existing.supplierSnapshot;
+  let supplierId = input.supplierId;
+  let notes = input.notes ?? null;
+  let originalSupplierName = existing.originalSupplierName ?? null; // kept while the supplier stays the same
   if (input.supplierId && input.supplierId !== existing.supplierId) {
-    const [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
+    originalSupplierName = null;
+    let [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
+    // a supplier that only a sibling organization may deal with: issue the PO to that organization instead
+    const route = await routeRestrictedSupplier(existing.organizationId, sup?.name, existing.createdBy);
+    if (route) {
+      supplierId = route.supplierId;
+      originalSupplierName = route.originalName;
+      notes = joinNotes(input.notes, route.note) || null;
+      [sup] = await db.select().from(supplier).where(eq(supplier.id, supplierId));
+    }
     await assertSupplierAllowed(existing.organizationId, sup?.name);
     if (sup) {
       supplierSnapshot = {
@@ -1640,21 +1683,46 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
     }
   }
 
+  // A sibling organization as the supplier: price the lines by the chosen method (or the one already on the PO)
+  let poItems = input.items;
+  let totals = { subtotal: input.subtotal ?? existing.subtotal, sst: input.sst ?? existing.sst, grandTotal: input.grandTotal ?? existing.grandTotal };
+  let pricing: { method: string; marginPct: string | null } | null = null;
+  notes = stripPricingNote(notes) || null;
+  if (supplierId) {
+    const [pricedSup] = await db.select({ linkedOrganizationId: supplier.linkedOrganizationId }).from(supplier).where(eq(supplier.id, supplierId));
+    if (pricedSup?.linkedOrganizationId && (await getOwnerOrgIds(existing.organizationId)).includes(pricedSup.linkedOrganizationId)) {
+      const sameSupplier = supplierId === existing.supplierId;
+      const priced = await priceIntercompanyLines(pricedSup.linkedOrganizationId, existing.organizationId, input.items, {
+        method: input.pricingMethod ?? (sameSupplier ? existing.pricingMethod : undefined),
+        marginPct: input.pricingMarginPct ?? (sameSupplier ? existing.pricingMarginPct : undefined),
+      }, input.customerPoIds ?? [], originalSupplierName);
+      pricing = { method: priced.method, marginPct: priced.marginPct };
+      if (priced.method !== "manual") {
+        poItems = priced.lines;
+        totals = sumTotals(poItems, input.sstPct ?? existing.sstPct);
+        notes = joinNotes(notes, intercompanyPricingNote(priced.method, priced.marginPct, priced.source, priced.kept, originalSupplierName)) || null;
+      }
+    }
+  }
+
   const [row] = await db
     .update(purchaseOrder)
     .set({
       salesOrderId: input.salesOrderId ?? null,
-      supplierId: input.supplierId,
+      supplierId,
       supplierSnapshot,
       supplierQuotationKey: input.supplierQuotationKey !== undefined
         ? input.supplierQuotationKey
         : existing.supplierQuotationKey,
       currency: input.currency ?? existing.currency,
-      subtotal: input.subtotal ?? existing.subtotal,
-      sst: input.sst ?? existing.sst,
+      subtotal: totals.subtotal,
+      sst: totals.sst,
       sstPct: input.sstPct ?? existing.sstPct,
-      grandTotal: input.grandTotal ?? existing.grandTotal,
-      notes: input.notes ?? null,
+      grandTotal: totals.grandTotal,
+      pricingMethod: pricing?.method ?? null,
+      pricingMarginPct: pricing?.marginPct ?? null,
+      originalSupplierName,
+      notes,
       expectedDeliveryDate: input.expectedDeliveryDate ?? null,
       deliveryAddress: input.deliveryAddress ?? null,
       status: input.status ?? existing.status,
@@ -1668,7 +1736,7 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
     .from(purchaseOrderItem)
     .where(eq(purchaseOrderItem.purchaseOrderId, input.id));
 
-  const newImageKeys = new Set(input.items.map((i) => i.imageKey).filter(Boolean));
+  const newImageKeys = new Set(poItems.map((i) => i.imageKey).filter(Boolean));
   for (const old of oldItems) {
     if (old.imageKey && !newImageKeys.has(old.imageKey)) {
       await deleteFile(PROCUREMENT_DOCS_BUCKET, old.imageKey);
@@ -1677,9 +1745,9 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
 
   await db.delete(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, input.id));
 
-  if (input.items.length > 0) {
+  if (poItems.length > 0) {
     await db.insert(purchaseOrderItem).values(
-      input.items.map((item) => ({
+      poItems.map((item) => ({
         id: nanoid(),
         purchaseOrderId: input.id,
         rowNo: item.rowNo,

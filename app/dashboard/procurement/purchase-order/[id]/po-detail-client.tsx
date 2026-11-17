@@ -1,5 +1,6 @@
 "use client";
 
+import { pricingMethodLabel } from "@/lib/intercompany/methods";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -519,6 +520,16 @@ export function PurchaseOrderDetailClient({
                 {snap.email && <p className="text-xs text-muted-foreground pl-5">{snap.email}</p>}
                 {snap.contactNo && <p className="text-xs text-muted-foreground pl-5">{snap.contactNo}</p>}
                 {snap.address && <p className="text-xs text-muted-foreground pl-5 whitespace-pre-wrap">{snap.address}</p>}
+                {order.originalSupplierName && (
+                  <p className="text-xs pl-5 pt-1 text-muted-foreground">
+                    For supplier: <span className="font-medium text-foreground">{order.originalSupplierName}</span>
+                  </p>
+                )}
+                {order.pricingMethod && order.pricingMethod !== "manual" && (
+                  <p className="text-xs pl-5 pt-1 text-muted-foreground">
+                    Intercompany pricing: <span className="font-medium text-foreground">{pricingMethodLabel(order.pricingMethod, order.pricingMarginPct)}</span>
+                  </p>
+                )}
               </div>
             </section>
           )}

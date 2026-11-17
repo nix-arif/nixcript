@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createCustomerPo, getNextCashSaleNo, type CpoItemInput } from "@/server/customer-purchase-order";
+import { createCustomerPo, getNextCashSaleNo, getNextPoTbcNo, type CpoItemInput } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
 import { searchQuotationsByNo, getQuotationForSO } from "@/server/quotation";
@@ -110,6 +110,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   const [notes,          setNotes]          = useState("");
 
   const [cashSaleLoading, setCashSaleLoading] = useState(false);
+  const [poTbcLoading, setPoTbcLoading] = useState(false);
 
   // ── PDF ────────────────────────────────────────────────────────────────────
   const [pdfFile,      setPdfFile]      = useState<File | null>(null);
@@ -581,6 +582,18 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     }
   }
 
+  async function handlePoToFollow() {
+    if (poTbcLoading) return;
+    setPoTbcLoading(true);
+    try {
+      setCustomerPoNo(await getNextPoTbcNo());
+    } catch {
+      toast.error("Failed to generate a temporary PO number");
+    } finally {
+      setPoTbcLoading(false);
+    }
+  }
+
   async function handleCashSale() {
     if (cashSaleLoading) return;
     setCashSaleLoading(true);
@@ -630,6 +643,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
               ...rest,
               rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
               quotationNo:   _quotationNo || undefined,
+              originalCode:  rest._codeSource === "user" ? (_origCode?.trim() || undefined) : undefined,
               cpoDescription: rest.cpoDescription?.trim() || undefined,
               setCpoTitle:   rest.setGroupId && !isNotAsSetLabel(rest.setGroupLabel) ? (rest.setCpoTitle?.trim() || undefined) : undefined,
               setGroupId:    rest.setGroupId    || undefined,
@@ -836,6 +850,19 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <Label>Customer PO number <span className="text-destructive">*</span></Label>
+              <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={poTbcLoading}
+                onClick={handlePoToFollow}
+                title="The customer has ordered but has not sent its PO yet. Gives a temporary number; replace it when the real PO arrives."
+                className="flex items-center gap-1 text-[11px] md:text-[11px] text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 border border-dashed border-amber-400 dark:border-amber-600 rounded px-2 py-0.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {poTbcLoading
+                  ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                  : <PlusIcon className="w-3 h-3" />}
+                PO to follow
+              </button>
               <button
                 type="button"
                 disabled={cashSaleLoading}
@@ -847,6 +874,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                   : <PlusIcon className="w-3 h-3" />}
                 Cash Sale
               </button>
+              </div>
             </div>
             <Input
               value={customerPoNo}
@@ -854,6 +882,11 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
               placeholder="e.g. HOSPITAL-PO-2025-001"
               className="h-9"
             />
+            {/^PO-TBC-/i.test(customerPoNo.trim()) && (
+              <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+                Temporary number: the customer&apos;s PO has not arrived yet. Replace it with the real PO number when it does.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">

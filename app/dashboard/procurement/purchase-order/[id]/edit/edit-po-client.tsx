@@ -10,6 +10,8 @@ import {
   type PurchaseOrderWithItems,
 } from "@/server/purchase-order";
 import type { Supplier } from "@/server/supplier";
+import { usesPercent } from "@/lib/intercompany/methods";
+import { IntercompanyPricingPicker, type PricingPick } from "@/components/purchase-order/intercompany-pricing-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -119,6 +121,11 @@ export function EditPurchaseOrderClient({
 
   // Supplier (required)
   const [supplierId, setSupplierId] = useState(order.supplierId ?? "");
+  // the method already on the PO stays selected; a supplier change starts again from the default rule
+  const [pricing, setPricing] = useState<PricingPick>({
+    method: (order.pricingMethod as PricingPick["method"]) ?? "",
+    marginPct: order.pricingMarginPct ?? "",
+  });
 
   // Linked SO
   const existingSo = order.salesOrderId
@@ -239,6 +246,8 @@ export function EditPurchaseOrderClient({
       await updateFn({
         id: order.id,
         supplierId,
+        pricingMethod: pricing.method || undefined,
+        pricingMarginPct: usesPercent(pricing.method) ? pricing.marginPct : undefined,
         salesOrderId: selectedSo?.id,
         customerPoIds: selectedCpos.map((c) => c.id),
         supplierQuotationKey: pdfKey,
@@ -294,7 +303,7 @@ export function EditPurchaseOrderClient({
             <select
               className={`w-full h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${!supplierId ? "border-destructive/50" : "border-border"}`}
               value={supplierId}
-              onChange={(e) => setSupplierId(e.target.value)}
+              onChange={(e) => { setSupplierId(e.target.value); if (e.target.value !== order.supplierId) setPricing({ method: "", marginPct: "" }); }}
             >
               <option value="">— Select supplier —</option>
               {suppliers.map((s) => (
@@ -304,6 +313,12 @@ export function EditPurchaseOrderClient({
               ))}
             </select>
           )}
+          <IntercompanyPricingPicker
+            supplierId={supplierId}
+            originalSupplier={supplierId === order.supplierId ? order.originalSupplierName : null}
+            value={pricing}
+            onChange={setPricing}
+          />
         </section>
 
         {/* ── Linked SO (single, optional) ── */}

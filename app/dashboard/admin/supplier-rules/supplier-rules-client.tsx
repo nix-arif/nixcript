@@ -1,239 +1,91 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
-import {
-  getRestrictedSupplierRules,
-  createRestrictedSupplierRule,
-  deleteRestrictedSupplierRule,
-  type RestrictedSupplierRule,
-} from "@/server/supplier-restrictions";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { getRestrictedSupplierRules, type RestrictedSupplierRule } from "@/server/supplier-restrictions";
+import { getPricingAdminData } from "@/server/intercompany-pricing";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/page-header";
-import {
-  PlusIcon,
-  TrashIcon,
-  ShieldIcon,
-  BuildingIcon,
-} from "lucide-react";
+import { ArrowRightIcon, BuildingIcon, FactoryIcon, TagsIcon } from "lucide-react";
+import { HandlingPanel } from "./handling-panel";
+import { PricingRulesPanel } from "./pricing-rules-panel";
+import { PriceListPanel } from "./price-list-panel";
+
+export type IntercompanyTab = "suppliers" | "pricing" | "prices";
+export type PricingData = Awaited<ReturnType<typeof getPricingAdminData>>;
 
 interface Props {
+  initialTab: IntercompanyTab;
   initialRules: RestrictedSupplierRule[];
   ownerOrganizations: { id: string; name: string }[];
   supplierNames: string[];
+  initialPricing: PricingData;
 }
 
-const EMPTY_FORM = {
-  supplierName: "",
-  designatedOrganizationId: "",
-  notes: "",
-};
+function Count({ n }: { n: number }) {
+  return <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-semibold tabular-nums text-muted-foreground">{n}</span>;
+}
 
-export function SupplierRulesClient({ initialRules, ownerOrganizations, supplierNames }: Props) {
+export function SupplierRulesClient({ initialTab, initialRules, ownerOrganizations, supplierNames, initialPricing }: Props) {
+  const [tab, setTab] = useState<IntercompanyTab>(initialTab);
   const [rules, setRules] = useState(initialRules);
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [pricing, setPricing] = useState(initialPricing);
+  const reloadRules = async () => setRules(await getRestrictedSupplierRules());
+  const reloadPricing = async () => setPricing(await getPricingAdminData());
 
-  function openCreate() {
-    setForm({ ...EMPTY_FORM, designatedOrganizationId: ownerOrganizations[0]?.id ?? "" });
-    setOpen(true);
-  }
-
-  const f =
-    (k: keyof typeof EMPTY_FORM) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-      setForm((prev) => ({ ...prev, [k]: e.target.value }));
-
-  async function handleSave() {
-    if (!form.supplierName.trim()) {
-      toast.error("Supplier name is required");
-      return;
-    }
-    if (!form.designatedOrganizationId) {
-      toast.error("Choose which organization is allowed to deal with this supplier");
-      return;
-    }
-    setSaving(true);
-    try {
-      await createRestrictedSupplierRule(form);
-      toast.success("Rule created");
-      setRules(await getRestrictedSupplierRules());
-      setOpen(false);
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDelete(id: string, name: string) {
-    if (!confirm(`Remove the rule for "${name}"? Every organization will be able to deal with this supplier again.`)) return;
-    setDeleting(id);
-    try {
-      await deleteRestrictedSupplierRule(id);
-      setRules(await getRestrictedSupplierRules());
-      toast.success("Rule removed");
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setDeleting(null);
-    }
-  }
+  const changeTab = (v: string) => {
+    setTab(v as IntercompanyTab);
+    try { window.history.replaceState(null, "", `?tab=${v}`); } catch { /* the tab still works without the URL */ }
+  };
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6 max-w-5xl">
       <PageHeader
-        title="Supplier Rules"
-        description="Restrict a supplier to being dealt with directly by only one of your organizations"
-        action={
-          ownerOrganizations.length > 0 ? (
-            <Button onClick={openCreate} className="gap-2">
-              <PlusIcon className="w-4 h-4" /> Add rule
-            </Button>
-          ) : undefined
-        }
+        title="Intercompany Purchasing"
+        description="How your organizations buy from shared suppliers and from each other"
       />
 
-      {ownerOrganizations.length === 0 ? (
+      {ownerOrganizations.length < 2 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
-          <ShieldIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-          <div className="text-sm font-medium mb-1">No other organizations</div>
-          <div className="text-xs">
-            Supplier rules only apply when you own more than one organization.
-          </div>
-        </div>
-      ) : rules.length === 0 ? (
-        <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
-          <ShieldIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-          <div className="text-sm font-medium mb-1">No rules yet</div>
-          <div className="text-xs mb-4">
-            Every organization can deal with any supplier directly until you add a rule.
-          </div>
-          <Button variant="outline" size="sm" className="gap-2" onClick={openCreate}>
-            <PlusIcon className="w-3.5 h-3.5" /> Add rule
-          </Button>
+          <BuildingIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
+          <div className="text-sm font-medium mb-1">Only one organization</div>
+          <div className="text-xs">These settings apply when you own more than one organization.</div>
         </div>
       ) : (
-        <div className="space-y-2">
-          {rules.map((r) => (
-            <div
-              key={r.id}
-              className="border border-border rounded-xl bg-background px-4 py-3 flex items-start gap-3 hover:bg-muted/20 transition-colors"
-            >
-              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0 mt-0.5">
-                <ShieldIcon className="w-3.5 h-3.5 text-muted-foreground" />
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-sm">{r.supplierName}</span>
-                  <span
-                    className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800"
-                    title="Only this organization can deal with this supplier directly"
-                  >
-                    <BuildingIcon className="w-3 h-3 shrink-0" />
-                    {r.designatedOrganizationName ?? "Unknown organization"}
-                  </span>
-                </div>
-                {r.notes && (
-                  <p className="text-[11px] text-muted-foreground mt-1">{r.notes}</p>
-                )}
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Added {new Date(r.createdAt).toLocaleDateString()}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-1 shrink-0">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="w-7 h-7 text-destructive hover:text-destructive"
-                  disabled={deleting === r.id}
-                  onClick={() => handleDelete(r.id, r.supplierName)}
-                >
-                  <TrashIcon className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent className="w-full sm:max-w-md max-w-lg! overflow-y-auto px-10">
-          <SheetHeader className="mb-5">
-            <SheetTitle>Add supplier rule</SheetTitle>
-          </SheetHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>
-                Supplier name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                value={form.supplierName}
-                onChange={f("supplierName")}
-                placeholder="e.g. ABC Medical Sdn Bhd"
-                list="supplier-rule-name-suggestions"
-              />
-              <datalist id="supplier-rule-name-suggestions">
-                {supplierNames.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-              <p className="text-[11px] text-muted-foreground">
-                Matches any supplier record with this name (case-insensitive) across all your organizations. Pick an existing supplier or type a new name.
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>
-                Designated organization <span className="text-destructive">*</span>
-              </Label>
-              <select
-                value={form.designatedOrganizationId}
-                onChange={f("designatedOrganizationId")}
-                className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
-              >
-                {ownerOrganizations.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
-                ))}
-              </select>
-              <p className="text-[11px] text-muted-foreground">
-                Only this organization can deal with this supplier directly. Every other organization is blocked.
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Notes</Label>
-              <Textarea
-                value={form.notes}
-                onChange={f("notes")}
-                placeholder="Internal notes..."
-                rows={2}
-              />
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <Button className="flex-1" onClick={handleSave} disabled={saving}>
-                {saving ? "Saving…" : "Add rule"}
-              </Button>
-              <Button variant="outline" onClick={() => setOpen(false)}>
-                Cancel
-              </Button>
+        <>
+          {/* the idea in one line, so each tab makes sense on its own */}
+          <div className="mb-5 rounded-xl border border-border bg-muted/20 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+              <span className="rounded-md border border-border bg-background px-2 py-1 font-medium">Any of your organizations</span>
+              <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-muted-foreground">PO at the price you set</span>
+              <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 font-medium text-indigo-700 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-400">Organization that handles the supplier</span>
+              <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-muted-foreground">its own PO</span>
+              <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="rounded-md border border-border bg-background px-2 py-1 font-medium">Supplier</span>
             </div>
           </div>
-        </SheetContent>
-      </Sheet>
+
+          <Tabs value={tab} onValueChange={changeTab}>
+            <TabsList className="flex-wrap">
+              <TabsTrigger value="suppliers"><FactoryIcon className="h-3.5 w-3.5" />Supplier handling <Count n={rules.length} /></TabsTrigger>
+              <TabsTrigger value="pricing"><BuildingIcon className="h-3.5 w-3.5" />Pricing between organizations <Count n={pricing.rules.length} /></TabsTrigger>
+              <TabsTrigger value="prices"><TagsIcon className="h-3.5 w-3.5" />Price list <Count n={pricing.prices.length} /></TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="suppliers">
+              <HandlingPanel rules={rules} orgs={ownerOrganizations} supplierNames={supplierNames} reload={reloadRules} />
+            </TabsContent>
+            <TabsContent value="pricing">
+              <PricingRulesPanel data={pricing} supplierRules={rules} reload={reloadPricing} goToPrices={() => changeTab("prices")} />
+            </TabsContent>
+            <TabsContent value="prices">
+              <PriceListPanel data={pricing} reload={reloadPricing} />
+            </TabsContent>
+          </Tabs>
+        </>
+      )}
     </div>
   );
 }

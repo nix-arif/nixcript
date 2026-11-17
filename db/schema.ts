@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -1785,6 +1785,48 @@ export const supplierRelations = relations(supplier, ({ one }) => ({
 // Scoped by ownerUserId (the actual invariant tying orgs together, same
 // resolution getOwnerOrgIds itself uses) rather than any single
 // organizationId, since the rule applies across every org that owner has.
+/* =========================
+   INTERCOMPANY PRICING
+   A PO from one of the owner's organizations to a sibling is priced by a method the user picks on the PO.
+   When the user does not pick, the rule for the (seller, buyer) pair applies, else the seller's rule for any
+   buyer, else the price typed on the PO (manual).
+========================= */
+export const intercompanyPricingRule = pgTable(
+  "intercompany_pricing_rule",
+  {
+    id: text("id").primaryKey(),
+    sellerOrganizationId: text("seller_organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    buyerOrganizationId: text("buyer_organization_id").references(() => organization.id, { onDelete: "cascade" }), // null = any buyer
+    method: text("method").notNull(), // manual | selling_price | cost_plus | price_list
+    marginPct: text("margin_pct"), // the margin (cost_plus) or the discount (cpo_less)
+    // An exception for one supplier handled by the seller (null = the general rule): that supplier is priced by this rule instead
+    supplierName: text("supplier_name"),
+    supplierNameNormalized: text("supplier_name_normalized"), // lower(trim(supplierName))
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("intercompany_pricing_rule_scope_uidx").on(t.sellerOrganizationId, sql`COALESCE(${t.buyerOrganizationId}, '')`, sql`COALESCE(${t.supplierNameNormalized}, '')`),
+  ],
+);
+
+export const intercompanyPrice = pgTable(
+  "intercompany_price",
+  {
+    id: text("id").primaryKey(),
+    sellerOrganizationId: text("seller_organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    productCode: text("product_code").notNull(),
+    productCodeNormalized: text("product_code_normalized").notNull(), // lower(trim(productCode))
+    unitPrice: text("unit_price").notNull(),
+    currency: text("currency").notNull().default("MYR"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [uniqueIndex("intercompany_price_seller_code_uidx").on(t.sellerOrganizationId, t.productCodeNormalized)],
+);
+
 export const restrictedSupplier = pgTable(
   "restricted_supplier",
   {
@@ -2443,6 +2485,10 @@ export const purchaseOrder = pgTable(
 
     notes: text("notes"),
     currency: text("currency").notNull().default("MYR"),
+    // Intercompany pricing used when the supplier is a sibling organization (see lib/intercompany/pricing.ts)
+    pricingMethod: text("pricing_method"), // manual | selling_price | cost_plus | price_list
+    pricingMarginPct: text("pricing_margin_pct"),
+    originalSupplierName: text("original_supplier_name"), // the supplier this PO was really for, when it was routed to a sibling organization
     status: text("status").notNull().default("draft"), // draft | submitted | confirmed | fulfilled | cancelled
 
     expectedDeliveryDate: timestamp("expected_delivery_date"),
@@ -3099,6 +3145,7 @@ export const customerPurchaseOrder = pgTable(
       setGroupLabel?: string;
       setQty?: string;
       quotationNo?: string;
+      originalCode?: string;
       cpoDescription?: string;
       setCpoTitle?: string;
     }[]>(),

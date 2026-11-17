@@ -12,6 +12,8 @@ import {
 } from "@/server/purchase-order";
 import { getProductDetailsByCodes } from "@/server/products";
 import type { Supplier } from "@/server/supplier";
+import { usesPercent } from "@/lib/intercompany/methods";
+import { IntercompanyPricingPicker, type PricingPick } from "@/components/purchase-order/intercompany-pricing-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,6 +107,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   })();
 
   const [supplierId, setSupplierId] = useState(initialSupplierId);
+  const [pricing, setPricing] = useState<PricingPick>({ method: "", marginPct: "" });
 
   // Linked SO (direct mode only)
   const [selectedSo, setSelectedSo] = useState<ApprovedSo | null>(() =>
@@ -532,6 +535,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     return createPurchaseOrder({
       purchaseRequisitionId: prData?.id,
       supplierId,
+      pricingMethod: pricing.method || undefined,
+      pricingMarginPct: usesPercent(pricing.method) ? pricing.marginPct : undefined,
       salesOrderId: isPrMode ? (prData?.salesOrderId ?? undefined) : selectedSo?.id,
       customerPoIds: isPrMode ? prModeCpoIds : selectedCpos.map((c) => c.id),
       supplierQuotationKey: pdfKey,
@@ -690,6 +695,11 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
               </optgroup>
             </select>
           )}
+          <IntercompanyPricingPicker
+            supplierId={supplierId}
+            value={pricing}
+            onChange={setPricing}
+          />
           {!isPrMode && supplierId && orderedSupplierIds.includes(supplierId) && (
             <div className="mt-2 flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
               <AlertCircleIcon className="w-3.5 h-3.5 shrink-0" />

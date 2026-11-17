@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { updateCustomerPo, getNextCashSaleNo, type CpoItemInput, type CustomerPo } from "@/server/customer-purchase-order";
+import { updateCustomerPo, getNextCashSaleNo, getNextPoTbcNo, type CpoItemInput, type CustomerPo } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
 import { searchQuotationsByNo, getQuotationForSO } from "@/server/quotation";
@@ -151,6 +151,7 @@ export function EditCustomerPoClient({
         _qtySource:         raw._qtySource         ?? (hasQuotations ? "quote" : null),
         _unitPriceSource:   raw._unitPriceSource   ?? (hasQuotations ? "quote" : null),
         _editedBy:          raw._editedBy          ?? null,
+        _origCode:          raw._codeSource === "user" ? raw.originalCode || undefined : undefined,
       } as EditableItem;
     })
   );
@@ -186,6 +187,7 @@ export function EditCustomerPoClient({
   const [notes,          setNotes]          = useState(cpo.notes ?? "");
 
   const [cashSaleLoading, setCashSaleLoading] = useState(false);
+  const [poTbcLoading, setPoTbcLoading] = useState(false);
 
   // ── PDF ────────────────────────────────────────────────────────────────────
   const [existingDocKey, setExistingDocKey] = useState<string | null>(cpo.documentKey ?? null);
@@ -656,6 +658,18 @@ export function EditCustomerPoClient({
     }
   }
 
+  async function handlePoToFollow() {
+    if (poTbcLoading) return;
+    setPoTbcLoading(true);
+    try {
+      setCustomerPoNo(await getNextPoTbcNo());
+    } catch {
+      toast.error("Failed to generate a temporary PO number");
+    } finally {
+      setPoTbcLoading(false);
+    }
+  }
+
   async function handleCashSale() {
     if (cashSaleLoading) return;
     setCashSaleLoading(true);
@@ -706,6 +720,7 @@ export function EditCustomerPoClient({
               ...rest,
               rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
               quotationNo:   _quotationNo || undefined,
+              originalCode:  rest._codeSource === "user" ? (_origCode?.trim() || undefined) : undefined,
               cpoDescription: rest.cpoDescription?.trim() || undefined,
               setCpoTitle:   rest.setGroupId && !isNotAsSetLabel(rest.setGroupLabel) ? (rest.setCpoTitle?.trim() || undefined) : undefined,
               setGroupId:    rest.setGroupId    || undefined,
@@ -912,6 +927,19 @@ export function EditCustomerPoClient({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <Label>Customer PO number <span className="text-destructive">*</span></Label>
+              <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={poTbcLoading}
+                onClick={handlePoToFollow}
+                title="The customer has ordered but has not sent its PO yet. Gives a temporary number; replace it when the real PO arrives."
+                className="flex items-center gap-1 text-[11px] md:text-[11px] text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 border border-dashed border-amber-400 dark:border-amber-600 rounded px-2 py-0.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {poTbcLoading
+                  ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                  : <PlusIcon className="w-3 h-3" />}
+                PO to follow
+              </button>
               <button
                 type="button"
                 disabled={cashSaleLoading}
@@ -923,6 +951,7 @@ export function EditCustomerPoClient({
                   : <PlusIcon className="w-3 h-3" />}
                 Cash Sale
               </button>
+              </div>
             </div>
             <Input
               value={customerPoNo}
@@ -930,6 +959,16 @@ export function EditCustomerPoClient({
               placeholder="e.g. HOSPITAL-PO-2025-001"
               className="h-9"
             />
+            {/^PO-TBC-/i.test(customerPoNo.trim()) && (
+              <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+                Temporary number: the customer&apos;s PO has not arrived yet. Replace it with the real PO number when it does (edit this CPO; documents already made from it are renamed too).
+              </p>
+            )}
+            {customerPoNo.trim() && customerPoNo.trim() !== (cpo.customerPoNo ?? "") && (cpo.salesOrderNo || status !== "received") && (
+              <p className="text-[11px] leading-snug text-blue-700 dark:text-blue-400">
+                The number changes from <span className="font-mono">{cpo.customerPoNo}</span> to <span className="font-mono">{customerPoNo.trim()}</span>. The sales order, delivery orders, invoices and other documents made from this CPO are renamed too when you save.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">

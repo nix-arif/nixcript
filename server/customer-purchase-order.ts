@@ -9,18 +9,24 @@ import {
   invoice,
   purchaseOrder,
   purchaseOrderCustomerPo,
+  purchaseOrderItem,
+  purchaseRequisition,
+  packingListItem,
+  salesOrderItem,
+  documentNumberingSetting,
   user,
   member,
   organization,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, inArray, or, isNull, notInArray } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, inArray, or, isNull, notInArray, sql } from "drizzle-orm";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { requireAccess } from "@/lib/auth/require-access";
+import { PO_TBC_PREFIX } from "@/lib/customer-po/po-number";
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT!,
@@ -79,6 +85,8 @@ export type CpoItemInput = {
   setCpoTitle?: string;
   // Our quotation this line came from (so the "from quotation …" badge stays right after saving)
   quotationNo?: string;
+  // The code before a user changed it (kept so the "Code changed from …" notice survives saving)
+  originalCode?: string;
   _codeSource?: "quote" | "user" | null;
   _descriptionSource?: Array<"quote" | "catalog" | "user"> | null;
   _unitPriceSource?: "quote" | "user" | null;
@@ -127,6 +135,34 @@ export async function getNextCashSaleNo(): Promise<string> {
     if (n) max = Math.max(max, parseInt(n, 10));
   }
   return `CASH-SALE-${String(max + 1).padStart(2, "0")}`;
+}
+
+// "PO to follow": the customer has ordered (e.g. by email) but has not sent its PO yet. The CPO gets a
+// temporary number, PO-TBC-<org code>-001, 002, … so nothing has to be typed into the number field. The
+// org code is the prefix of the organization's document numbering (BIO, AF, SI), else its initials.
+// When the real number arrives, rename the CPO: every later document that copied the number follows it.
+export async function getNextPoTbcNo(): Promise<string> {
+  const { orgId } = await requireAccess("customer-po:create");
+  const [[setting], [org]] = await Promise.all([
+    db.select({ prefix: documentNumberingSetting.prefix }).from(documentNumberingSetting)
+      .where(and(eq(documentNumberingSetting.organizationId, orgId), eq(documentNumberingSetting.documentType, "so"))).limit(1),
+    db.select({ name: organization.name }).from(organization).where(eq(organization.id, orgId)).limit(1),
+  ]);
+  const fromName = (org?.name ?? "")
+    .replace(/\b(sdn|bhd|berhad|sendirian)\b\.?/gi, "")
+    .split(/\s+/).filter(Boolean).map((w) => w[0]).join("").toUpperCase();
+  const code = (setting?.prefix?.trim() || fromName || "ORG").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const head = `${PO_TBC_PREFIX}${code}-`;
+  const rows = await db
+    .select({ customerPoNo: customerPurchaseOrder.customerPoNo })
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.organizationId, orgId), ilike(customerPurchaseOrder.customerPoNo, `${head}%`)));
+  let max = 0;
+  for (const { customerPoNo } of rows) {
+    const n = customerPoNo.slice(head.length).match(/^(\d+)$/)?.[1];
+    if (n) max = Math.max(max, parseInt(n, 10));
+  }
+  return `${head}${String(max + 1).padStart(3, "0")}`;
 }
 
 // isIntercompany marks a CPO created automatically from a sibling org's PO
@@ -440,6 +476,10 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
     await deleteDocument(existing.documentKey);
   }
 
+  const newNo = input.customerPoNo.trim();
+  const oldNo = existing.customerPoNo;
+  const renamed = !!newNo && newNo !== oldNo;
+
   const [row] = await db
     .update(customerPurchaseOrder)
     .set({
@@ -467,7 +507,49 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
     })
     .where(eq(customerPurchaseOrder.id, input.id))
     .returning();
+  if (renamed) await renameCustomerPoNoOnDocuments(existing, oldNo, newNo);
   return row;
+}
+
+// The CPO number is copied onto the documents made from the CPO (sales order, PR, internal PO, DO,
+// invoice, packing list). When the number changes (a temporary number replaced by the real PO, or a
+// CPO that turns out to be a cash sale) those copies are renamed too, so no document keeps the old
+// number. Linked documents are found by the CPO id; the copies that only hold the number text
+// (internal PO items, packing list items) are matched by the old number inside the same owner's orgs.
+async function renameCustomerPoNoOnDocuments(cpo: CustomerPo, oldNo: string, newNo: string) {
+  const orgIds = await getAllOwnerOrgIds("", cpo.organizationId);
+  const id = cpo.id;
+  const orgPoIds = db.select({ id: purchaseOrder.id }).from(purchaseOrder).where(inArray(purchaseOrder.organizationId, orgIds));
+
+  const linkedSos = await db
+    .select({ id: salesOrder.id, links: salesOrder.customerPoLinks })
+    .from(salesOrder)
+    .where(and(inArray(salesOrder.organizationId, orgIds), or(
+      eq(salesOrder.id, cpo.salesOrderId ?? "-"),
+      sql`${salesOrder.customerPoLinks}::text like ${"%" + id + "%"}`,
+    )));
+
+  const queries = [
+    ...linkedSos.map((so) => {
+      const links = (so.links ?? []).map((l) => (l.customerPoId === id ? { ...l, customerPoNo: newNo } : l));
+      const first = links[0]?.customerPoId === id;
+      return db.update(salesOrder).set({
+        customerPoLinks: links.length > 0 ? links : null,
+        ...(first || links.length === 0 ? { customerPoNo: newNo } : {}),
+      }).where(eq(salesOrder.id, so.id));
+    }),
+    db.update(salesOrderItem).set({ sourceCustomerPoNo: newNo }).where(eq(salesOrderItem.sourceCustomerPoId, id)),
+    db.update(purchaseRequisition).set({ customerPoNo: newNo }).where(eq(purchaseRequisition.customerPoId, id)),
+    db.update(purchaseOrderCustomerPo).set({ customerPoNo: newNo }).where(eq(purchaseOrderCustomerPo.customerPoId, id)),
+    db.update(deliveryOrder).set({ customerPoNo: newNo }).where(eq(deliveryOrder.customerPoId, id)),
+    db.update(invoice).set({ customerPoNo: newNo }).where(eq(invoice.customerPoId, id)),
+    db.update(purchaseOrderItem).set({ customerPoNo: newNo })
+      .where(and(eq(purchaseOrderItem.customerPoNo, oldNo), inArray(purchaseOrderItem.purchaseOrderId, orgPoIds))),
+    db.update(packingListItem).set({ customerPoNo: newNo })
+      .where(and(eq(packingListItem.customerPoNo, oldNo), inArray(packingListItem.purchaseOrderId, orgPoIds))),
+  ];
+  // one atomic batch: either every copy is renamed or none
+  await db.batch(queries as unknown as [(typeof queries)[0], ...(typeof queries)[number][]]);
 }
 
 export interface CustomerPoTrackingData {

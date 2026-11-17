@@ -6,7 +6,7 @@ import {
   FileTextIcon, PackageIcon, TruckIcon, ReceiptIcon,
   BanknoteIcon, CircleIcon, PencilIcon, ExternalLinkIcon, LinkIcon, DatabaseIcon,
   BuildingIcon, UserIcon, CalendarIcon, PaperclipIcon, PlusIcon,
-  LayersIcon,
+  LayersIcon, AlertTriangleIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -736,7 +736,22 @@ function ItemsSection({ items: rawItems, currency, quotations }: { items: CpoIte
                     </div>
                   </td>
                   <td className="px-3 py-2 font-mono text-[11px] align-top">
-                    {e.item.productCode || "—"}
+                    {e.item._codeSource === "user" ? (
+                      <>
+                        {/* the code was changed by a user: hard to miss, as it is on the edit page */}
+                        <span className="inline-block rounded border-2 border-amber-500 bg-amber-100 px-1.5 py-0.5 font-bold text-amber-950 ring-2 ring-amber-300/80 dark:bg-amber-900/40 dark:text-amber-50">
+                          {e.item.productCode || "—"}
+                        </span>
+                        <div className="mt-1 flex items-start gap-1 font-sans text-[10px] font-medium leading-snug text-amber-700 dark:text-amber-400">
+                          <AlertTriangleIcon className="mt-px h-3 w-3 shrink-0" />
+                          <span>
+                            Code changed{e.item.originalCode && e.item.originalCode !== e.item.productCode ? <> from <span className="font-mono">{e.item.originalCode}</span></> : ""}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      e.item.productCode || "—"
+                    )}
                     <SourceBadges sources={asSources(e.item._codeSource)} item={e.item} />
                   </td>
                   <td className="px-3 py-2 align-top whitespace-normal">
