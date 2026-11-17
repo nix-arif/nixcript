@@ -34,6 +34,7 @@ type LinkedQuotation = {
   customerName?: string | null;
   customerOrg?: string | null;
   customerOrgNames?: string[]; // every organization the customer belongs to (to tell whether two customers share one)
+  customerOrgIds?: string[];
   customerOrgMemberId?: string | null;
 };
 
@@ -177,6 +178,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       let customerName: string | null = null;
       let customerOrg:  string | null = null;
       let customerOrgNames: string[] = [];
+      let customerOrgIds: string[] = [];
       let customerOrgMemberId: string | null = null;
 
       const applySnapshotFallback = () => {
@@ -194,6 +196,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
             const primary = cust.memberships.find((c) => c.isPrimary) ?? cust.memberships[0];
             customerOrg  = primary?.orgName ?? null;
             customerOrgNames = cust.memberships.map((m) => m.orgName).filter((n): n is string => !!n);
+            customerOrgIds = cust.memberships.map((m) => m.customerOrganizationId).filter((n): n is string => !!n);
             customerOrgMemberId = primary?.id ?? null;
           } else {
             applySnapshotFallback();
@@ -209,8 +212,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       // the customer field). A customer of a different organization cannot share a Customer PO.
       if (primaryCustomer) {
         const rel = customerRelation(
-          { customerId: primaryCustomer.customerId, orgNames: primaryCustomer.customerOrgNames ?? [primaryCustomer.customerOrg] },
-          { customerId: qt.customerId, orgNames: customerOrgNames },
+          { customerId: primaryCustomer.customerId, orgNames: primaryCustomer.customerOrgNames ?? [primaryCustomer.customerOrg], orgIds: primaryCustomer.customerOrgIds },
+          { customerId: qt.customerId, orgNames: customerOrgNames, orgIds: customerOrgIds },
         );
         if (rel === "different") {
           toast.error(`Cannot link — this quotation is for a customer of a different organization${customerOrg ? ` (${customerOrg})` : ""}. Quotations can be combined for the same customer, or for other contacts of the same organization.`, { duration: 9000 });
@@ -226,6 +229,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         customerName,
         customerOrg,
         customerOrgNames,
+        customerOrgIds,
         customerOrgMemberId,
       };
 
@@ -849,12 +853,12 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                   <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
                     {qtResults.map((qt, idx) => {
                       const snap = qt.customerSnapshot as any;
-                      const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+                      const custName = (snap ? [snap.title, snap.name].filter(Boolean).join(" ") : "") || qt.customerLabel || null;
                       const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
                       const rel = primaryCustomer
                         ? customerRelation(
-                            { customerId: primaryCustomer.customerId, orgNames: primaryCustomer.customerOrgNames ?? [primaryCustomer.customerOrg] },
-                            { customerId: qt.customerId, orgNames: [snap?.organizationName] },
+                            { customerId: primaryCustomer.customerId, orgNames: primaryCustomer.customerOrgNames ?? [primaryCustomer.customerOrg], orgIds: primaryCustomer.customerOrgIds },
+                            { customerId: qt.customerId, orgNames: [snap?.organizationName, ...qt.customerOrgs.map((o) => o.name)], orgIds: qt.customerOrgs.map((o) => o.id) },
                           )
                         : "same";
                       const diffCustomer = rel === "different";

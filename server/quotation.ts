@@ -968,7 +968,7 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
     .limit(10);
 
   const filteredRows = includeDummy ? rows : rows.filter((r) => r.isDummy !== 1);
-  if (filteredRows.length === 0) return filteredRows.map((r) => ({ ...r, cpoCount: 0 }));
+  if (filteredRows.length === 0) return filteredRows.map((r) => ({ ...r, cpoCount: 0, customerOrgs: [] as { id: string; name: string }[], customerLabel: null as string | null }));
 
   // Count existing CPOs per quotation so the UI can show "2 CPOs already"
   const qtIds = filteredRows.map((r) => r.id);
@@ -981,7 +981,28 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
   const cpoCountMap: Record<string, number> = {};
   for (const c of cpoCounts) if (c.quotationId) cpoCountMap[c.quotationId] = c.cnt;
 
-  return filteredRows.map((r) => ({ ...r, cpoCount: cpoCountMap[r.id] ?? 0 }));
+  // The customer's organization(s) and name come from the customer record: a quotation's saved snapshot can be empty,
+  // and the CPO form needs them to tell whether two quotations are for the same customer organization
+  const customerIds = [...new Set(filteredRows.map((r) => r.customerId).filter((v): v is string => !!v))];
+  const [orgRows, custRows] = customerIds.length
+    ? await Promise.all([
+        db.select({ customerId: customerCompany.customerId, id: customerOrganization.id, name: customerOrganization.name })
+          .from(customerCompany)
+          .innerJoin(customerOrganization, eq(customerOrganization.id, customerCompany.customerOrganizationId))
+          .where(inArray(customerCompany.customerId, customerIds)),
+        db.select({ id: customer.id, title: customer.title, name: customer.name }).from(customer).where(inArray(customer.id, customerIds)),
+      ])
+    : [[], []];
+
+  return filteredRows.map((r) => {
+    const c = custRows.find((x) => x.id === r.customerId);
+    return {
+      ...r,
+      cpoCount: cpoCountMap[r.id] ?? 0,
+      customerOrgs: orgRows.filter((o) => o.customerId === r.customerId).map((o) => ({ id: o.id, name: o.name })),
+      customerLabel: c ? [c.title, c.name].filter(Boolean).join(" ") : null,
+    };
+  });
 }
 
 // ── Fetch quotation with items for SO pre-fill ───────────────────────────

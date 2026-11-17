@@ -8,12 +8,14 @@
 export const normOrgName = (n: string | null | undefined) =>
   (n ?? "").toLowerCase().replace(/[.,()]/g, " ").replace(/\s+/g, " ").trim();
 
-export type CustomerRef = { customerId?: string | null; orgNames: (string | null | undefined)[] };
+export type CustomerRef = { customerId?: string | null; orgNames: (string | null | undefined)[]; orgIds?: (string | null | undefined)[] };
 export type CustomerRelation = "same" | "same-organization" | "different";
 
 export function customerRelation(primary: CustomerRef, other: CustomerRef): CustomerRelation {
   if (primary.customerId && other.customerId && primary.customerId === other.customerId) return "same";
-  // no customer record on either side: only the organization can tell
+  // the same customer organization record is the surest sign; the name is the fallback (older data, or no record)
+  const ids = new Set((primary.orgIds ?? []).filter((x): x is string => !!x));
+  if ((other.orgIds ?? []).some((x) => !!x && ids.has(x))) return "same-organization";
   const a = new Set(primary.orgNames.map(normOrgName).filter(Boolean));
   const shared = other.orgNames.map(normOrgName).filter((n) => n && a.has(n));
   if (shared.length > 0) return "same-organization";
