@@ -220,7 +220,7 @@ export function OrganizationProfileClient({ data }: Props) {
   const [mofValidity, setMofValidity] = useState(data.mofValidity?.slice(0, 10) ?? "");
   const [pkkNo, setPkkNo] = useState(data.pkkNo ?? "");
 
-  // Company code (the 01 in lot numbers LOT-01-…)
+  // Company code (the 01 in lot numbers 01-260005-052-24)
   const [companyCode, setCompanyCode] = useState(data.companyCode ?? "");
   const codeTakenBy = data.siblingCompanyCodes.find((c) => c.code === companyCode.trim());
   const codeProblem = companyCode.trim() && !/^\d{2}$/.test(companyCode.trim())
@@ -675,7 +675,7 @@ export function OrganizationProfileClient({ data }: Props) {
           <SectionHeader icon={FileTextIcon} title="Company code" />
           <div className="p-4 space-y-3">
             <div className="bg-muted/30 border border-border rounded-lg p-3 text-xs text-muted-foreground leading-relaxed">
-              A two-digit code for this company, used in lot numbers (LOT-<span className="font-semibold">01</span>-260005-052-24). It must be different for each of your organizations, and it is fixed into the lot numbers already issued, so choose it once.
+              A two-digit code for this company, used at the start of lot numbers (<span className="font-semibold">01</span>-260005-052-24). It must be different for each of your organizations, and it is fixed into the lot numbers already issued, so choose it once.
             </div>
             <Field label="Company code">
               <Input

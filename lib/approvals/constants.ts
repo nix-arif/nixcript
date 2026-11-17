@@ -17,6 +17,15 @@ export const APPROVAL_MODULES = [
     ],
   },
   {
+    id: "sponsorship",
+    title: "Sponsorship",
+    description: "Who can check (first-level review) or approve sponsorship requests.",
+    permissions: [
+      { key: "sponsorship:check",   label: "Check Sponsorship Requests (1st level)" },
+      { key: "sponsorship:approve", label: "Approve / Reject Sponsorship Requests (final)" },
+    ],
+  },
+  {
     id: "payroll",
     title: "Payroll",
     description: "Who can approve payroll periods and publish payslips to employees.",

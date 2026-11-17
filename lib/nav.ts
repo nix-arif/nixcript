@@ -18,6 +18,7 @@ import {
   LayersIcon,
   ArrowLeftRightIcon,
   LifeBuoyIcon,
+  HandshakeIcon,
 } from "lucide-react";
 import React from "react";
 
@@ -204,6 +205,10 @@ export const navConfig: NavGroup[] = [
       { title: "Claim Approvals",url: "/dashboard/human-resources/claim/approvals",      permission: "claim:approve", section: "Claims" },
       { title: "Claim Types",    url: "/dashboard/human-resources/claim/types",          permission: "claim:manage", section: "Claims" },
       { title: "All Claims",     url: "/dashboard/human-resources/claim/all",            permission: "claim:read:all", section: "Claims" },
+      { title: "My Reviews",     url: "/dashboard/human-resources/performance",          permission: "review:read:own", section: "Performance" },
+      { title: "Team Reviews",   url: "/dashboard/human-resources/performance/team",     permission: "review:conduct", section: "Performance" },
+      { title: "Review Periods", url: "/dashboard/human-resources/performance/periods",  permission: "review:manage", section: "Performance" },
+      { title: "Review Templates", url: "/dashboard/human-resources/performance/templates", permission: "review:manage", section: "Performance" },
       { title: "My Travel Forms",  url: "/dashboard/human-resources/travel",             permission: "travel:read:own", section: "Travel" },
       { title: "Travel Approvals", url: "/dashboard/human-resources/travel/approvals",   permission: "travel:approve", section: "Travel" },
       { title: "All Travel Forms", url: "/dashboard/human-resources/travel/all",         permission: "travel:read:all", section: "Travel" },
@@ -221,6 +226,17 @@ export const navConfig: NavGroup[] = [
       { title: "Approvals",            url: "/dashboard/admin/approvals",          permission: "permission:read" },
       { title: "Member Approvals",     url: "/dashboard/admin/member-approvals",   permission: "permission:read" },
       { title: "Intercompany Purchasing", url: "/dashboard/admin/supplier-rules", permission: "intercompany:read" },
+    ],
+  },
+  {
+    title: "Sponsorship",
+    url: "#",
+    icon: React.createElement(HandshakeIcon),
+    items: [
+      { title: "My Requests",  url: "/dashboard/sponsorship",            permission: "sponsorship:read:own" },
+      { title: "Checker",      url: "/dashboard/sponsorship/checker",    permission: "sponsorship:check" },
+      { title: "Approvals",    url: "/dashboard/sponsorship/approvals",  permission: "sponsorship:approve" },
+      { title: "All Sponsorships", url: "/dashboard/sponsorship/all",    permission: "sponsorship:manage" },
     ],
   },
   {

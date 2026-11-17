@@ -173,6 +173,17 @@ export const ALL_PERMISSIONS = [
   { key: "leave:summary",  label: "View Leave Summary (all members)" },
   { key: "leave:record",   label: "Record Leave for a Member (HR)" },
 
+  // Sponsorship (the company sponsors an external party)
+  { key: "sponsorship:read:own", label: "Request & View Own Sponsorships" },
+  { key: "sponsorship:check",    label: "Check Sponsorship Requests (1st level)" },
+  { key: "sponsorship:approve",  label: "Approve / Reject Sponsorship Requests (final)" },
+  { key: "sponsorship:manage",   label: "Manage Sponsorships (view all, record spend and payment, close)" },
+
+  // Performance review (HR templates and periods, self-assessment, manager review, sign-off)
+  { key: "review:read:own", label: "View & Complete Own Performance Reviews (self-assessment)" },
+  { key: "review:conduct",  label: "Review Team Members (manager review of assigned employees)" },
+  { key: "review:manage",   label: "Manage Performance Reviews (templates, review periods, assign reviewers, sign-off, view all)" },
+
   // Claim management
   { key: "claim:read:own", label: "View Own Claims" },
   { key: "claim:apply",    label: "Submit Claim Application" },
@@ -591,6 +602,36 @@ export const BASIC_PERMISSIONS: PermissionKey[] = [
 ];
 
 export const PERMISSION_BUNDLES: PermissionBundle[] = [
+  {
+    id: "sponsorship-requester",
+    label: "Sponsorship: Requester",
+    description: "Submit sponsorship requests and follow your own.",
+    permissions: ["sponsorship:read:own"],
+  },
+  {
+    id: "sponsorship-approver",
+    label: "Sponsorship: Checker & Approver",
+    description: "Check and approve sponsorship requests, and see all of them.",
+    permissions: ["sponsorship:read:own", "sponsorship:check", "sponsorship:approve", "sponsorship:manage"],
+  },
+  {
+    id: "performance-review-employee",
+    label: "Performance Review: Employee",
+    description: "See and complete your own performance reviews (self-assessment) and read the result once it is signed off.",
+    permissions: ["review:read:own"],
+  },
+  {
+    id: "performance-review-manager",
+    label: "Performance Review: Manager",
+    description: "Review the team members assigned to you, as well as your own review.",
+    permissions: ["review:read:own", "review:conduct"],
+  },
+  {
+    id: "performance-review-hr",
+    label: "Performance Review: HR",
+    description: "Set up templates, open review periods, assign reviewers, sign off and see every review.",
+    permissions: ["review:read:own", "review:conduct", "review:manage"],
+  },
   {
     id: "intercompany-viewer",
     label: "Intercompany Purchasing Viewer",

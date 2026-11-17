@@ -1,6 +1,6 @@
 // Lot numbers for goods we receive and label ourselves (OEM):
-//   LOT-01-260005-052-24        the lot of one PO line on one packing list
-//   LOT-01-260005-052-24-001    one piece of it (printed on the sticker, 001 up to the accepted quantity)
+//   01-260005-052-24        the lot of one PO line on one packing list (digits and hyphens only, no prefix)
+//   01-260005-052-24-001    one piece of it (printed on the sticker, 001 up to the accepted quantity)
 // 01 = company code, 26 = year and 0005 = the packing list's number, 052 = the PO's number, 24 = the PO line.
 // Built only from numbers that never change, so it is the same whenever it is made, and adding or removing other
 // lines on the list does not move it. Plain functions, safe for client code.
@@ -40,7 +40,7 @@ export function buildLotNo(p: LotParts): string | null {
   const pl = packingListRef(p.packingListNo);
   const po = poSequence(p.poNo);
   if (!pl || !po || !Number.isInteger(p.poLine) || p.poLine < 1) return null;
-  return `LOT-${p.companyCode.trim()}-${pl}-${po}-${String(p.poLine).padStart(2, "0")}`;
+  return `${p.companyCode.trim()}-${pl}-${po}-${String(p.poLine).padStart(2, "0")}`;
 }
 
 export function lotProblem(p: Partial<LotParts>): string | null {

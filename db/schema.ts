@@ -1069,7 +1069,7 @@ export const organizationProfile = pgTable("organization_profile", {
 
   // MDA
   mdaEstablishmentNo: text("mda_establishment_no"),
-  // Two digits, unique inside the owner's group of organizations: the company part of lot numbers (LOT-01-…)
+  // Two digits, unique inside the owner's group of organizations: the company part of lot numbers (01-260005-052-24)
   companyCode: text("company_code"),
   mdaEstablishmentValidity: timestamp("mda_establishment_validity", {
     mode: "string",
@@ -1787,6 +1787,193 @@ export const supplierRelations = relations(supplier, ({ one }) => ({
 // Scoped by ownerUserId (the actual invariant tying orgs together, same
 // resolution getOwnerOrgIds itself uses) rather than any single
 // organizationId, since the rule applies across every org that owner has.
+/* =========================
+   SPONSORSHIP
+   The company sponsors an external party (doctor, hospital, association, event).
+   Status: DRAFT -> PENDING -> CHECKED -> APPROVED -> CLOSED (REJECTED / CANCELLED on the way).
+========================= */
+export const sponsorship = pgTable(
+  "sponsorship",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    sponsorshipNo: text("sponsorship_no").notNull(),
+    requestedBy: text("requested_by").notNull().references(() => user.id),
+    status: text("status").notNull().default("DRAFT"), // DRAFT | PENDING | CHECKED | APPROVED | REJECTED | CANCELLED | CLOSED
+    recipientType: text("recipient_type").notNull().default("doctor"), // doctor | hospital | association | event | other
+    recipientName: text("recipient_name").notNull().default(""),
+    recipientOrganization: text("recipient_organization"),
+    isHcp: boolean("is_hcp").notNull().default(false), // a healthcare professional
+    isGovernment: boolean("is_government").notNull().default(false), // works at a government hospital / institution
+    institutionApproved: boolean("institution_approved").notNull().default(false), // the institution's permission was obtained
+    title: text("title").notNull().default(""),
+    purpose: text("purpose").notNull().default(""),
+    eventDateFrom: date("event_date_from"),
+    eventDateTo: date("event_date_to"),
+    venue: text("venue"),
+    totalRequested: text("total_requested").notNull().default("0"),
+    approvedAmount: text("approved_amount"),
+    declarationAccepted: boolean("declaration_accepted").notNull().default(false),
+    checkedBy: text("checked_by").references(() => user.id),
+    checkedAt: timestamp("checked_at"),
+    checkComment: text("check_comment"),
+    approvedBy: text("approved_by").references(() => user.id),
+    approvedAt: timestamp("approved_at"),
+    approveComment: text("approve_comment"),
+    rejectedBy: text("rejected_by").references(() => user.id),
+    rejectedAt: timestamp("rejected_at"),
+    rejectReason: text("reject_reason"),
+    cancelledBy: text("cancelled_by").references(() => user.id),
+    cancelledAt: timestamp("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    actualAmount: text("actual_amount"),
+    paidAt: timestamp("paid_at"),
+    paidBy: text("paid_by").references(() => user.id),
+    paymentRef: text("payment_ref"),
+    closedAt: timestamp("closed_at"),
+    closedBy: text("closed_by").references(() => user.id),
+    closeNote: text("close_note"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("sponsorship_no_org_uidx").on(t.organizationId, t.sponsorshipNo),
+    index("sponsorship_requester_idx").on(t.requestedBy, t.organizationId),
+    index("sponsorship_status_idx").on(t.status, t.organizationId),
+  ],
+);
+
+export const sponsorshipItem = pgTable(
+  "sponsorship_item",
+  {
+    id: text("id").primaryKey(),
+    sponsorshipId: text("sponsorship_id").notNull().references(() => sponsorship.id, { onDelete: "cascade" }),
+    category: text("category").notNull().default("other"), // registration | travel | accommodation | meals | product | honorarium | other
+    description: text("description").notNull().default(""),
+    amount: text("amount").notNull().default("0"),
+    actualAmount: text("actual_amount"),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("sponsorship_item_sponsorship_idx").on(t.sponsorshipId)],
+);
+
+export const sponsorshipDocument = pgTable(
+  "sponsorship_document",
+  {
+    id: text("id").primaryKey(),
+    sponsorshipId: text("sponsorship_id").notNull().references(() => sponsorship.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull().default("other"), // invitation | quotation | approval-letter | receipt | other
+    fileName: text("file_name").notNull(),
+    fileKey: text("file_key").notNull(),
+    fileSize: integer("file_size").notNull(),
+    mimeType: text("mime_type").notNull(),
+    uploadedBy: text("uploaded_by").notNull().references(() => user.id),
+    uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+  },
+  (t) => [index("sponsorship_document_sponsorship_idx").on(t.sponsorshipId)],
+);
+
+/* =========================
+   PERFORMANCE REVIEW
+   HR sets up templates and opens a review period; every employee in it gets a review that goes
+   self-assessment -> manager review -> HR sign-off (status: self | manager | signoff | completed | cancelled).
+========================= */
+export const reviewTemplate = pgTable(
+  "review_template",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    scaleMax: integer("scale_max").notNull().default(5),
+    isActive: boolean("is_active").notNull().default(true),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [index("review_template_org_idx").on(t.organizationId)],
+);
+
+export const reviewCriterion = pgTable(
+  "review_criterion",
+  {
+    id: text("id").primaryKey(),
+    templateId: text("template_id").notNull().references(() => reviewTemplate.id, { onDelete: "cascade" }),
+    section: text("section").notNull().default(""),
+    name: text("name").notNull(),
+    description: text("description"),
+    weight: text("weight").notNull().default("1"),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("review_criterion_template_idx").on(t.templateId)],
+);
+
+export const reviewPeriod = pgTable(
+  "review_period",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    templateId: text("template_id").references(() => reviewTemplate.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("open"), // open | closed
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    closedAt: timestamp("closed_at"),
+  },
+  (t) => [index("review_period_org_idx").on(t.organizationId)],
+);
+
+export type ReviewCriterionSnapshot = { id: string; section: string; name: string; description: string; weight: number };
+
+export const review = pgTable(
+  "review",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    periodId: text("period_id").notNull().references(() => reviewPeriod.id, { onDelete: "cascade" }),
+    employeeUserId: text("employee_user_id").notNull().references(() => user.id),
+    reviewerUserId: text("reviewer_user_id").references(() => user.id),
+    status: text("status").notNull().default("self"), // self | manager | signoff | completed | cancelled
+    templateName: text("template_name").notNull(),
+    scaleMax: integer("scale_max").notNull().default(5),
+    // the template's criteria as they were when the review was opened
+    criteria: json("criteria").$type<ReviewCriterionSnapshot[]>().notNull(),
+    selfSummary: text("self_summary"),
+    selfSubmittedAt: timestamp("self_submitted_at"),
+    managerSummary: text("manager_summary"),
+    managerSubmittedAt: timestamp("manager_submitted_at"),
+    signoffComment: text("signoff_comment"),
+    signedOffBy: text("signed_off_by").references(() => user.id),
+    signedOffAt: timestamp("signed_off_at"),
+    returnNote: text("return_note"), // why HR sent it back to the manager
+    finalScore: text("final_score"), // weighted average of the manager's ratings, out of scaleMax
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("review_period_employee_uidx").on(t.periodId, t.employeeUserId),
+    index("review_employee_idx").on(t.employeeUserId, t.organizationId),
+    index("review_reviewer_idx").on(t.reviewerUserId, t.organizationId),
+  ],
+);
+
+export const reviewAnswer = pgTable(
+  "review_answer",
+  {
+    id: text("id").primaryKey(),
+    reviewId: text("review_id").notNull().references(() => review.id, { onDelete: "cascade" }),
+    criterionId: text("criterion_id").notNull(), // id inside review.criteria
+    selfRating: integer("self_rating"),
+    selfComment: text("self_comment"),
+    managerRating: integer("manager_rating"),
+    managerComment: text("manager_comment"),
+  },
+  (t) => [uniqueIndex("review_answer_uidx").on(t.reviewId, t.criterionId)],
+);
+
 /* =========================
    INTERCOMPANY PRICING
    A PO from one of the owner's organizations to a sibling is priced by a method the user picks on the PO.
@@ -2928,7 +3115,7 @@ export const packingListItem = pgTable(
     designBrandName: text("design_brand_name"),
     designBrandCode: text("design_brand_code"),
     privateLabelCode: text("private_label_code"),
-    // LOT-<company code>-<YY><packing list no>-<PO no>-<PO line>: set once when the goods are received (lib/lot-no.ts)
+    // <company code>-<YY><packing list no>-<PO no>-<PO line>, e.g. 01-260005-052-24: set once when the goods are received (lib/lot-no.ts)
     lotNo: text("lot_no"),
     imageKey: text("image_key"),
     // Provenance — same meaning as on purchaseOrderItem, carried through so

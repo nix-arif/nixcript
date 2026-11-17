@@ -123,7 +123,7 @@ export function LabelsClient({
     ? { ...previewData, piece: pieceNo(1), lotPiece: previewData.lot ? lotWithPiece(previewData.lot, 1) : "" }
     : {
     code: "CODE-123", description: "Sample description", mda: "GB1234567-123456", qty: "1", uom: "pcs", brand: "Brand",
-    lot: "LOT-01-260005-052-24", piece: "001", lotPiece: "LOT-01-260005-052-24-001",
+    lot: "01-260005-052-24", piece: "001", lotPiece: "01-260005-052-24-001",
     supplier: "Supplier", plNo: packingListNo, poNo: "PO/000-26", company: "Company", address: "Address", establishment: "", date: "00.00.0000",
   };
   const sel = design.elements.find((e) => e.id === selectedId) ?? null;
