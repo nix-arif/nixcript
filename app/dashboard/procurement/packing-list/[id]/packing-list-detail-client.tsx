@@ -23,6 +23,7 @@ import { LineIssueChips } from "@/components/line-issue-chips";
 import { ReplacementChips } from "@/components/replacement-chips";
 import { ReceiptHistoryChips } from "@/components/receipt-history-chips";
 import { RequestAmendButton, AmendmentPanel, type AmendApproval } from "./amend-line";
+import { AmendmentLog } from "./amendment-log";
 import { RequestRevisionButton, RevisionPanel } from "./revision-panel";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
@@ -835,6 +836,9 @@ export function PackingListDetailClient({
           </div>
         )}
       </section>
+
+      {/* every change made after the inspection was completed, in one place */}
+      <AmendmentLog items={items} poLabel={poLabel} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-5">
