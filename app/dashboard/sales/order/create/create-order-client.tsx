@@ -112,6 +112,7 @@ interface LineItem extends SalesOrderItemInput {
   customerName?: string;
   customerOrganization?: string;
   customerOrganizationId?: string;
+  _descKeep?: boolean; // the description was accepted as intended on the Customer PO
   _codeSource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
   _descriptionSource?: Array<"quote" | "catalog" | "user" | "cpo" | "so"> | null;
   _qtySource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
@@ -475,6 +476,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 customerName: item.customerName,
                 customerOrganization: item.customerOrganization,
                 customerOrganizationId: item.customerOrganizationId,
+                _descKeep: item.descAccepted ? true : undefined,
                 _quotationNo: item._qtNo,
                 _codeSource: [item._codeSource === "user" ? "user" : item._codeSource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,
                 _descriptionSource: item._descriptionSource ?? null,
@@ -673,6 +675,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   sourceCustomerPoId: data.id,
                   sourceCustomerPoNo: data.customerPoNo,
                   ...itemCustomer(item, data),
+                  _descKeep: item.descAccepted ? true : undefined,
                   _codeSource: [item._codeSource === "user" ? "user" : item._codeSource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,
                   _descriptionSource: item._descriptionSource ?? null,
                   _qtySource: [item._qtySource === "user" ? "user" : item._qtySource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,
@@ -1409,7 +1412,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       sstPct,
       sst: sstAmt.toFixed(2),
       grandTotal: grand.toFixed(2),
-      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, _codeSource, _descriptionSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _dbDescription, _dbRef, _quotationNo, _designBrandSource, _privateLabelSource, ...rest }) => ({
+      items: items.map(({ _key, lineType, rentalDuration, rentalUnit, setGroupId, setGroupLabel, setQty, sourceQuotationId, sourceCustomerPoId, sourceCustomerPoNo, _codeSource, _descriptionSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _dbDescription, _dbRef, _quotationNo, _designBrandSource, _privateLabelSource, _descKeep, ...rest }) => ({
         ...rest,
         unitPrice: soType === "proforma" ? "0" : rest.unitPrice,
         discountPct: soType === "proforma" ? "0" : rest.discountPct,

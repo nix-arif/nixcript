@@ -18,6 +18,8 @@ import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
 import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, sinkUnselected, isSettled, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
 import { customerRelation, otherContactsNote } from "@/lib/customer-po/customer-match";
+import { descriptionState, unresolvedDifferences, unresolvedMessage, ACCEPTED_NOTE, type DescriptionState } from "@/lib/customer-po/description-check";
+import { useDbDescriptionLookup } from "@/lib/sales-order/use-db-descriptions";
 import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
@@ -355,6 +357,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           ...i,
           description: product.description?.trim() ? product.description.trim() : i.description,
           uom: product.uom ?? i.uom,
+          descAccepted: product.description?.trim() ? false : i.descAccepted,
+          descAcceptedBy: product.description?.trim() ? undefined : i.descAcceptedBy,
           _descriptionSource: product.description?.trim() ? ["catalog"] : i._descriptionSource,
           _codeNotFound: false,
         };
@@ -511,6 +515,22 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     } catch (err: any) {
       toast.error(err.message || "Could not read the sheet");
     }
+  }
+
+  // The description in the product database for each code on the page (the code is the reference): a description
+  // taken from the quotation that differs from it has to be confirmed or replaced
+  const dbDescMap = useDbDescriptionLookup(items.map((i) => i.productCode ?? ""));
+
+  function acceptDescription(key: string) {
+    setItems((prev) => prev.map((i) => (i._key === key ? { ...i, descAccepted: true, descAcceptedBy: currentUserName || undefined } : i)));
+    toast.warning(ACCEPTED_NOTE, { duration: 9000 });
+  }
+  function useDatabaseDescription(key: string) {
+    setItems((prev) => prev.map((i) => {
+      if (i._key !== key) return i;
+      const db = descriptionState(i, dbDescMap).dbText;
+      return db ? { ...i, description: db, descAccepted: false, descAcceptedBy: undefined, _descriptionSource: ["catalog"] } : i;
+    }));
   }
 
   // Ticked items stay together in order and the unticked ones sit below the last ticked one (inside each set).
@@ -686,6 +706,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       }, 0);
       return;
     }
+    }
+    if (!asDraft) {
+      const undecided = unresolvedDifferences(items, dbDescMap);
+      if (undecided.length > 0) {
+        toast.error(unresolvedMessage(undecided.length), { duration: 10000 });
+        setTimeout(() => document.querySelector(`[data-item-row="${undecided[0]._key}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 0);
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -1198,6 +1226,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                         cpoDescError={showDescErrors}
                         move={canMove(items, item._key)}
                         flash={flashKey === item._key}
+                        descState={descriptionState(item, dbDescMap)}
+                        onAcceptDescription={acceptDescription}
+                        onUseDbDescription={useDatabaseDescription}
                         showCustomer={new Set(items.map((x) => x.customerId).filter(Boolean)).size > 1}
                         onMove={handleMove}
                         rowIdx={rowIdx++}
@@ -1395,6 +1426,9 @@ function ItemRow({
   inSet,
   flash,
   showCustomer,
+  descState,
+  onAcceptDescription,
+  onUseDbDescription,
   updateItem,
   onSetLabelChange,
   onCellKeyDown,
@@ -1406,6 +1440,9 @@ function ItemRow({
   cpoDescError: boolean; // outline the CPO description in red when it is still empty
   move: { up: boolean; down: boolean };
   flash?: boolean; // just ticked or moved
+  descState?: { state: DescriptionState; dbText: string | null }; // the description against the product database
+  onAcceptDescription?: (key: string) => void;
+  onUseDbDescription?: (key: string) => void;
   showCustomer?: boolean; // the CPO has lines of different customers: say whose each line is
   onMove: (key: string, dir: -1 | 1) => void;
   rowIdx: number;
@@ -1488,7 +1525,28 @@ function ItemRow({
       </td>
       <td className="py-1.5 pr-2">
         <div className="space-y-0.5">
-          <div className="min-h-7 flex items-center text-[11px] md:text-[11px] whitespace-pre-wrap break-words">{item.description || "—"}</div>
+          <div className={cn(
+            "min-h-7 flex items-center text-[11px] md:text-[11px] whitespace-pre-wrap break-words",
+            descState?.state === "differs" && "font-bold text-red-600 dark:text-red-400",
+            descState?.state === "accepted" && "font-semibold text-amber-700 dark:text-amber-400",
+          )}>{item.description || "—"}</div>
+          {item.included && descState?.state === "differs" && (
+            <div role="alert" className="space-y-1.5 rounded-md border border-red-200 bg-red-50/80 px-2.5 py-2 text-[10px] leading-snug text-red-900 dark:border-red-800/60 dark:bg-red-900/15 dark:text-red-200">
+              <p><span className="font-semibold">Different from the product database</span> for code <span className="font-mono">{item.productCode}</span>. The database says:</p>
+              <p className="whitespace-pre-wrap font-medium">{descState.dbText}</p>
+              <p className="font-semibold">Is this description intended?</p>
+              <div className="flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => onAcceptDescription?.(item._key)} className="rounded border border-red-300 bg-background px-2 py-0.5 text-[10px] font-medium text-red-800 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900/30">Yes, keep this description</button>
+                <button type="button" onClick={() => onUseDbDescription?.(item._key)} className="rounded border border-border bg-background px-2 py-0.5 text-[10px] font-medium hover:bg-muted">No, use the database description</button>
+              </div>
+            </div>
+          )}
+          {item.included && descState?.state === "accepted" && (
+            <div className="rounded-md border border-amber-200 bg-amber-50/80 px-2.5 py-1.5 text-[10px] leading-snug text-amber-900 dark:border-amber-800/60 dark:bg-amber-900/15 dark:text-amber-200">
+              <p><span className="font-semibold">Differs from the product database, accepted{item.descAcceptedBy ? ` by ${item.descAcceptedBy}` : ""}.</span> It will stay as written until the end of the transaction (sales order, purchase requisition and supplier PO).</p>
+              <button type="button" onClick={() => onUseDbDescription?.(item._key)} className="mt-0.5 underline">Use the database description instead</button>
+            </div>
+          )}
           {item._codeNotFound && (
             <div className="text-[10px] leading-snug text-amber-700 dark:text-amber-400">
               Code not found in the product database. The description was not changed.

@@ -93,6 +93,9 @@ export type CpoItemInput = {
   customerName?: string;
   customerOrganization?: string;
   customerOrganizationId?: string;
+  // The description differs from the product database and the user confirmed that is intended: it stays as written
+  descAccepted?: boolean;
+  descAcceptedBy?: string;
   // A draft keeps the lines the user had switched off, so they can be switched on again later
   _excluded?: boolean;
   _codeSource?: "quote" | "user" | null;

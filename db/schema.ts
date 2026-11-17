@@ -3351,6 +3351,8 @@ export const customerPurchaseOrder = pgTable(
       customerOrganization?: string;
       customerOrganizationId?: string;
       _excluded?: boolean;
+      descAccepted?: boolean;
+      descAcceptedBy?: string;
       cpoDescription?: string;
       setCpoTitle?: string;
     }[]>(),
