@@ -15,6 +15,7 @@ import { eq, and, inArray, asc } from "drizzle-orm";
 
 import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 import { requireIntercompany } from "@/lib/auth/intercompany-access";
+import { activeRule, todayKL } from "@/lib/org/handling-periods";
 // The userId that owns orgId (the member row with role "owner" there) —
 // null if that org has no owner on record, which means no restriction rule
 // could possibly apply to it.
@@ -81,6 +82,9 @@ export async function getSupplierNamesForRules(): Promise<string[]> {
 export interface CreateRestrictedSupplierRuleInput {
   supplierName: string;
   designatedOrganizationId: string;
+  // The date this organization takes over the supplier (YYYY-MM-DD). Empty = from the beginning. A later date on a
+  // second rule for the same supplier hands it to another organization from that date on.
+  effectiveFrom?: string;
   notes?: string;
 }
 
@@ -99,11 +103,20 @@ export async function createRestrictedSupplierRule(input: CreateRestrictedSuppli
   const ownerUserId = await getOwnerUserId(orgId);
   if (!ownerUserId) throw new Error("No owner found for this organization");
 
-  const [existing] = await db
-    .select({ id: restrictedSupplier.id })
+  const effectiveFrom = input.effectiveFrom?.trim() || null;
+  if (effectiveFrom && !(/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) && !Number.isNaN(Date.parse(effectiveFrom)))) {
+    throw new Error("Enter a valid date for when this organization takes over");
+  }
+
+  const sameSupplier = await db
+    .select({ id: restrictedSupplier.id, effectiveFrom: restrictedSupplier.effectiveFrom })
     .from(restrictedSupplier)
     .where(and(eq(restrictedSupplier.ownerUserId, ownerUserId), eq(restrictedSupplier.supplierNameNormalized, supplierNameNormalized)));
-  if (existing) throw new Error(`A rule for "${supplierName}" already exists`);
+  if (sameSupplier.some((r) => (r.effectiveFrom ?? null) === effectiveFrom)) {
+    throw new Error(effectiveFrom
+      ? `"${supplierName}" already has a rule starting on that date`
+      : `"${supplierName}" already has a rule from the beginning. Give this one a start date to hand the supplier over.`);
+  }
 
   await db.insert(restrictedSupplier).values({
     id: nanoid(),
@@ -111,6 +124,7 @@ export async function createRestrictedSupplierRule(input: CreateRestrictedSuppli
     supplierName,
     supplierNameNormalized,
     designatedOrganizationId: input.designatedOrganizationId,
+    effectiveFrom,
     notes: input.notes?.trim() || null,
     createdBy: userId,
   });
@@ -141,10 +155,12 @@ export async function assertSupplierAllowed(orgId: string, supplierName: string 
   const ownerUserId = await getOwnerUserId(orgId);
   if (!ownerUserId) return; // no owner on record — no rule could apply
 
-  const [rule] = await db
-    .select({ designatedOrganizationId: restrictedSupplier.designatedOrganizationId })
+  // the rule that applies today (a supplier can be handed from one organization to another on a date)
+  const rules = await db
+    .select({ designatedOrganizationId: restrictedSupplier.designatedOrganizationId, effectiveFrom: restrictedSupplier.effectiveFrom })
     .from(restrictedSupplier)
     .where(and(eq(restrictedSupplier.ownerUserId, ownerUserId), eq(restrictedSupplier.supplierNameNormalized, normalize(name))));
+  const rule = activeRule(rules, todayKL());
   if (!rule || rule.designatedOrganizationId === orgId) return; // no rule, or this is the designated org
 
   const [designatedOrg] = await db.select({ name: organization.name }).from(organization).where(eq(organization.id, rule.designatedOrganizationId));

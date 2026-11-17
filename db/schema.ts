@@ -1839,6 +1839,9 @@ export const restrictedSupplier = pgTable(
     designatedOrganizationId: text("designated_organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
+    // The date this organization takes over the supplier (null = from the beginning). Another rule for the same supplier
+    // with a later date hands it to another organization from that date on.
+    effectiveFrom: date("effective_from"),
     notes: text("notes"),
     createdBy: text("created_by")
       .notNull()
@@ -1850,7 +1853,7 @@ export const restrictedSupplier = pgTable(
       .notNull(),
   },
   (t) => [
-    uniqueIndex("restricted_supplier_owner_name_uidx").on(t.ownerUserId, t.supplierNameNormalized),
+    uniqueIndex("restricted_supplier_owner_name_from_uidx").on(t.ownerUserId, t.supplierNameNormalized, sql`COALESCE(${t.effectiveFrom}, DATE '0001-01-01')`),
     index("restricted_supplier_owner_idx").on(t.ownerUserId),
   ],
 );

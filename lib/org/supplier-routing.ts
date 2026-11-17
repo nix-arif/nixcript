@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { restrictedSupplier, member, organization, supplier } from "@/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
+import { activeRule, toBusinessDate, todayKL } from "@/lib/org/handling-periods";
 import { nanoid } from "nanoid";
 
 // Supplier rules (server/supplier-restrictions.ts) say that a real supplier is dealt with by ONE of the
@@ -22,7 +23,9 @@ export async function routeRestrictedSupplier(
   orgId: string,
   supplierName: string | null | undefined,
   createdBy: string,
-  opts: { dryRun?: boolean } = {}, // dryRun: only look, do not make the stand-in supplier record (supplierId is "" then)
+  // dryRun: only look, do not make the stand-in supplier record (supplierId is "" then).
+  // asOf: the date of the PO / PR; the organization handling the supplier on that date applies (default today).
+  opts: { dryRun?: boolean; asOf?: Date | string } = {},
 ): Promise<SupplierRoute | null> {
   const name = supplierName?.trim();
   if (!name) return null;
@@ -34,10 +37,11 @@ export async function routeRestrictedSupplier(
     .limit(1);
   if (!ownerRow) return null;
 
-  const [rule] = await db
-    .select({ designatedOrganizationId: restrictedSupplier.designatedOrganizationId, supplierName: restrictedSupplier.supplierName })
+  const rules = await db
+    .select({ designatedOrganizationId: restrictedSupplier.designatedOrganizationId, supplierName: restrictedSupplier.supplierName, effectiveFrom: restrictedSupplier.effectiveFrom })
     .from(restrictedSupplier)
     .where(and(eq(restrictedSupplier.ownerUserId, ownerRow.userId), eq(restrictedSupplier.supplierNameNormalized, name.toLowerCase())));
+  const rule = activeRule(rules, opts.asOf ? toBusinessDate(opts.asOf) : todayKL());
   if (!rule || rule.designatedOrganizationId === orgId) return null;
 
   const [designated] = await db

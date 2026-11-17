@@ -1663,7 +1663,7 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
     originalSupplierName = null;
     let [sup] = await db.select().from(supplier).where(eq(supplier.id, input.supplierId));
     // a supplier that only a sibling organization may deal with: issue the PO to that organization instead
-    const route = await routeRestrictedSupplier(existing.organizationId, sup?.name, existing.createdBy);
+    const route = await routeRestrictedSupplier(existing.organizationId, sup?.name, existing.createdBy, { asOf: existing.createdAt });
     if (route) {
       supplierId = route.supplierId;
       originalSupplierName = route.originalName;
