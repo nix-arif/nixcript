@@ -70,6 +70,10 @@ interface LineItem extends SalesOrderItemInput {
   _privateLabelSource?: "auto" | "user" | null;
   sourceCustomerPoId: string;
   sourceCustomerPoNo: string;
+  customerId?: string;
+  customerName?: string;
+  customerOrganization?: string;
+  customerOrganizationId?: string;
   _descriptionSource?: Array<"quote" | "catalog" | "user" | "cpo" | "so"> | null;
   _codeSource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
   _qtySource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
@@ -430,6 +434,10 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           sourceQuotationId: i.sourceQuotationId ?? "",
           sourceCustomerPoId: (i as any).sourceCustomerPoId ?? "",
           sourceCustomerPoNo: (i as any).sourceCustomerPoNo ?? "",
+          customerId: (i as any).customerId ?? "",
+          customerName: (i as any).customerName ?? "",
+          customerOrganization: (i as any).customerOrganization ?? "",
+          customerOrganizationId: (i as any).customerOrganizationId ?? "",
           _descriptionSource: (() => {
             const s = (i as any).descriptionSource;
             if (!s) return (i as any).sourceCustomerPoId ? ["cpo" as const] : null;

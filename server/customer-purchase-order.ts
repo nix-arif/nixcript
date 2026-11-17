@@ -20,7 +20,7 @@ import {
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, inArray, or, isNull, notInArray, sql } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, inArray, or, isNull, notInArray, ne, sql } from "drizzle-orm";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -88,6 +88,13 @@ export type CpoItemInput = {
   quotationNo?: string;
   // The code before a user changed it (kept so the "Code changed from …" notice survives saving)
   originalCode?: string;
+  // The customer this line is for: the one on the quotation it came from (a CPO can combine several contacts of one organization)
+  customerId?: string;
+  customerName?: string;
+  customerOrganization?: string;
+  customerOrganizationId?: string;
+  // A draft keeps the lines the user had switched off, so they can be switched on again later
+  _excluded?: boolean;
   _codeSource?: "quote" | "user" | null;
   _descriptionSource?: Array<"quote" | "catalog" | "user"> | null;
   _unitPriceSource?: "quote" | "user" | null;
@@ -180,13 +187,17 @@ export async function getNextPoTbcNo(): Promise<string> {
 // instead of it silently blending in with genuine customer orders.
 export type CustomerPoListRow = CustomerPo & { isIntercompany: boolean };
 
+// A draft is private to the person who started it and is not a real order yet: it stays out of sales orders,
+// searches, customer pages and summaries, and only its creator sees it in the lists.
+const visibleTo = (userId: string) => or(ne(customerPurchaseOrder.status, "draft"), eq(customerPurchaseOrder.createdBy, userId));
+
 export async function getCustomerPos(): Promise<CustomerPoListRow[]> {
-  const { orgId } = await requireAccess("customer-po:read");
+  const { orgId, userId } = await requireAccess("customer-po:read");
   const rows = await db
     .select({ po: customerPurchaseOrder, linkedOrganizationId: customer.linkedOrganizationId })
     .from(customerPurchaseOrder)
     .leftJoin(customer, eq(customer.id, customerPurchaseOrder.customerId))
-    .where(eq(customerPurchaseOrder.organizationId, orgId))
+    .where(and(eq(customerPurchaseOrder.organizationId, orgId), visibleTo(userId)))
     .orderBy(desc(customerPurchaseOrder.createdAt));
   return rows.map(({ po, linkedOrganizationId }) => ({ ...po, isIntercompany: !!linkedOrganizationId }));
 }
@@ -229,7 +240,7 @@ export async function getCustomerPosCentralized(): Promise<CentralizedCustomerPo
     .from(customerPurchaseOrder)
     .innerJoin(organization, eq(organization.id, customerPurchaseOrder.organizationId))
     .leftJoin(customer, eq(customer.id, customerPurchaseOrder.customerId))
-    .where(inArray(customerPurchaseOrder.organizationId, ownerOrgIds))
+    .where(and(inArray(customerPurchaseOrder.organizationId, ownerOrgIds), visibleTo(userId)))
     .orderBy(desc(customerPurchaseOrder.createdAt));
 
   return rows.map(({ po, organizationName, linkedOrganizationId }) => ({ ...po, organizationName, isIntercompany: !!linkedOrganizationId }));
@@ -252,18 +263,18 @@ export async function getOpenCustomerPos(): Promise<CustomerPoSearchResult[]> {
       and(
         eq(customerPurchaseOrder.organizationId, orgId),
         isNull(customerPurchaseOrder.salesOrderId),
-        notInArray(customerPurchaseOrder.status, ["cancelled", "fulfilled"]),
+        notInArray(customerPurchaseOrder.status, ["cancelled", "fulfilled", "draft"]),
       ),
     )
     .orderBy(desc(customerPurchaseOrder.createdAt));
 }
 
 export async function getCustomerPoDetail(id: string): Promise<CustomerPo | null> {
-  const { orgId } = await requireAccess("customer-po:read");
+  const { orgId, userId } = await requireAccess("customer-po:read");
   const [row] = await db
     .select()
     .from(customerPurchaseOrder)
-    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
+    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId), visibleTo(userId)));
   return row ?? null;
 }
 
@@ -275,7 +286,7 @@ export async function getCustomerPoDetailCentralized(id: string): Promise<Custom
   const [row] = await db
     .select()
     .from(customerPurchaseOrder)
-    .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
+    .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds), visibleTo(userId)));
   return row ?? null;
 }
 
@@ -323,7 +334,7 @@ export async function getCustomerPoForSoCreate(id: string): Promise<CustomerPoFo
       notes: customerPurchaseOrder.notes,
     })
     .from(customerPurchaseOrder)
-    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
+    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId), ne(customerPurchaseOrder.status, "draft")));
   return row ?? null;
 }
 
@@ -356,6 +367,7 @@ export async function searchCustomerPosByNo(query: string): Promise<CustomerPoSe
       and(
         eq(customerPurchaseOrder.organizationId, orgId),
         ilike(customerPurchaseOrder.customerPoNo, `%${query}%`),
+        ne(customerPurchaseOrder.status, "draft"),
       ),
     )
     .orderBy(desc(customerPurchaseOrder.createdAt))
@@ -372,6 +384,7 @@ export async function getCustomerPosByCustomer(customerId: string): Promise<Cust
       and(
         eq(customerPurchaseOrder.organizationId, orgId),
         eq(customerPurchaseOrder.customerId, customerId),
+        ne(customerPurchaseOrder.status, "draft"),
       ),
     )
     .orderBy(desc(customerPurchaseOrder.createdAt));
@@ -385,12 +398,41 @@ function assertCpoDescriptions(items: CpoItemInput[] | null | undefined, status?
     throw new Error(`CPO description is required for every item (missing on ${missing.length} of ${items.length}).`);
 }
 
+// Tell the sales approvers that a new Customer PO needs a Sales Order
+async function notifyNewCpo(orgId: string, userId: string, cpoId: string, customerPoNo: string, customerSnapshot: CustomerPo["customerSnapshot"]) {
+  try {
+    const approvers = await getSoApprovers(orgId);
+    const snap = customerSnapshot as any;
+    const customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
+    const body = customerName
+      ? `${customerName} sent a PO that requires a Sales Order to be created.`
+      : "A new Customer PO has been received and requires a Sales Order.";
+    await Promise.all(
+      approvers
+        .filter((uid) => uid !== userId) // don't notify self
+        .map((uid) =>
+          createNotification({ organizationId: orgId, userId: uid, type: "cpo:received", title: `New Customer PO: ${customerPoNo}`, body, link: `/dashboard/sales/customer-po/${cpoId}` }),
+        ),
+    );
+  } catch {
+    // Notification failure must never break CPO creation
+  }
+}
+
 export async function createCustomerPo(input: CreateCustomerPoInput): Promise<CustomerPo> {
   const { orgId, userId } = await requireAccess("customer-po:create");
-  assertCpoDescriptions(input.items, input.status);
-  if (input.status !== "cancelled") {
-    const clash = await findCpoNoClash(orgId, input.customerPoNo);
-    if (clash) throw new Error(clashMessage(clash));
+  const isDraft = input.status === "draft";
+  if (isDraft) {
+    // a draft can be saved half-way, as long as there is something to come back to
+    if (!input.customerPoNo?.trim() && !input.quotationLinks?.length && !input.items?.length) {
+      throw new Error("Add a customer PO number, a quotation or an item before saving a draft.");
+    }
+  } else {
+    assertCpoDescriptions(input.items, input.status);
+    if (input.status !== "cancelled") {
+      const clash = await findCpoNoClash(orgId, input.customerPoNo);
+      if (clash) throw new Error(clashMessage(clash));
+    }
   }
 
   const customerSnapshot: CustomerPo["customerSnapshot"] = input.customerId
@@ -402,7 +444,7 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
     .values({
       id: nanoid(),
       organizationId: orgId,
-      customerPoNo: input.customerPoNo,
+      customerPoNo: input.customerPoNo?.trim() ?? "",
       customerId: input.customerId ?? null,
       customerSnapshot,
       quotationId: input.quotationLinks?.[0]?.quotationId ?? input.quotationId ?? null,
@@ -425,38 +467,14 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
     })
     .returning();
 
-  // Notify sales approvers that a new Customer PO needs a Sales Order
-  try {
-    const approvers = await getSoApprovers(orgId);
-    const snap = customerSnapshot as any;
-    const customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
-    const body = customerName
-      ? `${customerName} sent a PO that requires a Sales Order to be created.`
-      : "A new Customer PO has been received and requires a Sales Order.";
-
-    await Promise.all(
-      approvers
-        .filter((uid) => uid !== userId) // don't notify self
-        .map((uid) =>
-          createNotification({
-            organizationId: orgId,
-            userId: uid,
-            type: "cpo:received",
-            title: `New Customer PO: ${input.customerPoNo}`,
-            body,
-            link: `/dashboard/sales/customer-po/${row.id}`,
-          }),
-        ),
-    );
-  } catch {
-    // Notification failure must never break CPO creation
-  }
+  // A draft is not an order yet: nobody is told until it is recorded
+  if (!isDraft) await notifyNewCpo(orgId, userId, row.id, row.customerPoNo, customerSnapshot);
 
   return row;
 }
 
 export async function updateCustomerPo(input: UpdateCustomerPoInput): Promise<CustomerPo> {
-  const { orgId } = await requireAccess("customer-po:update");
+  const { orgId, userId } = await requireAccess("customer-po:update");
 
   const [existing] = await db
     .select()
@@ -464,7 +482,7 @@ export async function updateCustomerPo(input: UpdateCustomerPoInput): Promise<Cu
     .where(and(eq(customerPurchaseOrder.id, input.id), eq(customerPurchaseOrder.organizationId, orgId)));
   if (!existing) throw new Error("Customer PO not found");
 
-  return applyCustomerPoUpdate(existing, input);
+  return applyCustomerPoUpdate(existing, input, userId);
 }
 
 // Same update, but resolvable across every org the caller's owner controls —
@@ -479,14 +497,23 @@ export async function updateCustomerPoCentralized(input: UpdateCustomerPoInput):
     .where(and(eq(customerPurchaseOrder.id, input.id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
   if (!existing) throw new Error("Customer PO not found");
 
-  return applyCustomerPoUpdate(existing, input);
+  return applyCustomerPoUpdate(existing, input, userId);
 }
 
-async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomerPoInput): Promise<CustomerPo> {
-  if (input.items !== undefined) assertCpoDescriptions(input.items, input.status ?? existing.status);
-  if ((input.status ?? existing.status) !== "cancelled") {
-    const clash = await findCpoNoClash(existing.organizationId, input.customerPoNo, existing.id);
-    if (clash) throw new Error(clashMessage(clash));
+async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomerPoInput, userId: string): Promise<CustomerPo> {
+  const wasDraft = existing.status === "draft";
+  const nextStatus = input.status ?? existing.status;
+  const staysDraft = nextStatus === "draft";
+  if (wasDraft && existing.createdBy !== userId) throw new Error("Only the person who started this draft can change it.");
+  if (!wasDraft && staysDraft) throw new Error("A recorded Customer PO cannot go back to a draft.");
+  if (!staysDraft) {
+    // recording it (a draft becoming a real CPO) or an ordinary edit: the full rules
+    if (!input.customerPoNo?.trim()) throw new Error("Customer PO number is required.");
+    assertCpoDescriptions(input.items ?? existing.items, nextStatus);
+    if (nextStatus !== "cancelled") {
+      const clash = await findCpoNoClash(existing.organizationId, input.customerPoNo, existing.id);
+      if (clash) throw new Error(clashMessage(clash));
+    }
   }
   if (input.documentKey !== undefined && existing.documentKey && existing.documentKey !== input.documentKey) {
     await deleteDocument(existing.documentKey);
@@ -494,12 +521,13 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
 
   const newNo = input.customerPoNo.trim();
   const oldNo = existing.customerPoNo;
-  const renamed = !!newNo && newNo !== oldNo;
+  // (nothing has been made from a draft, and an empty old number must never match other documents)
+  const renamed = !!newNo && newNo !== oldNo && !wasDraft && !!oldNo.trim();
 
   const [row] = await db
     .update(customerPurchaseOrder)
     .set({
-      customerPoNo: input.customerPoNo,
+      customerPoNo: input.customerPoNo.trim(),
       quotationId: input.quotationLinks?.[0]?.quotationId ?? input.quotationId ?? null,
       quotationNo: input.quotationLinks?.[0]?.quotationNo ?? input.quotationNo ?? null,
       quotationLinks: input.quotationLinks !== undefined
@@ -524,6 +552,8 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
     .where(eq(customerPurchaseOrder.id, input.id))
     .returning();
   if (renamed) await renameCustomerPoNoOnDocuments(existing, oldNo, newNo);
+  // recorded now: tell the sales approvers, as if it had just been received
+  if (wasDraft && !staysDraft && nextStatus !== "cancelled") await notifyNewCpo(existing.organizationId, userId, existing.id, newNo, row.customerSnapshot);
   return row;
 }
 
@@ -719,7 +749,7 @@ export async function getCustomerPoSummary(): Promise<CustomerPoSummaryRow[]> {
     await db
       .select()
       .from(customerPurchaseOrder)
-      .where(eq(customerPurchaseOrder.organizationId, orgId))
+      .where(and(eq(customerPurchaseOrder.organizationId, orgId), ne(customerPurchaseOrder.status, "draft")))
       .orderBy(desc(customerPurchaseOrder.createdAt))
   ).filter((c) => !c.customerId || !intercompanyCustomerIds.has(c.customerId));
 
@@ -838,12 +868,15 @@ export async function getCustomerPoSummary(): Promise<CustomerPoSummaryRow[]> {
 }
 
 export async function deleteCustomerPo(id: string): Promise<void> {
-  const { orgId } = await requireAccess("customer-po:delete");
+  // whoever started a draft may delete it; any other CPO needs the delete permission
+  const { orgId, userId } = await requireAccess("customer-po:read");
   const [existing] = await db
     .select()
     .from(customerPurchaseOrder)
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
   if (!existing) throw new Error("Customer PO not found");
+  if (!(existing.status === "draft" && existing.createdBy === userId)) await requireAccess("customer-po:delete");
+  if (existing.status === "draft" && existing.createdBy !== userId) throw new Error("Customer PO not found");
   if (existing.salesOrderId) {
     throw new Error(
       `Cannot delete — this CPO is linked to sales order ${existing.salesOrderNo ?? existing.salesOrderId}. Remove the link from the sales order first.`,

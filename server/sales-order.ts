@@ -199,6 +199,10 @@ export interface SalesOrderItemInput {
   sourceQuotationId?: string;
   sourceCustomerPoId?: string;
   sourceCustomerPoNo?: string;
+  customerId?: string;
+  customerOrganizationId?: string;
+  customerName?: string;
+  customerOrganization?: string;
   descriptionSource?: Array<"quote" | "catalog" | "user" | "cpo" | "so"> | null;
   codeSource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
   qtySource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
@@ -669,6 +673,10 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
         sourceQuotationId: item.sourceQuotationId || null,
         sourceCustomerPoId: item.sourceCustomerPoId || null,
         sourceCustomerPoNo: item.sourceCustomerPoNo || null,
+        customerId: item.customerId || null,
+        customerOrganizationId: item.customerOrganizationId || null,
+        customerName: item.customerName || null,
+        customerOrganization: item.customerOrganization || null,
         descriptionSource: item.descriptionSource ?? null,
         codeSource: item.codeSource ?? null,
         qtySource: item.qtySource ?? null,
@@ -994,6 +1002,10 @@ async function applySalesOrderUpdate(
         sourceQuotationId: item.sourceQuotationId || null,
         sourceCustomerPoId: item.sourceCustomerPoId || null,
         sourceCustomerPoNo: item.sourceCustomerPoNo || null,
+        customerId: item.customerId || null,
+        customerOrganizationId: item.customerOrganizationId || null,
+        customerName: item.customerName || null,
+        customerOrganization: item.customerOrganization || null,
         descriptionSource: item.descriptionSource ?? null,
         codeSource: item.codeSource ?? null,
         qtySource: item.qtySource ?? null,

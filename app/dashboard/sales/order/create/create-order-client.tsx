@@ -51,6 +51,7 @@ import {
 } from "lucide-react";
 import type { CustomerPoForSoCreate } from "@/server/customer-purchase-order";
 import { isNotAsSetLabel, sourceQuotationNo, titleBySet } from "@/lib/customer-po/item-order";
+import { itemCustomer } from "@/lib/customer-po/customer-match";
 import { applySoSheet, downloadSoItemsSheet, readSoItemsSheet } from "@/lib/sales-order/items-sheet";
 import { uid } from "@/lib/uid";
 
@@ -106,6 +107,11 @@ interface LineItem extends SalesOrderItemInput {
   sourceQuotationId: string;
   sourceCustomerPoId: string;
   sourceCustomerPoNo: string;
+  // the customer this line is for (from the Customer PO line)
+  customerId?: string;
+  customerName?: string;
+  customerOrganization?: string;
+  customerOrganizationId?: string;
   _codeSource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
   _descriptionSource?: Array<"quote" | "catalog" | "user" | "cpo" | "so"> | null;
   _qtySource?: Array<"cpo" | "quotation" | "user" | "so"> | null;
@@ -428,7 +434,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       const links = (c.quotationLinks && c.quotationLinks.length > 0)
         ? c.quotationLinks
         : c.quotationId && c.quotationNo ? [{ quotationId: c.quotationId, quotationNo: c.quotationNo }] : [];
-      return (c.items ?? []).map((i) => ({ ...i, _cpoId: c.id, _cpoNo: c.customerPoNo, _qtNo: sourceQuotationNo(i, links) }));
+      return (c.items ?? []).map((i) => ({ ...i, _cpoId: c.id, _cpoNo: c.customerPoNo, _qtNo: sourceQuotationNo(i, links), ...itemCustomer(i, c) }));
     });
     if (allItems.length > 0) {
       const codes = [...new Set(allItems.map((i) => i.productCode).filter(Boolean) as string[])];
@@ -465,6 +471,10 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 sourceQuotationId: "",
                 sourceCustomerPoId: item._cpoId,
                 sourceCustomerPoNo: item._cpoNo,
+                customerId: item.customerId,
+                customerName: item.customerName,
+                customerOrganization: item.customerOrganization,
+                customerOrganizationId: item.customerOrganizationId,
                 _quotationNo: item._qtNo,
                 _codeSource: [item._codeSource === "user" ? "user" : item._codeSource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,
                 _descriptionSource: item._descriptionSource ?? null,
@@ -662,6 +672,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   _quotationNo: sourceQuotationNo(item, qLinks),
                   sourceCustomerPoId: data.id,
                   sourceCustomerPoNo: data.customerPoNo,
+                  ...itemCustomer(item, data),
                   _codeSource: [item._codeSource === "user" ? "user" : item._codeSource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,
                   _descriptionSource: item._descriptionSource ?? null,
                   _qtySource: [item._qtySource === "user" ? "user" : item._qtySource === "quote" ? "quotation" : "cpo"] as Array<"cpo" | "quotation" | "user" | "so">,

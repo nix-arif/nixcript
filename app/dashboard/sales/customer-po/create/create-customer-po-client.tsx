@@ -17,6 +17,7 @@ import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
 import { uid } from "@/lib/uid";
 import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, sinkUnselected, isSettled, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
+import { customerRelation, otherContactsNote } from "@/lib/customer-po/customer-match";
 import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
 import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
@@ -32,6 +33,7 @@ type LinkedQuotation = {
   customerId?: string | null;
   customerName?: string | null;
   customerOrg?: string | null;
+  customerOrgNames?: string[]; // every organization the customer belongs to (to tell whether two customers share one)
   customerOrgMemberId?: string | null;
 };
 
@@ -174,12 +176,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
       let customerName: string | null = null;
       let customerOrg:  string | null = null;
+      let customerOrgNames: string[] = [];
       let customerOrgMemberId: string | null = null;
 
       const applySnapshotFallback = () => {
         const snap = qt.customerSnapshot as any;
         customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
         customerOrg  = snap?.organizationName ?? null;
+        customerOrgNames = snap?.organizationName ? [snap.organizationName] : [];
       };
 
       if (qt.customerId) {
@@ -189,6 +193,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
             customerName = [cust.title, cust.name].filter(Boolean).join(" ");
             const primary = cust.memberships.find((c) => c.isPrimary) ?? cust.memberships[0];
             customerOrg  = primary?.orgName ?? null;
+            customerOrgNames = cust.memberships.map((m) => m.orgName).filter((n): n is string => !!n);
             customerOrgMemberId = primary?.id ?? null;
           } else {
             applySnapshotFallback();
@@ -200,10 +205,15 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         applySnapshotFallback();
       }
 
-      // Block if customer does not exactly match the primary quotation's customer
+      // The same customer, or another contact of the same customer organization (allowed, with a gentle warning at
+      // the customer field). A customer of a different organization cannot share a Customer PO.
       if (primaryCustomer) {
-        if (primaryCustomer.customerId !== qt.customerId) {
-          toast.error("Cannot link — this quotation belongs to a different customer.");
+        const rel = customerRelation(
+          { customerId: primaryCustomer.customerId, orgNames: primaryCustomer.customerOrgNames ?? [primaryCustomer.customerOrg] },
+          { customerId: qt.customerId, orgNames: customerOrgNames },
+        );
+        if (rel === "different") {
+          toast.error(`Cannot link — this quotation is for a customer of a different organization${customerOrg ? ` (${customerOrg})` : ""}. Quotations can be combined for the same customer, or for other contacts of the same organization.`, { duration: 9000 });
           return;
         }
       }
@@ -215,6 +225,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         customerId: qt.customerId,
         customerName,
         customerOrg,
+        customerOrgNames,
         customerOrgMemberId,
       };
 
@@ -265,6 +276,11 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           _key:          uid(),
           _quotationId:  qt.id,
           _quotationNo:  qt.quotationNo,
+          // the customer of the quotation this line came from, kept on the line (it is used on the sales order, PR and supplier PO)
+          customerId:             qt.customerId ?? undefined,
+          customerName:           customerName ?? undefined,
+          customerOrganization:   customerOrg ?? undefined,
+          customerOrganizationId: customerOrgMemberId ?? undefined,
           included:      true,
           rowNo:         startRow + idx + 1,
           productCode:   item.productCode  ?? "",
@@ -639,7 +655,15 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   // After a failed save, items still missing their CPO description are outlined in red
   const [showDescErrors, setShowDescErrors] = useState(false);
 
-  async function handleSave() {
+  // asDraft: keep what has been entered so far, however incomplete, to finish and record later
+  async function handleSave(asDraft = false) {
+    if (asDraft) {
+      if (linkedQuotations.length === 0 && !customerPoNo.trim() && items.length === 0) {
+        toast.error("Add a customer PO number or a quotation before saving a draft.");
+        return;
+      }
+      // a number that is already used is still worth a warning, though a draft does not hold the number
+    } else {
     if (linkedQuotations.length === 0) { toast.error("Please link at least one quotation"); return; }
     if (!customerPoNo.trim()) { toast.error("Customer PO number is required"); return; }
     if (!(await checkNo(customerPoNo))) { toast.error("This customer PO number is already used. Each one must be unique."); return; }
@@ -658,17 +682,20 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       }, 0);
       return;
     }
+    }
     setSaving(true);
     try {
       const primary = linkedQuotations[0];
       await createCustomerPo({
         customerPoNo:    customerPoNo.trim(),
-        customerId:      primary.customerId ?? undefined,
-        customerOrgMemberId: primary.customerOrgMemberId ?? undefined,
+        customerId:      primary?.customerId ?? undefined,
+        customerOrgMemberId: primary?.customerOrgMemberId ?? undefined,
         quotationLinks:  linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo })),
         items:           items.length > 0
-          ? items.filter((i) => i.included).map(({ _key, included, _quotationId, _quotationNo, _origCode, _origDescription, _origDescSource, _codeNotFound, ...rest }) => ({
+          ? (asDraft ? items : items.filter((i) => i.included)).map(({ _key, included, _quotationId, _quotationNo, _origCode, _origDescription, _origDescSource, _codeNotFound, ...rest }) => ({
               ...rest,
+              // a draft also keeps the lines that are switched off, so they can be switched on again later
+              _excluded:     asDraft && !included ? true : undefined,
               rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
               quotationNo:   _quotationNo || undefined,
               originalCode:  rest._codeSource === "user" ? (_origCode?.trim() || undefined) : undefined,
@@ -693,9 +720,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         receivedDate:    receivedDate ? new Date(receivedDate) : undefined,
         deliveryDate:    deliveryDate ? new Date(deliveryDate) : undefined,
         deliveryAddress: deliveryAddress.trim() || undefined,
-        status,
+        status: asDraft ? "draft" : status,
       });
-      toast.success("Customer PO recorded");
+      toast.success(asDraft ? "Draft saved. Finish it later from the Customer PO list." : "Customer PO recorded");
       router.push("/dashboard/sales/customer-po");
     } catch (e: any) {
       toast.error(e.message);
@@ -779,6 +806,20 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
               </div>
             )}
 
+            {/* Quotations of other contacts of the same organization: allowed, so only a gentle reminder */}
+            {(() => {
+              const others = linkedQuotations.slice(1).filter((q) => q.customerId && primaryCustomer?.customerId && q.customerId !== primaryCustomer.customerId);
+              if (!primaryCustomer || others.length === 0) return null;
+              return (
+                <div role="note" className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/70 px-3 py-2 dark:border-amber-800/50 dark:bg-amber-900/10">
+                  <AlertTriangleIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">
+                    {otherContactsNote(primaryCustomer.customerName, primaryCustomer.customerOrg, others.map((o) => ({ quotationNo: o.quotationNo, customerName: o.customerName })))}
+                  </p>
+                </div>
+              );
+            })()}
+
             {/* Search input — shown for first, or when adding more */}
             {showSearch ? (
               <div className="space-y-1.5">
@@ -810,10 +851,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                       const snap = qt.customerSnapshot as any;
                       const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
                       const alreadyLinked = linkedQuotations.some((q) => q.id === qt.id);
-                      const diffCustomer = !!(
-                        primaryCustomer &&
-                        primaryCustomer.customerId !== qt.customerId
-                      );
+                      const rel = primaryCustomer
+                        ? customerRelation(
+                            { customerId: primaryCustomer.customerId, orgNames: primaryCustomer.customerOrgNames ?? [primaryCustomer.customerOrg] },
+                            { customerId: qt.customerId, orgNames: [snap?.organizationName] },
+                          )
+                        : "same";
+                      const diffCustomer = rel === "different";
+                      const otherContact = rel === "same-organization";
                       const disabled = alreadyLinked || diffCustomer;
                       return (
                         <button
@@ -834,7 +879,10 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                               <span className="text-[10px] text-muted-foreground">already linked</span>
                             )}
                             {diffCustomer && (
-                              <span className="text-[10px] text-destructive">different customer</span>
+                              <span className="text-[10px] text-destructive">different organization</span>
+                            )}
+                            {otherContact && (
+                              <span className="text-[10px] text-amber-700 dark:text-amber-400">other contact, same organization</span>
                             )}
                             {qt.cpoCount > 0 && (
                               <span className="text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
@@ -1146,6 +1194,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                         cpoDescError={showDescErrors}
                         move={canMove(items, item._key)}
                         flash={flashKey === item._key}
+                        showCustomer={new Set(items.map((x) => x.customerId).filter(Boolean)).size > 1}
                         onMove={handleMove}
                         rowIdx={rowIdx++}
                         inSet={inSet}
@@ -1314,8 +1363,11 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         </div>
 
         <div className="flex gap-3 pb-8">
-          <Button onClick={handleSave} disabled={saving || pdfUploading}>
+          <Button onClick={() => handleSave(false)} disabled={saving || pdfUploading}>
             {saving ? "Saving…" : "Record customer PO"}
+          </Button>
+          <Button variant="outline" onClick={() => handleSave(true)} disabled={saving || pdfUploading} title="Keep what you have entered so far and finish it later">
+            Save as draft
           </Button>
           <Button variant="outline" onClick={() => router.push("/dashboard/sales/customer-po")}>
             Cancel
@@ -1338,6 +1390,7 @@ function ItemRow({
   rowIdx,
   inSet,
   flash,
+  showCustomer,
   updateItem,
   onSetLabelChange,
   onCellKeyDown,
@@ -1349,6 +1402,7 @@ function ItemRow({
   cpoDescError: boolean; // outline the CPO description in red when it is still empty
   move: { up: boolean; down: boolean };
   flash?: boolean; // just ticked or moved
+  showCustomer?: boolean; // the CPO has lines of different customers: say whose each line is
   onMove: (key: string, dir: -1 | 1) => void;
   rowIdx: number;
   inSet: boolean;
@@ -1450,6 +1504,11 @@ function ItemRow({
             <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
               <PencilIcon className="w-3 h-3 shrink-0" />
               {item._editedBy || currentUserName || "user"} edited CPO
+            </span>
+          )}
+          {showCustomer && item.customerName && (
+            <span title={item.customerOrganization ? `${item.customerName}, ${item.customerOrganization}` : item.customerName} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950/40 dark:text-sky-400 dark:border-sky-800">
+              <UserIcon className="w-3 h-3 shrink-0" />for {item.customerName}
             </span>
           )}
           <div className="flex items-center gap-1">

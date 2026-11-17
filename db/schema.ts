@@ -2226,6 +2226,11 @@ export const salesOrderItem = pgTable(
     sourceQuotationId: text("source_quotation_id"),
     sourceCustomerPoId: text("source_customer_po_id"),
     sourceCustomerPoNo: text("source_customer_po_no"),
+    // The customer this line is for (a CPO can combine several contacts of one organization); passed on to the PR and the PO
+    customerId: text("customer_id"),
+    customerOrganizationId: text("customer_organization_id"),
+    customerName: text("customer_name"),
+    customerOrganization: text("customer_organization"),
     descriptionSource: json("description_source").$type<Array<"quote" | "catalog" | "user" | "cpo" | "so">>(),
     codeSource: json("code_source").$type<Array<"cpo" | "quotation" | "user" | "so">>(),
     qtySource: json("qty_source").$type<Array<"cpo" | "quotation" | "user" | "so">>(),
@@ -3341,6 +3346,11 @@ export const customerPurchaseOrder = pgTable(
       setQty?: string;
       quotationNo?: string;
       originalCode?: string;
+      customerId?: string;
+      customerName?: string;
+      customerOrganization?: string;
+      customerOrganizationId?: string;
+      _excluded?: boolean;
       cpoDescription?: string;
       setCpoTitle?: string;
     }[]>(),
@@ -3356,7 +3366,7 @@ export const customerPurchaseOrder = pgTable(
     receivedDate: timestamp("received_date"),
     deliveryDate: timestamp("delivery_date"),
     deliveryAddress: text("delivery_address"),
-    status: text("status").notNull().default("received"), // received | acknowledged | fulfilled | cancelled
+    status: text("status").notNull().default("received"), // draft | received | acknowledged | fulfilled | cancelled
 
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -3367,8 +3377,8 @@ export const customerPurchaseOrder = pgTable(
   },
   (t) => [
     index("customer_po_org_idx").on(t.organizationId),
-    // the number is unique inside the organization; a cancelled CPO does not hold it (lib/customer-po/unique-no.ts)
-    uniqueIndex("customer_po_org_no_uidx").on(t.organizationId, sql`lower(btrim(${t.customerPoNo}))`).where(sql`${t.status} <> 'cancelled'`),
+    // the number is unique inside the organization; a cancelled CPO and a draft do not hold it (lib/customer-po/unique-no.ts)
+    uniqueIndex("customer_po_org_no_uidx").on(t.organizationId, sql`lower(btrim(${t.customerPoNo}))`).where(sql`${t.status} NOT IN ('cancelled', 'draft')`),
   ],
 );
 

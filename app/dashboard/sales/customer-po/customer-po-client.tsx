@@ -35,6 +35,7 @@ const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 const STATUS: Record<string, { label: string; className: string }> = {
+  draft: { label: "Draft", className: "bg-slate-100 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300" },
   received: { label: "Received", className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
   acknowledged: { label: "Acknowledged", className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
   fulfilled: { label: "Fulfilled", className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
@@ -136,7 +137,7 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
               <CpoTrailHover key={p.id} id={p.id} poNo={p.customerPoNo}>
               <div
                 className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
-                onClick={() => router.push(`/dashboard/sales/customer-po/${p.id}`)}
+                onClick={() => router.push(p.status === "draft" ? `/dashboard/sales/customer-po/${p.id}/edit` : `/dashboard/sales/customer-po/${p.id}`)}
               >
                 <div className="flex items-center gap-3 px-4 py-3">
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted/40 shrink-0">
@@ -196,7 +197,7 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    {canCreateSo && !p.salesOrderId && p.status !== "cancelled" && p.status !== "fulfilled" && (
+                    {canCreateSo && !p.salesOrderId && p.status !== "cancelled" && p.status !== "fulfilled" && p.status !== "draft" && (
                       <Button
                         variant="ghost" size="icon" className="w-7 h-7 text-amber-600 dark:text-amber-400 hover:text-amber-700"
                         title="Create Sales Order"

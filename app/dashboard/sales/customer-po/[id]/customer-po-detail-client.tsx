@@ -27,6 +27,7 @@ const fmtDate = (d: Date | string | null | undefined) =>
 
 // ── Status configs ─────────────────────────────────────────────────────────
 const CPO_STATUS: Record<string, { label: string; color: string }> = {
+  draft:        { label: "Draft",        color: "bg-slate-100 text-slate-700 dark:bg-slate-800/50 dark:text-slate-300" },
   received:     { label: "Received",     color: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
   acknowledged: { label: "Acknowledged", color: "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400" },
   fulfilled:    { label: "Fulfilled",    color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
@@ -231,6 +232,13 @@ export function CustomerPoDetailClient({
 
   return (
     <div className="p-6 space-y-6">
+      {cpo.status === "draft" && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm dark:border-slate-600 dark:bg-slate-800/40">
+          <span className="font-medium">This is a draft.</span>
+          <span className="text-muted-foreground">It is not recorded yet: nobody was told and no sales order can be made from it.</span>
+          <Button size="sm" className="ml-auto" onClick={() => router.push(`/dashboard/sales/customer-po/${cpo.id}/edit`)}>Finish and record it</Button>
+        </div>
+      )}
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -303,7 +311,7 @@ export function CustomerPoDetailClient({
             ) : (
               <>
                 <PendingCard label="No sales order linked yet" />
-                {can("sales-order:create") && cpo.status !== "cancelled" && (
+                {can("sales-order:create") && cpo.status !== "cancelled" && cpo.status !== "draft" && (
                   <Button
                     size="sm"
                     variant="outline"

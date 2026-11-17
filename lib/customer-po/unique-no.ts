@@ -1,9 +1,10 @@
 import { db } from "@/db";
 import { customerPurchaseOrder } from "@/db/schema";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, ne, notInArray, sql } from "drizzle-orm";
 
 // The customer PO number is unique inside an organization, ignoring capitals and spaces around it.
-// A cancelled CPO does not hold its number, so the real one can be entered again after a mistake.
+// A cancelled CPO does not hold its number, so the real one can be entered again after a mistake, and neither does a draft
+// (a draft is not recorded yet; the number is checked when it is).
 export const normCpoNo = (no: string | null | undefined) => (no ?? "").trim().toLowerCase();
 
 export type CpoNoClash = { id: string; customerPoNo: string; status: string; receivedDate: Date | null; customerName: string | null };
@@ -17,7 +18,7 @@ export async function findCpoNoClash(orgId: string, no: string, excludeId?: stri
     .where(and(
       eq(customerPurchaseOrder.organizationId, orgId),
       sql`lower(btrim(${customerPurchaseOrder.customerPoNo})) = ${n}`,
-      ne(customerPurchaseOrder.status, "cancelled"),
+      notInArray(customerPurchaseOrder.status, ["cancelled", "draft"]),
       excludeId ? ne(customerPurchaseOrder.id, excludeId) : undefined,
     ))
     .limit(1);
