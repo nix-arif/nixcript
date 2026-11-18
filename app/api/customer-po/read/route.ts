@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     pdf = await extractPdfText(new Uint8Array(await file.arrayBuffer()));
   } catch (e) {
     console.error("customer-po read: the PDF could not be opened", e);
-    return NextResponse.json({ readable: false, reason: "This file could not be opened as a PDF." });
+    return NextResponse.json({ readable: false, reason: `This file could not be opened as a PDF (${String((e as Error)?.message ?? e).slice(0, 160)}).` });
   }
   if (!pdf.readable) {
     return NextResponse.json({ readable: false, reason: "No text could be read from this PDF (it may be a scan or a photo). Link the quotation yourself." });
