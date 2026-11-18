@@ -30,7 +30,8 @@ export async function POST(req: NextRequest) {
   let pdf;
   try {
     pdf = await extractPdfText(new Uint8Array(await file.arrayBuffer()));
-  } catch {
+  } catch (e) {
+    console.error("customer-po read: the PDF could not be opened", e);
     return NextResponse.json({ readable: false, reason: "This file could not be opened as a PDF." });
   }
   if (!pdf.readable) {

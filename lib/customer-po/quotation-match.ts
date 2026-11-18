@@ -118,8 +118,37 @@ export function rankSuggestions(text: string, candidates: MatchCandidate[], max 
     .slice(0, max);
 }
 
+// ── the Malaysian government order (Pesanan Kerajaan, AM 75E): the labels sit below their values ──
+const DMY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+type GovOrder = { no: string | null; date: string | null; due: string | null; address: string | null };
+function parseGovOrder(text: string): GovOrder | null {
+  if (!/PESANAN\s+KERAJAAN/i.test(text)) return null;
+  const lines = text.split("\n").map((l) => l.replace(/\s+/g, " ").trim());
+  const toIso = (d: string) => { const m = DMY.exec(d); return m ? isoDate(Number(m[3]), Number(m[2]), Number(m[1])) : null; };
+  let no: string | null = null, date: string | null = null;
+  const h = lines.findIndex((l) => /Tarikh Dokumen/i.test(l) && /No\. ?Dokumen/i.test(l));
+  if (h > 0) {
+    const m = /(\d{1,2}\/\d{1,2}\/\d{4})\s+([A-Z]{1,3}\d{8,})\s*$/.exec(lines[h - 1]);
+    if (m) { date = toIso(m[1]); no = m[2]; }
+  }
+  let due: string | null = null, address: string | null = null;
+  const p = lines.findIndex((l) => /^Pada atau sebelum/i.test(l));
+  if (p >= 0) {
+    const addr: string[] = [];
+    for (let i = p + 1; i < Math.min(lines.length, p + 8); i++) {
+      if (!lines[i] || /^Sila bekalkan/i.test(lines[i])) break;
+      if (DMY.test(lines[i])) { due = toIso(lines[i]); break; }
+      addr.push(lines[i]);
+    }
+    if (addr.length) address = addr.join("\n");
+  }
+  return { no, date, due, address };
+}
+
 // ── the PO's own number and date, as a suggestion for the form ──────────────
 export function extractPoNumber(text: string): string | null {
+  const gov = parseGovOrder(text)?.no;
+  if (gov) return gov;
   const re = /(?:P\.?\s?O\.?\s*(?:No\.?|Number|#)|Purchase\s+Order\s*(?:No\.?|Number|#)?|Order\s*(?:No\.?|Number)|No\.?\s*Pesanan|Nombor\s+Pesanan)\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9\-\/.]{4,29})/i;
   const m = re.exec(text);
   const v = m?.[1]?.replace(/[.\-\/]+$/, "") ?? "";
@@ -128,25 +157,29 @@ export function extractPoNumber(text: string): string | null {
 }
 
 const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, mei: 5, jun: 6, jul: 7, aug: 8, ogos: 8, sep: 9, oct: 10, okt: 10, nov: 11, dec: 12, dis: 12 };
-const iso = (y: number, m: number, d: number) => (y >= 2000 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31 ? `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null);
+const isoDate = (y: number, m: number, d: number) => (y >= 2000 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31 ? `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null);
 
 // a date written after a label, day first as in Malaysia: 12/11/2026, 12-11-26, 12 Nov 2026, 2026-11-12
 function dateAfter(label: string, text: string): string | null {
   const m = new RegExp(`(?:${label})\\s*[:.\\-]?\\s*(\\d{1,2})[\\/.\\-](\\d{1,2})[\\/.\\-](\\d{2,4})`, "i").exec(text);
-  if (m) { const y = Number(m[3]); return iso(y < 100 ? 2000 + y : y, Number(m[2]), Number(m[1])); }
+  if (m) { const y = Number(m[3]); return isoDate(y < 100 ? 2000 + y : y, Number(m[2]), Number(m[1])); }
   const w = new RegExp(`(?:${label})\\s*[:.\\-]?\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+([A-Za-z]{3,9})\\.?,?\\s+(\\d{4})`, "i").exec(text);
-  if (w) { const mo = MONTHS[w[2].slice(0, 3).toLowerCase()]; if (mo) return iso(Number(w[3]), mo, Number(w[1])); }
+  if (w) { const mo = MONTHS[w[2].slice(0, 3).toLowerCase()]; if (mo) return isoDate(Number(w[3]), mo, Number(w[1])); }
   const s = new RegExp(`(?:${label})\\s*[:.\\-]?\\s*(\\d{4})-(\\d{2})-(\\d{2})`, "i").exec(text);
-  return s ? iso(Number(s[1]), Number(s[2]), Number(s[3])) : null;
+  return s ? isoDate(Number(s[1]), Number(s[2]), Number(s[3])) : null;
 }
 
 // the date of the order: next to "Date" / "Tarikh", but not the delivery, due or validity dates
 export function extractPoDate(text: string): string | null {
+  const gov = parseGovOrder(text);
+  if (gov) return gov.date;
   return dateAfter("(?<!Delivery\\s|Deliver\\s|Due\\s|Required\\s|Expiry\\s|Valid\\s|Hantar\\s)(?:Date|Tarikh)\\s*(?:of\\s+Order)?", text);
 }
 
 // when the customer wants the goods
 export function extractDeliveryDate(text: string): string | null {
+  const gov = parseGovOrder(text);
+  if (gov) return gov.due;
   return dateAfter("Delivery\\s*Date|Deliver(?:y)?\\s*By|Date\\s*Required|Required\\s*(?:Date|By|Delivery)|Due\\s*Date|Delivery\\s*Required|Tarikh\\s*(?:Penghantaran|Hantar|Dihantar)", text);
 }
 
@@ -154,6 +187,8 @@ export function extractDeliveryDate(text: string): string | null {
 const ADDRESS_LABEL = /(?:Deliver(?:y)?\s*(?:To|Address|At)|Ship(?:ping)?\s*To|Alamat\s*Penghantaran|Hantar\s*(?:Ke|Kepada))\s*[:\-]?/i;
 const NEXT_LABEL = /^(?:\W*)(?:Bill(?:ing)?\s*To|Invoice\s*To|Date|Tarikh|P\.?O\.?\s*(?:No|Number|#)|Order\s*No|Tel|Phone|Fax|Attn|Attention|Contact|Terms|Payment|Currency|Page|Item|No\.?\s|Description|Qty|Quantity|Vendor|Supplier|Requisition|Ref|Delivery\s*Date|Due|Sub\s*total|Total)\b/i;
 export function extractDeliveryAddress(text: string): string | null {
+  const gov = parseGovOrder(text);
+  if (gov) return gov.address;
   const m = ADDRESS_LABEL.exec(text);
   if (!m) return null;
   const lines = text.slice(m.index + m[0].length).split("\n");
