@@ -10,7 +10,7 @@ export type PoReadResult =
   | { status: "idle" }
   | { status: "loading"; fileName: string }
   | { status: "unreadable"; fileName: string; reason: string }
-  | { status: "done"; fileName: string; suggestions: Suggestion[]; poNumber: string | null; poDate: string | null; filled: string[]; lines: PoLine[] };
+  | { status: "done"; fileName: string; suggestions: Suggestion[]; poNumber: string | null; poDate: string | null; filled: string[]; lines: PoLine[]; linked?: boolean };
 
 const fmtMoney = (v: string | null) => (v ? Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 }) : "");
 const fmtDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
@@ -53,7 +53,7 @@ export function PoMatchResults({
   return (
     <div className="space-y-2.5">
       {filledNote}
-      {result.suggestions.length === 0 ? (
+      {result.linked ? null : result.suggestions.length === 0 ? (
         <p className="text-xs text-muted-foreground">No quotation matched {result.fileName}. Search for the quotation number below. The document is still attached to this CPO.</p>
       ) : (
         <>

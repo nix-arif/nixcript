@@ -681,7 +681,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       if (data.deliveryDate) { setDeliveryDate(data.deliveryDate); filled.push("due delivery date"); keys.push("due"); }
       if (data.deliveryAddress) { setDeliveryAddress(data.deliveryAddress); addressFromDoc.current = true; filled.push("delivery address"); keys.push("address"); }
       markFilled(keys);
-      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled, lines: data.lines ?? [] });
+      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled, lines: data.lines ?? [], linked: !wantSuggestions });
     } catch {
       setPoRead({ status: "unreadable", fileName: file.name, reason: "The document could not be read." });
     }
@@ -708,7 +708,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   async function linkSuggestion(sg: Suggestion) {
     await selectQuotation(sg.id, sg.quotationNo);
-    setPoRead({ status: "idle" });
+    // keep what was read (the PO's lines are matched to the items now that there are items), drop the suggestions
+    setPoRead((p) => (p.status === "done" ? { ...p, suggestions: [], linked: true } : { status: "idle" }));
   }
 
   function handlePdfSelect(e: React.ChangeEvent<HTMLInputElement>) {
