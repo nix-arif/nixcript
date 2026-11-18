@@ -9,7 +9,7 @@ export type PoReadResult =
   | { status: "idle" }
   | { status: "loading"; fileName: string }
   | { status: "unreadable"; fileName: string; reason: string }
-  | { status: "done"; fileName: string; suggestions: Suggestion[]; poNumber: string | null; poDate: string | null };
+  | { status: "done"; fileName: string; suggestions: Suggestion[]; poNumber: string | null; poDate: string | null; filled: string[] };
 
 const fmtMoney = (v: string | null) => (v ? Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 }) : "");
 const fmtDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
@@ -30,7 +30,7 @@ export function PoMatchResults({
   if (result.status === "idle") return null;
 
   if (result.status === "loading") {
-    return <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2Icon className="h-3.5 w-3.5 animate-spin" />Reading {result.fileName} to find the matching quotation…</p>;
+    return <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2Icon className="h-3.5 w-3.5 animate-spin" />Reading {result.fileName} for the dates, address and matching quotation…</p>;
   }
 
   if (result.status === "unreadable") {
@@ -42,10 +42,16 @@ export function PoMatchResults({
     );
   }
 
+  const filledNote = result.filled.length > 0 && (
+    <p className="rounded-md border border-green-200 bg-green-50/70 px-2.5 py-1.5 text-xs text-green-900 dark:border-green-800/50 dark:bg-green-900/10 dark:text-green-200">
+      Filled in from {result.fileName}: {result.filled.join(", ")}. Check them below and change anything that is not right.
+    </p>
+  );
   const showPoNo = !!result.poNumber && !currentPoNo.trim();
   const showDate = !!result.poDate && result.poDate !== currentDate;
   return (
     <div className="space-y-2.5">
+      {filledNote}
       {result.suggestions.length === 0 ? (
         <p className="text-xs text-muted-foreground">No quotation matched {result.fileName}. Search for the quotation number below. The document is still attached to this CPO.</p>
       ) : (

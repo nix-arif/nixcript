@@ -130,12 +130,41 @@ export function extractPoNumber(text: string): string | null {
 const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, mei: 5, jun: 6, jul: 7, aug: 8, ogos: 8, sep: 9, oct: 10, okt: 10, nov: 11, dec: 12, dis: 12 };
 const iso = (y: number, m: number, d: number) => (y >= 2000 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31 ? `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null);
 
-// the date next to a "Date" / "Tarikh" label (day first, as in Malaysia); else null
-export function extractPoDate(text: string): string | null {
-  const m = /(?:Date|Tarikh)\s*(?:of\s+Order)?\s*[:.\-]?\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/i.exec(text);
+// a date written after a label, day first as in Malaysia: 12/11/2026, 12-11-26, 12 Nov 2026, 2026-11-12
+function dateAfter(label: string, text: string): string | null {
+  const m = new RegExp(`(?:${label})\\s*[:.\\-]?\\s*(\\d{1,2})[\\/.\\-](\\d{1,2})[\\/.\\-](\\d{2,4})`, "i").exec(text);
   if (m) { const y = Number(m[3]); return iso(y < 100 ? 2000 + y : y, Number(m[2]), Number(m[1])); }
-  const w = /(?:Date|Tarikh)\s*[:.\-]?\s*(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{4})/i.exec(text);
-  if (w) { const mo = MONTHS[w[2].slice(0, 3).toLowerCase()]; return mo ? iso(Number(w[3]), mo, Number(w[1])) : null; }
-  const s = /(?:Date|Tarikh)\s*[:.\-]?\s*(\d{4})-(\d{2})-(\d{2})/i.exec(text);
+  const w = new RegExp(`(?:${label})\\s*[:.\\-]?\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+([A-Za-z]{3,9})\\.?,?\\s+(\\d{4})`, "i").exec(text);
+  if (w) { const mo = MONTHS[w[2].slice(0, 3).toLowerCase()]; if (mo) return iso(Number(w[3]), mo, Number(w[1])); }
+  const s = new RegExp(`(?:${label})\\s*[:.\\-]?\\s*(\\d{4})-(\\d{2})-(\\d{2})`, "i").exec(text);
   return s ? iso(Number(s[1]), Number(s[2]), Number(s[3])) : null;
+}
+
+// the date of the order: next to "Date" / "Tarikh", but not the delivery, due or validity dates
+export function extractPoDate(text: string): string | null {
+  return dateAfter("(?<!Delivery\\s|Deliver\\s|Due\\s|Required\\s|Expiry\\s|Valid\\s|Hantar\\s)(?:Date|Tarikh)\\s*(?:of\\s+Order)?", text);
+}
+
+// when the customer wants the goods
+export function extractDeliveryDate(text: string): string | null {
+  return dateAfter("Delivery\\s*Date|Deliver(?:y)?\\s*By|Date\\s*Required|Required\\s*(?:Date|By|Delivery)|Due\\s*Date|Delivery\\s*Required|Tarikh\\s*(?:Penghantaran|Hantar|Dihantar)", text);
+}
+
+// the address the goods go to: the lines after "Deliver to" / "Ship to", up to the next label
+const ADDRESS_LABEL = /(?:Deliver(?:y)?\s*(?:To|Address|At)|Ship(?:ping)?\s*To|Alamat\s*Penghantaran|Hantar\s*(?:Ke|Kepada))\s*[:\-]?/i;
+const NEXT_LABEL = /^(?:\W*)(?:Bill(?:ing)?\s*To|Invoice\s*To|Date|Tarikh|P\.?O\.?\s*(?:No|Number|#)|Order\s*No|Tel|Phone|Fax|Attn|Attention|Contact|Terms|Payment|Currency|Page|Item|No\.?\s|Description|Qty|Quantity|Vendor|Supplier|Requisition|Ref|Delivery\s*Date|Due|Sub\s*total|Total)\b/i;
+export function extractDeliveryAddress(text: string): string | null {
+  const m = ADDRESS_LABEL.exec(text);
+  if (!m) return null;
+  const lines = text.slice(m.index + m[0].length).split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length && out.length < 6; i++) {
+    const l = lines[i].replace(/\s+/g, " ").trim();
+    if (!l) { if (out.length) break; continue; }
+    if (i > 0 && NEXT_LABEL.test(l)) break;
+    out.push(l);
+  }
+  const addr = out.join("\n").trim();
+  // an address has a few words and usually a number or a postcode; not just a label's leftovers
+  return addr.length >= 12 && addr.length <= 300 && /[A-Za-z]{3,}/.test(addr) ? addr : null;
 }

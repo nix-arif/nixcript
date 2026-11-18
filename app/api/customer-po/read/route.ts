@@ -5,7 +5,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { validateUploadRequest } from "@/lib/uploads/validate";
 import { extractPdfText } from "@/lib/customer-po/pdf-text";
 import { findMatchingQuotations } from "@/lib/customer-po/find-quotations";
-import { extractPoDate, extractPoNumber } from "@/lib/customer-po/quotation-match";
+import { extractDeliveryAddress, extractDeliveryDate, extractPoDate, extractPoNumber } from "@/lib/customer-po/quotation-match";
 
 // Reads a customer's PO (a PDF) and suggests which of our quotations it belongs to. The file is read in memory and not
 // kept here; it is stored by the normal upload. Nothing is linked: the page shows the suggestions and the user decides.
@@ -37,5 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ readable: false, reason: "No text could be read from this PDF (it may be a scan or a photo). Link the quotation yourself." });
   }
   const suggestions = await findMatchingQuotations(orgId, pdf.text);
-  return NextResponse.json({ readable: true, suggestions, poNumber: extractPoNumber(pdf.text), poDate: extractPoDate(pdf.text) });
+  return NextResponse.json({ readable: true, suggestions, poNumber: extractPoNumber(pdf.text), poDate: extractPoDate(pdf.text),
+    deliveryDate: extractDeliveryDate(pdf.text), deliveryAddress: extractDeliveryAddress(pdf.text),
+  });
 }

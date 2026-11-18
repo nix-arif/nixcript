@@ -261,7 +261,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         if (prev.length === 0) {
           const snap = qt.customerSnapshot as any;
           const addrLines = [snap?.organizationName, snap?.organizationAddress].filter(Boolean).join("\n");
-          if (addrLines) setDeliveryAddress(addrLines);
+          if (addrLines && !addressFromDoc.current) setDeliveryAddress(addrLines);
         }
         return [...prev, linked];
       });
@@ -636,7 +636,10 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   // ── PDF upload ─────────────────────────────────────────────────────────────
 
-  async function readDocument(file: File) {
+  // The delivery address read from the document: a linked quotation must not replace it afterwards
+  const addressFromDoc = useRef(false);
+
+  async function readDocument(file: File, wantSuggestions: boolean) {
     setPoRead({ status: "loading", fileName: file.name });
     try {
       const form = new FormData();
@@ -645,7 +648,12 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setPoRead({ status: "unreadable", fileName: file.name, reason: data.error || "The document could not be read." }); return; }
       if (!data.readable) { setPoRead({ status: "unreadable", fileName: file.name, reason: data.reason || "The document could not be read." }); return; }
-      setPoRead({ status: "done", fileName: file.name, suggestions: data.suggestions ?? [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null });
+      // what the document says fills the form; the user checks it and can change it
+      const filled: string[] = [];
+      if (data.poDate) { setReceivedDate(data.poDate); filled.push("date received"); }
+      if (data.deliveryDate) { setDeliveryDate(data.deliveryDate); filled.push("due delivery date"); }
+      if (data.deliveryAddress) { setDeliveryAddress(data.deliveryAddress); addressFromDoc.current = true; filled.push("delivery address"); }
+      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled });
     } catch {
       setPoRead({ status: "unreadable", fileName: file.name, reason: "The document could not be read." });
     }
@@ -666,8 +674,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   async function attachFile(file: File) {
     setPdfFile(file);
     setPdfUploading(true);
-    // while no quotation is linked yet, the document is also read to suggest which quotation it belongs to
-    if (linkedQuotations.length === 0) void readDocument(file);
+    // the document is read for its dates and delivery address, and (while no quotation is linked) to suggest the quotation
+    void readDocument(file, linkedQuotations.length === 0);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -830,7 +838,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         <div className="border border-border rounded-xl p-4 space-y-3">
           <div className="flex flex-wrap items-baseline gap-x-2">
             <h2 className="text-sm font-semibold">Customer&apos;s PO document</h2>
-            <span className="text-xs text-muted-foreground">(optional) Attach it and we suggest the matching quotation, the PO number and the date.</span>
+            <span className="text-xs text-muted-foreground">(optional) Attach it and we fill in the dates and delivery address, and suggest the matching quotation.</span>
           </div>
           <input ref={pdfRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handlePdfSelect} />
           {pdfFile ? (
