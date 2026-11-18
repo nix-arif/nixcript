@@ -1018,6 +1018,7 @@ export async function getQuotationForSO(id: string) {
       title: quotation.title,
       status: quotation.status,
       isDummy: quotation.isDummy,
+      sets: quotation.sets,
       grandTotal: quotation.grandTotal,
       subtotal: quotation.subtotal,
       overallDiscountPct: quotation.overallDiscountPct,

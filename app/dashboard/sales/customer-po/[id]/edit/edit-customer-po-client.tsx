@@ -354,7 +354,11 @@ export function EditCustomerPoClient({
         // "not-as-set" lines from every quotation form ONE group, so they can be ordered together
         const notAsSet           = itemHasGroup && isNotAsSetLabel(resolvedGroupLabel);
         const resolvedGroupId    = notAsSet ? NOT_AS_SET_ID : itemHasGroup ? `${qt.id}:${item.setGroupId}` : autoGroupId;
-        const resolvedSetQty     = notAsSet ? "1" : itemHasGroup ? (item.setQty ?? "1") : (autoGroup ? "1" : "");
+        // The quotation can be for several sets (e.g. 6): everything on it is multiplied by that. It goes on the number of
+        // sets of each set, or on the quantity of a loose item, so the CPO carries the full quantity and amount.
+        const quotedSets         = Math.max(1, Number(qt.sets ?? 1) || 1);
+        const looseLine          = notAsSet || (!itemHasGroup && !autoGroup);
+        const resolvedSetQty     = notAsSet ? "1" : itemHasGroup ? String((Number(item.setQty ?? 1) || 1) * quotedSets) : (autoGroup ? String(quotedSets) : "");
         const base: EditableItem = {
           _key:          uid(),
           _quotationId:  qt.id,
@@ -368,7 +372,7 @@ export function EditCustomerPoClient({
           rowNo:         startRow + idx + 1,
           productCode:   item.productCode  ?? "",
           description:   item.description  ?? "",
-          qty:           String(item.qty   ?? "1"),
+          qty:           looseLine && quotedSets > 1 ? String((Number(item.qty ?? 1) || 1) * quotedSets) : String(item.qty ?? "1"),
           uom:           item.uom          ?? "",
           unitPrice:     String(item.unitPrice  ?? "0"),
           discountPct:   String(item.discountPct ?? "0"),
