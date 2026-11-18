@@ -19,6 +19,8 @@ import { uid } from "@/lib/uid";
 import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, sinkUnselected, isSettled, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
 import { customerRelation, otherContactsNote } from "@/lib/customer-po/customer-match";
 import { descriptionState, unresolvedDifferences, unresolvedMessage, keepDescription, takeDatabaseText, restorePreviousDescription, canRestorePrevious, ACCEPTED_NOTE, type DescriptionState } from "@/lib/customer-po/description-check";
+import { PoMatchPanel, type PoReadResult } from "./po-match-panel";
+import type { Suggestion } from "@/lib/customer-po/quotation-match";
 import { useDbDescriptionLookup } from "@/lib/sales-order/use-db-descriptions";
 import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
 import {
@@ -132,6 +134,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   const [pdfKey,       setPdfKey]       = useState<string | undefined>();
   const [pdfUploading, setPdfUploading] = useState(false);
   const pdfRef = useRef<HTMLInputElement>(null);
+  // What reading the customer's PO document found (the matching quotation, the PO number and date)
+  const [poRead, setPoRead] = useState<PoReadResult>({ status: "idle" });
+  const matchRef = useRef<HTMLInputElement>(null);
 
   const [saving, setSaving] = useState(false);
 
@@ -631,11 +636,34 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   // ── PDF upload ─────────────────────────────────────────────────────────────
 
+  async function readDocument(file: File) {
+    setPoRead({ status: "loading", fileName: file.name });
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/customer-po/read", { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setPoRead({ status: "unreadable", fileName: file.name, reason: data.error || "The document could not be read." }); return; }
+      if (!data.readable) { setPoRead({ status: "unreadable", fileName: file.name, reason: data.reason || "The document could not be read." }); return; }
+      setPoRead({ status: "done", fileName: file.name, suggestions: data.suggestions ?? [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null });
+    } catch {
+      setPoRead({ status: "unreadable", fileName: file.name, reason: "The document could not be read." });
+    }
+  }
+
+  async function linkSuggestion(sg: Suggestion) {
+    await selectQuotation(sg.id, sg.quotationNo);
+    setPoRead({ status: "idle" });
+  }
+
   async function handlePdfSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = ""; // so the same file can be picked again
     if (!file) return;
     setPdfFile(file);
     setPdfUploading(true);
+    // while no quotation is linked yet, the document is also read to suggest which quotation it belongs to
+    if (linkedQuotations.length === 0) void readDocument(file);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -853,6 +881,23 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                 </div>
               );
             })()}
+
+            {/* No quotation yet: the customer's PO can tell which one it is */}
+            {linkedQuotations.length === 0 && (
+              <>
+                <input ref={matchRef} type="file" accept="application/pdf" className="hidden" onChange={handlePdfSelect} />
+                <PoMatchPanel
+                  result={poRead}
+                  onAttach={() => matchRef.current?.click()}
+                  onLink={linkSuggestion}
+                  onUsePoNumber={(v) => { setCustomerPoNo(v); setNoTaken(null); }}
+                  onUseDate={setReceivedDate}
+                  currentPoNo={customerPoNo}
+                  currentDate={receivedDate}
+                  linking={qtLoading}
+                />
+              </>
+            )}
 
             {/* Search input — shown for first, or when adding more */}
             {showSearch ? (
