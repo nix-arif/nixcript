@@ -19,7 +19,7 @@ import { uid } from "@/lib/uid";
 import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, sinkUnselected, isSettled, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
 import { customerRelation, otherContactsNote } from "@/lib/customer-po/customer-match";
 import { descriptionState, unresolvedDifferences, unresolvedMessage, keepDescription, takeDatabaseText, restorePreviousDescription, canRestorePrevious, ACCEPTED_NOTE, type DescriptionState } from "@/lib/customer-po/description-check";
-import { PoMatchPanel, type PoReadResult } from "./po-match-panel";
+import { PoMatchResults, type PoReadResult } from "./po-match-panel";
 import type { Suggestion } from "@/lib/customer-po/quotation-match";
 import { useDbDescriptionLookup } from "@/lib/sales-order/use-db-descriptions";
 import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
@@ -136,7 +136,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   const pdfRef = useRef<HTMLInputElement>(null);
   // What reading the customer's PO document found (the matching quotation, the PO number and date)
   const [poRead, setPoRead] = useState<PoReadResult>({ status: "idle" });
-  const matchRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
 
   const [saving, setSaving] = useState(false);
 
@@ -656,10 +656,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     setPoRead({ status: "idle" });
   }
 
-  async function handlePdfSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  function handlePdfSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // so the same file can be picked again
-    if (!file) return;
+    if (file) void attachFile(file);
+  }
+
+  // The customer's PO: stored with the CPO, and (while no quotation is linked) read to suggest which quotation it is
+  async function attachFile(file: File) {
     setPdfFile(file);
     setPdfUploading(true);
     // while no quotation is linked yet, the document is also read to suggest which quotation it belongs to
@@ -822,7 +826,51 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
       <div className="space-y-5 w-full">
 
-        {/* ── 1. Quotations (required, multiple) ── */}
+        {/* ── 1. The customer's PO document: attached here, read to suggest the quotation ── */}
+        <div className="border border-border rounded-xl p-4 space-y-3">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <h2 className="text-sm font-semibold">Customer&apos;s PO document</h2>
+            <span className="text-xs text-muted-foreground">(optional) Attach it and we suggest the matching quotation, the PO number and the date.</span>
+          </div>
+          <input ref={pdfRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handlePdfSelect} />
+          {pdfFile ? (
+            <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-sm">
+              <PaperclipIcon className="w-4 h-4 shrink-0 text-muted-foreground" />
+              <span className="flex-1 truncate text-[13px]">{pdfFile.name}</span>
+              {pdfUploading && <span className="text-xs text-muted-foreground">Uploading…</span>}
+              {!pdfUploading && pdfKey && <span className="text-xs text-green-600">Attached</span>}
+              <button type="button" className="text-xs text-muted-foreground underline hover:text-foreground" onClick={() => pdfRef.current?.click()}>Replace</button>
+              <button type="button" aria-label="Remove the document" onClick={() => { setPdfFile(null); setPdfKey(undefined); setPoRead({ status: "idle" }); }}>
+                <XIcon className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+            </div>
+          ) : (
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) void attachFile(f); }}
+              className={cn("flex flex-wrap items-center gap-3 rounded-lg border-2 border-dashed px-4 py-4 transition-colors", dragging ? "border-primary bg-primary/5" : "border-border")}
+            >
+              <PaperclipIcon className="w-5 h-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1 text-sm">
+                <div className="font-medium">Drop the customer&apos;s PO here, or choose a file</div>
+                <div className="text-xs text-muted-foreground">PDF (we can read it) or an image (attached only)</div>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => pdfRef.current?.click()}>Choose file</Button>
+            </div>
+          )}
+          <PoMatchResults
+            result={poRead}
+            onLink={linkSuggestion}
+            onUsePoNumber={(v) => { setCustomerPoNo(v); setNoTaken(null); }}
+            onUseDate={setReceivedDate}
+            currentPoNo={customerPoNo}
+            currentDate={receivedDate}
+            linking={qtLoading}
+          />
+        </div>
+
+        {/* ── 2. Quotations (required, multiple) ── */}
         <div className="border border-border rounded-xl p-4">
           <h2 className="text-sm font-semibold mb-3">
             Our quotation(s) <span className="text-destructive">*</span>
@@ -881,23 +929,6 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                 </div>
               );
             })()}
-
-            {/* No quotation yet: the customer's PO can tell which one it is */}
-            {linkedQuotations.length === 0 && (
-              <>
-                <input ref={matchRef} type="file" accept="application/pdf" className="hidden" onChange={handlePdfSelect} />
-                <PoMatchPanel
-                  result={poRead}
-                  onAttach={() => matchRef.current?.click()}
-                  onLink={linkSuggestion}
-                  onUsePoNumber={(v) => { setCustomerPoNo(v); setNoTaken(null); }}
-                  onUseDate={setReceivedDate}
-                  currentPoNo={customerPoNo}
-                  currentDate={receivedDate}
-                  linking={qtLoading}
-                />
-              </>
-            )}
 
             {/* Search input — shown for first, or when adding more */}
             {showSearch ? (
@@ -999,7 +1030,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           </div>
         </div>
 
-        {/* ── 2. PO details ── */}
+        {/* ── 3. PO details ── */}
         <div className="border border-border rounded-xl p-4 space-y-4">
           <h2 className="text-sm font-semibold">PO details</h2>
           <div className="space-y-1.5">
@@ -1204,7 +1235,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           </div>
         </div>
 
-        {/* ── 3. Items (from quotations, editable) ── */}
+        {/* ── 4. Items (from quotations, editable) ── */}
         {items.length > 0 && (
           <div className="border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
@@ -1409,30 +1440,6 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
             </div>
           </div>
         )}
-
-        {/* ── 4. Attach document ── */}
-        <div className="border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold mb-3">
-            Attach document <span className="text-muted-foreground font-normal text-xs">(optional)</span>
-          </h2>
-          {pdfFile ? (
-            <div className="flex items-center gap-2 text-sm">
-              <PaperclipIcon className="w-4 h-4 text-muted-foreground" />
-              <span className="flex-1 truncate text-[13px]">{pdfFile.name}</span>
-              {pdfUploading && <span className="text-xs text-muted-foreground">Uploading…</span>}
-              {!pdfUploading && pdfKey && <span className="text-xs text-green-600">Uploaded</span>}
-              <button onClick={() => { setPdfFile(null); setPdfKey(undefined); if (pdfRef.current) pdfRef.current.value = ""; }}>
-                <XIcon className="w-3.5 h-3.5 text-muted-foreground" />
-              </button>
-            </div>
-          ) : (
-            <label className="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
-              <PaperclipIcon className="w-4 h-4" />
-              <span>Attach customer PO (PDF / image)</span>
-              <input ref={pdfRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={handlePdfSelect} />
-            </label>
-          )}
-        </div>
 
         {/* ── 5. Notes ── */}
         <div className="space-y-1.5">
