@@ -324,9 +324,31 @@ export function NewQuotationClient({
     setIsDragging(false);
   };
 
+  // The sheet to fill in. When the item table already has items they are written into it (so they can be edited in a
+  // spreadsheet and uploaded again); with no items it is the empty template with a few example rows.
   const downloadTemplate = () => {
-    const headers = ["No", "Set Name", "Subtitle", "Set Price", "Product Code", "Description", "Qty", "UOM", "Unit Price"];
-    const examples = [
+    const filled = reviewItems.length > 0;
+    const hasDiscount = filled && reviewItems.some((it) => Number(it.discountPct) > 0);
+    const headers = ["No", "Set Name", "Subtitle", "Set Price", "Product Code", "Description", "Qty", "UOM", "Unit Price", ...(hasDiscount ? ["Disc %"] : [])];
+    const examples: (string | number)[][] = filled
+      ? reviewItems.map((it) => {
+          const inSet = !!it.setGroupLabel && it.setGroupLabel !== "not-as-set";
+          const priced = inSet && !!it.setPrice;
+          return [
+            it.rowNo ?? "",
+            inSet ? it.setGroupLabel! : "not-as-set",
+            inSet ? it.setSubtitle ?? "" : "",
+            priced ? Number(it.setPrice) : "",
+            it.productCode ?? "",
+            it.description || it.productName || "",
+            Number(it.qty) || it.qty || 1,
+            it.uom ?? "",
+            // a set priced as a whole has no unit prices
+            priced || !it.unitPrice ? "" : Number(it.unitPrice),
+            ...(hasDiscount ? [Number(it.discountPct) > 0 ? Number(it.discountPct) : ""] : []),
+          ];
+        })
+      : [
       // Set priced as a whole: same Set Price on every row, leave Unit Price blank
       ["a", "abdominal retractor set", "abdominal retractor set for urology surgery consist of;", 120000, "CODE-001", "Example Product A", 1, "pc", ""],
       ["b", "abdominal retractor set", "abdominal retractor set for urology surgery consist of;", 120000, "CODE-002", "Example Product B", 6, "pc", ""],
@@ -349,13 +371,13 @@ export function NewQuotationClient({
       ["Unit Price", "Price per item. Leave blank for items inside a set that has a Set Price."],
     ];
     const ws = XLSX.utils.aoa_to_sheet([headers, ...examples]);
-    ws["!cols"] = [{ wch: 5 }, { wch: 26 }, { wch: 50 }, { wch: 11 }, { wch: 16 }, { wch: 36 }, { wch: 6 }, { wch: 8 }, { wch: 12 }];
+    ws["!cols"] = [{ wch: 5 }, { wch: 26 }, { wch: 50 }, { wch: 11 }, { wch: 16 }, { wch: 36 }, { wch: 6 }, { wch: 8 }, { wch: 12 }, ...(hasDiscount ? [{ wch: 8 }] : [])];
     const wsNotes = XLSX.utils.aoa_to_sheet(notes);
     wsNotes["!cols"] = [{ wch: 18 }, { wch: 100 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Items");
     XLSX.utils.book_append_sheet(wb, wsNotes, "How to fill");
-    XLSX.writeFile(wb, "quotation-template.xlsx");
+    XLSX.writeFile(wb, filled ? "quotation-items.xlsx" : "quotation-template.xlsx");
   };
 
   const processFile = (file: File) => {
@@ -1608,7 +1630,7 @@ export function NewQuotationClient({
                     onClick={downloadTemplate}
                     className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
                   >
-                    <DownloadIcon className="w-3 h-3" /> Download template
+                    <DownloadIcon className="w-3 h-3" /> {reviewItems.length > 0 ? "Download template with your items" : "Download template"}
                   </button>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -1700,7 +1722,14 @@ export function NewQuotationClient({
                   {reviewItems.length} items{sets > 1 ? ` · ${sets} sets` : ""}
                 </div>
               </div>
-              <div className="flex gap-1.5">
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={downloadTemplate}
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11px] text-foreground hover:bg-muted"
+                >
+                  <DownloadIcon className="w-3 h-3" /> Download as spreadsheet
+                </button>
                 {okCount > 0 && (
                   <span className="text-[10px] bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded px-2 py-0.5">
                     {okCount} OK
