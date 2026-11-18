@@ -16,8 +16,6 @@ const nextConfig: NextConfig = {
   // The manuals are read from disk by app/manuals/[slug] (not public/ — sign-in required)
   outputFileTracingIncludes: {
     "/manuals/*": ["./manuals/**/*"],
-    // the PDF reader loads its worker file by path, which the build cannot see
-    "/api/customer-po/read": ["./node_modules/pdfjs-dist/legacy/build/**/*"],
   },
   // Old public links to the manuals → the signed-in-only addresses
   async redirects() {

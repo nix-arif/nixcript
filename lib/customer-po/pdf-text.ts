@@ -5,6 +5,12 @@ export type PdfText = { text: string; pages: number; readable: boolean };
 
 export async function extractPdfText(data: Uint8Array, maxPages = 8): Promise<PdfText> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  // load the worker in-process: a normal import is traced by the build, so no symlinked include is needed
+  const g = globalThis as { pdfjsWorker?: unknown };
+  if (!g.pdfjsWorker) {
+    // @ts-expect-error the worker file ships without type declarations
+    g.pdfjsWorker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  }
   const doc = await pdfjs.getDocument({ data: new Uint8Array(data), useSystemFonts: true, disableFontFace: true, verbosity: 0 }).promise;
   try {
     const pages = doc.numPages;
