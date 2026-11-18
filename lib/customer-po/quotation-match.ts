@@ -8,7 +8,7 @@ export type MatchCandidate = {
   grandTotal: string | null;
   customerName: string | null;
   orgNames: string[];
-  items: { productCode?: string | null; description?: string | null }[];
+  items: { productCode?: string | null; description?: string | null; unitPrice?: string | null }[];
   cpoCount: number;
 };
 
@@ -64,10 +64,15 @@ export function customerAppears(text: string, c: Pick<MatchCandidate, "customerN
   return { org, person };
 }
 
-// how many of the quotation's items are on the document: by product code (as a whole word), else by the start of the description
-export function itemHits(text: string, items: MatchCandidate["items"]): number {
+const words = (s: string | null | undefined) => (s ?? "").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+
+// how many of the quotation's items are on the document: by product code (as a whole word), else by the start of a long
+// description; and, when the document's numbers are given, by description AND unit price together (a government PO does
+// not carry our codes, and the customer may mistype a word, so most of the words plus the same price is enough)
+export function itemHits(text: string, items: MatchCandidate["items"], nums?: Set<string>): number {
   const upper = text.toUpperCase();
   const t = alnum(text);
+  const docWords = nums ? new Set(words(text)) : null;
   let hits = 0;
   for (const it of items) {
     const code = (it.productCode ?? "").trim().toUpperCase();
@@ -76,6 +81,14 @@ export function itemHits(text: string, items: MatchCandidate["items"]): number {
     if (!hit) {
       const d = alnum(it.description).slice(0, 28);
       hit = d.length >= 16 && t.includes(d);
+    }
+    if (!hit && nums && docWords) {
+      const price = parseFloat(String(it.unitPrice ?? "").replace(/,/g, ""));
+      if (Number.isFinite(price) && price > 0 && nums.has(price.toFixed(2))) {
+        const toks = words(it.description).filter((w) => w.length >= 4);
+        const found = toks.filter((w) => docWords.has(w)).length;
+        hit = toks.length >= 2 ? found / toks.length >= 0.6 : toks.length === 1 && toks[0].length >= 6 && found === 1;
+      }
     }
     if (hit) hits++;
   }
@@ -90,12 +103,17 @@ export function quickSignals(text: string, nums: Set<string>, c: MatchCandidate)
 
 export function scoreCandidate(text: string, nums: Set<string>, c: MatchCandidate): Suggestion | null {
   const sig = quickSignals(text, nums, c);
-  const hits = itemHits(text, c.items);
+  const hits = itemHits(text, c.items, nums);
   const total = c.items.length;
   const reasons: string[] = [];
   let score = 0;
   if (sig.ref) { score += 100; reasons.push("Our quotation number is on the document"); }
-  if (total > 0 && hits > 0) { score += Math.round((40 * hits) / total); reasons.push(`${hits} of ${total} items are on the document`); }
+  // a customer often orders only some of the quotation's lines, so a few matching lines count for something even when they are a small share
+  if (total > 0 && hits > 0) {
+    score += Math.max(Math.round((40 * hits) / total), Math.min(hits, 5) * 9);
+    reasons.push(`${hits} of ${total} items are on the document`);
+    if (hits < total && !sig.amount) reasons.push("The PO may be for part of the quotation");
+  }
   if (sig.amount) { score += 25; reasons.push("The total matches"); }
   if (sig.org) { score += 15; reasons.push("The customer's organization is on the document"); }
   if (sig.person) { score += 10; reasons.push("The contact's name is on the document"); }

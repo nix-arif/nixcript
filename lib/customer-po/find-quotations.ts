@@ -54,14 +54,14 @@ export async function findMatchingQuotations(orgId: string, text: string) {
 
   const ids = worthALook.map((c) => c.id);
   const [items, cpoCounts] = await Promise.all([
-    db.select({ quotationId: quotationItem.quotationId, productCode: quotationItem.productCode, description: quotationItem.description }).from(quotationItem).where(inArray(quotationItem.quotationId, ids)),
+    db.select({ quotationId: quotationItem.quotationId, productCode: quotationItem.productCode, description: quotationItem.description, unitPrice: quotationItem.unitPrice }).from(quotationItem).where(inArray(quotationItem.quotationId, ids)),
     db.select({ quotationId: customerPurchaseOrder.quotationId, cnt: count() }).from(customerPurchaseOrder)
       .where(and(inArray(customerPurchaseOrder.organizationId, ownerOrgIds), inArray(customerPurchaseOrder.quotationId, ids), notInArray(customerPurchaseOrder.status, ["cancelled", "draft"])))
       .groupBy(customerPurchaseOrder.quotationId),
   ]);
   const full = worthALook.map((c) => ({
     ...c,
-    items: items.filter((i) => i.quotationId === c.id).map((i) => ({ productCode: i.productCode, description: i.description })),
+    items: items.filter((i) => i.quotationId === c.id).map((i) => ({ productCode: i.productCode, description: i.description, unitPrice: i.unitPrice })),
     cpoCount: cpoCounts.find((x) => x.quotationId === c.id)?.cnt ?? 0,
   }));
   return rankSuggestions(text, full);
