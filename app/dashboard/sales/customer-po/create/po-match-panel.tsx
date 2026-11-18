@@ -44,7 +44,7 @@ export function PoMatchResults({
 
   const filledNote = result.filled.length > 0 && (
     <p className="rounded-md border border-green-200 bg-green-50/70 px-2.5 py-1.5 text-xs text-green-900 dark:border-green-800/50 dark:bg-green-900/10 dark:text-green-200">
-      Filled in from {result.fileName}: {result.filled.join(", ")}. Check them below and change anything that is not right.
+      Filled in from {result.fileName}: {result.filled.join(", ")}. They are highlighted below: check each one and change anything that is not right.
     </p>
   );
   const showPoNo = !!result.poNumber && !currentPoNo.trim();

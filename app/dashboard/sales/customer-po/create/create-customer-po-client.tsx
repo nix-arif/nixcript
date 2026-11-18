@@ -638,6 +638,16 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   // The delivery address read from the document: a linked quotation must not replace it afterwards
   const addressFromDoc = useRef(false);
+  // Fields filled from the document stay highlighted until the user touches them, so each one gets checked
+  const [docFilled, setDocFilled] = useState<string[]>([]);
+  const markFilled = (keys: string[]) => setDocFilled((p) => [...new Set([...p, ...keys])]);
+  const clearFilled = (key: string) => setDocFilled((p) => (p.includes(key) ? p.filter((k) => k !== key) : p));
+  const checkRing = (key: string) => (docFilled.includes(key) ? "border-amber-400 bg-amber-50/60 ring-2 ring-amber-300/70 dark:bg-amber-900/10" : "");
+  const checkNote = (key: string) => docFilled.includes(key) && (
+    <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">Filled from the document. Please check it.</p>
+  );
+  const poNoRef = useRef(customerPoNo);
+  poNoRef.current = customerPoNo;
 
   async function readDocument(file: File, wantSuggestions: boolean) {
     setPoRead({ status: "loading", fileName: file.name });
@@ -650,9 +660,15 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       if (!data.readable) { setPoRead({ status: "unreadable", fileName: file.name, reason: data.reason || "The document could not be read." }); return; }
       // what the document says fills the form; the user checks it and can change it
       const filled: string[] = [];
-      if (data.poDate) { setReceivedDate(data.poDate); filled.push("date received"); }
-      if (data.deliveryDate) { setDeliveryDate(data.deliveryDate); filled.push("due delivery date"); }
-      if (data.deliveryAddress) { setDeliveryAddress(data.deliveryAddress); addressFromDoc.current = true; filled.push("delivery address"); }
+      const keys: string[] = [];
+      if (data.poNumber && !poNoRef.current.trim()) {
+        setCustomerPoNo(data.poNumber); setNoTaken(null); filled.push("customer PO number"); keys.push("poNo");
+        void checkNo(data.poNumber);
+      }
+      if (data.poDate) { setReceivedDate(data.poDate); filled.push("date received"); keys.push("received"); }
+      if (data.deliveryDate) { setDeliveryDate(data.deliveryDate); filled.push("due delivery date"); keys.push("due"); }
+      if (data.deliveryAddress) { setDeliveryAddress(data.deliveryAddress); addressFromDoc.current = true; filled.push("delivery address"); keys.push("address"); }
+      markFilled(keys);
       setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled });
     } catch {
       setPoRead({ status: "unreadable", fileName: file.name, reason: "The document could not be read." });
@@ -1072,12 +1088,13 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
             </div>
             <Input
               value={customerPoNo}
-              onChange={(e) => { setCustomerPoNo(e.target.value); setNoTaken(null); }}
+              onChange={(e) => { setCustomerPoNo(e.target.value); setNoTaken(null); clearFilled("poNo"); }}
               onBlur={(e) => checkNo(e.target.value)}
               aria-invalid={!!noTaken}
               placeholder="e.g. HOSPITAL-PO-2025-001"
-              className="h-9"
+              className={cn("h-9", checkRing("poNo"))}
             />
+            {checkNote("poNo")}
             {noTaken && (
               <p className="text-[11px] leading-snug text-destructive">
                 {noTaken.message}{noTaken.existingId && <> <a className="underline" href={`/dashboard/sales/customer-po/${noTaken.existingId}`} target="_blank" rel="noreferrer">Open it</a></>}
@@ -1125,28 +1142,31 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
               <input
                 type="date"
                 value={receivedDate}
-                onChange={(e) => setReceivedDate(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
+                onChange={(e) => { setReceivedDate(e.target.value); clearFilled("received"); }}
+                className={cn("w-full h-9 rounded-md border border-border bg-background px-3 text-sm", checkRing("received"))}
               />
+              {checkNote("received")}
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Due delivery date <span className="text-destructive">*</span></Label>
               <input
                 type="date"
                 value={deliveryDate}
-                onChange={(e) => setDeliveryDate(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
+                onChange={(e) => { setDeliveryDate(e.target.value); clearFilled("due"); }}
+                className={cn("w-full h-9 rounded-md border border-border bg-background px-3 text-sm", checkRing("due"))}
               />
+              {checkNote("due")}
             </div>
             <div className="col-span-2 space-y-1.5">
               <Label className="text-xs">Delivery address <span className="text-destructive">*</span></Label>
               <Textarea
                 value={deliveryAddress}
-                onChange={(e) => setDeliveryAddress(e.target.value)}
+                onChange={(e) => { setDeliveryAddress(e.target.value); clearFilled("address"); }}
                 placeholder={"Organization name\nFull address"}
                 rows={2}
-                className="text-sm resize-none"
+                className={cn("text-sm resize-none", checkRing("address"))}
               />
+              {checkNote("address")}
             </div>
             <div className="col-span-2 space-y-1.5">
               <label className="block text-xs font-medium text-muted-foreground">
