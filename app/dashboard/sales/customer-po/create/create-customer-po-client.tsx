@@ -19,9 +19,12 @@ import { sumLines, setTotal, bookSetPrices } from "@/lib/customer-po/set-price";
 import { isSetPriced } from "@/lib/quotation-set-price";
 import { uid } from "@/lib/uid";
 import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, sinkUnselected, isSettled, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
+import { sortBySheetOrder } from "@/lib/customer-po/item-order";
 import { customerRelation, otherContactsNote } from "@/lib/customer-po/customer-match";
 import { descriptionState, unresolvedDifferences, unresolvedMessage, keepDescription, takeDatabaseText, restorePreviousDescription, canRestorePrevious, ACCEPTED_NOTE, type DescriptionState } from "@/lib/customer-po/description-check";
 import { PoMatchResults, type PoReadResult } from "./po-match-panel";
+import { PoLinesReview } from "./po-lines-review";
+import type { PoLinesResult } from "@/lib/customer-po/po-lines";
 import type { Suggestion } from "@/lib/customer-po/quotation-match";
 import { useDbDescriptionLookup } from "@/lib/sales-order/use-db-descriptions";
 import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
@@ -484,8 +487,11 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       const target = items
         .filter((i) => i.included)
         .map((i) => ({ key: i._key, no: numbers.get(i._key)!, productCode: i.productCode || "", qty: i.qty, setGroupLabel: i.setGroupLabel || "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "" }));
-      const { updates, setTitles, setLabels, qtys, filled, skipped, conflicts } = applyCpoDescriptions(target, await readItemsSheet(file));
-      const changed = filled + setTitles.size + setLabels.size + qtys.size;
+      const { updates, setTitles, setLabels, qtys, filled, skipped, conflicts, order } = applyCpoDescriptions(target, await readItemsSheet(file));
+      // the rows are in the order of the customer's PO: the items follow it (items already on the CPO only)
+      const nowOrder = displayOrder(items).map((x) => x._key).filter((k) => order.includes(k));
+      const reordered = order.some((k, i) => k !== nowOrder[i]);
+      const changed = filled + setTitles.size + setLabels.size + qtys.size + (reordered ? 1 : 0);
       if (changed > 0)
         setItems((prev) => {
           // Sets that exist (or are being created by this upload), found by name regardless of case
@@ -511,13 +517,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
             if (gid) next = next.map((i) => (i.setGroupId === gid && !isNotAsSetLabel(i.setGroupLabel) ? { ...i, setCpoTitle: title } : i));
           }
           if ((qtys.size > 0 || setLabels.size > 0) && !amountOverride) setAmount(sumItems(next));
-          return next;
+          return sortBySheetOrder(next, order);
         });
       const parts = [
         ...(filled ? [`${filled} CPO description${filled === 1 ? "" : "s"}`] : []),
         ...(setLabels.size ? [`${setLabels.size} set assignment${setLabels.size === 1 ? "" : "s"}`] : []),
         ...(setTitles.size ? [`${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}`] : []),
         ...(qtys.size ? [`${qtys.size} quantit${qtys.size === 1 ? "y" : "ies"}`] : []),
+        ...(reordered ? ["the item order"] : []),
       ];
       if (changed === 0 && skipped.length === 0 && conflicts.length === 0) toast.info("Nothing new found in the sheet");
       else toast.success(`Updated ${parts.join(", ") || "nothing"}${skipped.length ? ` · ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped` : ""}`);
@@ -674,10 +681,29 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       if (data.deliveryDate) { setDeliveryDate(data.deliveryDate); filled.push("due delivery date"); keys.push("due"); }
       if (data.deliveryAddress) { setDeliveryAddress(data.deliveryAddress); addressFromDoc.current = true; filled.push("delivery address"); keys.push("address"); }
       markFilled(keys);
-      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled });
+      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled, lines: data.lines ?? [] });
     } catch {
       setPoRead({ status: "unreadable", fileName: file.name, reason: "The document could not be read." });
     }
+  }
+
+  // The PO's lines, matched to the items by the user's say-so: the PO's wording, order and quantities go onto the items
+  // and the items the PO does not list are switched off. Prices are not touched.
+  function applyPoLines(res: PoLinesResult) {
+    const byKey = new Map(res.matches.filter((m) => m.itemKey).map((m) => [m.itemKey as string, m] as const));
+    setItems((prev) => {
+      let next = prev.map((i) => {
+        const m = byKey.get(i._key);
+        if (!m) return i.included ? { ...i, included: false } : i;
+        let it: EditableItem = { ...i, included: true, cpoDescription: m.line.description };
+        if (m.qtyDiff && !i.setGroupId && m.line.qty) it = calcItemTotal({ ...it, qty: String(m.line.qty), _qtySource: "user", _editedBy: currentUserName || null });
+        return it;
+      });
+      next = sortBySheetOrder(next, res.matches.filter((m) => m.itemKey).map((m) => m.itemKey as string));
+      if (!amountOverride) setAmount(sumItems(next));
+      return next;
+    });
+    toast.success(`${byKey.size} PO line${byKey.size === 1 ? "" : "s"} applied to the items${res.notOnPo.length ? `, ${res.notOnPo.length} item${res.notOnPo.length === 1 ? "" : "s"} switched off` : ""}`);
   }
 
   async function linkSuggestion(sg: Suggestion) {
@@ -897,6 +923,13 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
             currentDate={receivedDate}
             linking={qtLoading}
           />
+          {poRead.status === "done" && (
+            <PoLinesReview
+              lines={poRead.lines}
+              items={items.map((i) => ({ key: i._key, productCode: i.productCode || "", description: i.description || "", qty: i.qty, unitPrice: i.unitPrice, included: i.included, inSet: !!i.setGroupId, label: `${i.productCode || "—"} ${i.description || ""}`.trim() }))}
+              onApply={applyPoLines}
+            />
+          )}
         </div>
 
         {/* ── 2. Quotations (required, multiple) ── */}

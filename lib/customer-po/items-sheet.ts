@@ -91,6 +91,7 @@ export function applyCpoDescriptions(
   qtys: Map<string, string>;
   filled: number;
   skipped: string[];
+  order: string[]; // item keys in the order the rows are in the sheet (the user sorts the rows to follow the customer's PO)
 } {
   const updates = new Map<string, string>();
   const setTitles = new Map<string, string>();
@@ -101,16 +102,20 @@ export function applyCpoDescriptions(
   const titleOfSet = new Map<string, { title: string; key: string; name: string }>();
   const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
   const claimed = new Set<string>(); // items already matched by an earlier row
+  const order: string[] = [];
   rows.forEach((r, idx) => {
-    if (!r.cpoDescription && !r.setCpoTitle && !r.qty && !r.set) return;
+    if (!r.code && r.no == null && !r.cpoDescription && !r.setCpoTitle && !r.qty && !r.set) return; // an empty row
     const label = `Row ${idx + 2}${r.code ? ` (${r.code})` : ""}`;
     let hit = r.no != null ? items.find((i) => i.no === r.no && (!r.code || same(i.productCode, r.code)) && !claimed.has(i.key)) : undefined;
     if (!hit && r.code) hit = items.find((i) => same(i.productCode, r.code) && !claimed.has(i.key));
     if (!hit) {
-      if (r.cpoDescription || r.setCpoTitle) skipped.push(`${label}: no matching item`);
+      // the sheet never adds an item: a row that is not one of the CPO's items is left out
+      skipped.push(`${label}: not one of this CPO's items, so it was not added`);
       return;
     }
     claimed.add(hit.key);
+    order.push(hit.key);
+    if (!r.cpoDescription && !r.setCpoTitle && !r.qty && !r.set) return;
     if (r.cpoDescription) updates.set(hit.key, r.cpoDescription);
     if (r.set && !same(r.set, hit.setGroupLabel)) setLabels.set(hit.key, r.set);
     // is the item in a real set once this row is applied?
@@ -134,5 +139,5 @@ export function applyCpoDescriptions(
     }
   });
   for (const g of titleOfSet.values()) setTitles.set(g.key, g.title);
-  return { updates, setTitles, setLabels, qtys, filled: updates.size, skipped, conflicts };
+  return { updates, setTitles, setLabels, qtys, filled: updates.size, skipped, conflicts, order };
 }

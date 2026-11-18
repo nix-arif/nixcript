@@ -111,6 +111,17 @@ export function moveItem<T extends Orderable>(items: T[], key: string, dir: -1 |
   return next;
 }
 
+// Put the items in the order the rows of an uploaded sheet are in. Only items that are already on the CPO can move (a
+// sheet never adds one); items the sheet does not mention keep their order and follow the ones it does. Sets are shown in
+// the order of their first item, so a set follows the position of its first row.
+export function sortBySheetOrder<T extends { _key: string }>(items: T[], order: string[]): T[] {
+  const rank = new Map(order.map((k, i) => [k, i] as const));
+  return items
+    .map((it, i) => ({ it, i, r: rank.get(it._key) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.it);
+}
+
 // Every selected item must have its CPO description (the item as written on the customer's PO).
 // Returns the ones that don't, in display order, with the number shown on the page.
 export function itemsMissingCpoDescription<T extends Orderable & { cpoDescription?: string; productCode?: string }>(

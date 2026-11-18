@@ -4,6 +4,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { validateUploadRequest } from "@/lib/uploads/validate";
 import { extractPdfText } from "@/lib/customer-po/pdf-text";
+import { parseGovLines } from "@/lib/customer-po/po-lines";
 import { findMatchingQuotations } from "@/lib/customer-po/find-quotations";
 import { extractDeliveryAddress, extractDeliveryDate, extractPoDate, extractPoNumber } from "@/lib/customer-po/quotation-match";
 
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
   }
   const suggestions = await findMatchingQuotations(orgId, pdf.text);
   return NextResponse.json({ readable: true, suggestions, poNumber: extractPoNumber(pdf.text), poDate: extractPoDate(pdf.text),
+    lines: parseGovLines(pdf.cells),
     deliveryDate: extractDeliveryDate(pdf.text), deliveryAddress: extractDeliveryAddress(pdf.text),
   });
 }

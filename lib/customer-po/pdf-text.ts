@@ -1,7 +1,7 @@
 // Reads the text of a PDF on the server (for customer POs made by a computer, which have real text in them).
 // A scan or a photo has no text: it comes back with readable = false and the user links the quotation themselves.
 
-export type PdfText = { text: string; pages: number; readable: boolean };
+export type PdfText = { text: string; pages: number; readable: boolean; cells: { page: number; x: number; y: number; str: string }[] };
 
 // The PDF reader expects browser classes that a server may not have (DOMMatrix needs a native canvas package that is not
 // always installed). Reading text never draws anything, so a plain stand-in is enough to let the reader load.
@@ -45,9 +45,13 @@ export async function extractPdfText(data: Uint8Array, maxPages = 8): Promise<Pd
   try {
     const pages = doc.numPages;
     const out: string[] = [];
+    const cells: PdfText["cells"] = [];
     for (let p = 1; p <= Math.min(pages, maxPages); p++) {
       const page = await doc.getPage(p);
       const content = await page.getTextContent();
+      for (const it of content.items as { str?: string; transform?: number[] }[]) {
+        if (typeof it.str === "string" && it.str.trim() && it.transform) cells.push({ page: p, x: Math.round(it.transform[4]), y: Math.round(it.transform[5]), str: it.str });
+      }
       // keep the lines of the page: a new line whenever the text moves down
       let line = "";
       let lastY: number | null = null;
@@ -63,7 +67,7 @@ export async function extractPdfText(data: Uint8Array, maxPages = 8): Promise<Pd
     }
     const text = out.join("\n").replace(/[ \t]+\n/g, "\n").trim();
     // a few words of real text at least; a scan gives nothing
-    return { text, pages, readable: (text.match(/[A-Za-z0-9]{2,}/g) ?? []).length >= 8 };
+    return { text, pages, readable: (text.match(/[A-Za-z0-9]{2,}/g) ?? []).length >= 8, cells };
   } finally {
     await doc.destroy();
   }

@@ -19,6 +19,7 @@ import { sumLines, setTotal, bookSetPrices } from "@/lib/customer-po/set-price";
 import { isSetPriced } from "@/lib/quotation-set-price";
 import { uid } from "@/lib/uid";
 import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, sinkUnselected, isSettled, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
+import { sortBySheetOrder } from "@/lib/customer-po/item-order";
 import { customerRelation, otherContactsNote } from "@/lib/customer-po/customer-match";
 import { descriptionState, unresolvedDifferences, unresolvedMessage, keepDescription, takeDatabaseText, restorePreviousDescription, canRestorePrevious, ACCEPTED_NOTE, type DescriptionState } from "@/lib/customer-po/description-check";
 import { useDbDescriptionLookup } from "@/lib/sales-order/use-db-descriptions";
@@ -560,8 +561,11 @@ export function EditCustomerPoClient({
       const target = items
         .filter((i) => i.included)
         .map((i) => ({ key: i._key, no: numbers.get(i._key)!, productCode: i.productCode || "", qty: i.qty, setGroupLabel: i.setGroupLabel || "", setGroupId: i.setGroupId && !isNotAsSetLabel(i.setGroupLabel) ? i.setGroupId : "" }));
-      const { updates, setTitles, setLabels, qtys, filled, skipped, conflicts } = applyCpoDescriptions(target, await readItemsSheet(file));
-      const changed = filled + setTitles.size + setLabels.size + qtys.size;
+      const { updates, setTitles, setLabels, qtys, filled, skipped, conflicts, order } = applyCpoDescriptions(target, await readItemsSheet(file));
+      // the rows are in the order of the customer's PO: the items follow it (items already on the CPO only)
+      const nowOrder = displayOrder(items).map((x) => x._key).filter((k) => order.includes(k));
+      const reordered = order.some((k, i) => k !== nowOrder[i]);
+      const changed = filled + setTitles.size + setLabels.size + qtys.size + (reordered ? 1 : 0);
       if (changed > 0)
         setItems((prev) => {
           // Sets that exist (or are being created by this upload), found by name regardless of case
@@ -587,13 +591,14 @@ export function EditCustomerPoClient({
             if (gid) next = next.map((i) => (i.setGroupId === gid && !isNotAsSetLabel(i.setGroupLabel) ? { ...i, setCpoTitle: title } : i));
           }
           if ((qtys.size > 0 || setLabels.size > 0) && !amountOverride) setAmount(sumItems(next));
-          return next;
+          return sortBySheetOrder(next, order);
         });
       const parts = [
         ...(filled ? [`${filled} CPO description${filled === 1 ? "" : "s"}`] : []),
         ...(setLabels.size ? [`${setLabels.size} set assignment${setLabels.size === 1 ? "" : "s"}`] : []),
         ...(setTitles.size ? [`${setTitles.size} set title${setTitles.size === 1 ? "" : "s"}`] : []),
         ...(qtys.size ? [`${qtys.size} quantit${qtys.size === 1 ? "y" : "ies"}`] : []),
+        ...(reordered ? ["the item order"] : []),
       ];
       if (changed === 0 && skipped.length === 0 && conflicts.length === 0) toast.info("Nothing new found in the sheet");
       else toast.success(`Updated ${parts.join(", ") || "nothing"}${skipped.length ? ` · ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped` : ""}`);
