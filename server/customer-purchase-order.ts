@@ -80,6 +80,8 @@ export type CpoItemInput = {
   setGroupId?: string;
   setGroupLabel?: string;
   setQty?: string;
+  // Price of ONE set when the quotation priced the whole set as a lump sum (the lines then carry no unit price)
+  setPrice?: string;
   // The item description exactly as written on the customer's PO (e.g. long government PO text)
   cpoDescription?: string;
   // For a set: the main title as written on the customer's PO, e.g. "TOILET & SUTURE SET consist of:-" (same on every item of the set)

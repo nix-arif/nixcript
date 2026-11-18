@@ -15,6 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
+import { sumLines, setTotal, bookSetPrices } from "@/lib/customer-po/set-price";
+import { isSetPriced } from "@/lib/quotation-set-price";
 import { uid } from "@/lib/uid";
 import { canMove, cpoDescriptionMessage, displayOrder, itemsMissingCpoDescription, titleBySet, isNotAsSetLabel, itemNumbers, moveItem, sinkUnselected, isSettled, NOT_AS_SET_ID, quotationIdOfGroup } from "@/lib/customer-po/item-order";
 import { customerRelation, otherContactsNote } from "@/lib/customer-po/customer-match";
@@ -78,10 +80,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 function sumItems(items: EditableItem[]): string {
-  return items
-    .filter((i) => i.included)
-    .reduce((s, i) => s + (parseFloat(i.totalPrice) || 0), 0)
-    .toFixed(2);
+  return sumLines(items);
 }
 
 export function EditCustomerPoClient({
@@ -378,6 +377,8 @@ export function EditCustomerPoClient({
           setGroupId:    resolvedGroupId,
           setGroupLabel: resolvedGroupLabel,
           setQty:        resolvedSetQty,
+          // a set priced as a whole on the quotation keeps that lump sum (its lines have no unit price)
+          setPrice:      itemHasGroup && !notAsSet && Number(item.setPrice) > 0 ? String(item.setPrice) : undefined,
           _descriptionSource: ["quote"],
           _editedBy: null,
           _codeSource: "quote",
@@ -665,7 +666,7 @@ export function EditCustomerPoClient({
       const gid = existing?.setGroupId || (newLabel ? `g-${newLabel}` : "");
       const next = prev.map((x) =>
         x._key === key
-          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1", setCpoTitle: existing?.setCpoTitle ?? x.setCpoTitle })
+          ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1", setCpoTitle: existing?.setCpoTitle ?? x.setCpoTitle, setPrice: existing?.setPrice })
           : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
@@ -702,7 +703,7 @@ export function EditCustomerPoClient({
     setItems((prev) => {
       const next = prev.map((x) =>
         x.setGroupId === groupId
-          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "", setCpoTitle: "" })
+          ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "", setCpoTitle: "", setPrice: undefined })
           : x,
       );
       if (!amountOverride) setAmount(sumItems(next));
@@ -812,7 +813,7 @@ export function EditCustomerPoClient({
           ? linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo }))
           : undefined,
         items:           items.length > 0
-          ? (asDraft ? items : items.filter((i) => i.included)).map(({ _key, included, _quotationId, _quotationNo, _origCode, _origDescription, _origDescSource, _codeNotFound, ...rest }) => ({
+          ? (asDraft ? bookSetPrices(items) : bookSetPrices(items.filter((i) => i.included))).map(({ _key, included, _quotationId, _quotationNo, _origCode, _origDescription, _origDescSource, _codeNotFound, ...rest }) => ({
               ...rest,
               // a draft also keeps the lines that are switched off, so they can be switched on again later
               _excluded:     asDraft && !included ? true : undefined,
@@ -1384,7 +1385,7 @@ export function EditCustomerPoClient({
                     const renderGroupHeader = (gid: string) => {
                       const gItems     = items.filter((i) => i.setGroupId === gid && i.included);
                       const first      = items.find((i) => i.setGroupId === gid)!;
-                      const groupTotal = gItems.reduce((s, i) => s + (parseFloat(i.totalPrice) || 0), 0);
+                      const groupTotal = setTotal(items, gid);
                       return (
                         <tr key={`hdr-${gid}`} className="bg-blue-50/60 dark:bg-blue-900/10 border-b border-blue-200/60 dark:border-blue-800/40">
                           <td colSpan={5} className="py-1.5 pr-2">
@@ -1776,8 +1777,9 @@ function ItemRow({
           data-row={rowIdx}
           data-col={4}
           type="number" min="0" step="any"
-          value={item.unitPrice}
-          disabled={!item.included}
+          value={isSetPriced(item) ? "" : item.unitPrice}
+          placeholder={isSetPriced(item) ? "set price" : undefined}
+          disabled={!item.included || isSetPriced(item)}
           onChange={(e) => updateItem(item._key, { unitPrice: e.target.value, _unitPriceSource: "user", _editedBy: currentUserName || null } as Partial<EditableItem>)}
           onKeyDown={(e) => onCellKeyDown(e, rowIdx, 4)}
           className="h-7 text-[11px] md:text-[11px] text-right tabular-nums w-24 ml-auto"
@@ -1796,9 +1798,11 @@ function ItemRow({
       </td>
       <td className="py-1.5 text-right tabular-nums font-medium text-[11px] md:text-[11px]">
         <div className="h-7 flex items-center justify-end">
-          {item.included
-            ? parseFloat(item.totalPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })
-            : "—"}
+          {!item.included
+            ? "—"
+            : isSetPriced(item)
+              ? <span className="text-[10px] font-normal text-muted-foreground">in set price</span>
+              : parseFloat(item.totalPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
         </div>
       </td>
     </tr>
