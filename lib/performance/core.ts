@@ -12,9 +12,21 @@ export const STATUS_LABEL: Record<ReviewStatus, string> = {
 
 export type Criterion = { id: string; section: string; name: string; description: string; weight: number };
 
+// The written parts of the company's review form (F-HR05)
+export type ReviewQuestion = { id: string; label: string; help: string };
+export type PreviousGoal = { goal: string; action: string; completed: "Y" | "N" | ""; comments: string };
+export type ActionPlanRow = { goal: string; action: string; targetDate: string };
+
+export const PURPOSES = { annual: "Annual Review", confirmation: "Confirmation" } as const;
+export type ReviewPurpose = keyof typeof PURPOSES;
+export const OUTCOMES = { satisfactory: "Satisfactory", unsatisfactory: "Unsatisfactory", extension: "Extension of probation" } as const;
+export type ReviewOutcome = keyof typeof OUTCOMES;
+export const isPurpose = (v: unknown): v is ReviewPurpose => typeof v === "string" && v in PURPOSES;
+export const isOutcome = (v: unknown): v is ReviewOutcome => typeof v === "string" && v in OUTCOMES;
+
 export const RATING_WORDS: Record<number, string[]> = {
   3: ["Below expectations", "Meets expectations", "Exceeds expectations"],
-  4: ["Poor", "Fair", "Good", "Excellent"],
+  4: ["Does not meet expectation", "Meets expectation", "Exceeds expectation", "Outstanding"], // as on form F-HR05
   5: ["Poor", "Needs improvement", "Meets expectations", "Exceeds expectations", "Outstanding"],
   10: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
 };
@@ -37,9 +49,9 @@ export function weightedScore(criteria: Criterion[], ratings: Record<string, num
   return weights > 0 ? Math.round((sum / weights) * 100) / 100 : null;
 }
 
-// the criteria that still have no rating
-export const missingRatings = (criteria: Criterion[], ratings: Record<string, number | null | undefined>) =>
-  criteria.filter((c) => ratings[c.id] == null);
+// the criteria that still have no rating. One marked "not applicable" is answered, and is left out of the score.
+export const missingRatings = (criteria: Criterion[], ratings: Record<string, number | null | undefined>, notApplicable: Record<string, boolean | undefined> = {}) =>
+  criteria.filter((c) => ratings[c.id] == null && !notApplicable[c.id]);
 
 // Which view of a review someone gets, and what they may do, by their relation to it and its status
 export type ReviewRole = "employee" | "reviewer" | "hr";

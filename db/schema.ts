@@ -1895,6 +1895,8 @@ export const reviewTemplate = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     scaleMax: integer("scale_max").notNull().default(5),
+    // written questions answered by the employee (e.g. achievements, challenges), copied into each review when it is opened
+    questions: json("questions").$type<ReviewQuestionSnapshot[]>().notNull().default([]),
     isActive: boolean("is_active").notNull().default(true),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -1935,6 +1937,9 @@ export const reviewPeriod = pgTable(
 );
 
 export type ReviewCriterionSnapshot = { id: string; section: string; name: string; description: string; weight: number };
+export type ReviewQuestionSnapshot = { id: string; label: string; help: string };
+export type ReviewPreviousGoal = { goal: string; action: string; completed: "Y" | "N" | ""; comments: string };
+export type ReviewActionPlanRow = { goal: string; action: string; targetDate: string };
 
 export const review = pgTable(
   "review",
@@ -1949,6 +1954,20 @@ export const review = pgTable(
     scaleMax: integer("scale_max").notNull().default(5),
     // the template's criteria as they were when the review was opened
     criteria: json("criteria").$type<ReviewCriterionSnapshot[]>().notNull(),
+    // the template's written questions as they were when the review was opened, and the employee's answers (question id -> text)
+    questions: json("questions").$type<ReviewQuestionSnapshot[]>().notNull().default([]),
+    questionAnswers: json("question_answers").$type<Record<string, string>>().notNull().default({}),
+    // who is reviewed and why (the header of the paper form)
+    purpose: text("purpose"), // annual | confirmation
+    employeeDesignation: text("employee_designation"),
+    employeeDepartment: text("employee_department"),
+    reviewerDesignation: text("reviewer_designation"),
+    // progress on the goals of the last review (employee), and the reviewer's outcome + goals for the next period
+    previousGoals: json("previous_goals").$type<ReviewPreviousGoal[]>().notNull().default([]),
+    outcome: text("outcome"), // satisfactory | unsatisfactory | extension
+    nextReviewDate: date("next_review_date"),
+    actionPlan: json("action_plan").$type<ReviewActionPlanRow[]>().notNull().default([]),
+    acknowledgedAt: timestamp("acknowledged_at"), // the employee has read the signed-off review
     selfSummary: text("self_summary"),
     selfSubmittedAt: timestamp("self_submitted_at"),
     managerSummary: text("manager_summary"),
@@ -1975,8 +1994,10 @@ export const reviewAnswer = pgTable(
     reviewId: text("review_id").notNull().references(() => review.id, { onDelete: "cascade" }),
     criterionId: text("criterion_id").notNull(), // id inside review.criteria
     selfRating: integer("self_rating"),
+    selfNa: boolean("self_na").notNull().default(false), // "not applicable": no rating, and not counted as missing
     selfComment: text("self_comment"),
     managerRating: integer("manager_rating"),
+    managerNa: boolean("manager_na").notNull().default(false),
     managerComment: text("manager_comment"),
   },
   (t) => [uniqueIndex("review_answer_uidx").on(t.reviewId, t.criterionId)],

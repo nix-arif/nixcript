@@ -38,6 +38,7 @@ const C_LINE   = rgb(0.88, 0.88, 0.88);
 const C_ALT    = rgb(0.965, 0.966, 0.968);
 const C_WHITE  = rgb(1, 1, 1);
 const C_AMBER  = rgb(0.57, 0.25, 0.05);
+const C_CORR   = rgb(0.43, 0.16, 0.85); // CORRECTION: lines changed after the inspection was completed
 const C_RED    = rgb(0.55, 0.13, 0.13);
 const C_BRAND  = rgb(0.36, 0.27, 0.56);
 const C_LINK   = rgb(0.10, 0.30, 0.75);
@@ -215,8 +216,10 @@ type IssueItem = {
   doneListing?: boolean;
   compact?: boolean;
   // The line's figures for THIS report were changed by an approved request
-  // after inspection was completed — a problem found on a later check.
-  afterInspection: { text: string; requestedAt: Date } | null;
+  // after inspection was completed — a problem found (or cleared) on a later
+  // check. Shown on the one report, marked CORRECTION, not in a separate file.
+  // evidenceFromCorrection: how many of the photos were added with the change.
+  correction: { text: string; requestedAt: Date; evidenceFromCorrection: number } | null;
 };
 
 type CachedImage = { buffer: Buffer; extension: "jpeg" | "png" | "gif" };
@@ -288,7 +291,7 @@ function buildInterimRows(
   poLabelById: Map<string, string>,
   poLineNoById: Map<string, number | null>,
   kind: ReportKind,
-  ctx: { baseUrl: string; packingListNo: string; completed: boolean; supplementary?: boolean },
+  ctx: { baseUrl: string; packingListNo: string; completed: boolean },
   issues: IssueItem[],
 ): IssueItem[] {
   const issueIds = new Set(issues.map((i) => i.itemId));
@@ -297,6 +300,13 @@ function buildInterimRows(
     const done = isDone(row.progress);
     return { ...row, evidenceImageUrls: [], videos: [], doneListing: true, compact: !done };
   });
+}
+
+// Lines changed after the inspection was completed stay on this one report, marked CORRECTION
+function correctionBanner(issues: IssueItem[]): string | null {
+  const n = issues.filter((i) => i.correction).length;
+  if (n === 0) return null;
+  return `CORRECTION - ${n} line${n !== 1 ? "s" : ""} below (marked CORRECTION) changed after the inspection was completed. The figures shown are the corrected ones; each marked line says what changed, when, and who approved it.`;
 }
 
 function interimSummaryText(info: InterimInfo): string {
@@ -364,7 +374,7 @@ async function fetchImages(urls: (string | null)[]): Promise<Map<string, CachedI
 // Approved "correct the figures" requests that touched what this report is
 // about — received/returned for the discrepancy report, repair for the repair
 // report — summarised as one line: first figures before, latest after.
-function afterInspectionChange(item: PackingListItemEnriched, kind: ReportKind): IssueItem["afterInspection"] {
+function correctionOf(item: PackingListItemEnriched, kind: ReportKind): IssueItem["correction"] {
   const relevant = (item.amendments ?? []).filter((a) => a.status === "approved" && a.kind === "amend" && (kind === "return"
     ? a.oldQtyReceived !== a.newQtyReceived || a.oldQtyReturn !== a.newQtyReturn
     : a.oldQtyRepair !== a.newQtyRepair));
@@ -384,8 +394,9 @@ function afterInspectionChange(item: PackingListItemEnriched, kind: ReportKind):
   return {
     // The request's "why" is an internal note to the approver — not printed
     // on a supplier-facing report; the return / repair notes say what's wrong.
-    text: `FOUND AFTER INSPECTION${times}: ${figures || "notes changed"} - ${who}`,
+    text: `CORRECTION${times}: ${figures || "notes changed"} - ${who}`,
     requestedAt: last.requestedAt,
+    evidenceFromCorrection: item.photos.filter((p) => p.category === kind && p.kind !== "video" && !!p.amendmentId).length,
   };
 }
 
@@ -394,7 +405,7 @@ function buildIssueItems(
   poLabelById: Map<string, string>,
   poLineNoById: Map<string, number | null>,
   kind: ReportKind,
-  ctx: { baseUrl: string; packingListNo: string; completed: boolean; supplementary?: boolean },
+  ctx: { baseUrl: string; packingListNo: string; completed: boolean },
   includeAll = false,
 ): IssueItem[] {
   return items
@@ -409,13 +420,14 @@ function buildIssueItems(
       // The return report also surfaces a plain shortfall (received < expected)
       // even with nothing formally returned; the repair report only ever
       // includes a line when something was actually sent for repair.
-      const include = kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0;
+      // A line changed after inspection is always reported, marked CORRECTION,
+      // even when the change cleared the problem (the supplier was told about it before).
+      const correction = correctionOf(item, kind);
+      const include = (kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0) || !!correction;
       if (!include && !includeAll) return null;
 
-      // Only photos are embedded; videos are listed with download links. A
-      // supplementary report carries only the evidence added with the
-      // after-inspection change — the original evidence went out already.
-      const lineMedia = item.photos.filter((p) => p.category === kind && (!ctx.supplementary || !!p.amendmentId));
+      // Only photos are embedded; videos are listed with download links.
+      const lineMedia = item.photos.filter((p) => p.category === kind);
       const evidencePhotos = lineMedia.filter((p) => p.kind !== "video");
       const videos = lineMedia
         .filter((p) => p.kind === "video")
@@ -447,7 +459,7 @@ function buildIssueItems(
         approvedAt: item.draftApprovedAt,
         progress: lineProgress(item, ctx.completed),
         itemId: item.id,
-        afterInspection: afterInspectionChange(item, kind),
+        correction,
       };
     })
     .filter((i): i is Omit<IssueItem, "no"> => i !== null)
@@ -522,7 +534,7 @@ async function buildXlsxBuffer(
   };
 
   const maxEvidence = issues.reduce((max, i) => Math.max(max, i.evidenceImageUrls.length), 0);
-  const baseHeaders = ["No.", "Status", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At", "Found After Inspection"];
+  const baseHeaders = ["No.", "Status", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At", "Correction"];
   const evidenceHeaders = Array.from({ length: maxEvidence }, (_, i) => `Evidence Photo ${i + 1}`);
   const maxVideos = issues.reduce((max, i) => Math.max(max, i.videos.length), 0);
   const videoHeaders = Array.from({ length: maxVideos }, (_, i) => `Video ${i + 1} (click to play)`);
@@ -545,6 +557,16 @@ async function buildXlsxBuffer(
   // Row 4: blank on a completed report, the in-progress warning otherwise —
   // either way exactly one row, so the image anchor maths below holds.
   sheet.addRow([]);
+  const fixBanner = interim ? null : correctionBanner(issues);
+  if (fixBanner) {
+    sheet.mergeCells(4, 1, 4, totalCols);
+    const cell = sheet.getCell(4, 1);
+    cell.value = `${fixBanner} See the "Correction" column.`;
+    cell.font = { bold: true, size: 10, color: { argb: "FF6D28D9" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEDE9FE" } };
+    cell.alignment = { vertical: "middle", wrapText: true };
+    sheet.getRow(4).height = 30;
+  }
   if (interim) {
     sheet.mergeCells(4, 1, 4, totalCols);
     const cell = sheet.getCell(4, 1);
@@ -568,7 +590,7 @@ async function buildXlsxBuffer(
   const IMAGE_COL = baseHeaders.indexOf("Image");
   const DESC_COL = baseHeaders.indexOf("Description");
   const NOTES_COL = baseHeaders.indexOf(config.notesColumnLabel);
-  const AFTER_COL = baseHeaders.indexOf("Found After Inspection");
+  const AFTER_COL = baseHeaders.indexOf("Correction");
   const EVIDENCE_START_COL = baseHeaders.length;
 
   function embedImage(url: string | null | undefined, colIndex0: number, rowIndex0: number) {
@@ -605,7 +627,7 @@ async function buildXlsxBuffer(
       fmtDateTime(issue.inspectedAt),
       issue.approvedByName ?? "",
       fmtDateTime(issue.approvedAt),
-      issue.afterInspection?.text ?? "",
+      issue.correction?.text ?? "",
       ...issue.evidenceImageUrls.map(() => ""),
       ...Array.from({ length: maxEvidence - issue.evidenceImageUrls.length }, () => ""),
       ...issue.videos.map((v) => ({ text: v.filename, hyperlink: v.url })),
@@ -655,7 +677,7 @@ async function buildXlsxBuffer(
     { width: 16 },  // Inspected At
     { width: 16 },  // Approved By
     { width: 16 },  // Approved At
-    { width: 48 },  // Found After Inspection
+    { width: 48 },  // Correction
     ...evidenceHeaders.map(() => ({ width: 12 })),
     ...videoHeaders.map(() => ({ width: 30 })),
   ];
@@ -718,7 +740,7 @@ type Measured = {
   brandLine: string[];
   descLines: string[];
   returnLines: string[];
-  afterLines: string[];
+  correctionLines: string[];
   evidenceRows: number;
   evidenceThumbsPerRow: number;
   reviewLines: string[];
@@ -754,7 +776,7 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
   const descLines = wrap(issue.description, fontR, 8, detMaxW);
   const returnLine = issue.returned > 0 ? config.flagLineText(issue.returned, issue.uom, issue.returnNotes) : "";
   const returnLines = returnLine ? wrap(returnLine, fontR, 7.5, detMaxW) : [];
-  const afterLines = issue.afterInspection ? wrap(issue.afterInspection.text, fontB, 7, detMaxW) : [];
+  const correctionLines = issue.correction ? wrap(issue.correction.text, fontB, 7, detMaxW) : [];
 
   const evidenceThumbsPerRow = Math.max(1, Math.floor(detMaxW / (EVID_THUMB + EVID_GAP)));
   const evidenceRows = issue.evidenceImageUrls.length > 0
@@ -775,13 +797,13 @@ function measure(issue: IssueItem, fontR: PDFFont, fontB: PDFFont, detMaxW: numb
     + TEXT_LINE_H // expected/received line, always present
     + (issue.shortfall > 0 ? TEXT_LINE_H : 0)
     + returnLines.length * RETURN_LINE_H
-    + afterLines.length * RETURN_LINE_H
+    + correctionLines.length * RETURN_LINE_H
     + (evidenceRows > 0 ? EVID_LABEL_H + evidenceRows * (EVID_THUMB + EVID_GAP) : 0)
     + (issue.videos.length > 0 ? EVID_LABEL_H + issue.videos.length * VIDEO_LINE_H + 2 : 0)
     + reviewLines.length * RETURN_LINE_H
     + ROW_V_PAD;
 
-  return { issue, headerLines, statusLines, brandLine, descLines, returnLines, afterLines, evidenceRows, evidenceThumbsPerRow, reviewLines, height: issue.compact ? textH : Math.max(textH, ROW_MIN_H) };
+  return { issue, headerLines, statusLines, brandLine, descLines, returnLines, correctionLines, evidenceRows, evidenceThumbsPerRow, reviewLines, height: issue.compact ? textH : Math.max(textH, ROW_MIN_H) };
 }
 
 // Invisible link over a thumbnail that opens the matching full-res file from
@@ -848,7 +870,6 @@ async function buildReportPdfBytes(
   hasBundledImages: boolean,
   prefix: string,
   interim: InterimInfo | null,
-  supplementary = false,
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const fontR = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -873,11 +894,7 @@ async function buildReportPdfBytes(
   const FOOTER_H = 20;
   // Amber "inspection still in progress" strip under the header band on
   // every page of an interim report.
-  const bannerText = interim
-    ? interimSummaryText(interim)
-    : supplementary
-      ? "SUPPLEMENTARY - these issues were found after the inspection of this packing list was completed (on a later check). Each line shows the figures before and after, when it was found, and the new evidence."
-      : null;
+  const bannerText = interim ? interimSummaryText(interim) : correctionBanner(issues);
   const BANNER_H = bannerText ? 26 : 0;
   const availH = H - MT - HDR_H - BANNER_H - COLHDR_H - MB - FOOTER_H;
   const COL_DET = CW - NO_COL_W - IMG_COL_W;
@@ -962,6 +979,9 @@ async function buildReportPdfBytes(
       else if (ri % 2 === 1) page.drawRectangle({ x: ML, y: rowY, width: CW, height: rowH, color: C_ALT });
       page.drawLine({ start: { x: ML, y: rowY }, end: { x: ML + CW, y: rowY }, thickness: 0.3, color: C_LINE });
 
+      // a violet bar down the left edge marks a line that was corrected after the inspection
+      if (issue.correction) page.drawRectangle({ x: ML, y: rowY, width: 3, height: rowH, color: C_CORR });
+
       const noStr = String(issue.no);
       page.drawText(noStr, { x: ML + (NO_COL_W - fontB.widthOfTextAtSize(noStr, 9)) / 2, y: rowY + rowH / 2 - 3, size: 9, font: fontB, color: C_MID });
 
@@ -1044,13 +1064,14 @@ async function buildReportPdfBytes(
         detY -= RETURN_LINE_H;
       }
 
-      for (const line of m.afterLines) {
-        page.drawText(line, { x: detX, y: detY, size: 7, font: fontB, color: C_BRAND });
+      for (const line of m.correctionLines) {
+        page.drawText(line, { x: detX, y: detY, size: 7, font: fontB, color: C_CORR });
         detY -= RETURN_LINE_H;
       }
 
       if (issue.evidenceImageUrls.length > 0) {
-        page.drawText(`Photos attached (${issue.evidenceImageUrls.length}):`, { x: detX, y: detY, size: 7, font: fontB, color: C_MID });
+        const fromFix = issue.correction?.evidenceFromCorrection ?? 0;
+        page.drawText(`Photos attached (${issue.evidenceImageUrls.length}${fromFix > 0 ? `, ${fromFix} added with the correction` : ""}):`, { x: detX, y: detY, size: 7, font: fontB, color: C_MID });
         detY -= EVID_LABEL_H;
 
         issue.evidenceImageUrls.forEach((url, ei) => {
@@ -1142,9 +1163,8 @@ export async function GET(req: Request, { params }: Props) {
     const { id } = await params;
     const search = new URL(req.url).searchParams;
     const format = search.get("format") === "xlsx" ? "xlsx" : "pdf";
-    // scope=after: a supplementary report with only what was found after
-    // inspection was completed (approved change requests on its lines).
-    const supplementary = search.get("scope") === "after";
+    // (an old link with scope=after now gives this same single report: lines changed
+    // after inspection are on it, marked CORRECTION, instead of in a separate file)
 
     // Own-org first, falling back to the cross-org (centralized) read —
     // without this fallback, anyone viewing this packing list through the
@@ -1177,9 +1197,6 @@ export async function GET(req: Request, { params }: Props) {
     // the inspectors' draft figures — same rule as the detail page, which
     // only shows those drafts to someone who could be inspecting this list.
     const isInterim = pl.status === "pending";
-    if (supplementary && isInterim) {
-      return new Response("Inspection isn't completed yet — there's nothing found after inspection to report", { status: 400 });
-    }
     if (isInterim && !(await canInspectPackingList(pl.organizationId))) {
       return new Response("Inspection is still in progress — only inspectors can download an interim report", { status: 403 });
     }
@@ -1199,14 +1216,10 @@ export async function GET(req: Request, { params }: Props) {
     // address (APP_DOMAIN in production), never the internal one the proxy
     // forwards the request to.
     const baseUrl = publicBaseUrl(req);
-    const ctx = { baseUrl, packingListNo: pl.packingListNo, completed: !isInterim, supplementary };
+    const ctx = { baseUrl, packingListNo: pl.packingListNo, completed: !isInterim };
     const currentItems = pl.items.filter((i) => !i.removedAt);
-    // Supplementary: only lines changed after inspection, numbered 1..N.
-    const afterOnly = (list: IssueItem[]) => supplementary
-      ? list.filter((i) => i.afterInspection).map((i, idx) => ({ ...i, no: idx + 1 }))
-      : list;
-    const returnIssues = afterOnly(buildIssueItems(currentItems, poLabelById, poLineNoById, "return", ctx));
-    const repairIssues = afterOnly(buildIssueItems(currentItems, poLabelById, poLineNoById, "repair", ctx));
+    const returnIssues = buildIssueItems(currentItems, poLabelById, poLineNoById, "return", ctx);
+    const repairIssues = buildIssueItems(currentItems, poLabelById, poLineNoById, "repair", ctx);
     const interim = isInterim ? buildInterimInfo(currentItems, poLabelById, poLineNoById) : null;
     // Interim: the PDF lists every line in its own place, so issue numbers
     // follow that full list — renumber the issue rows (spreadsheet too) to
@@ -1225,9 +1238,6 @@ export async function GET(req: Request, { params }: Props) {
     const hasRepair = repairIssues.length > 0;
 
     if (!hasReturn && !hasRepair) {
-      if (supplementary) {
-        return new Response("Nothing found after inspection to report — no approved change on this packing list affects what was received, returned or repaired", { status: 400 });
-      }
       if (interim) {
         const open = interim.total - interim.done;
         return new Response(`No issues recorded so far — ${interim.done} of ${interim.total} lines done, ${open} still in progress`, { status: 400 });
@@ -1244,9 +1254,11 @@ export async function GET(req: Request, { params }: Props) {
     const supplierName = (pl.supplierSnapshot as { name?: string } | null)?.name ?? "Supplier";
     // "_interim" in every file name so a draft copy is never mistaken for the final one.
     const safeNo = pl.packingListNo.replace(/[^a-z0-9]/gi, "_");
-    const sfx = interim ? "_interim" : supplementary ? "_supplementary" : "";
-    const cfgReturn = supplementary ? { ...REPORT_CONFIGS.return, title: "SUPPLEMENTARY DISCREPANCY REPORT" } : REPORT_CONFIGS.return;
-    const cfgRepair = supplementary ? { ...REPORT_CONFIGS.repair, title: "SUPPLEMENTARY REPAIR REPORT" } : REPORT_CONFIGS.repair;
+    // "_corrected" when it carries corrections, so it is not mistaken for the copy sent before them
+    const hasCorrections = [...returnIssues, ...repairIssues].some((i) => i.correction);
+    const sfx = interim ? "_interim" : hasCorrections ? "_corrected" : "";
+    const cfgReturn = REPORT_CONFIGS.return;
+    const cfgRepair = REPORT_CONFIGS.repair;
 
     if (format === "xlsx") {
       const parts: { name: string; buf: Buffer }[] = [];
@@ -1306,14 +1318,14 @@ export async function GET(req: Request, { params }: Props) {
     if (hasReturn) {
       const bytes = await buildReportPdfBytes(
         cfgReturn, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName,
-        returnRows, images, accent, accentDark, returnImageEntries.length > 0, "return", interim, supplementary,
+        returnRows, images, accent, accentDark, returnImageEntries.length > 0, "return", interim,
       );
       pdfParts.push({ name: `${safeNo}_discrepancy_report${sfx}.pdf`, bytes });
     }
     if (hasRepair) {
       const bytes = await buildReportPdfBytes(
         cfgRepair, pl.packingListNo, pl.supplierRefNo, supplierName, orgProfile.companyName,
-        repairRows, images, accent, accentDark, repairImageEntries.length > 0, "repair", interim, supplementary,
+        repairRows, images, accent, accentDark, repairImageEntries.length > 0, "repair", interim,
       );
       pdfParts.push({ name: `${safeNo}_repair_report${sfx}.pdf`, bytes });
     }

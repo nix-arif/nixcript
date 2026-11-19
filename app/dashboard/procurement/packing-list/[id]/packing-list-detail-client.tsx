@@ -217,7 +217,7 @@ export function PackingListDetailClient({
   });
   // Lines taken off the packing list by an approved removal don't count anywhere
   // An approved change after inspection that touched received / return /
-  // repair — what the supplementary report is made of.
+  // repair — reported as a CORRECTION on the one discrepancy report.
   const hasChangesAfterInspection = !isPending && items.some((item) => (item.amendments ?? []).some((a) =>
     a.status === "approved" && a.kind === "amend"
     && (a.oldQtyReceived !== a.newQtyReceived || a.oldQtyReturn !== a.newQtyReturn || a.oldQtyRepair !== a.newQtyRepair)));
@@ -317,12 +317,11 @@ export function PackingListDetailClient({
   // and only triggering a save on a real 200 (matching the pattern already
   // used in app/dashboard/products/picture-ref) surfaces the actual reason
   // as a toast instead.
-  async function handleDownloadReport(format: "pdf" | "xlsx", scope?: "after") {
+  async function handleDownloadReport(format: "pdf" | "xlsx") {
     setDownloadingReport(format);
     try {
       const qs = new URLSearchParams();
       if (format === "xlsx") qs.set("format", "xlsx");
-      if (scope) qs.set("scope", scope);
       const url = `/api/packing-list/${pl.id}/discrepancy-report${qs.size ? `?${qs}` : ""}`;
       const res = await fetch(url);
       if (!res.ok) {
@@ -438,25 +437,9 @@ export function PackingListDetailClient({
                     {downloadingReport === "xlsx" ? "Generating…" : "Download as Spreadsheet"}
                   </DropdownMenuItem>
                   {hasChangesAfterInspection && (
-                    <>
-                      <p className="px-2 pt-2 pb-1 text-[11px] font-medium text-violet-700 dark:text-violet-400 max-w-64">
-                        Supplementary — only problems found after inspection, with their new evidence
-                      </p>
-                      <DropdownMenuItem
-                        disabled={downloadingReport !== null}
-                        onClick={() => handleDownloadReport("pdf", "after")}
-                        className="flex items-center gap-2 cursor-pointer"
-                      >
-                        <FileTextIcon className="w-3.5 h-3.5 shrink-0" /> Supplementary PDF
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={downloadingReport !== null}
-                        onClick={() => handleDownloadReport("xlsx", "after")}
-                        className="flex items-center gap-2 cursor-pointer"
-                      >
-                        <FileSpreadsheetIcon className="w-3.5 h-3.5 shrink-0" /> Supplementary Spreadsheet
-                      </DropdownMenuItem>
-                    </>
+                    <p className="px-2 pt-2 pb-1 text-[11px] text-violet-700 dark:text-violet-400 max-w-64">
+                      Includes the corrections made after inspection, marked CORRECTION, with their new evidence.
+                    </p>
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>

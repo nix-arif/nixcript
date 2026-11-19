@@ -51,7 +51,7 @@ export function RequestAmendButton({ item, poLabel }: { item: PackingListItemEnr
   const [saving, setSaving] = useState(false);
   // Photos / videos of the problem, uploaded straight away and sent with the
   // request — the approver sees them, and once approved they become this
-  // line's evidence (and go into the supplementary discrepancy report).
+  // line's evidence (and go into the discrepancy report, marked as a correction).
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [evidenceCategory, setEvidenceCategory] = useState<InspectionPhotoCategory | null>(null);
   const [uploading, setUploading] = useState(false);

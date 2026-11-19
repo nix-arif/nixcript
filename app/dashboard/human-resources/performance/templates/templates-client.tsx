@@ -13,18 +13,36 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { ArrowDownIcon, ArrowUpIcon, ClipboardListIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
 
 type Row = { key: string; section: string; name: string; description: string; weight: string };
+type QRow = { key: string; id?: string; label: string; help: string };
 const newRow = (section = ""): Row => ({ key: Math.random().toString(36).slice(2), section, name: "", description: "", weight: "1" });
+const newQRow = (label = "", help = "", id?: string): QRow => ({ key: Math.random().toString(36).slice(2), id, label, help });
 const SCALES = [3, 4, 5, 10];
 
-// a sensible starting point so HR does not begin from an empty page
-const STARTER: Row[] = [
-  ["Job performance", "Quality of work", "Accuracy, thoroughness and attention to detail"],
-  ["Job performance", "Productivity", "Output and meeting deadlines"],
-  ["Job performance", "Job knowledge", "Understanding of the role and the products"],
-  ["Behaviour", "Teamwork", "Cooperation and helping colleagues"],
-  ["Behaviour", "Communication", "Clear and respectful communication with colleagues and customers"],
-  ["Behaviour", "Attendance and punctuality", "Reliability in attendance and time-keeping"],
-].map(([section, name, description]) => ({ ...newRow(section), name, description }));
+// The company's own form (F-HR05, Employee Performance Review Form): its core competencies and its written questions.
+// A new template starts from it, so HR does not begin from an empty page.
+const FORM_COMPETENCIES: [string, string[]][] = [
+  ["Attendance & Punctuality", ["Demonstrates commitment and ability to report to work on a consistent and punctual basis"]],
+  ["Job Knowledge", [
+    "Understands how your position supports the company's goal",
+    "Demonstrates knowledge and skills necessary to perform the job effectively and applies to critical work issues in a timely manner",
+    "Demonstrates willingness to learn new skills, methods, processes to enhance job performance",
+    "Performs the full range of duties and responsibilities associated with the job"]],
+  ["Interpersonal Skills, Cooperation, Collaboration", ["Demonstrates professional working relationships with internal and/or external stakeholders", "Encourages collaboration and sharing of information"]],
+  ["Communication Skills", ["Writes and communicates clearly and accurately", "Listens well; is responsive to inquiries, directions, and suggestions"]],
+  ["Planning, Organizing, and Achieving Results", ["Develops goals, plans, and priorities to achieve objectives; evaluates goals and accomplishments", "Meets deadlines in a timely and efficient manner", "Finds and uses resources well"]],
+  ["Problem Analysis and Decision Making", ["Gather and analyzes appropriate information before making decisions", "Develops and implements effective solutions"]],
+  ["Leadership", ["Demonstrates commitment and provides leadership through personal example and professional expertise", "Demonstrates the ability to motivate coworkers", "Displays an openness to new ideas and supports an environment of continuous improvement"]],
+  ["Supervision", ["Applies to those in supervision / management positions. Choose N/A for everyone else.", "Sets clear goals and expectations for subordinates", "Provides adequate support for subordinates to complete tasks and their professional development", "Creates a positive work culture that encourages commitment to teamwork and organizational goals", "Provides informal, ongoing feedback to employees as well as formal performance evaluation", "Delegates authority and responsibility appropriately"]],
+];
+const FORM_QUESTIONS: [string, string][] = [
+  ["Achievements", "What have been your significant achievements of the past year?"],
+  ["Challenges", "What have been the most challenging aspect of your work of the past year and why? How can these challenges be overcome?"],
+  ["Career planning", "What actions could be taken to improve your performance and enhance your career development? Describe your career aspirations and how can the management help you to achieve this?"],
+  ["Corporate culture", "Are you comfortable with our corporate culture, and are there areas that need improvement? Is the team working well collaboratively?"],
+];
+const FORM_NAME = "Employee Performance Review (F-HR05)";
+const formRows = (): Row[] => FORM_COMPETENCIES.map(([name, lines]) => ({ ...newRow("Core competencies"), name, description: lines.join("\n") }));
+const formQuestions = (): QRow[] => FORM_QUESTIONS.map(([label, help]) => newQRow(label, help));
 
 export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }) {
   const [templates, setTemplates] = useState(initial);
@@ -34,16 +52,18 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
   const [description, setDescription] = useState("");
   const [scaleMax, setScaleMax] = useState(5);
   const [rows, setRows] = useState<Row[]>([]);
+  const [qrows, setQRows] = useState<QRow[]>([]);
   const [saving, setSaving] = useState(false);
   const reload = async () => setTemplates(await getReviewTemplates());
 
   function openNew() {
-    setEditingId(undefined); setName(""); setDescription(""); setScaleMax(5); setRows(STARTER.map((r) => ({ ...r, key: Math.random().toString(36).slice(2) })));
+    setEditingId(undefined); setName(FORM_NAME); setDescription("The company's Employee Performance Review Form (F-HR05)"); setScaleMax(4); setRows(formRows()); setQRows(formQuestions());
     setOpen(true);
   }
   function openEdit(t: TemplateWithCriteria) {
     setEditingId(t.id); setName(t.name); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
     setRows(t.criteria.map((c) => ({ key: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: c.weight })));
+    setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help, q.id)));
     setOpen(true);
   }
   const patch = (key: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)));
@@ -52,7 +72,7 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
   async function save() {
     setSaving(true);
     try {
-      const r = await saveReviewTemplate({ id: editingId, name, description, scaleMax, criteria: rows.map((x) => ({ section: x.section, name: x.name, description: x.description, weight: x.weight })) });
+      const r = await saveReviewTemplate({ id: editingId, name, description, scaleMax, criteria: rows.map((x) => ({ section: x.section, name: x.name, description: x.description, weight: x.weight })), questions: qrows.map((q) => ({ id: q.id, label: q.label, help: q.help })) });
       if (!r.ok) { toast.error(r.error); return; }
       await reload(); setOpen(false); toast.success("Template saved");
     } catch (e: any) { toast.error(e.message); } finally { setSaving(false); }
@@ -85,7 +105,7 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
               <li key={t.id} className={`rounded-xl border border-border bg-background px-4 py-3 ${t.isActive ? "" : "opacity-60"}`}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold">{t.name}</span>
-                  <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">{t.criteria.length} criteria · scale 1 to {t.scaleMax}</span>
+                  <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">{t.criteria.length} criteria{(t.questions ?? []).length ? ` · ${(t.questions ?? []).length} questions` : ""} · scale 1 to {t.scaleMax}</span>
                   {!t.isActive && <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">Inactive</span>}
                   <div className="ml-auto flex gap-1.5">
                     <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => openEdit(t)}><PencilIcon className="h-3 w-3" />Edit</Button>
@@ -135,11 +155,31 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
                       <Button variant="ghost" size="icon" className="h-8 w-7 text-muted-foreground hover:text-destructive" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label="Remove"><TrashIcon className="h-3.5 w-3.5" /></Button>
                     </div>
                   </div>
-                  <Input className="h-8 text-xs" value={r.description} onChange={(e) => patch(r.key, { description: e.target.value })} placeholder="What this criterion looks at (shown to the employee and manager)" />
+                  <Textarea rows={Math.min(6, Math.max(2, r.description.split("\n").length))} className="text-xs" value={r.description} onChange={(e) => patch(r.key, { description: e.target.value })} placeholder="What this criterion looks at (shown to the employee and manager). One line per point." />
                 </div>
               ))}
               <datalist id="review-sections">{[...new Set(rows.map((r) => r.section).filter(Boolean))].map((s) => <option key={s} value={s} />)}</datalist>
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setRows((rs) => [...rs, newRow(rs[rs.length - 1]?.section ?? "")])}><PlusIcon className="h-3.5 w-3.5" />Add criterion</Button>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between"><Label>Written questions</Label>
+                <span className="text-[11px] text-muted-foreground">Answered by the employee in their self-assessment</span></div>
+              {qrows.map((q, i) => (
+                <div key={q.key} className="rounded-lg border border-border p-2.5 space-y-2">
+                  <div className="flex gap-2">
+                    <Input className="h-8 flex-1 text-sm" value={q.label} onChange={(e) => setQRows((qs) => qs.map((x) => (x.key === q.key ? { ...x, label: e.target.value } : x)))} placeholder={`Heading ${i + 1}, e.g. Achievements`} />
+                    <Button variant="ghost" size="icon" className="h-8 w-7 text-muted-foreground hover:text-destructive" onClick={() => setQRows((qs) => qs.filter((x) => x.key !== q.key))} aria-label="Remove question"><TrashIcon className="h-3.5 w-3.5" /></Button>
+                  </div>
+                  <Textarea rows={2} className="text-xs" value={q.help} onChange={(e) => setQRows((qs) => qs.map((x) => (x.key === q.key ? { ...x, help: e.target.value } : x)))} placeholder="The question the employee answers" />
+                </div>
+              ))}
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setQRows((qs) => [...qs, newQRow()])}><PlusIcon className="h-3.5 w-3.5" />Add question</Button>
+            </div>
+
+            <div className="rounded-lg border border-dashed border-border px-3 py-2 text-[11px] text-muted-foreground">
+              Employees also report progress on the goals of their last review, and the reviewer records the overall outcome, the next review date and the action plan for the next period. Those parts are the same in every template.
+              <button type="button" className="ml-1 underline hover:text-foreground" onClick={() => { if (confirm("Replace the criteria and questions below with the company form (F-HR05)?")) { setName((n) => n || FORM_NAME); setScaleMax(4); setRows(formRows()); setQRows(formQuestions()); } }}>Reset to the company form (F-HR05)</button>
             </div>
 
             <div className="flex gap-2 pt-2">

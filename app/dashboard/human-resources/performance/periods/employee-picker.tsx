@@ -4,8 +4,9 @@ import { useMemo, useState } from "react";
 import { SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { EligibleEmployee } from "@/server/performance";
+import { PURPOSES, type ReviewPurpose } from "@/lib/performance/core";
 
-export type Picked = Record<string, { reviewerUserId: string | null }>; // userId -> reviewer
+export type Picked = Record<string, { reviewerUserId: string | null; purpose: ReviewPurpose }>; // userId -> reviewer and purpose of the review
 
 // Choose who is reviewed and by whom. The reviewer starts as the manager of the person's department.
 export function EmployeePicker({
@@ -25,12 +26,12 @@ export function EmployeePicker({
 
   const toggle = (e: EligibleEmployee) => {
     const next = { ...value };
-    if (next[e.userId]) delete next[e.userId]; else next[e.userId] = { reviewerUserId: e.defaultReviewer?.userId ?? null };
+    if (next[e.userId]) delete next[e.userId]; else next[e.userId] = { reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual" };
     onChange(next);
   };
   const toggleAll = () => {
     const next = { ...value };
-    for (const e of list) { if (allOn) delete next[e.userId]; else if (!next[e.userId]) next[e.userId] = { reviewerUserId: e.defaultReviewer?.userId ?? null }; }
+    for (const e of list) { if (allOn) delete next[e.userId]; else if (!next[e.userId]) next[e.userId] = { reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual" }; }
     onChange(next);
   };
 
@@ -58,9 +59,19 @@ export function EmployeePicker({
               </label>
               {on && (
                 <select
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  value={value[e.userId].purpose}
+                  onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], purpose: ev.target.value as ReviewPurpose } })}
+                  aria-label={`Purpose of the review for ${e.name}`}
+                >
+                  {(Object.keys(PURPOSES) as ReviewPurpose[]).map((k) => <option key={k} value={k}>{PURPOSES[k]}</option>)}
+                </select>
+              )}
+              {on && (
+                <select
                   className="h-8 max-w-48 rounded-md border border-input bg-background px-2 text-xs"
                   value={value[e.userId].reviewerUserId ?? ""}
-                  onChange={(ev) => onChange({ ...value, [e.userId]: { reviewerUserId: ev.target.value || null } })}
+                  onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], reviewerUserId: ev.target.value || null } })}
                   aria-label={`Reviewer for ${e.name}`}
                 >
                   <option value="">{e.defaultReviewer ? "No reviewer yet" : "No manager found, pick one"}</option>
@@ -71,7 +82,7 @@ export function EmployeePicker({
           );
         })}
       </div>
-      <p className="text-[11px] text-muted-foreground">{Object.keys(value).length} selected. The reviewer is the manager of the person&apos;s department; change it if someone else should review.</p>
+      <p className="text-[11px] text-muted-foreground">{Object.keys(value).length} selected. The reviewer is the manager of the person&apos;s department; change it if someone else should review. Purpose: Annual Review or Confirmation (end of probation).</p>
     </div>
   );
 }

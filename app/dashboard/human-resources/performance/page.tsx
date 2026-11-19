@@ -1,8 +1,16 @@
-import { requirePermission } from "@/lib/auth/require-permission";
+import { redirect } from "next/navigation";
+import { getCachedSession } from "@/lib/auth/cached-session";
+
+// Signed in is enough here: what a person sees is decided by the reviews they are named on (see lib/performance/service.ts)
+async function requireSignedIn() {
+  const session = await getCachedSession();
+  if (!session) redirect("/login");
+  if (!session.session.activeOrganizationId) redirect("/dashboard");
+}
 import { getMyReviews } from "@/server/performance";
 import { ReviewsListClient } from "./reviews-list-client";
 
 export default async function MyReviewsPage() {
-  await requirePermission("review:read:own");
+  await requireSignedIn();
   return <ReviewsListClient rows={await getMyReviews()} variant="mine" />;
 }

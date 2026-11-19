@@ -205,7 +205,8 @@ export const navConfig: NavGroup[] = [
       { title: "Claim Approvals",url: "/dashboard/human-resources/claim/approvals",      permission: "claim:approve", section: "Claims" },
       { title: "Claim Types",    url: "/dashboard/human-resources/claim/types",          permission: "claim:manage", section: "Claims" },
       { title: "All Claims",     url: "/dashboard/human-resources/claim/all",            permission: "claim:read:all", section: "Claims" },
-      { title: "My Reviews",     url: "/dashboard/human-resources/performance",          permission: "review:read:own", section: "Performance" },
+      // no permission: every staff member can see their own performance reviews (access follows being named on the review)
+      { title: "My Reviews",     url: "/dashboard/human-resources/performance",          section: "Performance" },
       { title: "Team Reviews",   url: "/dashboard/human-resources/performance/team",     permission: "review:conduct", section: "Performance" },
       { title: "Review Periods", url: "/dashboard/human-resources/performance/periods",  permission: "review:manage", section: "Performance" },
       { title: "Review Templates", url: "/dashboard/human-resources/performance/templates", permission: "review:manage", section: "Performance" },

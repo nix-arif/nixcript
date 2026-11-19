@@ -18,8 +18,9 @@ async function ctx(): Promise<S.Ctx> {
 export async function getMyReviews() { return S.listMyReviews(await ctx()); }
 export async function getTeamReviews() { return S.listTeamReviews(await ctx()); }
 export async function getReviewView(id: string) { return S.getReview(await ctx(), id); }
-export async function saveSelfReview(id: string, input: { answers: S.AnswerInput[]; summary?: string; submit: boolean }) { return S.saveSelf(await ctx(), id, input); }
-export async function saveManagerReview(id: string, input: { answers: S.AnswerInput[]; summary?: string; submit: boolean }) { return S.saveManager(await ctx(), id, input); }
+export async function saveSelfReview(id: string, input: Parameters<typeof S.saveSelf>[2]) { return S.saveSelf(await ctx(), id, input); }
+export async function saveManagerReview(id: string, input: Parameters<typeof S.saveManager>[2]) { return S.saveManager(await ctx(), id, input); }
+export async function acknowledgeReview(id: string) { return S.acknowledgeReview(await ctx(), id); }
 export async function signOffReview(id: string, comment?: string) { return S.signOff(await ctx(), id, comment); }
 export async function returnReviewToManager(id: string, note: string) { return S.returnToManager(await ctx(), id, note); }
 export async function reassignReviewer(id: string, reviewerUserId: string) { return S.reassignReviewer(await ctx(), id, reviewerUserId); }

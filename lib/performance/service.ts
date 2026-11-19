@@ -3,14 +3,15 @@
 import { db } from "@/db";
 import {
   review, reviewAnswer, reviewCriterion, reviewPeriod, reviewTemplate,
-  member, memberDepartment, department, user, notification, userPermission,
+  member, memberDepartment, department, user, notification, userPermission, profile,
+  type ReviewQuestionSnapshot,
 } from "@/db/schema";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { hasAccess } from "@/lib/permissions/has-access";
 import {
-  canEditNow, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
-  type Criterion, type ReviewRole, type ReviewStatus,
+  canEditNow, isOutcome, isPurpose, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
+  type ActionPlanRow, type Criterion, type PreviousGoal, type ReviewOutcome, type ReviewPurpose, type ReviewQuestion, type ReviewRole, type ReviewStatus,
 } from "@/lib/performance/core";
 
 export type Ctx = { orgId: string; userId: string; perms: string[] };
@@ -50,6 +51,8 @@ export type TemplateInput = {
   scaleMax: number;
   isActive?: boolean;
   criteria: { section?: string; name: string; description?: string; weight: number | string }[];
+  // written questions the employee answers (achievements, challenges, career planning ...)
+  questions?: { id?: string; label: string; help?: string }[];
 };
 
 export async function listTemplates(ctx: Ctx) {
@@ -73,16 +76,22 @@ export async function saveTemplate(ctx: Ctx, input: TemplateInput): Promise<Resu
   if (blank >= 0) return fail(`Criterion ${blank + 1} has no name.`);
   const badWeight = criteria.findIndex((c) => !(c.weight > 0));
   if (badWeight >= 0) return fail(`Criterion "${criteria[badWeight].name}" needs a weight greater than 0.`);
+  const questions: ReviewQuestionSnapshot[] = [];
+  for (const [i, q] of (input.questions ?? []).entries()) {
+    const label = q.label?.trim();
+    if (!label) return fail(`Question ${i + 1} is empty. Write the question or remove it.`);
+    questions.push({ id: q.id || nanoid(), label, help: q.help?.trim() ?? "" });
+  }
 
   let id = input.id;
   if (id) {
     const [t] = await db.select({ id: reviewTemplate.id }).from(reviewTemplate).where(and(eq(reviewTemplate.id, id), eq(reviewTemplate.organizationId, ctx.orgId)));
     if (!t) return fail("Template not found.");
-    await db.update(reviewTemplate).set({ name, description: input.description?.trim() || null, scaleMax: input.scaleMax, isActive: input.isActive ?? true }).where(eq(reviewTemplate.id, id));
+    await db.update(reviewTemplate).set({ name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, isActive: input.isActive ?? true }).where(eq(reviewTemplate.id, id));
     await db.delete(reviewCriterion).where(eq(reviewCriterion.templateId, id)); // reviews keep their own copy, so this changes nothing already opened
   } else {
     id = nanoid();
-    await db.insert(reviewTemplate).values({ id, organizationId: ctx.orgId, name, description: input.description?.trim() || null, scaleMax: input.scaleMax, isActive: input.isActive ?? true, createdBy: ctx.userId });
+    await db.insert(reviewTemplate).values({ id, organizationId: ctx.orgId, name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, isActive: input.isActive ?? true, createdBy: ctx.userId });
   }
   await db.insert(reviewCriterion).values(criteria.map((c, i) => ({ id: nanoid(), templateId: id!, section: c.section, name: c.name, description: c.description || null, weight: String(c.weight), sortOrder: i })));
   return ok(id);
@@ -127,7 +136,7 @@ export type PeriodInput = {
   startDate: string;
   endDate: string;
   templateId: string;
-  employees: { userId: string; reviewerUserId?: string | null }[];
+  employees: { userId: string; reviewerUserId?: string | null; purpose?: ReviewPurpose | null }[];
 };
 
 async function openReviews(ctx: Ctx, periodId: string, periodName: string, templateId: string, employees: PeriodInput["employees"]): Promise<Result<number>> {
@@ -145,9 +154,25 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, templ
     if (e.reviewerUserId && !inOrg.has(e.reviewerUserId)) return fail("A reviewer must be a member of this organization.");
     if (e.reviewerUserId === e.userId) return fail("Nobody can be their own reviewer.");
   }
+  for (const e of employees) if (e.purpose && !isPurpose(e.purpose)) return fail("The purpose of a review is Annual Review or Confirmation.");
+  // the header of the paper form: designation and department as they are on the staff profile today
+  const profiles = await db.select({ userId: profile.userId, jobTitle: profile.jobTitle, department: profile.department }).from(profile).where(inArray(profile.userId, ids));
+  const profileOf = (u: string | null | undefined) => profiles.find((p) => p.userId === u);
+  // the goals set at the employee's last completed review are what they report progress on in this one
+  const lastPlans = await db.select({ employeeUserId: review.employeeUserId, actionPlan: review.actionPlan, createdAt: review.createdAt }).from(review)
+    .where(and(eq(review.organizationId, ctx.orgId), eq(review.status, "completed"), inArray(review.employeeUserId, employees.map((e) => e.userId)))).orderBy(desc(review.createdAt));
+  const goalsOf = (u: string): PreviousGoal[] => {
+    const plan = lastPlans.find((p) => p.employeeUserId === u && (p.actionPlan ?? []).length > 0)?.actionPlan ?? [];
+    return plan.map((g) => ({ goal: g.goal, action: "", completed: "" as const, comments: "" }));
+  };
   const rows = employees.map((e) => ({
     id: nanoid(), organizationId: ctx.orgId, periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null,
     status: "self" as const, templateName: tpl.name, scaleMax: tpl.scaleMax, criteria: snapshot,
+    questions: (tpl.questions ?? []) as ReviewQuestionSnapshot[],
+    purpose: e.purpose ?? null,
+    employeeDesignation: profileOf(e.userId)?.jobTitle ?? null, employeeDepartment: profileOf(e.userId)?.department ?? null,
+    reviewerDesignation: profileOf(e.reviewerUserId)?.jobTitle ?? null,
+    previousGoals: goalsOf(e.userId),
   }));
   if (rows.length > 0) await db.insert(review).values(rows);
   for (const r of rows) {
@@ -239,14 +264,15 @@ async function withContext(rows: (typeof review.$inferSelect)[]) {
 }
 export type ReviewListRow = Awaited<ReturnType<typeof withContext>>[number];
 
+// Being named on a review is what gives access to it: the employee to their own review, the assigned manager to the
+// reviews waiting for them. No permission has to be granted separately (HR opening a review is the grant), so the
+// person who got the notification can always open it. HR powers still need review:manage.
 export async function listMyReviews(ctx: Ctx): Promise<ReviewListRow[]> {
-  if (!can(ctx, "review:read:own")) return [];
   const rows = await db.select().from(review).where(and(eq(review.organizationId, ctx.orgId), eq(review.employeeUserId, ctx.userId))).orderBy(desc(review.createdAt));
   return (await withContext(rows.filter((r) => r.status !== "cancelled"))).map((r) => (r.status === "completed" ? r : { ...r, finalScore: null }));
 }
 
 export async function listTeamReviews(ctx: Ctx): Promise<ReviewListRow[]> {
-  if (!can(ctx, "review:conduct")) return [];
   const rows = await db.select().from(review).where(and(eq(review.organizationId, ctx.orgId), eq(review.reviewerUserId, ctx.userId))).orderBy(desc(review.createdAt));
   return withContext(rows.filter((r) => r.status !== "cancelled"));
 }
@@ -263,6 +289,23 @@ export type ReviewView = {
   criteria: Criterion[];
   employeeName: string;
   reviewerName: string | null;
+  // the header of the form
+  periodStart: string;
+  periodEnd: string;
+  purpose: ReviewPurpose | null;
+  employeeDesignation: string | null;
+  employeeDepartment: string | null;
+  reviewerDesignation: string | null;
+  // the written parts (employee)
+  questions: ReviewQuestion[];
+  questionAnswers: Record<string, string>;
+  previousGoals: PreviousGoal[];
+  // the reviewer's part (visible once the manager side is visible)
+  outcome: ReviewOutcome | null;
+  nextReviewDate: string | null;
+  actionPlan: ActionPlanRow[];
+  acknowledgedAt: Date | null;
+  canAcknowledge: boolean;
   canEdit: boolean;
   canSignOff: boolean;
   canReassign: boolean;
@@ -275,16 +318,17 @@ export type ReviewView = {
   managerSubmittedAt: Date | null;
   signedOffAt: Date | null;
   signedOffByName: string | null;
-  answers: Record<string, { selfRating: number | null; selfComment: string | null; managerRating: number | null; managerComment: string | null }>;
+  answers: Record<string, { selfRating: number | null; selfNa: boolean; selfComment: string | null; managerRating: number | null; managerNa: boolean; managerComment: string | null }>;
 };
 
 // who the caller is on this review. Your own review never gives you reviewer or HR powers over it.
 function roleOf(ctx: Ctx, r: typeof review.$inferSelect): ReviewRole | null {
   const isEmployee = r.employeeUserId === ctx.userId;
-  if (isEmployee) return can(ctx, "review:read:own") ? "employee" : null;
-  if (r.reviewerUserId === ctx.userId && can(ctx, "review:conduct") && r.status === "manager") return "reviewer";
+  if (isEmployee) return "employee";
+  const isReviewer = r.reviewerUserId === ctx.userId;
+  if (isReviewer && r.status === "manager") return "reviewer";
   if (can(ctx, "review:manage")) return "hr";
-  if (r.reviewerUserId === ctx.userId && can(ctx, "review:conduct")) return "reviewer";
+  if (isReviewer) return "reviewer";
   return null;
 }
 
@@ -314,14 +358,27 @@ export async function getReview(ctx: Ctx, id: string): Promise<ReviewView | null
     const a = answers.find((x) => x.criterionId === c.id);
     answerMap[c.id] = {
       selfRating: showSelf || role === "employee" ? a?.selfRating ?? null : null,
+      selfNa: showSelf || role === "employee" ? a?.selfNa ?? false : false,
       selfComment: showSelf || role === "employee" ? a?.selfComment ?? null : null,
       managerRating: showManager ? a?.managerRating ?? null : null,
+      managerNa: showManager ? a?.managerNa ?? false : false,
       managerComment: showManager ? a?.managerComment ?? null : null,
     };
   }
   return {
     id: r.id, role, status: r.status as ReviewStatus, periodName: period?.name ?? "", periodOpen, templateName: r.templateName, scaleMax: r.scaleMax,
     criteria: r.criteria, employeeName: nameOf(r.employeeUserId) ?? "—", reviewerName: nameOf(r.reviewerUserId),
+    periodStart: period?.startDate ?? "", periodEnd: period?.endDate ?? "",
+    purpose: isPurpose(r.purpose) ? r.purpose : null,
+    employeeDesignation: r.employeeDesignation, employeeDepartment: r.employeeDepartment, reviewerDesignation: r.reviewerDesignation,
+    questions: r.questions ?? [],
+    questionAnswers: showSelf || role === "employee" ? r.questionAnswers ?? {} : {},
+    previousGoals: showSelf || role === "employee" ? r.previousGoals ?? [] : [],
+    outcome: showManager && isOutcome(r.outcome) ? r.outcome : null,
+    nextReviewDate: showManager ? r.nextReviewDate : null,
+    actionPlan: showManager ? r.actionPlan ?? [] : [],
+    acknowledgedAt: r.acknowledgedAt,
+    canAcknowledge: role === "employee" && r.status === "completed" && !r.acknowledgedAt,
     canEdit: periodOpen && canEditNow(role, r.status as ReviewStatus),
     canSignOff: periodOpen && role === "hr" && r.status === "signoff",
     canReassign: periodOpen && role === "hr" && (r.status === "self" || r.status === "manager"),
@@ -338,14 +395,16 @@ export async function getReview(ctx: Ctx, id: string): Promise<ReviewView | null
   };
 }
 
-export type AnswerInput = { criterionId: string; rating: number | null; comment?: string };
+export type AnswerInput = { criterionId: string; rating: number | null; na?: boolean; comment?: string };
 
 async function upsertAnswers(reviewId: string, side: "self" | "manager", answers: AnswerInput[]) {
   const existing = await db.select().from(reviewAnswer).where(eq(reviewAnswer.reviewId, reviewId));
   for (const a of answers) {
     const comment = a.comment?.trim() || null;
     const hit = existing.find((e) => e.criterionId === a.criterionId);
-    const set = side === "self" ? { selfRating: a.rating, selfComment: comment } : { managerRating: a.rating, managerComment: comment };
+    const na = !!a.na; // not applicable: no rating
+    const rating = na ? null : a.rating;
+    const set = side === "self" ? { selfRating: rating, selfNa: na, selfComment: comment } : { managerRating: rating, managerNa: na, managerComment: comment };
     if (hit) await db.update(reviewAnswer).set(set).where(eq(reviewAnswer.id, hit.id));
     else await db.insert(reviewAnswer).values({ id: nanoid(), reviewId, criterionId: a.criterionId, ...set });
   }
@@ -362,11 +421,41 @@ function checkAnswers(r: typeof review.$inferSelect, answers: AnswerInput[]): st
 
 async function ratingsOf(reviewId: string, side: "self" | "manager") {
   const rows = await db.select().from(reviewAnswer).where(eq(reviewAnswer.reviewId, reviewId));
-  return Object.fromEntries(rows.map((a) => [a.criterionId, side === "self" ? a.selfRating : a.managerRating]));
+  return {
+    ratings: Object.fromEntries(rows.map((a) => [a.criterionId, side === "self" ? a.selfRating : a.managerRating])) as Record<string, number | null>,
+    na: Object.fromEntries(rows.map((a) => [a.criterionId, side === "self" ? a.selfNa : a.managerNa])) as Record<string, boolean>,
+  };
+}
+
+// the written parts the employee fills in: answers keyed by a question of this review, and rows of progress on the last goals
+function checkEmployeeParts(r: typeof review.$inferSelect, input: { questionAnswers?: Record<string, string>; previousGoals?: PreviousGoal[] }) {
+  const known = new Set((r.questions ?? []).map((q) => q.id));
+  const questionAnswers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input.questionAnswers ?? {})) {
+    if (!known.has(k)) return { error: "A question in the form does not exist any more. Reload the page." as const };
+    questionAnswers[k] = String(v ?? "").trim();
+  }
+  const previousGoals = (input.previousGoals ?? []).map((g) => ({ goal: g.goal?.trim() ?? "", action: g.action?.trim() ?? "", completed: g.completed === "Y" || g.completed === "N" ? g.completed : ("" as const), comments: g.comments?.trim() ?? "" }))
+    .filter((g) => g.goal || g.action || g.completed || g.comments);
+  const noGoal = previousGoals.findIndex((g) => !g.goal);
+  if (noGoal >= 0) return { error: `Goal ${noGoal + 1} has no goal written. Write the goal or remove the row.` as const };
+  return { questionAnswers, previousGoals };
+}
+
+// the reviewer's outcome, next review date and goals for the next period
+function checkReviewerParts(input: { outcome?: string | null; nextReviewDate?: string | null; actionPlan?: ActionPlanRow[] }) {
+  if (input.outcome && !isOutcome(input.outcome)) return { error: "Choose Satisfactory, Unsatisfactory or Extension of probation." as const };
+  if (input.nextReviewDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.nextReviewDate)) return { error: "Enter a valid next review date." as const };
+  const actionPlan = (input.actionPlan ?? []).map((g) => ({ goal: g.goal?.trim() ?? "", action: g.action?.trim() ?? "", targetDate: g.targetDate?.trim() ?? "" })).filter((g) => g.goal || g.action || g.targetDate);
+  const noGoal = actionPlan.findIndex((g) => !g.goal);
+  if (noGoal >= 0) return { error: `Action plan row ${noGoal + 1} has no goal written. Write the goal or remove the row.` as const };
+  const badDate = actionPlan.findIndex((g) => g.targetDate && !/^\d{4}-\d{2}-\d{2}$/.test(g.targetDate));
+  if (badDate >= 0) return { error: `Action plan row ${badDate + 1} has an invalid target date.` as const };
+  return { outcome: (input.outcome || null) as ReviewOutcome | null, nextReviewDate: input.nextReviewDate || null, actionPlan };
 }
 
 // Saves the employee's self-assessment; submit hands it to the manager
-export async function saveSelf(ctx: Ctx, id: string, input: { answers: AnswerInput[]; summary?: string; submit: boolean }): Promise<Result<{ status: ReviewStatus }>> {
+export async function saveSelf(ctx: Ctx, id: string, input: { answers: AnswerInput[]; summary?: string; submit: boolean; questionAnswers?: Record<string, string>; previousGoals?: PreviousGoal[] }): Promise<Result<{ status: ReviewStatus }>> {
   const found = await loadReview(ctx, id);
   if (!found || found.role !== "employee") return NO_ACCESS;
   const { r } = found;
@@ -375,11 +464,14 @@ export async function saveSelf(ctx: Ctx, id: string, input: { answers: AnswerInp
   if (period?.status !== "open") return fail("This review period is closed.");
   const bad = checkAnswers(r, input.answers);
   if (bad) return fail(bad);
+  const parts = checkEmployeeParts(r, input);
+  if (parts.error) return fail(parts.error);
   await upsertAnswers(id, "self", input.answers);
-  await db.update(review).set({ selfSummary: input.summary?.trim() || null }).where(eq(review.id, id));
+  await db.update(review).set({ selfSummary: input.summary?.trim() || null, questionAnswers: parts.questionAnswers, previousGoals: parts.previousGoals }).where(eq(review.id, id));
   if (!input.submit) return ok({ status: "self" });
 
-  const missing = missingRatings(r.criteria, await ratingsOf(id, "self"));
+  const mine = await ratingsOf(id, "self");
+  const missing = missingRatings(r.criteria, mine.ratings, mine.na);
   if (missing.length > 0) return fail(`Rate every criterion before submitting (missing: ${missing.slice(0, 3).map((m) => m.name).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}).`);
   await db.update(review).set({ status: "manager", selfSubmittedAt: new Date(), returnNote: null }).where(eq(review.id, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
@@ -392,7 +484,7 @@ export async function saveSelf(ctx: Ctx, id: string, input: { answers: AnswerInp
 }
 
 // Saves the manager's review; submit sends it to HR for sign-off
-export async function saveManager(ctx: Ctx, id: string, input: { answers: AnswerInput[]; summary?: string; submit: boolean }): Promise<Result<{ status: ReviewStatus }>> {
+export async function saveManager(ctx: Ctx, id: string, input: { answers: AnswerInput[]; summary?: string; submit: boolean; outcome?: string | null; nextReviewDate?: string | null; actionPlan?: ActionPlanRow[] }): Promise<Result<{ status: ReviewStatus }>> {
   const found = await loadReview(ctx, id);
   if (!found || found.role !== "reviewer") return NO_ACCESS;
   const { r } = found;
@@ -401,14 +493,17 @@ export async function saveManager(ctx: Ctx, id: string, input: { answers: Answer
   if (period?.status !== "open") return fail("This review period is closed.");
   const bad = checkAnswers(r, input.answers);
   if (bad) return fail(bad);
+  const parts = checkReviewerParts(input);
+  if (parts.error) return fail(parts.error);
   await upsertAnswers(id, "manager", input.answers);
-  await db.update(review).set({ managerSummary: input.summary?.trim() || null }).where(eq(review.id, id));
+  await db.update(review).set({ managerSummary: input.summary?.trim() || null, outcome: parts.outcome, nextReviewDate: parts.nextReviewDate, actionPlan: parts.actionPlan }).where(eq(review.id, id));
   if (!input.submit) return ok({ status: "manager" });
 
-  const ratings = await ratingsOf(id, "manager");
-  const missing = missingRatings(r.criteria, ratings);
+  const { ratings, na } = await ratingsOf(id, "manager");
+  const missing = missingRatings(r.criteria, ratings, na);
   if (missing.length > 0) return fail(`Rate every criterion before submitting (missing: ${missing.slice(0, 3).map((m) => m.name).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}).`);
-  if (!input.summary?.trim()) return fail("Write an overall comment before submitting.");
+  if (!parts.outcome) return fail("Choose the overall review outcome before submitting.");
+  if (!input.summary?.trim()) return fail("Write the reviewer's comments before submitting.");
   const score = weightedScore(r.criteria, ratings);
   await db.update(review).set({ status: "signoff", managerSubmittedAt: new Date(), finalScore: score == null ? null : String(score), returnNote: null }).where(eq(review.id, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
@@ -425,6 +520,19 @@ export async function signOff(ctx: Ctx, id: string, comment?: string): Promise<R
   if (period?.status !== "open") return fail("This review period is closed.");
   await db.update(review).set({ status: "completed", signedOffBy: ctx.userId, signedOffAt: new Date(), signoffComment: comment?.trim() || null }).where(eq(review.id, id));
   await notifyUser(ctx.orgId, r.employeeUserId, { title: `Your review is ready: ${period.name}`, body: "Your performance review has been completed. You can read it now.", link: `${LINK}/review/${id}` });
+  return ok(undefined);
+}
+
+// The employee confirms they have read the signed-off review: the signature and date on the paper form
+export async function acknowledgeReview(ctx: Ctx, id: string): Promise<Result> {
+  const found = await loadReview(ctx, id);
+  if (!found || found.role !== "employee") return NO_ACCESS;
+  const { r } = found;
+  if (r.status !== "completed") return fail("You can acknowledge a review once HR has signed it off.");
+  if (r.acknowledgedAt) return ok(undefined);
+  await db.update(review).set({ acknowledgedAt: new Date() }).where(eq(review.id, id));
+  const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
+  if (r.reviewerUserId) await notifyUser(ctx.orgId, r.reviewerUserId, { title: `Review acknowledged: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "The employee"} has read and acknowledged the review.`, link: `${LINK}/review/${id}` });
   return ok(undefined);
 }
 
@@ -449,7 +557,8 @@ export async function reassignReviewer(ctx: Ctx, id: string, reviewerUserId: str
   if (reviewerUserId === r.employeeUserId) return fail("Nobody can be their own reviewer.");
   const [m] = await db.select({ id: member.id }).from(member).where(and(eq(member.organizationId, ctx.orgId), eq(member.userId, reviewerUserId), isNull(member.deletedAt)));
   if (!m) return fail("A reviewer must be a member of this organization.");
-  await db.update(review).set({ reviewerUserId }).where(eq(review.id, id));
+  const [rp] = await db.select({ jobTitle: profile.jobTitle }).from(profile).where(eq(profile.userId, reviewerUserId));
+  await db.update(review).set({ reviewerUserId, reviewerDesignation: rp?.jobTitle ?? null }).where(eq(review.id, id));
   if (r.status === "manager") {
     const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
     await notifyUser(ctx.orgId, reviewerUserId, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: "You were assigned as the reviewer.", link: `${LINK}/review/${id}` });

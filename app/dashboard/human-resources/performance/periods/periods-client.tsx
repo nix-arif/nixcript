@@ -29,7 +29,7 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
   async function create() {
     setSaving(true);
     try {
-      const r = await createReviewPeriod({ name, startDate, endDate, templateId, employees: Object.entries(picked).map(([userId, v]) => ({ userId, reviewerUserId: v.reviewerUserId })) });
+      const r = await createReviewPeriod({ name, startDate, endDate, templateId, employees: Object.entries(picked).map(([userId, v]) => ({ userId, reviewerUserId: v.reviewerUserId, purpose: v.purpose })) });
       if (!r.ok) { toast.error(r.error); return; }
       toast.success("Review period opened. Employees were notified.");
       setPeriods(await getReviewPeriods()); setOpen(false); router.push(`/dashboard/human-resources/performance/periods/${r.value}`);
