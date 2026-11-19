@@ -146,10 +146,12 @@ function ProductSlideOver({
   product: p,
   onClose,
   onChanged,
+  canDiscontinue,
 }: {
   product: Product;
   onClose: () => void;
   onChanged: (patch: Partial<Product>) => void;
+  canDiscontinue: boolean;
 }) {
   const status = getCertStatus(p);
   const [life, setLife] = useState({ status: p.status, replacedByCode: p.replacedByCode, note: p.discontinuedNote });
@@ -370,7 +372,7 @@ function ProductSlideOver({
                     </p>
                     {life.status === "discontinued" && life.note && <p className="text-xs text-muted-foreground mt-0.5">Note: {life.note}</p>}
                   </div>
-                  {life.status === "discontinued" ? (
+                  {!canDiscontinue ? null : life.status === "discontinued" ? (
                     <button type="button" disabled={lifeSaving} onClick={() => saveLife(false)}
                       className="shrink-0 text-xs px-3 py-1.5 rounded-md border border-border bg-muted/40 font-medium hover:bg-muted disabled:opacity-50">
                       {lifeSaving ? "saving…" : "Make active again"}
@@ -755,7 +757,7 @@ function ProductCard({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export function ProductSearch() {
+export function ProductSearch({ canDiscontinue = false }: { canDiscontinue?: boolean }) {
   const [query, setQuery] = useState("");
   const [brand, setBrand] = useState("");
   const [brands, setBrands] = useState<string[]>([]);
@@ -1020,6 +1022,7 @@ export function ProductSearch() {
       {selected && (
         <ProductSlideOver
           product={selected}
+          canDiscontinue={canDiscontinue}
           onClose={() => setSelected(null)}
           onChanged={(patch) => {
             setSelected((cur) => (cur ? { ...cur, ...patch } : cur));

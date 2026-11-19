@@ -661,7 +661,7 @@ export async function setProductDiscontinued(
   discontinued: boolean,
   opts?: { replacedByCode?: string | null; note?: string | null },
 ): Promise<{ replacedByCode: string | null }> {
-  const { orgId } = await requireAccess("product:seed");
+  const { orgId } = await requireAccess("product:discontinue");
   const ownerOrgIds = await getAllOwnerOrgIds(orgId);
   const [p] = await db
     .select({ productCode: product.productCode })

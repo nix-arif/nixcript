@@ -103,6 +103,7 @@ export const ALL_PERMISSIONS = [
   { key: "product:seed",         label: "Seed Products" },
   { key: "product:update-price", label: "Update Product Selling Prices" },
   { key: "product:upload-image", label: "Upload Product Images" },
+  { key: "product:discontinue",   label: "Discontinue / Reactivate Products" },
   { key: "brand-conversion:read",   label: "Convert Brand Codes to Best Medical Codes" },
   { key: "brand-conversion:manage", label: "Manage Brand Conversion List" },
 
@@ -431,7 +432,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
 
   engineering: {
     manager: [
-      "product:read", "product:seed", "product:update-price", "product:upload-image",
+      "product:read", "product:seed", "product:update-price", "product:upload-image", "product:discontinue",
       "quotation:read",
       "sales-order:read",
       "delivery-order:read",
@@ -793,6 +794,12 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Product Data Manager",
     description: "Update product selling prices and upload product images. Requires product read.",
     permissions: ["product:read", "product:update-price", "product:upload-image"],
+  },
+  {
+    id: "product-lifecycle-manager",
+    label: "Product Lifecycle Manager",
+    description: "Mark products as discontinued (and set the replacement), or make them active again. A discontinued product cannot be put on a new quotation. Requires product read.",
+    permissions: ["product:read", "product:discontinue"],
   },
   {
     id: "account-manager",

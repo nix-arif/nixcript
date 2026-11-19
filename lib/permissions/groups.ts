@@ -31,7 +31,7 @@ export const KEY_GROUP: Record<string, string> = {
   "accounts-receivable:read": "fulfillment", "accounts-receivable:create": "fulfillment",
 
   "product:read": "products", "product:seed": "products",
-  "product:update-price": "products", "product:upload-image": "products",
+  "product:update-price": "products", "product:upload-image": "products", "product:discontinue": "products",
   "brand-conversion:read": "products", "brand-conversion:manage": "products",
 
   "inventory:read": "inventory", "inventory:adjust": "inventory",

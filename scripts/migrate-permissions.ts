@@ -38,6 +38,7 @@ export const ALL_PERMISSIONS = [
   { key: "profile:delete:all", label: "Delete Any Employee Profile" },
 
   { key: "product:seed", label: "Seed Products" },
+  { key: "product:discontinue", label: "Discontinue / Reactivate Products" },
   { key: "product:read", label: "View Products" },
 
   { key: "payslip:read:own", label: "View own payslip" },
