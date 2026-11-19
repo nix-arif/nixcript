@@ -845,6 +845,8 @@ export function NewQuotationClient({
   const notFoundCount = reviewItems.filter(
     (i) => i.status === "not_found",
   ).length;
+  // discontinued products cannot be quoted: the quotation cannot be saved until they are removed or swapped
+  const discontinuedItems = reviewItems.filter((i) => i.discontinued);
 
   // ── Step indicator ────────────────────────────────────────────────────────
   const STEPS = ["Setup", "Upload", "Review"];
@@ -1750,6 +1752,11 @@ export function NewQuotationClient({
                     {notFoundCount} not found
                   </span>
                 )}
+                {discontinuedItems.length > 0 && (
+                  <span className="text-[10px] bg-red-600 text-white rounded px-2 py-0.5 font-semibold">
+                    {discontinuedItems.length} discontinued
+                  </span>
+                )}
               </div>
             </div>
             <div className="px-4 py-3 border-b border-border flex flex-wrap items-end gap-4">
@@ -1904,6 +1911,11 @@ export function NewQuotationClient({
                                   )}
                                 </div>
                                 {renderSourceTag(item.productCode ? "sheet" : undefined)}
+                                {item.discontinued && (
+                                  <span className="mt-0.5 inline-block rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">
+                                    Discontinued{item.replacedByCode ? ` · use ${item.replacedByCode}` : ""}
+                                  </span>
+                                )}
                               </div>
                             ) : (
                               <span className="font-mono text-[11px] text-muted-foreground">
@@ -2235,6 +2247,18 @@ export function NewQuotationClient({
             </div>
           </div>
 
+          {step === 3 && discontinuedItems.length > 0 && (
+            <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-900/10 dark:text-red-300">
+              <p className="font-medium">The quotation cannot be saved: {discontinuedItems.length === 1 ? "1 item is" : `${discontinuedItems.length} items are`} discontinued.</p>
+              <ul className="mt-1 list-disc pl-4">
+                {discontinuedItems.map((i, n) => (
+                  <li key={n}><span className="font-mono">{i.productCode}</span>{i.replacedByCode ? `: use ${i.replacedByCode} instead` : ": no replacement set"}</li>
+                ))}
+              </ul>
+              <p className="mt-1">Change the product code to the replacement, or remove the row.</p>
+            </div>
+          )}
+
           <div className="flex justify-between">
             <Button
               variant="outline"
@@ -2248,7 +2272,7 @@ export function NewQuotationClient({
                 Next: Review <ChevronRightIcon className="w-4 h-4" />
               </Button>
             ) : (
-              <Button onClick={handleCreate} disabled={creating} className="gap-2 h-10">
+              <Button onClick={handleCreate} disabled={creating || discontinuedItems.length > 0} className="gap-2 h-10">
                 {creating && <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />}
                 {editData ? "Save changes" : "Create quotation"}
               </Button>

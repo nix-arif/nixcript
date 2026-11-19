@@ -338,7 +338,37 @@ export type ReviewItem = SpreadsheetRow & {
   discountAmt: string;
   computedTotal: string;
   status: "ok" | "no_price" | "no_cert" | "no_price_no_cert" | "not_found";
+  // the product is discontinued: it cannot be put on a new quotation (replacedByCode = the product to use instead)
+  discontinued?: boolean;
+  replacedByCode?: string;
 };
+
+// A quotation cannot take a discontinued product. Checks every line against the products table (not the flag the
+// browser sent) and says which product to use instead when one is set.
+async function assertNoDiscontinued(
+  items: { productId?: string | null; productCode?: string | null }[],
+  ownerOrgIds: string[],
+) {
+  const ids = [...new Set(items.map((i) => i.productId).filter(Boolean) as string[])];
+  const codes = [...new Set(items.map((i) => i.productCode?.trim()).filter(Boolean) as string[])];
+  if (ids.length === 0 && codes.length === 0) return;
+  const rows = await db
+    .select({ productCode: product.productCode, replacedByCode: product.replacedByCode })
+    .from(product)
+    .where(and(
+      inArray(product.organizationId, ownerOrgIds),
+      eq(product.status, "discontinued"),
+      or(ids.length ? inArray(product.id, ids) : undefined, codes.length ? inArray(product.productCode, codes) : undefined),
+    ));
+  if (rows.length === 0) return;
+  const seen = new Set<string>();
+  const list = rows
+    .filter((r) => !seen.has(r.productCode) && !!seen.add(r.productCode))
+    .map((r) => (r.replacedByCode ? `${r.productCode} (use ${r.replacedByCode} instead)` : r.productCode));
+  throw new Error(
+    `${list.length === 1 ? "This product is" : "These products are"} discontinued and cannot be quoted: ${list.join(", ")}. Remove ${list.length === 1 ? "it" : "them"} from the items${rows.some((r) => r.replacedByCode) ? " or switch to the replacement" : ""}.`,
+  );
+}
 
 export async function matchSpreadsheetToProducts(
   rows: SpreadsheetRow[],
@@ -433,6 +463,8 @@ export async function matchSpreadsheetToProducts(
       discountAmt: (qty * price * disc).toFixed(2),
       computedTotal: total,
       status,
+      discontinued: dbProduct?.status === "discontinued",
+      replacedByCode: dbProduct?.status === "discontinued" ? dbProduct.replacedByCode ?? undefined : undefined,
     };
   });
 }
@@ -544,6 +576,7 @@ export async function createQuotation(input: CreateQuotationInput) {
   // the active org alone silently produced a null snapshot in that case.
   const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
   const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
+  await assertNoDiscontinued(input.items, ownerOrgIds);
   const customerSnapshot = input.customerId
     ? await buildCustomerSnapshot(input.customerId, ownerOrgIds, input.customerOrgMemberId)
     : null;
@@ -1977,6 +2010,8 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
     ? await buildCustomerSnapshot(input.customerId, ownerOrgIds, input.customerOrgMemberId)
     : null;
 
+  await assertNoDiscontinued(input.items, ownerOrgIds);
+
   // Recalculate totals — set items use setQty multiplier; global sets multiplies all
   const setsCount = Math.max(1, input.sets ?? Number(q.sets ?? 1));
   const updLineTotals = lineTotalsWithSetPrice(input.items, (item) => calcItemTotal({
@@ -2351,6 +2386,8 @@ function buildGovItem(
     imageKey: dbProduct?.imageKey ?? undefined,
     mdaRegNo: dbProduct?.mdaRegistrationNo ?? undefined,
     mdaValidity: dbProduct?.mdaExpiredOn ?? undefined,
+    discontinued: dbProduct?.status === "discontinued",
+    replacedByCode: dbProduct?.status === "discontinued" ? dbProduct.replacedByCode ?? undefined : undefined,
   };
 }
 
@@ -2417,6 +2454,7 @@ export async function createGovernmentBatch(
 
   for (const file of files) {
     const reviewItems = file.items.map((raw) => buildGovItem(raw, productMap));
+    await assertNoDiscontinued(reviewItems, ownerOrgIds);
 
     const subtotal = reviewItems.reduce((s, item) => {
       return s + (Number(item.qty) || 1) * (Number(item.unitPrice) || 0);

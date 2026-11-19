@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { searchProducts, getDistinctBrands, setProductRental, setProductSerialTracking, updateProductSourcing } from "@/server/products";
+import { searchProducts, getDistinctBrands, setProductRental, setProductSerialTracking, updateProductSourcing, setProductDiscontinued, getMdaCertUrl } from "@/server/products";
 import {
   SearchIcon,
   ShieldCheckIcon,
@@ -12,6 +12,7 @@ import {
   XIcon,
   ImageIcon,
   ExternalLinkIcon,
+  BanIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -89,6 +90,16 @@ function CertBadge({ status }: { status: "certified" | "expired" | "nocert" }) {
   );
 }
 
+// Shown wherever a discontinued product turns up. Points to the replacement when there is one.
+function DiscontinuedBadge({ p }: { p: Pick<Product, "status" | "replacedByCode"> }) {
+  if (p.status !== "discontinued") return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-red-600 text-white rounded px-1.5 py-0.5">
+      <BanIcon className="w-3 h-3" /> Discontinued{p.replacedByCode ? ` · use ${p.replacedByCode}` : ""}
+    </span>
+  );
+}
+
 function ProductImage({
   productCode,
   imageUploadedAt,
@@ -134,11 +145,55 @@ function ProductImage({
 function ProductSlideOver({
   product: p,
   onClose,
+  onChanged,
 }: {
   product: Product;
   onClose: () => void;
+  onChanged: (patch: Partial<Product>) => void;
 }) {
   const status = getCertStatus(p);
+  const [life, setLife] = useState({ status: p.status, replacedByCode: p.replacedByCode, note: p.discontinuedNote });
+  const [replaceInput, setReplaceInput] = useState("");
+  const [noteInput, setNoteInput] = useState("");
+  const [lifeOpen, setLifeOpen] = useState(false);
+  const [lifeSaving, setLifeSaving] = useState(false);
+  const [lifeError, setLifeError] = useState("");
+  const [openingCert, setOpeningCert] = useState(false);
+  const [certError, setCertError] = useState("");
+
+  // the certificate is in private storage: ask the server for a short-lived link, then open it
+  async function openCert() {
+    setOpeningCert(true);
+    setCertError("");
+    const win = window.open("", "_blank"); // opened first so the browser does not block it
+    try {
+      const url = await getMdaCertUrl(p.id);
+      if (win) win.location.href = url; else window.location.href = url;
+    } catch (e) {
+      win?.close();
+      setCertError(e instanceof Error ? e.message : "Could not open the certificate");
+    } finally {
+      setOpeningCert(false);
+    }
+  }
+
+  async function saveLife(discontinued: boolean) {
+    setLifeSaving(true);
+    setLifeError("");
+    try {
+      const res = await setProductDiscontinued(p.id, discontinued, { replacedByCode: replaceInput, note: noteInput });
+      const next = discontinued
+        ? { status: "discontinued", replacedByCode: res.replacedByCode, note: noteInput.trim() || null }
+        : { status: "active", replacedByCode: null, note: null };
+      setLife(next);
+      onChanged({ status: next.status, replacedByCode: next.replacedByCode, discontinuedNote: next.note });
+      setLifeOpen(false);
+    } catch (e) {
+      setLifeError(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setLifeSaving(false);
+    }
+  }
   const [isRental, setIsRental] = useState(p.isRental);
   const [toggling, setToggling] = useState(false);
 
@@ -290,11 +345,59 @@ function ProductSlideOver({
                   {p.productCode}
                 </span>
                 <CertBadge status={status} />
+                <DiscontinuedBadge p={{ status: life.status, replacedByCode: life.replacedByCode }} />
                 {p.brand && (
                   <span className="text-[10px] text-muted-foreground border border-border rounded px-1.5 py-0.5">
                     {p.brand}
                   </span>
                 )}
+              </div>
+            </div>
+
+            {/* Product status */}
+            <div className={cn("border rounded-lg overflow-hidden", life.status === "discontinued" ? "border-red-300 dark:border-red-800" : "border-border")}>
+              <div className="px-3 py-2 bg-muted/40 border-b border-border">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Product status</span>
+              </div>
+              <div className="px-3 py-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">{life.status === "discontinued" ? "Discontinued" : "Active"}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {life.status === "discontinued"
+                        ? life.replacedByCode ? `Replaced by ${life.replacedByCode}. It cannot be put on a new quotation.` : "No replacement set. It cannot be put on a new quotation."
+                        : "Can be quoted."}
+                    </p>
+                    {life.status === "discontinued" && life.note && <p className="text-xs text-muted-foreground mt-0.5">Note: {life.note}</p>}
+                  </div>
+                  {life.status === "discontinued" ? (
+                    <button type="button" disabled={lifeSaving} onClick={() => saveLife(false)}
+                      className="shrink-0 text-xs px-3 py-1.5 rounded-md border border-border bg-muted/40 font-medium hover:bg-muted disabled:opacity-50">
+                      {lifeSaving ? "saving…" : "Make active again"}
+                    </button>
+                  ) : !lifeOpen ? (
+                    <button type="button" onClick={() => setLifeOpen(true)}
+                      className="shrink-0 text-xs px-3 py-1.5 rounded-md border border-red-300 text-red-700 bg-red-50 font-medium hover:bg-red-100 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+                      Discontinue…
+                    </button>
+                  ) : null}
+                </div>
+                {life.status !== "discontinued" && lifeOpen && (
+                  <div className="space-y-2 border-t border-border pt-2">
+                    <input value={replaceInput} onChange={(e) => setReplaceInput(e.target.value)} placeholder="Replaced by (product code, optional)"
+                      className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-mono" />
+                    <input value={noteInput} onChange={(e) => setNoteInput(e.target.value)} placeholder="Note (optional), e.g. supplier stopped making it"
+                      className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs" />
+                    <div className="flex gap-2">
+                      <button type="button" disabled={lifeSaving} onClick={() => saveLife(true)}
+                        className="text-xs px-3 py-1.5 rounded-md bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50">
+                        {lifeSaving ? "saving…" : "Mark as discontinued"}
+                      </button>
+                      <button type="button" onClick={() => { setLifeOpen(false); setLifeError(""); }} className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted">Cancel</button>
+                    </div>
+                  </div>
+                )}
+                {lifeError && <p className="text-xs text-red-600">{lifeError}</p>}
               </div>
             </div>
 
@@ -351,7 +454,20 @@ function ProductSlideOver({
                     </div>
                   )}
                   <DetailRow label="Page no." value={p.mdaPageNo} />
-                  <DetailRow label="PDF file" value={p.mdaPdfFile} link />
+                  {p.mdaPdfFile && (
+                    <div className="flex items-center justify-between py-2">
+                      <span className="text-xs text-muted-foreground shrink-0">PDF file</span>
+                      <button
+                        type="button"
+                        disabled={openingCert}
+                        onClick={openCert}
+                        className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+                      >
+                        {openingCert ? "opening…" : p.mdaPdfFile.split("/").pop()} <ExternalLinkIcon className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                  {certError && <p className="pb-2 text-xs text-red-600">{certError}</p>}
                 </div>
               </div>
             )}
@@ -568,6 +684,7 @@ function ProductCard({
             {highlight(p.productCode, query)}
           </span>
           <CertBadge status={status} />
+          <DiscontinuedBadge p={p} />
           {p.brand && (
             <span className="text-[10px] text-muted-foreground border border-border rounded px-1.5 py-0.5">
               {p.brand}
@@ -904,6 +1021,10 @@ export function ProductSearch() {
         <ProductSlideOver
           product={selected}
           onClose={() => setSelected(null)}
+          onChanged={(patch) => {
+            setSelected((cur) => (cur ? { ...cur, ...patch } : cur));
+            setResults((rs) => rs.map((r) => (r.id === selected.id ? { ...r, ...patch } : r)));
+          }}
         />
       )}
     </>

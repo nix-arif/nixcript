@@ -7,7 +7,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { nanoid } from "nanoid";
 import { eq, and, sql, asc, or, ilike, isNotNull, inArray } from "drizzle-orm";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const s3 = new S3Client({
@@ -651,4 +651,64 @@ export async function updateProductSourcing(productId: string, data: ProductSour
       updatedAt: new Date(),
     })
     .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds)));
+}
+
+// Discontinue a product, or bring it back. A discontinued product stays in the database but cannot go on a new quotation.
+// The same code can exist under several orgs of one owner, so every copy changes together. The replacement (if any) is
+// the code of the product that takes its place; it must be a real, active product.
+export async function setProductDiscontinued(
+  productId: string,
+  discontinued: boolean,
+  opts?: { replacedByCode?: string | null; note?: string | null },
+): Promise<{ replacedByCode: string | null }> {
+  const { orgId } = await requireAccess("product:seed");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const [p] = await db
+    .select({ productCode: product.productCode })
+    .from(product)
+    .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds)))
+    .limit(1);
+  if (!p) throw new Error("Product not found");
+
+  let replacedByCode: string | null = null;
+  if (discontinued) {
+    const code = opts?.replacedByCode?.trim() || null;
+    if (code) {
+      if (code.toLowerCase() === p.productCode.toLowerCase()) throw new Error("A product cannot replace itself");
+      const [r] = await db
+        .select({ productCode: product.productCode, status: product.status })
+        .from(product)
+        .where(and(inArray(product.organizationId, ownerOrgIds), ilike(product.productCode, code)))
+        .limit(1);
+      if (!r) throw new Error(`Replacement product ${code} was not found`);
+      if (r.status === "discontinued") throw new Error(`Replacement product ${r.productCode} is discontinued too`);
+      replacedByCode = r.productCode;
+    }
+  }
+
+  await db
+    .update(product)
+    .set(
+      discontinued
+        ? { status: "discontinued", discontinuedAt: new Date(), discontinuedNote: opts?.note?.trim() || null, replacedByCode, updatedAt: new Date() }
+        : { status: "active", discontinuedAt: null, discontinuedNote: null, replacedByCode: null, updatedAt: new Date() },
+    )
+    .where(and(eq(product.productCode, p.productCode), inArray(product.organizationId, ownerOrgIds)));
+  return { replacedByCode };
+}
+
+// A short-lived link to the product's MDA certificate PDF. The certificates sit in a private bucket, so the file name
+// stored on the product is not an address a browser can open.
+export async function getMdaCertUrl(productId: string): Promise<string> {
+  const { orgId } = await requireAccess("product:read");
+  const ownerOrgIds = await getAllOwnerOrgIds(orgId);
+  const [p] = await db
+    .select({ mdaPdfFile: product.mdaPdfFile })
+    .from(product)
+    .where(and(eq(product.id, productId), inArray(product.organizationId, ownerOrgIds)))
+    .limit(1);
+  if (!p?.mdaPdfFile) throw new Error("This product has no certificate file");
+  const bucket = process.env.R2_MDA_CERTIFICATES_BUCKET;
+  if (!bucket) throw new Error("The certificate storage is not set up on this server");
+  return getSignedUrl(s3, new GetObjectCommand({ Bucket: bucket, Key: p.mdaPdfFile }), { expiresIn: 900 });
 }

@@ -737,6 +737,14 @@ export const product = pgTable(
     mdaPageWidth: text("mda_page_width"),
     mdaPageHeight: text("mda_page_height"),
 
+    // Lifecycle: "active" or "discontinued". A discontinued product stays in the database (old quotations, orders and
+    // stock history point at it) but can no longer be put on a new quotation.
+    status: text("status").notNull().default("active"),
+    discontinuedAt: timestamp("discontinued_at"),
+    discontinuedNote: text("discontinued_note"),
+    // product code of the item that takes its place (shown wherever the discontinued product turns up)
+    replacedByCode: text("replaced_by_code"),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
