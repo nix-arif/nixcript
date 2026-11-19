@@ -497,9 +497,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
       const { key, uploadUrl } = await getPoSupplierQuotationUploadUrl(file.name);
       await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": "application/pdf" } });
       setPdfKey(key);
-      toast.success("PDF uploaded");
+      toast.success("Supplier quotation PDF attached");
     } catch {
-      toast.error("Failed to upload PDF");
+      toast.error("The PDF could not be uploaded. Please try again.");
       setPdfFile(null);
     } finally {
       setPdfUploading(false);
@@ -566,10 +566,12 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
       const po = await buildAndCreate();
       if (!po) return;
       committedRef.current = true;
-      toast.success(`Purchase order ${po.poNo ?? ""} created`);
+      toast.success(po.poNo ? `Supplier PO ${po.poNo} created` : "Supplier PO created");
       router.push(`/dashboard/procurement/purchase-order/${po.id}`);
     } catch (e: any) {
-      toast.error(e.message);
+      // a server message is shown as written; when the server hides it (production), say what happened in plain words
+      const msg = typeof e?.message === "string" ? e.message.trim() : "";
+      toast.error(msg && !/server components render|digest/i.test(msg) ? msg : "The supplier PO could not be created. Please try again.");
     } finally {
       setSaving(false);
     }
