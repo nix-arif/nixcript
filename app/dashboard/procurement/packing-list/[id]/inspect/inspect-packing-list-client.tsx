@@ -1163,7 +1163,13 @@ export function InspectPackingListClient({
                         <td className="py-2.5 pr-3 align-top w-48">
                           <div className="flex flex-col gap-1">
                             <div className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-1 items-center text-[11px]">
-                              <span className="text-muted-foreground">Expected</span>
+                              {item.history && (
+                                <>
+                                  <span className="text-muted-foreground" title="Total quantity on the PO line">Ordered</span>
+                                  <span className="text-right tabular-nums text-muted-foreground">{item.history.poQty} {item.uom || ""}</span>
+                                </>
+                              )}
+                              <span className="text-muted-foreground" title="Quantity on this packing list">This PL</span>
                               <span className="text-right tabular-nums text-muted-foreground">{item.qtyExpected} {item.uom || ""}</span>
 
                               <span className="text-muted-foreground">Received</span>

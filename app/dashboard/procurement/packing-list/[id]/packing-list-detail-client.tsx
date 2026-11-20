@@ -724,7 +724,13 @@ export function PackingListDetailClient({
                           <td className="py-2 pr-3 align-top w-44">
                             <div className="flex flex-col gap-1">
                               <div className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 items-center">
-                                <span className="text-muted-foreground">Expected</span>
+                                {item.history && (
+                                  <>
+                                    <span className="text-muted-foreground" title="Total quantity on the PO line">Ordered</span>
+                                    <span className="text-right tabular-nums">{item.history.poQty}</span>
+                                  </>
+                                )}
+                                <span className="text-muted-foreground" title="Quantity on this packing list">This PL</span>
                                 <span className="text-right tabular-nums">{item.qtyExpected}</span>
                                 {showInspectionResults && (
                                   <>
