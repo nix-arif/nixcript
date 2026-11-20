@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { LineReceiptHistory } from "@/server/packing-list";
 
 const n = (v: number) => String(Math.round(v * 1000) / 1000);
+const short = (no: string) => no.replace(/^PL-.*-(\d{4}-\d{4})$/, "PL-$1");
 
 // Marks a packing-list line whose PO line was already received elsewhere
 // (earlier/later packing lists, direct GRs), with the list on click, and warns
@@ -60,7 +61,13 @@ export function ReceiptHistoryChips({
 
 // The PO line's whole story in the Quantities column, as a small table: one row per delivery (replacement marked),
 // this packing list last, and a total against what was ordered.
-export function PoLineLedger({ history, thisQty, uom }: { history: LineReceiptHistory | null; thisQty: number; uom?: string | null }) {
+export function PoLineLedger({ history, thisQty, current, uom }: {
+  history: LineReceiptHistory | null;
+  thisQty: number;
+  // this packing list's own figures for the line, shown as the last (highlighted) row
+  current: { packingListNo: string; received: number; returned: number };
+  uom?: string | null;
+}) {
   const receipts = history?.receipts ?? [];
   if (!history || receipts.length === 0) return null;
   const unit = uom ? ` ${uom}` : "";
@@ -87,7 +94,7 @@ export function PoLineLedger({ history, thisQty, uom }: { history: LineReceiptHi
           {receipts.map((r) => (
             <tr key={r.grId} className="border-b border-slate-100 align-top dark:border-slate-800">
               <td className="px-1.5 py-0.5">
-                <span className="font-mono">{(r.packingListNo ?? "Direct GR").replace(/^PL-.*-(\d{4}-\d{4})$/, "PL-$1")}</span>
+                <span className="font-mono">{short(r.packingListNo ?? "Direct GR")}</span>
                 <span className="block text-muted-foreground">{format(new Date(r.at), "d MMM")}</span>
                 {r.isReplacement && <span className="rounded bg-sky-600 px-1 font-bold uppercase text-white">replacement</span>}
                 {r.returned > 0 && r.returnOpen && <span className="block text-red-600 dark:text-red-400">{r.returnSentBack ? "return open" : "not sent back"}</span>}
@@ -98,8 +105,12 @@ export function PoLineLedger({ history, thisQty, uom }: { history: LineReceiptHi
             </tr>
           ))}
           <tr className="border-b border-slate-200 bg-indigo-50/60 align-top dark:border-slate-700 dark:bg-indigo-900/10">
-            <td className="px-1.5 py-0.5 font-semibold">This list</td>
-            <td className={td} colSpan={2} />
+            <td className="px-1.5 py-0.5">
+              <span className="font-mono font-semibold">{short(current.packingListNo)}</span>
+              <span className="block rounded bg-indigo-600 px-1 font-bold uppercase text-white w-fit">this list</span>
+            </td>
+            <td className={td}>{n(current.received)}</td>
+            <td className={cn(td, current.returned > 0 && "font-medium text-red-600 dark:text-red-400")}>{current.returned > 0 ? n(current.returned) : "–"}</td>
             <td className={cn(td, "font-semibold")}>{n(thisQty)}</td>
           </tr>
           <tr className={diff > 1e-9 ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-slate-50 dark:bg-slate-900/40"}>

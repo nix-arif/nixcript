@@ -764,7 +764,7 @@ export function PackingListDetailClient({
                                   <span className="tabular-nums">{accepted}</span>
                                 </div>
                               )}
-                              <PoLineLedger history={item.history} thisQty={accepted} uom={item.uom} />
+                              <PoLineLedger history={item.history} thisQty={accepted} current={{ packingListNo: pl.packingListNo, received: parseFloat(received) || 0, returned: ret }} uom={item.uom} />
                               {canAmend && !removed && !pendingChange && <RequestAmendButton item={item} poLabel={poLabel(poId)} />}
                               <AmendmentPanel amendments={item.amendments ?? []} approval={approval} />
                             </div>

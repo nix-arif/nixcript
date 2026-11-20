@@ -1216,7 +1216,7 @@ export function InspectPackingListClient({
                               </span>
                               <span className="tabular-nums">{accepted}</span>
                             </div>
-                            <PoLineLedger history={item.history} thisQty={accepted} uom={item.uom} />
+                            <PoLineLedger history={item.history} thisQty={accepted} current={{ packingListNo: pl.packingListNo, received, returned: ret }} uom={item.uom} />
                           </div>
                         </td>
                         <td className="py-2.5 pr-3 pl-3 border-l border-border/60 align-top w-56">
