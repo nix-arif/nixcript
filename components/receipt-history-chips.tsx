@@ -58,44 +58,58 @@ export function ReceiptHistoryChips({
   );
 }
 
-// The PO line's whole story in the Quantities column: ordered, every delivery (replacement marked), this packing list, total.
+// The PO line's whole story in the Quantities column, as a small table: one row per delivery (replacement marked),
+// this packing list last, and a total against what was ordered.
 export function PoLineLedger({ history, thisQty, uom }: { history: LineReceiptHistory | null; thisQty: number; uom?: string | null }) {
   const receipts = history?.receipts ?? [];
   if (!history || receipts.length === 0) return null;
   const unit = uom ? ` ${uom}` : "";
-  const overPo = history.otherAccepted + thisQty - history.poQty;
+  const total = history.otherAccepted + thisQty;
+  const diff = total - history.poQty;
+  const th = "px-1 py-0.5 text-right font-medium text-muted-foreground";
+  const td = "px-1 py-0.5 text-right tabular-nums";
   return (
-    <div className="mt-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1.5 text-[10px] leading-snug text-slate-700 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-300">
-          <p className="mb-0.5 flex items-center gap-1 font-semibold">
-            <HistoryIcon className="h-2.5 w-2.5 shrink-0" />
-            This PO line: ordered {n(history.poQty)}{unit}
-          </p>
-          <ul className="space-y-0.5">
-            {receipts.map((r) => (
-              <li key={r.grId}>
-                <span className="font-mono">{r.packingListNo ?? "Direct GR"}</span>
-                {r.isReplacement && <span className="ml-1 rounded bg-sky-600 px-1 font-bold uppercase text-white">replacement</span>}
-                {" · "}{format(new Date(r.at), "d MMM yyyy")}
-                {" — received "}{n(r.received)}
-                {r.returned > 0 ? (
-                  <span className="text-red-600 dark:text-red-400">
-                    {", rejected "}{n(r.returned)}
-                    {r.returnReason && <> ({r.returnReason})</>}
-                    {r.returnOpen && (r.returnSentBack ? " · return open" : " · not sent back yet")}
-                  </span>
-                ) : null}
-                {" → "}<b>{n(r.accepted)} accepted</b>
-              </li>
-            ))}
-            <li>
-              <span className="font-mono">This packing list</span>
-              {" → "}<b>{n(thisQty)} accepted</b>
-            </li>
-          </ul>
-          <p className={cn("mt-0.5 border-t border-slate-300 pt-0.5 font-semibold dark:border-slate-600", overPo > 1e-9 ? "text-amber-700 dark:text-amber-400" : "")}>
-            Total accepted {n(history.otherAccepted + thisQty)} of {n(history.poQty)} ordered
-            {overPo > 1e-9 ? ` — over by ${n(overPo)}${unit}` : history.otherAccepted + thisQty < history.poQty - 1e-9 ? ` — ${n(history.poQty - history.otherAccepted - thisQty)}${unit} still to come` : " — complete"}
-          </p>
-        </div>
+    <div className="mt-1 overflow-hidden rounded-md border border-slate-300 text-[10px] leading-snug dark:border-slate-600">
+      <p className="flex items-center gap-1 bg-slate-100 px-1.5 py-1 font-semibold dark:bg-slate-800">
+        <HistoryIcon className="h-2.5 w-2.5 shrink-0" />
+        PO line · ordered {n(history.poQty)}{unit}
+      </p>
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-slate-200 dark:border-slate-700">
+            <th className="px-1.5 py-0.5 text-left font-medium text-muted-foreground">Delivery</th>
+            <th className={th} title="Received">Rec&apos;d</th>
+            <th className={th} title="Rejected, returned to the supplier">Rej.</th>
+            <th className={th} title="Accepted into stock">Acc.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {receipts.map((r) => (
+            <tr key={r.grId} className="border-b border-slate-100 align-top dark:border-slate-800">
+              <td className="px-1.5 py-0.5">
+                <span className="font-mono">{(r.packingListNo ?? "Direct GR").replace(/^PL-.*-(\d{4}-\d{4})$/, "PL-$1")}</span>
+                <span className="block text-muted-foreground">{format(new Date(r.at), "d MMM")}</span>
+                {r.isReplacement && <span className="rounded bg-sky-600 px-1 font-bold uppercase text-white">replacement</span>}
+                {r.returned > 0 && r.returnOpen && <span className="block text-red-600 dark:text-red-400">{r.returnSentBack ? "return open" : "not sent back"}</span>}
+              </td>
+              <td className={td}>{n(r.received)}</td>
+              <td className={cn(td, r.returned > 0 && "font-medium text-red-600 dark:text-red-400")} title={r.returnReason ?? undefined}>{r.returned > 0 ? n(r.returned) : "–"}</td>
+              <td className={cn(td, "font-medium")}>{n(r.accepted)}</td>
+            </tr>
+          ))}
+          <tr className="border-b border-slate-200 bg-indigo-50/60 align-top dark:border-slate-700 dark:bg-indigo-900/10">
+            <td className="px-1.5 py-0.5 font-semibold">This list</td>
+            <td className={td} colSpan={2} />
+            <td className={cn(td, "font-semibold")}>{n(thisQty)}</td>
+          </tr>
+          <tr className={diff > 1e-9 ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-slate-50 dark:bg-slate-900/40"}>
+            <td className="px-1.5 py-0.5 font-semibold" colSpan={3}>
+              Total vs ordered {n(history.poQty)}{diff > 1e-9 ? ` · over by ${n(diff)}` : diff < -1e-9 ? ` · ${n(-diff)} to come` : " · complete"}
+            </td>
+            <td className={cn(td, "font-bold")}>{n(total)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   );
 }
