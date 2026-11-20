@@ -21,7 +21,7 @@ import { PoBadge } from "@/components/po-badge";
 import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
 import { ReplacementChips } from "@/components/replacement-chips";
-import { ReceiptHistoryChips } from "@/components/receipt-history-chips";
+import { ReceiptHistoryChips, PoLineLedger } from "@/components/receipt-history-chips";
 import { RequestAmendButton, AmendmentPanel, type AmendApproval } from "./amend-line";
 import { AmendmentLog } from "./amendment-log";
 import { RequestRevisionButton, RevisionPanel } from "./revision-panel";
@@ -509,7 +509,7 @@ export function PackingListDetailClient({
                         <th className="text-left py-1.5 pr-3 font-medium w-24">Emboss Code</th>
                         <th className="text-left py-1.5 pr-3 font-medium">Description</th>
                         <th className="text-left py-1.5 pr-3 font-medium w-10">Img</th>
-                        <th className="text-left py-1.5 pr-3 font-medium w-44">Quantities</th>
+                        <th className="text-left py-1.5 pr-3 font-medium w-60">Quantities</th>
                         <th className="text-left py-1.5 pr-3 font-medium w-12">UOM</th>
                         {showInspectionResults && (
                           <th className="text-left py-1.5 pr-3 font-medium w-56 border-l border-border/60 pl-3">Inspection &amp; Approval</th>
@@ -721,7 +721,7 @@ export function PackingListDetailClient({
                           <td className="py-2 pr-3 align-top">
                             <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} designBrandCode={item.designBrandCode} />
                           </td>
-                          <td className="py-2 pr-3 align-top w-44">
+                          <td className="py-2 pr-3 align-top w-60">
                             <div className="flex flex-col gap-1">
                               <div className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 items-center">
                                 {item.history && (
@@ -764,6 +764,7 @@ export function PackingListDetailClient({
                                   <span className="tabular-nums">{accepted}</span>
                                 </div>
                               )}
+                              <PoLineLedger history={item.history} thisQty={accepted} uom={item.uom} />
                               {canAmend && !removed && !pendingChange && <RequestAmendButton item={item} poLabel={poLabel(poId)} />}
                               <AmendmentPanel amendments={item.amendments ?? []} approval={approval} />
                             </div>

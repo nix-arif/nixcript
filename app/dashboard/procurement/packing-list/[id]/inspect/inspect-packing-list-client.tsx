@@ -29,7 +29,7 @@ import { PoBadge } from "@/components/po-badge";
 import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
 import { ReplacementChips } from "@/components/replacement-chips";
-import { ReceiptHistoryChips } from "@/components/receipt-history-chips";
+import { ReceiptHistoryChips, PoLineLedger } from "@/components/receipt-history-chips";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getProductImageUrl } from "@/helper/product-image";
 import { INSPECTION_MEDIA_ACCEPT, inspectionMediaProblem, mediaKindOf } from "@/lib/inspection-media";
@@ -931,7 +931,7 @@ export function InspectPackingListClient({
                     <th className="text-left pb-2 pr-3 w-20">Emboss Code</th>
                     <th className="text-left pb-2 pr-3">Description</th>
                     <th className="text-left pb-2 pr-3 w-10">Img</th>
-                    <th className="text-left pb-2 pr-3 w-48">Quantities</th>
+                    <th className="text-left pb-2 pr-3 w-60">Quantities</th>
                     <th className="text-left pb-2 pr-3 w-56 border-l border-border/60 pl-3">Inspection &amp; Approval</th>
                   </tr>
                 </thead>
@@ -1160,7 +1160,7 @@ export function InspectPackingListClient({
                         <td className="py-2.5 pr-3">
                           <ItemImageThumb imageUrl={item.imageUrl} productCode={item.productCode} designBrandCode={item.designBrandCode} />
                         </td>
-                        <td className="py-2.5 pr-3 align-top w-48">
+                        <td className="py-2.5 pr-3 align-top w-60">
                           <div className="flex flex-col gap-1">
                             <div className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-1 items-center text-[11px]">
                               {item.history && (
@@ -1216,6 +1216,7 @@ export function InspectPackingListClient({
                               </span>
                               <span className="tabular-nums">{accepted}</span>
                             </div>
+                            <PoLineLedger history={item.history} thisQty={accepted} uom={item.uom} />
                           </div>
                         </td>
                         <td className="py-2.5 pr-3 pl-3 border-l border-border/60 align-top w-56">

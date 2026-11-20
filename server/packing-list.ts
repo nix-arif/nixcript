@@ -216,6 +216,8 @@ export type LineReceiptHistory = {
     returnReason: string | null;
     returnOpen: boolean;
     returnSentBack: boolean;
+    // a replacement attempt points at this delivery's line: it was sent to make good rejected units
+    isReplacement: boolean;
   }[];
 };
 
@@ -1708,7 +1710,7 @@ async function getPoLineContext(
 ): Promise<Map<string, { rowNo: number; history: LineReceiptHistory }>> {
   const ids = [...new Set(poItemIds.filter(Boolean))];
   if (ids.length === 0) return new Map();
-  const [lines, receipts] = await Promise.all([
+  const [lines, receipts, replacementLines] = await Promise.all([
     db
       .select({ id: purchaseOrderItem.id, rowNo: purchaseOrderItem.rowNo, qty: purchaseOrderItem.qty })
       .from(purchaseOrderItem)
@@ -1737,7 +1739,13 @@ async function getPoLineContext(
         or(isNull(goodsReceipt.packingListId), ne(goodsReceipt.packingListId, packingListId)),
       ))
       .orderBy(asc(goodsReceipt.createdAt)),
+    db
+      .select({ packingListId: packingListItem.packingListId, purchaseOrderItemId: packingListItem.purchaseOrderItemId })
+      .from(returnReplacementAttempt)
+      .innerJoin(packingListItem, eq(returnReplacementAttempt.packingListItemId, packingListItem.id))
+      .where(inArray(packingListItem.purchaseOrderItemId, ids)),
   ]);
+  const replacementKeys = new Set(replacementLines.map((r) => `${r.packingListId}|${r.purchaseOrderItemId}`));
 
   const out = new Map<string, { rowNo: number; history: LineReceiptHistory }>();
   for (const l of lines) {
@@ -1764,6 +1772,7 @@ async function getPoLineContext(
       returnReason: returned > 0 ? r.returnNotes : null,
       returnOpen: returned > 0 && r.returnStatus === "pending",
       returnSentBack: returned > 0 && !!r.returnShippedAt,
+      isReplacement: !!r.packingListId && replacementKeys.has(`${r.packingListId}|${r.purchaseOrderItemId}`),
     });
   }
   return out;
