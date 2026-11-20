@@ -420,10 +420,10 @@ function buildIssueItems(
       // The return report also surfaces a plain shortfall (received < expected)
       // even with nothing formally returned; the repair report only ever
       // includes a line when something was actually sent for repair.
-      // A line changed after inspection is always reported, marked CORRECTION,
-      // even when the change cleared the problem (the supplier was told about it before).
+      // A line changed after inspection is marked CORRECTION only while it still has a problem;
+      // once the correction cleared it, the line is left out so the supplier is not confused.
       const correction = correctionOf(item, kind);
-      const include = (kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0) || !!correction;
+      const include = kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0;
       if (!include && !includeAll) return null;
 
       // Only photos are embedded; videos are listed with download links.
