@@ -425,7 +425,10 @@ function buildIssueItems(
       // A line changed after inspection is marked CORRECTION only while it still has a problem;
       // once the correction cleared it, the line is left out so the supplier is not confused.
       const correction = correctionOf(item, kind);
-      const include = kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0;
+      // Accepted on the PO line (other deliveries + this one) already covers more than was ordered:
+      // nothing is missing from the supplier, so the line is left out of the report.
+      const overOrdered = !!item.history && item.history.otherAccepted + Math.max(0, received - returnQty) > item.history.poQty + 1e-9;
+      const include = !overOrdered && (kind === "return" ? (shortfall > 0 || returnQty > 0) : repairQty > 0);
       if (!include && !includeAll) return null;
 
       // Only photos are embedded; videos are listed with download links.

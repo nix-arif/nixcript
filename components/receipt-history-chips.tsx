@@ -73,6 +73,7 @@ export function PoLineLedger({ history, thisQty, current, uom }: {
   const unit = uom ? ` ${uom}` : "";
   const total = history.otherAccepted + thisQty;
   const diff = total - history.poQty;
+  const totalRejected = receipts.reduce((sum, r) => sum + r.returned, 0) + current.returned;
   const th = "px-1 py-0.5 text-right font-medium text-muted-foreground";
   const td = "px-1 py-0.5 text-right tabular-nums";
   return (
@@ -121,6 +122,9 @@ export function PoLineLedger({ history, thisQty, current, uom }: {
           </tr>
         </tbody>
       </table>
+      <p className={cn("border-t border-slate-200 px-1.5 py-0.5 dark:border-slate-700", totalRejected > 1e-9 ? "font-semibold text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+        Total rejected: {n(totalRejected)}{unit}
+      </p>
     </div>
   );
 }
