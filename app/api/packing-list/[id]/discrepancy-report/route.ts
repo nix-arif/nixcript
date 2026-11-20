@@ -178,6 +178,8 @@ type IssueItem = {
   designBrandCode: string | null;
   description: string;
   uom: string;
+  // Quantity on the purchase order line (null when the line has no PO line)
+  orderQty: number | null;
   expected: number;
   received: number;
   shortfall: number;
@@ -291,7 +293,7 @@ function buildInterimRows(
   poLabelById: Map<string, string>,
   poLineNoById: Map<string, number | null>,
   kind: ReportKind,
-  ctx: { baseUrl: string; packingListNo: string; completed: boolean },
+  ctx: { baseUrl: string; packingListNo: string; completed: boolean; orderQtyById?: Map<string, number> },
   issues: IssueItem[],
 ): IssueItem[] {
   const issueIds = new Set(issues.map((i) => i.itemId));
@@ -405,7 +407,7 @@ function buildIssueItems(
   poLabelById: Map<string, string>,
   poLineNoById: Map<string, number | null>,
   kind: ReportKind,
-  ctx: { baseUrl: string; packingListNo: string; completed: boolean },
+  ctx: { baseUrl: string; packingListNo: string; completed: boolean; orderQtyById?: Map<string, number> },
   includeAll = false,
 ): IssueItem[] {
   return items
@@ -445,6 +447,7 @@ function buildIssueItems(
         designBrandCode: item.designBrandCode?.trim() ? item.designBrandCode : null,
         description: item.description ?? item.productCode ?? "",
         uom: item.uom ?? "",
+        orderQty: item.purchaseOrderItemId ? (ctx.orderQtyById?.get(item.purchaseOrderItemId) ?? null) : null,
         expected,
         received,
         shortfall,
@@ -534,7 +537,7 @@ async function buildXlsxBuffer(
   };
 
   const maxEvidence = issues.reduce((max, i) => Math.max(max, i.evidenceImageUrls.length), 0);
-  const baseHeaders = ["No.", "Status", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At", "Correction"];
+  const baseHeaders = ["No.", "Status", "Image", "PO", "PO Line", "Product Code", "Design Brand", "Design Code", "Description", "UOM", "Order Qty", "Expected", "Received", "Short", config.flagColumnLabel, config.notesColumnLabel, "Inspected By", "Inspected At", "Approved By", "Approved At", "Correction"];
   const evidenceHeaders = Array.from({ length: maxEvidence }, (_, i) => `Evidence Photo ${i + 1}`);
   const maxVideos = issues.reduce((max, i) => Math.max(max, i.videos.length), 0);
   const videoHeaders = Array.from({ length: maxVideos }, (_, i) => `Video ${i + 1} (click to play)`);
@@ -618,6 +621,7 @@ async function buildXlsxBuffer(
       issue.designBrandCode ?? "",
       issue.description,
       issue.uom,
+      issue.orderQty,
       issue.expected,
       issue.received,
       issue.shortfall || null,
@@ -668,6 +672,7 @@ async function buildXlsxBuffer(
     { width: 14 },  // Design Code
     { width: 40 },  // Description
     { width: 7 },   // UOM
+    { width: 9 },   // Order Qty
     { width: 9 },   // Expected
     { width: 9 },   // Received
     { width: 7 },   // Short
@@ -1050,7 +1055,8 @@ async function buildReportPdfBytes(
       // A line nobody has counted yet has no received figure — the draft
       // would otherwise fall back to the expected qty and look complete.
       const receivedStr = issue.progress === "not-inspected" ? "- (not counted yet)" : `${issue.received}${issue.uom}`;
-      const qtyStr = `Expected ${issue.expected}${issue.uom}  ·  Received ${receivedStr}`;
+      const orderStr = issue.orderQty !== null ? `Ordered ${issue.orderQty}${issue.uom}  ·  ` : "";
+      const qtyStr = `${orderStr}This delivery ${issue.expected}${issue.uom}  ·  Received ${receivedStr}`;
       page.drawText(qtyStr, { x: detX, y: detY, size: 7.5, font: fontR, color: C_MID });
       detY -= TEXT_LINE_H;
 
@@ -1208,15 +1214,16 @@ export async function GET(req: Request, { params }: Props) {
     // came from, we need the linked purchase_order_item's own rowNo instead.
     const poItemIds = [...new Set(pl.items.map((i) => i.purchaseOrderItemId).filter((v): v is string => !!v))];
     const poItemRows = poItemIds.length > 0
-      ? await db.select({ id: purchaseOrderItem.id, rowNo: purchaseOrderItem.rowNo }).from(purchaseOrderItem).where(inArray(purchaseOrderItem.id, poItemIds))
+      ? await db.select({ id: purchaseOrderItem.id, rowNo: purchaseOrderItem.rowNo, qty: purchaseOrderItem.qty }).from(purchaseOrderItem).where(inArray(purchaseOrderItem.id, poItemIds))
       : [];
     const poLineNoById = new Map(poItemRows.map((r) => [r.id, r.rowNo]));
+    const orderQtyById = new Map(poItemRows.map((r) => [r.id, parseFloat(r.qty) || 0]));
 
     // Absolute links printed in the report (video playback) — the public
     // address (APP_DOMAIN in production), never the internal one the proxy
     // forwards the request to.
     const baseUrl = publicBaseUrl(req);
-    const ctx = { baseUrl, packingListNo: pl.packingListNo, completed: !isInterim };
+    const ctx = { baseUrl, packingListNo: pl.packingListNo, completed: !isInterim, orderQtyById };
     const currentItems = pl.items.filter((i) => !i.removedAt);
     const returnIssues = buildIssueItems(currentItems, poLabelById, poLineNoById, "return", ctx);
     const repairIssues = buildIssueItems(currentItems, poLabelById, poLineNoById, "repair", ctx);
