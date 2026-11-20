@@ -185,6 +185,14 @@ export const ALL_PERMISSIONS = [
   { key: "review:conduct",  label: "Review Team Members (manager review of assigned employees)" },
   { key: "review:manage",   label: "Manage Performance Reviews (templates, review periods, assign reviewers, sign-off, view all)" },
 
+  // Problems found after delivery to the customer, and the claims raised against suppliers because of them
+  { key: "customer-issue:read",   label: "View Customer Issues (problems reported after delivery)" },
+  { key: "customer-issue:create", label: "Report a Customer Issue" },
+  { key: "customer-issue:update", label: "Update Customer Issues (status, evidence, customer resolution)" },
+  { key: "supplier-claim:read",   label: "View Supplier Claims" },
+  { key: "supplier-claim:manage", label: "Manage Supplier Claims (raise, send, record the supplier's answer, close)" },
+  { key: "supplier-claim:terms",  label: "Set Each Supplier's Claim Terms (claim window and what it is counted from)" },
+
   // Claim management
   { key: "claim:read:own", label: "View Own Claims" },
   { key: "claim:apply",    label: "Submit Claim Application" },
@@ -337,6 +345,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "sales-order:read", "sales-order:create", "sales-order:update", "sales-order:delete",
       "sales-order:approve",
       "customer-po:read", "customer-po:create", "customer-po:update", "customer-po:delete",
+      "customer-issue:read", "customer-issue:create", "customer-issue:update", "supplier-claim:read",
       "delivery-order:read",
       "invoice:read",
       "customer:read", "customer:create", "customer:update", "customer:delete",
@@ -353,6 +362,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "quotation:read", "quotation:create", "quotation:update",
       "sales-order:read", "sales-order:create",
       "customer-po:read",
+      "customer-issue:read", "customer-issue:create",
       "delivery-order:read",
       "invoice:read",
       "customer:read",
@@ -472,6 +482,7 @@ export const DEPT_ROLE_PERMISSIONS: Record<
       "packing-list:create",
       "label:read", "label:create", "label:update", "label:delete",
       "supplier:read", "supplier:create", "supplier:update", "supplier:delete",
+      "customer-issue:read", "customer-issue:update", "supplier-claim:read", "supplier-claim:manage", "supplier-claim:terms",
       "inventory:read", "inventory:adjust", "inventory:manage", "inventory:create", "inventory:request",
       "consignment:read", "consignment:manage", "consignment:adjust",
       "customer:read",
@@ -614,6 +625,18 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
     label: "Sponsorship: Checker & Approver",
     description: "Check and approve sponsorship requests, and see all of them.",
     permissions: ["sponsorship:read:own", "sponsorship:check", "sponsorship:approve", "sponsorship:manage"],
+  },
+  {
+    id: "customer-issue-handler",
+    label: "Customer Issues: Report & Follow Up",
+    description: "Report problems found after delivery, add evidence, follow them up and record what the customer is given. Can see supplier claims but not change them.",
+    permissions: ["customer-issue:read", "customer-issue:create", "customer-issue:update", "supplier-claim:read"],
+  },
+  {
+    id: "supplier-claim-handler",
+    label: "Supplier Claims: Raise & Follow Up",
+    description: "Raise claims against suppliers, send them, record the supplier's answer and close them. Also sets each supplier's claim terms.",
+    permissions: ["customer-issue:read", "customer-issue:update", "supplier-claim:read", "supplier-claim:manage", "supplier-claim:terms"],
   },
   {
     id: "performance-review-employee",

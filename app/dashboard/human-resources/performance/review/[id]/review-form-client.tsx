@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -117,6 +117,16 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
     return out;
   }, [view]);
   const rated = view.criteria.filter((c) => ratings[c.id] != null || na[c.id]).length;
+  // what is still missing when someone tries to submit: shown on the cards, not only in a message
+  const [missing, setMissing] = useState<{ criteria: string[]; outcome: boolean; summary: boolean }>({ criteria: [], outcome: false, summary: false });
+  const unrated = view.criteria.filter((c) => ratings[c.id] == null && !na[c.id]);
+  // autosave: the form as it is now against the form as it was last saved
+  const snapshot = JSON.stringify([ratings, na, comments, summary, qa, goals, outcome, nextReview, plan]);
+  const [savedSnapshot, setSavedSnapshot] = useState(snapshot);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const dirty = !!side && snapshot !== savedSnapshot;
+  const snapshotRef = useRef(snapshot);
+  useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
 
   async function run(fn: () => Promise<{ ok: boolean; error?: string }>, success: string) {
     setBusy(true);
@@ -130,11 +140,59 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
   const selfPayload = (submit: boolean) => ({ ...payload(submit), questionAnswers: qa, previousGoals: goals });
   const managerPayload = (submit: boolean) => ({ ...payload(submit), outcome: outcome || null, nextReviewDate: nextReview || null, actionPlan: plan });
 
-  const save = (submit: boolean) => {
-    if (submit && !confirm(side === "self" ? "Submit your self-assessment to your manager? You can't change it afterwards." : "Submit your review for HR sign-off? You can't change it unless HR sends it back.")) return;
-    const call = () => (side === "self" ? saveSelfReview(view.id, selfPayload(submit)) : saveManagerReview(view.id, managerPayload(submit)));
-    run(call, submit ? "Submitted" : "Draft saved").then((okay) => { if (okay && submit) router.push(side === "self" ? "/dashboard/human-resources/performance" : "/dashboard/human-resources/performance/team"); });
+  const callSave = (submit: boolean) => (side === "self" ? saveSelfReview(view.id, selfPayload(submit)) : saveManagerReview(view.id, managerPayload(submit)));
+
+  const goToFirstMissing = (ids: string[]) => {
+    const el = ids.length ? document.getElementById(`crit-${ids[0]}`) : document.getElementById("section-b");
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
+
+  const save = (submit: boolean) => {
+    if (submit) {
+      // say exactly what is missing, on the page, before asking the server
+      const miss = { criteria: unrated.map((c) => c.id), outcome: side === "manager" && !outcome, summary: side === "manager" && !summary.trim() };
+      setMissing(miss);
+      if (miss.criteria.length > 0 || miss.outcome || miss.summary) {
+        const bits = [miss.criteria.length > 0 && `${miss.criteria.length} not rated`, miss.outcome && "the overall outcome", miss.summary && "the reviewer's comments"].filter(Boolean);
+        toast.error(`Not ready to submit: ${bits.join(", ")}. They are marked on the page.`, { duration: 8000 });
+        goToFirstMissing(miss.criteria);
+        return;
+      }
+      if (!confirm(side === "self" ? "Submit your self-assessment to your manager? You can't change it afterwards." : "Submit your review for HR sign-off? You can't change it unless HR sends it back.")) return;
+    }
+    const sentSnapshot = snapshot;
+    run(() => callSave(submit), submit ? "Submitted" : "Draft saved").then((okay) => {
+      if (okay) { setSavedSnapshot(sentSnapshot); setSavedAt(new Date()); }
+      if (okay && submit) router.push(side === "self" ? "/dashboard/human-resources/performance" : "/dashboard/human-resources/performance/team");
+    });
+  };
+
+  // Draft autosave every 20 seconds while there are unsaved changes (quietly: no toast, only the "Saved" time in the bar)
+  const autosaving = useRef(false);
+  const autosave = useCallback(async () => {
+    if (!side || autosaving.current) return;
+    const sent = snapshotRef.current;
+    if (sent === savedSnapshot) return;
+    autosaving.current = true;
+    try {
+      const r = await callSave(false);
+      if (r.ok) { setSavedSnapshot(sent); setSavedAt(new Date()); }
+    } catch { /* the next tick tries again, and the Save draft button still shows the error */ }
+    finally { autosaving.current = false; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [side, savedSnapshot, view.id]);
+  useEffect(() => {
+    if (!side) return;
+    const t = setInterval(() => { if (!busy) void autosave(); }, 20000);
+    return () => clearInterval(t);
+  }, [side, busy, autosave]);
+  // leaving with unsaved changes asks first
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   const showSelf = view.criteria.some((c) => view.answers[c.id].selfRating != null || view.answers[c.id].selfNa) || view.selfSummary != null || view.previousGoals.length > 0 || Object.values(view.questionAnswers).some(Boolean);
   const showManager = view.status === "completed" || (view.role !== "employee" && (view.criteria.some((c) => view.answers[c.id].managerRating != null || view.answers[c.id].managerNa) || view.managerSummary != null || view.outcome != null));
@@ -238,9 +296,9 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
           {sec.items.map((c) => {
             const a = view.answers[c.id];
             return (
-              <div key={c.id} className="rounded-xl border border-border bg-background p-4 space-y-3">
+              <div key={c.id} id={`crit-${c.id}`} className={`rounded-xl border bg-background p-4 space-y-3 ${missing.criteria.includes(c.id) && ratings[c.id] == null && !na[c.id] ? "border-red-400 ring-1 ring-red-300 dark:border-red-700" : "border-border"}`}>
                 <div>
-                  <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{c.name}</span>{c.weight !== 1 && <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">weight {c.weight}</span>}</div>
+                  <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{c.name}</span>{missing.criteria.includes(c.id) && ratings[c.id] == null && !na[c.id] && <span className="rounded-md bg-red-600 px-1.5 py-px text-[10px] font-semibold text-white">Not rated</span>}{c.weight !== 1 && <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">weight {c.weight}</span>}</div>
                   {c.description && <Points text={c.description} />}
                 </div>
 
@@ -270,7 +328,8 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
         {side ? (
           <div className="space-y-1.5">
             <Label>{side === "self" ? "Anything else you would like to say (optional)" : `Reviewer's comments on ${view.employeeName}`}{side === "manager" && <span className="text-destructive"> *</span>}</Label>
-            <Textarea rows={5} value={summary} onChange={(e) => setSummary(e.target.value)} />
+            <Textarea rows={5} value={summary} onChange={(e) => setSummary(e.target.value)} className={missing.summary && !summary.trim() ? "border-red-400" : ""} />
+            {missing.summary && !summary.trim() && <p className="text-xs font-medium text-red-600">Write the reviewer&apos;s comments to submit.</p>}
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -283,9 +342,11 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
       {/* ── Section B: to be completed by the reviewer ── */}
       {showB && (
         <>
+          <span id="section-b" />
           <Card title="Overall review outcome" hint="Section B: completed by the reviewer">
             {side === "manager" ? (
               <div className="space-y-3">
+                {missing.outcome && !outcome && <p className="text-xs font-medium text-red-600">Choose the overall outcome to submit.</p>}
                 <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Overall review outcome">
                   {(Object.keys(OUTCOMES) as ReviewOutcome[]).map((k) => (
                     <button key={k} type="button" role="radio" aria-checked={outcome === k} onClick={() => setOutcome(k)}
@@ -352,8 +413,15 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
       {/* ── actions ── */}
       {side && (
         <div className="sticky bottom-3 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/95 px-4 py-3 shadow-md backdrop-blur">
-          <div className="text-xs text-muted-foreground">
-            {rated} of {view.criteria.length} rated{side === "manager" && liveScore != null ? ` · score so far ${formatScore(liveScore, view.scaleMax)}` : ""}
+          <div className="min-w-40 flex-1 space-y-1">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{rated} of {view.criteria.length} rated{side === "manager" && liveScore != null ? ` · score so far ${formatScore(liveScore, view.scaleMax)}` : ""}</span>
+              {unrated.length > 0 && <button type="button" className="underline hover:text-foreground" onClick={() => document.getElementById(`crit-${unrated[0].id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>Next unrated</button>}
+            </div>
+            <div className="h-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${view.criteria.length ? Math.round((rated / view.criteria.length) * 100) : 0}%` }} /></div>
+            <div className="text-[11px] text-muted-foreground" aria-live="polite">
+              {busy ? "Saving…" : dirty ? "Unsaved changes (saved automatically every 20 seconds)" : savedAt ? `Saved at ${savedAt.toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}` : "Nothing changed yet"}
+            </div>
           </div>
           <div className="ml-auto flex gap-2">
             <Button variant="outline" disabled={busy} onClick={() => save(false)}>Save draft</Button>

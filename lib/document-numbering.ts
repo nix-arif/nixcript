@@ -1,4 +1,4 @@
-export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "pl" | "do" | "inv" | "co" | "icpo";
+export type DocType = "qt" | "so" | "po" | "pr" | "gr" | "pl" | "do" | "inv" | "co" | "icpo" | "ci" | "sc";
 
 export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string }> = {
   qt:   { docCode: "QT",   label: "Quotation" },
@@ -14,6 +14,9 @@ export const DOC_TYPE_DEFAULTS: Record<DocType, { docCode: string; label: string
   // Laser-category split) — a distinct code so it's never mistaken for, or
   // numbered alongside, a real supplier PO.
   icpo: { docCode: "ICPO", label: "Intercompany PO" },
+  // a problem the customer reported after delivery, and the claim raised against a supplier because of it
+  ci:   { docCode: "CI",   label: "Customer Issue" },
+  sc:   { docCode: "SC",   label: "Supplier Claim" },
 };
 
 export type NumberFormat = "standard" | "compact";

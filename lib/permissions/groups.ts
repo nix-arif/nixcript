@@ -48,6 +48,8 @@ export const KEY_GROUP: Record<string, string> = {
   "payslip:read:own": "hr", "payslip:read:all": "hr", "payslip:create": "hr",
   "profile:read": "hr", "profile:update": "hr", "profile:read:all": "hr", "profile:update:all": "hr", "profile:delete:all": "hr",
 
+  "customer-issue:read": "sales", "customer-issue:create": "sales", "customer-issue:update": "sales",
+  "supplier-claim:read": "procurement", "supplier-claim:manage": "procurement", "supplier-claim:terms": "procurement",
   "sponsorship:read:own": "sales", "sponsorship:check": "sales", "sponsorship:approve": "sales", "sponsorship:manage": "sales",
   "review:read:own": "hr", "review:conduct": "hr", "review:manage": "hr",
 

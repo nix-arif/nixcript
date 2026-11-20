@@ -35,4 +35,5 @@ export async function createReviewPeriod(input: S.PeriodInput) { return S.create
 export async function addReviewsToPeriod(periodId: string, employees: S.PeriodInput["employees"]) { return S.addReviews(await ctx(), periodId, employees); }
 export async function getReviewPeriods() { return S.listPeriods(await ctx()); }
 export async function getReviewPeriod(id: string) { return S.getPeriod(await ctx(), id); }
+export async function remindReviewPeriod(id: string) { return S.remindPeriod(await ctx(), id); }
 export async function setReviewPeriodStatus(id: string, status: "open" | "closed") { return S.setPeriodStatus(await ctx(), id, status); }

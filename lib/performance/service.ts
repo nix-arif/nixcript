@@ -3,10 +3,10 @@
 import { db } from "@/db";
 import {
   review, reviewAnswer, reviewCriterion, reviewPeriod, reviewTemplate,
-  member, memberDepartment, department, user, notification, userPermission, profile,
+  member, memberDepartment, department, user, notification, userPermission, profile, organization,
   type ReviewQuestionSnapshot,
 } from "@/db/schema";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { hasAccess } from "@/lib/permissions/has-access";
 import {
@@ -23,6 +23,18 @@ const can = (ctx: Ctx, key: string) => hasAccess(ctx.perms, key);
 const NO_ACCESS = fail("You don't have permission to do this.");
 const SCALES = [3, 4, 5, 10];
 const LINK = "/dashboard/human-resources/performance";
+
+// The organizations owned by the same owner as this one (this one always first). One template and one review period
+// can cover all of them: the owner runs several companies and HR does the reviews for the group.
+async function ownerOrgsOf(orgId: string): Promise<{ id: string; name: string }[]> {
+  const [ownerMember] = await db.select({ userId: member.userId }).from(member).where(and(eq(member.organizationId, orgId), eq(member.role, "owner"))).limit(1);
+  const owned = ownerMember
+    ? await db.select({ id: member.organizationId }).from(member).where(and(eq(member.userId, ownerMember.userId), eq(member.role, "owner"), isNull(member.deletedAt)))
+    : [];
+  const ids = [...new Set([orgId, ...owned.map((o) => o.id)])];
+  const orgs = await db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, ids));
+  return ids.map((id) => orgs.find((o) => o.id === id)).filter((o): o is { id: string; name: string } => !!o);
+}
 
 // ── notifications ───────────────────────────────────────────────────────────
 async function notifyUser(orgId: string, userId: string | null, n: { title: string; body: string; link: string }) {
@@ -57,11 +69,13 @@ export type TemplateInput = {
 
 export async function listTemplates(ctx: Ctx) {
   if (!can(ctx, "review:manage")) return [];
-  const templates = await db.select().from(reviewTemplate).where(eq(reviewTemplate.organizationId, ctx.orgId)).orderBy(asc(reviewTemplate.name));
+  // the templates of every company of this owner: any of them can be used for a period, only this company's can be edited
+  const orgs = await ownerOrgsOf(ctx.orgId);
+  const templates = await db.select().from(reviewTemplate).where(inArray(reviewTemplate.organizationId, orgs.map((o) => o.id))).orderBy(asc(reviewTemplate.name));
   const criteria = templates.length
     ? await db.select().from(reviewCriterion).where(inArray(reviewCriterion.templateId, templates.map((t) => t.id))).orderBy(asc(reviewCriterion.sortOrder))
     : [];
-  return templates.map((t) => ({ ...t, criteria: criteria.filter((c) => c.templateId === t.id) }));
+  return templates.map((t) => ({ ...t, criteria: criteria.filter((c) => c.templateId === t.id), own: t.organizationId === ctx.orgId, organizationName: orgs.find((o) => o.id === t.organizationId)?.name ?? "" }));
 }
 export type TemplateWithCriteria = Awaited<ReturnType<typeof listTemplates>>[number];
 
@@ -104,31 +118,43 @@ export async function setTemplateActive(ctx: Ctx, id: string, isActive: boolean)
 }
 
 // ── employees and periods ───────────────────────────────────────────────────
-export type EligibleEmployee = { userId: string; name: string; email: string; departments: string[]; defaultReviewer: { userId: string; name: string } | null };
+export type EligibleEmployee = {
+  userId: string; name: string; email: string; departments: string[]; defaultReviewer: { userId: string; name: string } | null;
+  organizationId: string; organizationName: string; // the company the review is kept under (the person's own)
+};
 
-// everyone who can be reviewed, with the manager of their department as the default reviewer
+// everyone who can be reviewed, in every company of this owner, with the manager of their own department as the default reviewer
 export async function listEligibleEmployees(ctx: Ctx): Promise<EligibleEmployee[]> {
   if (!can(ctx, "review:manage")) return [];
+  const orgs = await ownerOrgsOf(ctx.orgId);
+  const orgIds = orgs.map((o) => o.id);
   const members = await db
-    .select({ memberId: member.id, userId: user.id, name: user.name, email: user.email })
+    .select({ memberId: member.id, organizationId: member.organizationId, userId: user.id, name: user.name, email: user.email })
     .from(member).innerJoin(user, eq(member.userId, user.id))
-    .where(and(eq(member.organizationId, ctx.orgId), isNull(member.deletedAt)))
+    .where(and(inArray(member.organizationId, orgIds), isNull(member.deletedAt)))
     .orderBy(asc(user.name));
   const assigns = await db
-    .select({ memberId: memberDepartment.memberId, role: memberDepartment.role, departmentId: memberDepartment.departmentId, departmentName: department.name })
+    .select({ memberId: memberDepartment.memberId, organizationId: memberDepartment.organizationId, role: memberDepartment.role, departmentId: memberDepartment.departmentId, departmentName: department.name })
     .from(memberDepartment).innerJoin(department, eq(memberDepartment.departmentId, department.id))
-    .where(eq(memberDepartment.organizationId, ctx.orgId));
+    .where(inArray(memberDepartment.organizationId, orgIds));
   const userOf = new Map(members.map((m) => [m.memberId, m]));
-  return members.map((m) => {
+  // a person who belongs to several companies is listed once, under this company if they are in it, else the first one
+  const rank = (o: string) => orgIds.indexOf(o);
+  const first = new Map<string, (typeof members)[number]>();
+  for (const m of members) {
+    const cur = first.get(m.userId);
+    if (!cur || rank(m.organizationId) < rank(cur.organizationId)) first.set(m.userId, m);
+  }
+  return [...first.values()].map((m) => {
     const mine = assigns.filter((a) => a.memberId === m.memberId);
     let defaultReviewer: EligibleEmployee["defaultReviewer"] = null;
     for (const a of mine) {
-      const mgr = assigns.find((x) => x.departmentId === a.departmentId && x.role === "manager" && x.memberId !== m.memberId);
+      const mgr = assigns.find((x) => x.organizationId === m.organizationId && x.departmentId === a.departmentId && x.role === "manager" && x.memberId !== m.memberId);
       const u = mgr && userOf.get(mgr.memberId);
       if (u) { defaultReviewer = { userId: u.userId, name: u.name }; break; }
     }
-    return { userId: m.userId, name: m.name, email: m.email, departments: mine.map((a) => a.departmentName), defaultReviewer };
-  });
+    return { userId: m.userId, name: m.name, email: m.email, departments: mine.map((a) => a.departmentName), defaultReviewer, organizationId: m.organizationId, organizationName: orgs.find((o) => o.id === m.organizationId)?.name ?? "" };
+  }).sort((a, b) => rank(a.organizationId) - rank(b.organizationId) || a.name.localeCompare(b.name));
 }
 
 export type PeriodInput = {
@@ -140,18 +166,25 @@ export type PeriodInput = {
 };
 
 async function openReviews(ctx: Ctx, periodId: string, periodName: string, templateId: string, employees: PeriodInput["employees"]): Promise<Result<number>> {
-  const [tpl] = await db.select().from(reviewTemplate).where(and(eq(reviewTemplate.id, templateId), eq(reviewTemplate.organizationId, ctx.orgId)));
+  const orgs = await ownerOrgsOf(ctx.orgId);
+  const orgIds = orgs.map((o) => o.id);
+  const [tpl] = await db.select().from(reviewTemplate).where(and(eq(reviewTemplate.id, templateId), inArray(reviewTemplate.organizationId, orgIds)));
   if (!tpl) return fail("Choose a template.");
   const criteria = await db.select().from(reviewCriterion).where(eq(reviewCriterion.templateId, templateId)).orderBy(asc(reviewCriterion.sortOrder));
   if (criteria.length === 0) return fail("That template has no criteria.");
   const snapshot = criteria.map((c) => ({ id: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: Number(c.weight) }));
 
   const ids = [...new Set([...employees.map((e) => e.userId), ...employees.map((e) => e.reviewerUserId).filter((v): v is string => !!v)])];
-  const members = await db.select({ userId: member.userId }).from(member).where(and(eq(member.organizationId, ctx.orgId), isNull(member.deletedAt), inArray(member.userId, ids)));
+  const members = await db.select({ userId: member.userId, organizationId: member.organizationId }).from(member).where(and(inArray(member.organizationId, orgIds), isNull(member.deletedAt), inArray(member.userId, ids)));
   const inOrg = new Set(members.map((m) => m.userId));
+  // the review is kept under the employee's own company (this one when they are in it), so they and their manager see it there
+  const orgOfEmployee = (u: string) => {
+    const mine = members.filter((m) => m.userId === u).map((m) => m.organizationId);
+    return mine.includes(ctx.orgId) ? ctx.orgId : mine.sort((a, b) => orgIds.indexOf(a) - orgIds.indexOf(b))[0] ?? ctx.orgId;
+  };
   for (const e of employees) {
-    if (!inOrg.has(e.userId)) return fail("One of the selected employees is not a member of this organization.");
-    if (e.reviewerUserId && !inOrg.has(e.reviewerUserId)) return fail("A reviewer must be a member of this organization.");
+    if (!inOrg.has(e.userId)) return fail("One of the selected employees is not a member of your companies.");
+    if (e.reviewerUserId && !inOrg.has(e.reviewerUserId)) return fail("A reviewer must be a member of one of your companies.");
     if (e.reviewerUserId === e.userId) return fail("Nobody can be their own reviewer.");
   }
   for (const e of employees) if (e.purpose && !isPurpose(e.purpose)) return fail("The purpose of a review is Annual Review or Confirmation.");
@@ -160,13 +193,13 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, templ
   const profileOf = (u: string | null | undefined) => profiles.find((p) => p.userId === u);
   // the goals set at the employee's last completed review are what they report progress on in this one
   const lastPlans = await db.select({ employeeUserId: review.employeeUserId, actionPlan: review.actionPlan, createdAt: review.createdAt }).from(review)
-    .where(and(eq(review.organizationId, ctx.orgId), eq(review.status, "completed"), inArray(review.employeeUserId, employees.map((e) => e.userId)))).orderBy(desc(review.createdAt));
+    .where(and(inArray(review.organizationId, orgIds), eq(review.status, "completed"), inArray(review.employeeUserId, employees.map((e) => e.userId)))).orderBy(desc(review.createdAt));
   const goalsOf = (u: string): PreviousGoal[] => {
     const plan = lastPlans.find((p) => p.employeeUserId === u && (p.actionPlan ?? []).length > 0)?.actionPlan ?? [];
     return plan.map((g) => ({ goal: g.goal, action: "", completed: "" as const, comments: "" }));
   };
   const rows = employees.map((e) => ({
-    id: nanoid(), organizationId: ctx.orgId, periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null,
+    id: nanoid(), organizationId: orgOfEmployee(e.userId), periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null,
     status: "self" as const, templateName: tpl.name, scaleMax: tpl.scaleMax, criteria: snapshot,
     questions: (tpl.questions ?? []) as ReviewQuestionSnapshot[],
     purpose: e.purpose ?? null,
@@ -176,7 +209,7 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, templ
   }));
   if (rows.length > 0) await db.insert(review).values(rows);
   for (const r of rows) {
-    await notifyUser(ctx.orgId, r.employeeUserId, { title: `Performance review: ${periodName}`, body: "Your self-assessment is waiting. Please complete it.", link: `${LINK}/review/${r.id}` });
+    await notifyUser(r.organizationId, r.employeeUserId, { title: `Performance review: ${periodName}`, body: "Your self-assessment is waiting. Please complete it.", link: `${LINK}/review/${r.id}` });
   }
   return ok(rows.length);
 }
@@ -229,17 +262,59 @@ export async function getPeriod(ctx: Ctx, id: string) {
   const [p] = await db.select().from(reviewPeriod).where(and(eq(reviewPeriod.id, id), eq(reviewPeriod.organizationId, ctx.orgId)));
   if (!p) return null;
   const rows = await db.select().from(review).where(eq(review.periodId, id));
+  const orgs = await ownerOrgsOf(ctx.orgId);
   const ids = [...new Set(rows.flatMap((r) => [r.employeeUserId, r.reviewerUserId].filter((v): v is string => !!v)))];
   const names = ids.length ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids)) : [];
   const nameOf = (u: string | null) => names.find((n) => n.id === u)?.name ?? null;
   return {
     ...p,
     reviews: rows
-      .map((r) => ({ id: r.id, employeeUserId: r.employeeUserId, employeeName: nameOf(r.employeeUserId) ?? "—", reviewerUserId: r.reviewerUserId, reviewerName: nameOf(r.reviewerUserId), status: r.status as ReviewStatus, finalScore: r.finalScore, scaleMax: r.scaleMax }))
+      .map((r) => ({
+        id: r.id, employeeUserId: r.employeeUserId, employeeName: nameOf(r.employeeUserId) ?? "—", reviewerUserId: r.reviewerUserId, reviewerName: nameOf(r.reviewerUserId),
+        status: r.status as ReviewStatus, finalScore: r.finalScore, scaleMax: r.scaleMax,
+        // for the filters and the export
+        organizationId: r.organizationId, organizationName: orgs.find((o) => o.id === r.organizationId)?.name ?? "", department: r.employeeDepartment, designation: r.employeeDesignation,
+        purpose: isPurpose(r.purpose) ? r.purpose : null, outcome: isOutcome(r.outcome) ? r.outcome : null,
+        selfSubmittedAt: r.selfSubmittedAt, managerSubmittedAt: r.managerSubmittedAt, signedOffAt: r.signedOffAt, acknowledgedAt: r.acknowledgedAt,
+      }))
       .sort((a, b) => a.employeeName.localeCompare(b.employeeName)),
   };
 }
 export type PeriodDetail = NonNullable<Awaited<ReturnType<typeof getPeriod>>>;
+
+// Nudges the people a period is waiting for: employees who have not submitted their self-assessment, managers who have not
+// reviewed, and HR for reviews waiting for sign-off. Nobody is reminded twice in a day, so pressing it again is harmless.
+export async function remindPeriod(ctx: Ctx, periodId: string): Promise<Result<{ reminded: number; skipped: number }>> {
+  if (!can(ctx, "review:manage")) return NO_ACCESS;
+  const [p] = await db.select().from(reviewPeriod).where(and(eq(reviewPeriod.id, periodId), eq(reviewPeriod.organizationId, ctx.orgId)));
+  if (!p) return fail("Review period not found.");
+  if (p.status !== "open") return fail("This period is closed.");
+  const rows = (await db.select().from(review).where(eq(review.periodId, periodId))).filter((r) => r.status !== "cancelled" && r.status !== "completed");
+  if (rows.length === 0) return fail("Nothing is waiting: every review in this period is completed.");
+  const names = await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, rows.map((r) => r.employeeUserId)));
+  const nameOf = (u: string) => names.find((n) => n.id === u)?.name ?? "an employee";
+  const since = new Date(Date.now() - 24 * 3600 * 1000);
+  const recent = await db.select({ userId: notification.userId, link: notification.link }).from(notification)
+    .where(and(eq(notification.type, "review"), sql`${notification.title} LIKE 'Reminder:%'`, sql`${notification.createdAt} > ${since}`));
+  const wasReminded = (userId: string, link: string) => recent.some((n) => n.userId === userId && n.link === link);
+  let reminded = 0, skipped = 0;
+  const send = async (orgId: string, userId: string | null, title: string, body: string, link: string) => {
+    if (!userId) { skipped++; return; }
+    if (wasReminded(userId, link)) { skipped++; return; }
+    await notifyUser(orgId, userId, { title, body, link });
+    recent.push({ userId, link });
+    reminded++;
+  };
+  for (const r of rows) {
+    const link = `${LINK}/review/${r.id}`;
+    if (r.status === "self") await send(r.organizationId, r.employeeUserId, `Reminder: ${p.name}`, "Your self-assessment is still waiting. Please complete it.", link);
+    else if (r.status === "manager") await send(r.organizationId, r.reviewerUserId, `Reminder: review of ${nameOf(r.employeeUserId)}`, `Your review of ${nameOf(r.employeeUserId)} for ${p.name} is still waiting.`, link);
+    else if (r.status === "signoff") {
+      for (const hr of await reviewManagerIds(p.organizationId)) await send(p.organizationId, hr, `Reminder: sign off ${nameOf(r.employeeUserId)}`, `The review of ${nameOf(r.employeeUserId)} (${p.name}) is waiting for sign-off.`, link);
+    }
+  }
+  return ok({ reminded, skipped });
+}
 
 export async function setPeriodStatus(ctx: Ctx, id: string, status: "open" | "closed"): Promise<Result> {
   if (!can(ctx, "review:manage")) return NO_ACCESS;
@@ -268,12 +343,12 @@ export type ReviewListRow = Awaited<ReturnType<typeof withContext>>[number];
 // reviews waiting for them. No permission has to be granted separately (HR opening a review is the grant), so the
 // person who got the notification can always open it. HR powers still need review:manage.
 export async function listMyReviews(ctx: Ctx): Promise<ReviewListRow[]> {
-  const rows = await db.select().from(review).where(and(eq(review.organizationId, ctx.orgId), eq(review.employeeUserId, ctx.userId))).orderBy(desc(review.createdAt));
+  const rows = await db.select().from(review).where(eq(review.employeeUserId, ctx.userId)).orderBy(desc(review.createdAt));
   return (await withContext(rows.filter((r) => r.status !== "cancelled"))).map((r) => (r.status === "completed" ? r : { ...r, finalScore: null }));
 }
 
 export async function listTeamReviews(ctx: Ctx): Promise<ReviewListRow[]> {
-  const rows = await db.select().from(review).where(and(eq(review.organizationId, ctx.orgId), eq(review.reviewerUserId, ctx.userId))).orderBy(desc(review.createdAt));
+  const rows = await db.select().from(review).where(eq(review.reviewerUserId, ctx.userId)).orderBy(desc(review.createdAt));
   return withContext(rows.filter((r) => r.status !== "cancelled"));
 }
 
@@ -322,20 +397,22 @@ export type ReviewView = {
 };
 
 // who the caller is on this review. Your own review never gives you reviewer or HR powers over it.
-function roleOf(ctx: Ctx, r: typeof review.$inferSelect): ReviewRole | null {
+function roleOf(ctx: Ctx, r: typeof review.$inferSelect, periodOrgId: string | null): ReviewRole | null {
   const isEmployee = r.employeeUserId === ctx.userId;
   if (isEmployee) return "employee";
   const isReviewer = r.reviewerUserId === ctx.userId;
   if (isReviewer && r.status === "manager") return "reviewer";
-  if (can(ctx, "review:manage")) return "hr";
+  // HR of the company that opened the period, or of the company the review is kept under
+  if (can(ctx, "review:manage") && (r.organizationId === ctx.orgId || periodOrgId === ctx.orgId)) return "hr";
   if (isReviewer) return "reviewer";
   return null;
 }
 
 async function loadReview(ctx: Ctx, id: string) {
-  const [r] = await db.select().from(review).where(and(eq(review.id, id), eq(review.organizationId, ctx.orgId)));
+  const [r] = await db.select().from(review).where(eq(review.id, id));
   if (!r) return null;
-  const role = roleOf(ctx, r);
+  const [p] = await db.select({ organizationId: reviewPeriod.organizationId }).from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId));
+  const role = roleOf(ctx, r, p?.organizationId ?? null);
   return role ? { r, role } : null;
 }
 
@@ -476,9 +553,9 @@ export async function saveSelf(ctx: Ctx, id: string, input: { answers: AnswerInp
   await db.update(review).set({ status: "manager", selfSubmittedAt: new Date(), returnNote: null }).where(eq(review.id, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
   if (r.reviewerUserId) {
-    await notifyUser(ctx.orgId, r.reviewerUserId, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "An employee"} submitted a self-assessment for ${period.name}. Please review it.`, link: `${LINK}/review/${id}` });
+    await notifyUser(r.organizationId, r.reviewerUserId, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "An employee"} submitted a self-assessment for ${period.name}. Please review it.`, link: `${LINK}/review/${id}` });
   } else {
-    await notifyManagers(ctx.orgId, { title: `No reviewer for ${emp?.name ?? "an employee"}`, body: `${emp?.name ?? "An employee"} submitted a self-assessment for ${period.name} but has no reviewer. Assign one.`, link: `${LINK}/periods/${r.periodId}` });
+    await notifyManagers(period.organizationId, { title: `No reviewer for ${emp?.name ?? "an employee"}`, body: `${emp?.name ?? "An employee"} submitted a self-assessment for ${period.name} but has no reviewer. Assign one.`, link: `${LINK}/periods/${r.periodId}` });
   }
   return ok({ status: "manager" });
 }
@@ -507,7 +584,7 @@ export async function saveManager(ctx: Ctx, id: string, input: { answers: Answer
   const score = weightedScore(r.criteria, ratings);
   await db.update(review).set({ status: "signoff", managerSubmittedAt: new Date(), finalScore: score == null ? null : String(score), returnNote: null }).where(eq(review.id, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
-  await notifyManagers(ctx.orgId, { title: `Review to sign off: ${emp?.name ?? "employee"}`, body: `The manager review of ${emp?.name ?? "an employee"} (${period.name}) is ready for sign-off.`, link: `${LINK}/review/${id}` }, ctx.userId);
+  await notifyManagers(period.organizationId, { title: `Review to sign off: ${emp?.name ?? "employee"}`, body: `The manager review of ${emp?.name ?? "an employee"} (${period.name}) is ready for sign-off.`, link: `${LINK}/review/${id}` }, ctx.userId);
   return ok({ status: "signoff" });
 }
 
@@ -519,7 +596,7 @@ export async function signOff(ctx: Ctx, id: string, comment?: string): Promise<R
   const [period] = await db.select().from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId));
   if (period?.status !== "open") return fail("This review period is closed.");
   await db.update(review).set({ status: "completed", signedOffBy: ctx.userId, signedOffAt: new Date(), signoffComment: comment?.trim() || null }).where(eq(review.id, id));
-  await notifyUser(ctx.orgId, r.employeeUserId, { title: `Your review is ready: ${period.name}`, body: "Your performance review has been completed. You can read it now.", link: `${LINK}/review/${id}` });
+  await notifyUser(r.organizationId, r.employeeUserId, { title: `Your review is ready: ${period.name}`, body: "Your performance review has been completed. You can read it now.", link: `${LINK}/review/${id}` });
   return ok(undefined);
 }
 
@@ -532,7 +609,7 @@ export async function acknowledgeReview(ctx: Ctx, id: string): Promise<Result> {
   if (r.acknowledgedAt) return ok(undefined);
   await db.update(review).set({ acknowledgedAt: new Date() }).where(eq(review.id, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
-  if (r.reviewerUserId) await notifyUser(ctx.orgId, r.reviewerUserId, { title: `Review acknowledged: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "The employee"} has read and acknowledged the review.`, link: `${LINK}/review/${id}` });
+  if (r.reviewerUserId) await notifyUser(r.organizationId, r.reviewerUserId, { title: `Review acknowledged: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "The employee"} has read and acknowledged the review.`, link: `${LINK}/review/${id}` });
   return ok(undefined);
 }
 
@@ -545,7 +622,7 @@ export async function returnToManager(ctx: Ctx, id: string, note: string): Promi
   if (!r.reviewerUserId) return fail("This review has no reviewer. Assign one first.");
   await db.update(review).set({ status: "manager", returnNote: note.trim(), managerSubmittedAt: null }).where(eq(review.id, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
-  await notifyUser(ctx.orgId, r.reviewerUserId, { title: `Review sent back: ${emp?.name ?? "employee"}`, body: note.trim(), link: `${LINK}/review/${id}` });
+  await notifyUser(r.organizationId, r.reviewerUserId, { title: `Review sent back: ${emp?.name ?? "employee"}`, body: note.trim(), link: `${LINK}/review/${id}` });
   return ok(undefined);
 }
 
@@ -555,13 +632,14 @@ export async function reassignReviewer(ctx: Ctx, id: string, reviewerUserId: str
   const { r } = found;
   if (r.status !== "self" && r.status !== "manager") return fail("The reviewer can only be changed before the manager has submitted.");
   if (reviewerUserId === r.employeeUserId) return fail("Nobody can be their own reviewer.");
-  const [m] = await db.select({ id: member.id }).from(member).where(and(eq(member.organizationId, ctx.orgId), eq(member.userId, reviewerUserId), isNull(member.deletedAt)));
-  if (!m) return fail("A reviewer must be a member of this organization.");
+  const owned = (await ownerOrgsOf(ctx.orgId)).map((o) => o.id);
+  const [m] = await db.select({ id: member.id }).from(member).where(and(inArray(member.organizationId, owned), eq(member.userId, reviewerUserId), isNull(member.deletedAt)));
+  if (!m) return fail("A reviewer must be a member of one of your companies.");
   const [rp] = await db.select({ jobTitle: profile.jobTitle }).from(profile).where(eq(profile.userId, reviewerUserId));
   await db.update(review).set({ reviewerUserId, reviewerDesignation: rp?.jobTitle ?? null }).where(eq(review.id, id));
   if (r.status === "manager") {
     const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
-    await notifyUser(ctx.orgId, reviewerUserId, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: "You were assigned as the reviewer.", link: `${LINK}/review/${id}` });
+    await notifyUser(r.organizationId, reviewerUserId, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: "You were assigned as the reviewer.", link: `${LINK}/review/${id}` });
   }
   return ok(undefined);
 }

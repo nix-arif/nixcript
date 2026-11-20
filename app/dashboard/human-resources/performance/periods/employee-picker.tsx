@@ -1,14 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { SearchIcon } from "lucide-react";
+import { SearchIcon, UsersIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import type { EligibleEmployee } from "@/server/performance";
 import { PURPOSES, type ReviewPurpose } from "@/lib/performance/core";
+import type { EligibleEmployee } from "@/server/performance";
 
 export type Picked = Record<string, { reviewerUserId: string | null; purpose: ReviewPurpose }>; // userId -> reviewer and purpose of the review
 
-// Choose who is reviewed and by whom. The reviewer starts as the manager of the person's department.
+// Choose who is reviewed and by whom, across every company of the owner. The reviewer starts as the manager of the
+// person's own department; HR can change one by one, or set the purpose / reset the reviewers for everyone selected.
 export function EmployeePicker({
   employees, value, onChange, excludeIds = [],
 }: {
@@ -18,71 +19,159 @@ export function EmployeePicker({
   excludeIds?: string[];
 }) {
   const [q, setQ] = useState("");
-  const list = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return employees.filter((e) => !excludeIds.includes(e.userId) && (!needle || e.name.toLowerCase().includes(needle) || e.departments.some((d) => d.toLowerCase().includes(needle))));
-  }, [employees, q, excludeIds]);
-  const allOn = list.length > 0 && list.every((e) => value[e.userId]);
+  const [company, setCompany] = useState<string>("all");
+  const pool = useMemo(() => employees.filter((e) => !excludeIds.includes(e.userId)), [employees, excludeIds]);
+  const companies = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string; count: number }>();
+    for (const e of pool) { const c = seen.get(e.organizationId) ?? { id: e.organizationId, name: e.organizationName, count: 0 }; c.count++; seen.set(e.organizationId, c); }
+    return [...seen.values()];
+  }, [pool]);
+  const several = companies.length > 1;
 
-  const toggle = (e: EligibleEmployee) => {
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return pool.filter((e) => (company === "all" || e.organizationId === company) && (!needle || e.name.toLowerCase().includes(needle) || e.departments.some((d) => d.toLowerCase().includes(needle))));
+  }, [pool, q, company]);
+  const groups = useMemo(() => {
+    const out: { id: string; name: string; people: EligibleEmployee[] }[] = [];
+    for (const e of shown) {
+      let g = out.find((x) => x.id === e.organizationId);
+      if (!g) { g = { id: e.organizationId, name: e.organizationName, people: [] }; out.push(g); }
+      g.people.push(e);
+    }
+    return out;
+  }, [shown]);
+
+  const entryFor = (e: EligibleEmployee): Picked[string] => ({ reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual" });
+  const setMany = (list: EligibleEmployee[], on: boolean) => {
     const next = { ...value };
-    if (next[e.userId]) delete next[e.userId]; else next[e.userId] = { reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual" };
+    for (const e of list) { if (on) { if (!next[e.userId]) next[e.userId] = entryFor(e); } else delete next[e.userId]; }
     onChange(next);
   };
-  const toggleAll = () => {
+  const toggle = (e: EligibleEmployee) => setMany([e], !value[e.userId]);
+  const picked = pool.filter((e) => value[e.userId]);
+  const everyone = pool.length > 0 && picked.length === pool.length;
+  const noReviewer = picked.filter((e) => !value[e.userId].reviewerUserId);
+  const pickedCompanies = new Set(picked.map((e) => e.organizationId)).size;
+
+  const setPurposeForAll = (purpose: ReviewPurpose) => {
     const next = { ...value };
-    for (const e of list) { if (allOn) delete next[e.userId]; else if (!next[e.userId]) next[e.userId] = { reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual" }; }
+    for (const e of picked) next[e.userId] = { ...next[e.userId], purpose };
+    onChange(next);
+  };
+  const resetReviewers = () => {
+    const next = { ...value };
+    for (const e of picked) next[e.userId] = { ...next[e.userId], reviewerUserId: e.defaultReviewer?.userId ?? null };
     onChange(next);
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
+      {/* the one-click way to apply the template to everybody */}
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50/50 px-3 py-2 dark:border-indigo-800 dark:bg-indigo-900/10">
+        <UsersIcon className="h-4 w-4 text-indigo-600" />
+        <div className="min-w-0 flex-1 text-xs">
+          <span className="font-medium">{pool.length} {pool.length === 1 ? "person" : "people"}</span>
+          <span className="text-muted-foreground">{several ? ` in ${companies.length} companies` : ""} can be reviewed.</span>
+        </div>
+        <button type="button" className="rounded-md border border-indigo-300 bg-background px-2.5 py-1 text-xs font-medium hover:bg-indigo-50 dark:border-indigo-700 dark:hover:bg-indigo-900/20" onClick={() => setMany(pool, !everyone)}>
+          {everyone ? "Clear everyone" : `Select everyone${several ? " in all companies" : ""}`}
+        </button>
+      </div>
+
+      {several && (
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Company">
+          {[{ id: "all", name: "All companies", count: pool.length }, ...companies].map((c) => {
+            const n = c.id === "all" ? picked.length : picked.filter((e) => e.organizationId === c.id).length;
+            return (
+              <button key={c.id} type="button" role="tab" aria-selected={company === c.id} onClick={() => setCompany(c.id)}
+                className={`rounded-full border px-2.5 py-1 text-xs ${company === c.id ? "border-indigo-500 bg-indigo-50 font-medium dark:bg-indigo-900/20" : "border-border text-muted-foreground hover:bg-muted/30"}`}>
+                {c.name} <span className="tabular-nums text-muted-foreground">{n}/{c.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <SearchIcon className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input className="h-9 pl-8" placeholder="Search name or department" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <button type="button" className="whitespace-nowrap text-xs underline text-muted-foreground hover:text-foreground" onClick={toggleAll}>{allOn ? "Clear" : "Select all"}</button>
+        {shown.length > 0 && (
+          <button type="button" className="whitespace-nowrap text-xs underline text-muted-foreground hover:text-foreground" onClick={() => setMany(shown, !shown.every((e) => value[e.userId]))}>
+            {shown.every((e) => value[e.userId]) ? "Clear shown" : `Select shown (${shown.length})`}
+          </button>
+        )}
       </div>
-      <div className="max-h-72 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
-        {list.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">No one to show.</p>}
-        {list.map((e) => {
-          const on = !!value[e.userId];
+
+      <div className="max-h-80 overflow-y-auto rounded-lg border border-border">
+        {groups.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">No one to show.</p>}
+        {groups.map((g) => {
+          const allIn = g.people.every((e) => value[e.userId]);
+          const n = g.people.filter((e) => value[e.userId]).length;
           return (
-            <div key={e.userId} className={`flex flex-wrap items-center gap-2 px-3 py-2 ${on ? "bg-indigo-50/50 dark:bg-indigo-900/10" : ""}`}>
-              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
-                <input type="checkbox" checked={on} onChange={() => toggle(e)} className="h-4 w-4" />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{e.name}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">{e.departments.join(", ") || "No department"}</span>
-                </span>
-              </label>
-              {on && (
-                <select
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  value={value[e.userId].purpose}
-                  onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], purpose: ev.target.value as ReviewPurpose } })}
-                  aria-label={`Purpose of the review for ${e.name}`}
-                >
-                  {(Object.keys(PURPOSES) as ReviewPurpose[]).map((k) => <option key={k} value={k}>{PURPOSES[k]}</option>)}
-                </select>
+            <div key={g.id}>
+              {several && (
+                <label className="sticky top-0 z-10 flex cursor-pointer items-center gap-2.5 border-b border-border bg-muted/60 px-3 py-1.5 text-xs font-semibold backdrop-blur">
+                  <input type="checkbox" checked={allIn} onChange={() => setMany(g.people, !allIn)} className="h-3.5 w-3.5" />
+                  <span className="flex-1">{g.name}</span>
+                  <span className="font-normal tabular-nums text-muted-foreground">{n} of {g.people.length}</span>
+                </label>
               )}
-              {on && (
-                <select
-                  className="h-8 max-w-48 rounded-md border border-input bg-background px-2 text-xs"
-                  value={value[e.userId].reviewerUserId ?? ""}
-                  onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], reviewerUserId: ev.target.value || null } })}
-                  aria-label={`Reviewer for ${e.name}`}
-                >
-                  <option value="">{e.defaultReviewer ? "No reviewer yet" : "No manager found, pick one"}</option>
-                  {employees.filter((x) => x.userId !== e.userId).map((x) => <option key={x.userId} value={x.userId}>{x.name}{x.userId === e.defaultReviewer?.userId ? " (dept. manager)" : ""}</option>)}
-                </select>
-              )}
+              <div className="divide-y divide-border/60">
+                {g.people.map((e) => {
+                  const on = !!value[e.userId];
+                  return (
+                    <div key={e.userId} className={`flex flex-wrap items-center gap-2 px-3 py-2 ${on ? "bg-indigo-50/50 dark:bg-indigo-900/10" : ""}`}>
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+                        <input type="checkbox" checked={on} onChange={() => toggle(e)} className="h-4 w-4" />
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium">{e.name}</span>
+                          <span className="block truncate text-[11px] text-muted-foreground">{e.departments.join(", ") || "No department"}</span>
+                        </span>
+                      </label>
+                      {on && (
+                        <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={value[e.userId].purpose}
+                          onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], purpose: ev.target.value as ReviewPurpose } })} aria-label={`Purpose of the review for ${e.name}`}>
+                          {(Object.keys(PURPOSES) as ReviewPurpose[]).map((k) => <option key={k} value={k}>{PURPOSES[k]}</option>)}
+                        </select>
+                      )}
+                      {on && (
+                        <select className={`h-8 max-w-48 rounded-md border bg-background px-2 text-xs ${value[e.userId].reviewerUserId ? "border-input" : "border-amber-400"}`} value={value[e.userId].reviewerUserId ?? ""}
+                          onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], reviewerUserId: ev.target.value || null } })} aria-label={`Reviewer for ${e.name}`}>
+                          <option value="">{e.defaultReviewer ? "No reviewer yet" : "No manager found, pick one"}</option>
+                          {employees.filter((x) => x.userId !== e.userId).map((x) => <option key={x.userId} value={x.userId}>{x.name}{several ? ` (${x.organizationName})` : ""}{x.userId === e.defaultReviewer?.userId ? " · dept. manager" : ""}</option>)}
+                        </select>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })}
       </div>
-      <p className="text-[11px] text-muted-foreground">{Object.keys(value).length} selected. The reviewer is the manager of the person&apos;s department; change it if someone else should review. Purpose: Annual Review or Confirmation (end of probation).</p>
+
+      {picked.length > 0 && (
+        <div className="space-y-1.5 rounded-lg bg-muted/30 px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="font-medium">{picked.length} selected{pickedCompanies > 1 ? ` in ${pickedCompanies} companies` : ""}</span>
+            <label className="flex items-center gap-1.5 text-muted-foreground">Purpose for all:
+              <select className="h-7 rounded-md border border-input bg-background px-1.5 text-xs text-foreground" value="" onChange={(e) => e.target.value && setPurposeForAll(e.target.value as ReviewPurpose)}>
+                <option value="">choose…</option>
+                {(Object.keys(PURPOSES) as ReviewPurpose[]).map((k) => <option key={k} value={k}>{PURPOSES[k]}</option>)}
+              </select>
+            </label>
+            <button type="button" className="underline text-muted-foreground hover:text-foreground" onClick={resetReviewers}>Use department managers as reviewers</button>
+          </div>
+          {noReviewer.length > 0 && (
+            <p className="text-amber-700 dark:text-amber-400">
+              {noReviewer.length} {noReviewer.length === 1 ? "person has" : "people have"} no reviewer yet ({noReviewer.slice(0, 3).map((e) => e.name).join(", ")}{noReviewer.length > 3 ? ` and ${noReviewer.length - 3} more` : ""}). You can open the period and assign them later, but their review will wait until a reviewer is set.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

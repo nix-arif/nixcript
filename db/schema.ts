@@ -2004,6 +2004,197 @@ export const reviewAnswer = pgTable(
 );
 
 /* =========================
+   POST-DELIVERY ISSUES AND SUPPLIER CLAIMS
+   A problem the customer reports after delivery is recorded as a customer issue (with the delivered units and
+   evidence). Where a supplier is responsible, a supplier claim is raised for it, with a deadline worked out from
+   that supplier's own terms. The receiving inspection records (packing list, goods receipt) are never changed by
+   this: they stay as they were at receipt.
+   Migration: drizzle/0089_post_delivery_issues.sql
+========================= */
+export const supplierClaimTerm = pgTable(
+  "supplier_claim_term",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    supplierId: text("supplier_id").notNull().references(() => supplier.id, { onDelete: "cascade" }),
+    situation: text("situation").notNull().default(""), // "" = any kind of problem without its own row
+    windowDays: integer("window_days").notNull(),
+    basis: text("basis").notNull().default("receipt"), // receipt | delivery
+    notes: text("notes"),
+    updatedBy: text("updated_by").references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [uniqueIndex("supplier_claim_term_uidx").on(t.organizationId, t.supplierId, t.situation)],
+);
+
+export const postDeliveryCounter = pgTable(
+  "post_delivery_counter",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    docType: text("doc_type").notNull(), // ci | sc
+    year: integer("year").notNull(),
+    lastNumber: integer("last_number").notNull().default(0),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("post_delivery_counter_uidx").on(t.organizationId, t.docType)],
+);
+
+export const customerIssue = pgTable(
+  "customer_issue",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    issueNo: text("issue_no").notNull(),
+    status: text("status").notNull().default("open"), // open | investigating | claim_raised | resolved | closed_no_claim | cancelled
+    customerId: text("customer_id").references(() => customer.id, { onDelete: "set null" }),
+    customerName: text("customer_name").notNull(),
+    contactPerson: text("contact_person"),
+    contactNo: text("contact_no"),
+    deliveryOrderId: text("delivery_order_id").references(() => deliveryOrder.id, { onDelete: "set null" }),
+    deliveryOrderNo: text("delivery_order_no"),
+    deliveredAt: date("delivered_at"),
+    reportedAt: date("reported_at").notNull(),
+    reportedChannel: text("reported_channel"),
+    situation: text("situation").notNull(),
+    severity: text("severity").notNull().default("normal"), // normal | high | urgent
+    safetyRelated: boolean("safety_related").notNull().default(false),
+    summary: text("summary").notNull(),
+    description: text("description"),
+    customerResolution: text("customer_resolution"), // replacement | credit | repair | refund | none
+    customerResolutionNotes: text("customer_resolution_notes"),
+    resolvedAt: timestamp("resolved_at"),
+    closedReason: text("closed_reason"),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("customer_issue_no_uidx").on(t.organizationId, t.issueNo),
+    index("customer_issue_org_status_idx").on(t.organizationId, t.status),
+  ],
+);
+
+export const customerIssueItem = pgTable(
+  "customer_issue_item",
+  {
+    id: text("id").primaryKey(),
+    issueId: text("issue_id").notNull().references(() => customerIssue.id, { onDelete: "cascade" }),
+    rowNo: integer("row_no").notNull().default(0),
+    productId: text("product_id"),
+    productCode: text("product_code"),
+    description: text("description"),
+    qtyDelivered: text("qty_delivered"),
+    qtyAffected: text("qty_affected").notNull().default("1"),
+    uom: text("uom"),
+    lotNo: text("lot_no"),
+    serialNo: text("serial_no"),
+    supplierId: text("supplier_id").references(() => supplier.id, { onDelete: "set null" }),
+    supplierName: text("supplier_name"),
+    poNo: text("po_no"),
+    supplierDocRef: text("supplier_doc_ref"), // the supplier's own delivery order / invoice number
+    goodsReceiptId: text("goods_receipt_id").references(() => goodsReceipt.id, { onDelete: "set null" }),
+    grNo: text("gr_no"),
+    packingListItemId: text("packing_list_item_id").references(() => packingListItem.id, { onDelete: "set null" }),
+    receivedAt: date("received_at"), // when we received it from the supplier
+    unitCost: text("unit_cost"),
+    currency: text("currency"),
+    unitStatus: text("unit_status").notNull().default("with_customer"), // with_customer | returned_to_us | quarantine | sent_to_supplier | replaced | credited | repaired | scrapped
+    notes: text("notes"),
+  },
+  (t) => [index("customer_issue_item_issue_idx").on(t.issueId), index("customer_issue_item_supplier_idx").on(t.supplierId)],
+);
+
+export const customerIssueMedia = pgTable(
+  "customer_issue_media",
+  {
+    id: text("id").primaryKey(),
+    issueId: text("issue_id").notNull().references(() => customerIssue.id, { onDelete: "cascade" }),
+    itemId: text("item_id").references(() => customerIssueItem.id, { onDelete: "set null" }),
+    imageKey: text("image_key").notNull(),
+    kind: text("kind").notNull().default("image"), // image | video
+    filename: text("filename").notNull(),
+    caption: text("caption"),
+    uploadedBy: text("uploaded_by").references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("customer_issue_media_issue_idx").on(t.issueId)],
+);
+
+export const supplierClaim = pgTable(
+  "supplier_claim",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    claimNo: text("claim_no").notNull(),
+    issueId: text("issue_id").notNull().references(() => customerIssue.id, { onDelete: "cascade" }),
+    supplierId: text("supplier_id").notNull().references(() => supplier.id),
+    supplierName: text("supplier_name").notNull(),
+    status: text("status").notNull().default("draft"), // draft | sent | accepted | partial | rejected | closed | withdrawn
+    situation: text("situation").notNull(),
+    basis: text("basis"), // receipt | delivery | null when the supplier has no terms recorded
+    basisDate: date("basis_date"),
+    windowDays: integer("window_days"),
+    deadlineDate: date("deadline_date"),
+    deadlineOverridden: boolean("deadline_overridden").notNull().default(false),
+    deadlineNote: text("deadline_note"),
+    sentAt: timestamp("sent_at"),
+    sentBy: text("sent_by").references(() => user.id),
+    sentVia: text("sent_via"),
+    sentLate: boolean("sent_late").notNull().default(false),
+    requestedOutcome: text("requested_outcome"), // what we ask the supplier for: replacement | credit_note | repair | refund
+    supplierRef: text("supplier_ref"), // the supplier's claim / RMA number
+    followUpDate: date("follow_up_date"),
+    followUpNotified: date("follow_up_notified"),
+    respondedAt: timestamp("responded_at"),
+    supplierResponse: text("supplier_response"),
+    outcome: text("outcome"), // replacement | credit_note | repair | refund | goodwill | rejected
+    outcomeNotes: text("outcome_notes"),
+    creditAmount: text("credit_amount"),
+    creditCurrency: text("credit_currency"),
+    closedAt: timestamp("closed_at"),
+    withdrawnReason: text("withdrawn_reason"),
+    remindedLevel: integer("reminded_level").notNull().default(0),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
+  },
+  (t) => [
+    uniqueIndex("supplier_claim_no_uidx").on(t.organizationId, t.claimNo),
+    index("supplier_claim_org_status_idx").on(t.organizationId, t.status),
+    index("supplier_claim_issue_idx").on(t.issueId),
+    index("supplier_claim_supplier_idx").on(t.supplierId),
+  ],
+);
+
+export const supplierClaimItem = pgTable(
+  "supplier_claim_item",
+  {
+    id: text("id").primaryKey(),
+    claimId: text("claim_id").notNull().references(() => supplierClaim.id, { onDelete: "cascade" }),
+    issueItemId: text("issue_item_id").notNull().references(() => customerIssueItem.id, { onDelete: "cascade" }),
+    qtyClaimed: text("qty_claimed").notNull(),
+    qtyAccepted: text("qty_accepted"),
+  },
+  (t) => [uniqueIndex("supplier_claim_item_uidx").on(t.claimId, t.issueItemId)],
+);
+
+export const postDeliveryEvent = pgTable(
+  "post_delivery_event",
+  {
+    id: text("id").primaryKey(),
+    issueId: text("issue_id").notNull().references(() => customerIssue.id, { onDelete: "cascade" }),
+    claimId: text("claim_id").references(() => supplierClaim.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    message: text("message").notNull(),
+    actorId: text("actor_id").references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("post_delivery_event_issue_idx").on(t.issueId, t.createdAt)],
+);
+
+/* =========================
    INTERCOMPANY PRICING
    A PO from one of the owner's organizations to a sibling is priced by a method the user picks on the PO.
    When the user does not pick, the rule for the (seller, buyer) pair applies, else the seller's rule for any

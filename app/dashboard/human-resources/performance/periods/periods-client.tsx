@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { CalendarRangeIcon, PlusIcon, ArrowRightIcon } from "lucide-react";
 import { EmployeePicker, type Picked } from "./employee-picker";
+import { RATING_WORDS } from "@/lib/performance/core";
 
 const fmt = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
 
@@ -25,6 +26,11 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
   const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
   const [picked, setPicked] = useState<Picked>({});
   const [saving, setSaving] = useState(false);
+  const chosenTemplate = templates.find((t) => t.id === templateId);
+  const companyNames = [...new Set(templates.map((t) => t.organizationName))];
+  const pickedList = Object.keys(picked);
+  const pickedCompanies = new Set(employees.filter((e) => picked[e.userId]).map((e) => e.organizationName));
+  const missingBits = [!name.trim() && "a name", (!startDate || !endDate) && "the period dates", !templateId && "a template", pickedList.length === 0 && "at least one person"].filter(Boolean);
 
   async function create() {
     setSaving(true);
@@ -94,15 +100,32 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
               <Label>Template <span className="text-destructive">*</span></Label>
               <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
                 {templates.length === 0 && <option value="">No active template</option>}
-                {templates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.criteria.length} criteria, 1 to {t.scaleMax})</option>)}
+                {companyNames.length > 1
+                  ? companyNames.map((c) => (
+                      <optgroup key={c} label={c}>
+                        {templates.filter((t) => t.organizationName === c).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </optgroup>
+                    ))
+                  : templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
+              {chosenTemplate && (
+                <p className="text-[11px] text-muted-foreground">
+                  {chosenTemplate.criteria.length} criteria{(chosenTemplate.questions ?? []).length ? ` · ${(chosenTemplate.questions ?? []).length} written questions` : ""} · scale 1 to {chosenTemplate.scaleMax} ({RATING_WORDS[chosenTemplate.scaleMax]?.[0]} to {RATING_WORDS[chosenTemplate.scaleMax]?.slice(-1)[0]})
+                  {!chosenTemplate.own ? ` · from ${chosenTemplate.organizationName}` : ""}
+                </p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>Employees <span className="text-destructive">*</span></Label>
               <EmployeePicker employees={employees} value={picked} onChange={setPicked} />
             </div>
+            <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
+              {missingBits.length > 0
+                ? <span className="text-muted-foreground">Still needed: {missingBits.join(", ")}.</span>
+                : <span>Open <span className="font-medium">&ldquo;{name.trim()}&rdquo;</span> with <span className="font-medium">{chosenTemplate?.name}</span> for <span className="font-medium">{pickedList.length} {pickedList.length === 1 ? "person" : "people"}</span>{pickedCompanies.size > 1 ? ` in ${pickedCompanies.size} companies` : ""}. Each one is notified to start their self-assessment, and their reviewer follows.</span>}
+            </div>
             <div className="flex gap-2 pt-2">
-              <Button className="flex-1" onClick={create} disabled={saving || templates.length === 0}>{saving ? "Opening…" : `Open period${Object.keys(picked).length ? ` for ${Object.keys(picked).length}` : ""}`}</Button>
+              <Button className="flex-1" onClick={create} disabled={saving || missingBits.length > 0}>{saving ? "Opening…" : `Open period${pickedList.length ? ` for ${pickedList.length}` : ""}`}</Button>
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             </div>
           </div>

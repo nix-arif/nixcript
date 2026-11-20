@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { ArrowDownIcon, ArrowUpIcon, ClipboardListIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, ClipboardListIcon, CopyIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
 
 type Row = { key: string; section: string; name: string; description: string; weight: string };
 type QRow = { key: string; id?: string; label: string; help: string };
@@ -60,6 +60,13 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
     setEditingId(undefined); setName(FORM_NAME); setDescription("The company's Employee Performance Review Form (F-HR05)"); setScaleMax(4); setRows(formRows()); setQRows(formQuestions());
     setOpen(true);
   }
+  // a template of another company of the owner can be used as it is; to change it, copy it into this company first
+  function openCopy(t: TemplateWithCriteria) {
+    setEditingId(undefined); setName(`${t.name} (copy)`); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
+    setRows(t.criteria.map((c) => ({ key: Math.random().toString(36).slice(2), section: c.section, name: c.name, description: c.description ?? "", weight: c.weight })));
+    setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help)));
+    setOpen(true);
+  }
   function openEdit(t: TemplateWithCriteria) {
     setEditingId(t.id); setName(t.name); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
     setRows(t.criteria.map((c) => ({ key: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: c.weight })));
@@ -86,7 +93,7 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
     <div className="p-4 sm:p-6 max-w-4xl">
       <PageHeader
         title="Review Templates"
-        description="The criteria, rating scale and weights used in performance reviews"
+        description="The criteria, rating scale and weights used in performance reviews. A template of any of your companies can be used for any review period."
         action={<Button className="gap-2" onClick={openNew}><PlusIcon className="h-4 w-4" />New template</Button>}
       />
 
@@ -107,9 +114,16 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
                   <span className="text-sm font-semibold">{t.name}</span>
                   <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">{t.criteria.length} criteria{(t.questions ?? []).length ? ` · ${(t.questions ?? []).length} questions` : ""} · scale 1 to {t.scaleMax}</span>
                   {!t.isActive && <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">Inactive</span>}
+                  {!t.own && <span className="rounded-md border border-sky-200 bg-sky-50 px-1.5 py-px text-[10px] font-medium text-sky-800 dark:border-sky-700 dark:bg-sky-900/20 dark:text-sky-300">From {t.organizationName}</span>}
                   <div className="ml-auto flex gap-1.5">
-                    <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => openEdit(t)}><PencilIcon className="h-3 w-3" />Edit</Button>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => toggle(t)}>{t.isActive ? "Deactivate" : "Activate"}</Button>
+                    {t.own ? (
+                      <>
+                        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => openEdit(t)}><PencilIcon className="h-3 w-3" />Edit</Button>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => toggle(t)}>{t.isActive ? "Deactivate" : "Activate"}</Button>
+                      </>
+                    ) : (
+                      <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => openCopy(t)}><CopyIcon className="h-3 w-3" />Copy to my company</Button>
+                    )}
                   </div>
                 </div>
                 {t.description && <p className="mt-1 text-xs text-muted-foreground">{t.description}</p>}

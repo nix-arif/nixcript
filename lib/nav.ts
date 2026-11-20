@@ -75,6 +75,7 @@ export const navConfig: NavGroup[] = [
       { title: "Quotations",   url: "/dashboard/sales/quotation",     permission: "quotation:read"   },
       { title: "Customer POs", url: "/dashboard/sales/customer-po",   permission: "customer-po:read" },
       { title: "Sales Orders", url: "/dashboard/sales/order",         permission: "sales-order:read" },
+      { title: "Customer Issues", url: "/dashboard/sales/customer-issues", permission: "customer-issue:read" },
       { title: "Activity Log", url: "/dashboard/sales/activity",      permission: "customer:read"    },
     ],
   },
@@ -89,6 +90,7 @@ export const navConfig: NavGroup[] = [
       { title: "Packing Lists",        url: "/dashboard/procurement/packing-list",   permission: "purchase-order:read" },
       { title: "Goods Receipts",       url: "/dashboard/procurement/goods-receipt",  permission: "purchase-order:read" },
       { title: "Returns & Surplus",    url: "/dashboard/procurement/receiving-issues", permission: "purchase-order:read" },
+      { title: "Supplier Claims",      url: "/dashboard/procurement/supplier-claims", permission: "supplier-claim:read" },
     ],
   },
   {
