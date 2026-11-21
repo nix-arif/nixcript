@@ -10,7 +10,21 @@ export const STATUS_LABEL: Record<ReviewStatus, string> = {
   cancelled: "Cancelled",
 };
 
-export type Criterion = { id: string; section: string; name: string; description: string; weight: number };
+// Template names are unique within a company, ignoring case and extra spaces ("Annual  Review" = "annual review").
+// The same name may be used by another of the owner's companies: templates are always shown grouped by company.
+export const templateNameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+// The first of "name", "name (copy)", "name (copy 2)" ... that is not taken yet
+export function freeTemplateName(name: string, taken: string[]): string {
+  const used = new Set(taken.map(templateNameKey));
+  if (!used.has(templateNameKey(name))) return name;
+  for (let i = 1; ; i++) {
+    const candidate = i === 1 ? `${name} (copy)` : `${name} (copy ${i})`;
+    if (!used.has(templateNameKey(candidate))) return candidate;
+  }
+}
+
+export type Criterion ={ id: string; section: string; name: string; description: string; weight: number };
 
 // The written parts of the company's review form (F-HR05)
 export type ReviewQuestion = { id: string; label: string; help: string };

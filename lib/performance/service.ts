@@ -10,7 +10,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { hasAccess } from "@/lib/permissions/has-access";
 import {
-  canEditNow, isOutcome, isPurpose, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
+  canEditNow, isOutcome, isPurpose, templateNameKey, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
   type ActionPlanRow, type Criterion, type PreviousGoal, type ReviewOutcome, type ReviewPurpose, type ReviewQuestion, type ReviewRole, type ReviewStatus,
 } from "@/lib/performance/core";
 
@@ -75,14 +75,26 @@ export async function listTemplates(ctx: Ctx) {
   const criteria = templates.length
     ? await db.select().from(reviewCriterion).where(inArray(reviewCriterion.templateId, templates.map((t) => t.id))).orderBy(asc(reviewCriterion.sortOrder))
     : [];
-  return templates.map((t) => ({ ...t, criteria: criteria.filter((c) => c.templateId === t.id), own: t.organizationId === ctx.orgId, organizationName: orgs.find((o) => o.id === t.organizationId)?.name ?? "" }));
+  // how many review periods use each template, in any company: a template in use can only be deactivated, not deleted
+  const usage = templates.length
+    ? await db.select({ templateId: reviewPeriod.templateId, n: sql<number>`count(*)::int` }).from(reviewPeriod).where(inArray(reviewPeriod.templateId, templates.map((t) => t.id))).groupBy(reviewPeriod.templateId)
+    : [];
+  return templates.map((t) => ({
+    ...t, criteria: criteria.filter((c) => c.templateId === t.id), own: t.organizationId === ctx.orgId,
+    organizationName: orgs.find((o) => o.id === t.organizationId)?.name ?? "",
+    periodCount: usage.find((u) => u.templateId === t.id)?.n ?? 0,
+  }));
 }
 export type TemplateWithCriteria = Awaited<ReturnType<typeof listTemplates>>[number];
 
 export async function saveTemplate(ctx: Ctx, input: TemplateInput): Promise<Result<string>> {
   if (!can(ctx, "review:manage")) return NO_ACCESS;
-  const name = input.name?.trim();
+  const name = input.name?.trim().replace(/\s+/g, " ");
   if (!name) return fail("Give the template a name.");
+  const others = await db.select({ id: reviewTemplate.id, name: reviewTemplate.name }).from(reviewTemplate).where(eq(reviewTemplate.organizationId, ctx.orgId));
+  if (others.some((t) => t.id !== input.id && templateNameKey(t.name) === templateNameKey(name))) {
+    return fail(`This company already has a template called "${name}". Give it a different name.`);
+  }
   if (!SCALES.includes(input.scaleMax)) return fail("Choose a rating scale of 3, 4, 5 or 10.");
   const criteria = (input.criteria ?? []).map((c) => ({ section: c.section?.trim() ?? "", name: c.name?.trim() ?? "", description: c.description?.trim() ?? "", weight: Number(c.weight) }));
   if (criteria.length === 0) return fail("Add at least one criterion.");
@@ -114,6 +126,18 @@ export async function saveTemplate(ctx: Ctx, input: TemplateInput): Promise<Resu
 export async function setTemplateActive(ctx: Ctx, id: string, isActive: boolean): Promise<Result> {
   if (!can(ctx, "review:manage")) return NO_ACCESS;
   await db.update(reviewTemplate).set({ isActive }).where(and(eq(reviewTemplate.id, id), eq(reviewTemplate.organizationId, ctx.orgId)));
+  return ok(undefined);
+}
+
+// Only a template no review period has used can be deleted (its criteria go with it). One that a period uses, in this
+// company or another of the owner's, is kept so the period can still add employees: deactivate it instead.
+export async function deleteTemplate(ctx: Ctx, id: string): Promise<Result> {
+  if (!can(ctx, "review:template:delete")) return NO_ACCESS;
+  const [t] = await db.select({ id: reviewTemplate.id }).from(reviewTemplate).where(and(eq(reviewTemplate.id, id), eq(reviewTemplate.organizationId, ctx.orgId)));
+  if (!t) return fail("Template not found.");
+  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(reviewPeriod).where(eq(reviewPeriod.templateId, id));
+  if (n > 0) return fail(`This template is used by ${n} review ${n === 1 ? "period" : "periods"}, so it can't be deleted. Deactivate it instead.`);
+  await db.delete(reviewTemplate).where(eq(reviewTemplate.id, id));
   return ok(undefined);
 }
 
@@ -165,14 +189,36 @@ export type PeriodInput = {
   employees: { userId: string; reviewerUserId?: string | null; purpose?: ReviewPurpose | null }[];
 };
 
-async function openReviews(ctx: Ctx, periodId: string, periodName: string, templateId: string, employees: PeriodInput["employees"]): Promise<Result<number>> {
-  const orgs = await ownerOrgsOf(ctx.orgId);
-  const orgIds = orgs.map((o) => o.id);
+// The form every review of a period is filled in on: the template's name, scale, criteria and questions, copied into
+// each review so that later edits to the template change nothing already opened.
+type ReviewForm = { templateName: string; scaleMax: number; criteria: Criterion[]; questions: ReviewQuestionSnapshot[] };
+
+// the form as the template is today; a new period may only be opened with an active template
+async function formFromTemplate(orgIds: string[], templateId: string, opts: { requireActive: boolean }): Promise<Result<ReviewForm>> {
   const [tpl] = await db.select().from(reviewTemplate).where(and(eq(reviewTemplate.id, templateId), inArray(reviewTemplate.organizationId, orgIds)));
   if (!tpl) return fail("Choose a template.");
+  if (opts.requireActive && !tpl.isActive) return fail(`The template "${tpl.name}" is inactive. Activate it or choose another one.`);
   const criteria = await db.select().from(reviewCriterion).where(eq(reviewCriterion.templateId, templateId)).orderBy(asc(reviewCriterion.sortOrder));
   if (criteria.length === 0) return fail("That template has no criteria.");
-  const snapshot = criteria.map((c) => ({ id: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: Number(c.weight) }));
+  return ok({
+    templateName: tpl.name, scaleMax: tpl.scaleMax,
+    criteria: criteria.map((c) => ({ id: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: Number(c.weight) })),
+    questions: (tpl.questions ?? []) as ReviewQuestionSnapshot[],
+  });
+}
+
+// the form the period was opened with, taken from its first review (reviews are never deleted, only cancelled), so a
+// late joiner is rated on the same criteria as everyone else even if the template was edited, deactivated or deleted since
+async function formOfPeriod(periodId: string): Promise<ReviewForm | null> {
+  const [first] = await db.select({ templateName: review.templateName, scaleMax: review.scaleMax, criteria: review.criteria, questions: review.questions })
+    .from(review).where(eq(review.periodId, periodId)).orderBy(asc(review.createdAt)).limit(1);
+  if (!first) return null;
+  return { templateName: first.templateName, scaleMax: first.scaleMax, criteria: first.criteria as Criterion[], questions: (first.questions ?? []) as ReviewQuestionSnapshot[] };
+}
+
+async function openReviews(ctx: Ctx, periodId: string, periodName: string, form: ReviewForm, employees: PeriodInput["employees"]): Promise<Result<number>> {
+  const orgs = await ownerOrgsOf(ctx.orgId);
+  const orgIds = orgs.map((o) => o.id);
 
   const ids = [...new Set([...employees.map((e) => e.userId), ...employees.map((e) => e.reviewerUserId).filter((v): v is string => !!v)])];
   const members = await db.select({ userId: member.userId, organizationId: member.organizationId }).from(member).where(and(inArray(member.organizationId, orgIds), isNull(member.deletedAt), inArray(member.userId, ids)));
@@ -200,8 +246,8 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, templ
   };
   const rows = employees.map((e) => ({
     id: nanoid(), organizationId: orgOfEmployee(e.userId), periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null,
-    status: "self" as const, templateName: tpl.name, scaleMax: tpl.scaleMax, criteria: snapshot,
-    questions: (tpl.questions ?? []) as ReviewQuestionSnapshot[],
+    status: "self" as const, templateName: form.templateName, scaleMax: form.scaleMax, criteria: form.criteria,
+    questions: form.questions,
     purpose: e.purpose ?? null,
     employeeDesignation: profileOf(e.userId)?.jobTitle ?? null, employeeDepartment: profileOf(e.userId)?.department ?? null,
     reviewerDesignation: profileOf(e.reviewerUserId)?.jobTitle ?? null,
@@ -224,10 +270,12 @@ export async function createPeriod(ctx: Ctx, input: PeriodInput): Promise<Result
   if (!input.employees?.length) return fail("Select at least one employee.");
   const dup = input.employees.map((e) => e.userId).find((u, i, a) => a.indexOf(u) !== i);
   if (dup) return fail("An employee is selected twice.");
+  const form = await formFromTemplate((await ownerOrgsOf(ctx.orgId)).map((o) => o.id), input.templateId, { requireActive: true });
+  if (!form.ok) return form;
 
   const id = nanoid();
   await db.insert(reviewPeriod).values({ id, organizationId: ctx.orgId, name, startDate: input.startDate, endDate: input.endDate, templateId: input.templateId, createdBy: ctx.userId });
-  const r = await openReviews(ctx, id, name, input.templateId, input.employees);
+  const r = await openReviews(ctx, id, name, form.value, input.employees);
   if (!r.ok) { await db.delete(reviewPeriod).where(eq(reviewPeriod.id, id)); return r; } // nothing is left half-made
   return ok(id);
 }
@@ -238,12 +286,19 @@ export async function addReviews(ctx: Ctx, periodId: string, employees: PeriodIn
   const [p] = await db.select().from(reviewPeriod).where(and(eq(reviewPeriod.id, periodId), eq(reviewPeriod.organizationId, ctx.orgId)));
   if (!p) return fail("Review period not found.");
   if (p.status !== "open") return fail("This period is closed. Reopen it to add people.");
-  if (!p.templateId) return fail("This period has no template any more.");
   const have = await db.select({ u: review.employeeUserId }).from(review).where(eq(review.periodId, periodId));
   const already = new Set(have.map((h) => h.u));
   const fresh = employees.filter((e) => !already.has(e.userId));
   if (fresh.length === 0) return fail("Those employees already have a review in this period.");
-  return openReviews(ctx, periodId, p.name, p.templateId, fresh);
+  // the same form as the people already in the period; only a period with no review at all falls back to its template
+  let form = await formOfPeriod(periodId);
+  if (!form) {
+    if (!p.templateId) return fail("This period has no template any more.");
+    const t = await formFromTemplate((await ownerOrgsOf(ctx.orgId)).map((o) => o.id), p.templateId, { requireActive: false });
+    if (!t.ok) return t;
+    form = t.value;
+  }
+  return openReviews(ctx, periodId, p.name, form, fresh);
 }
 
 export async function listPeriods(ctx: Ctx) {

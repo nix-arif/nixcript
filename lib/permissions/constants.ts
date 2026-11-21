@@ -184,6 +184,7 @@ export const ALL_PERMISSIONS = [
   { key: "review:read:own", label: "View & Complete Own Performance Reviews (self-assessment)" },
   { key: "review:conduct",  label: "Review Team Members (manager review of assigned employees)" },
   { key: "review:manage",   label: "Manage Performance Reviews (templates, review periods, assign reviewers, sign-off, view all)" },
+  { key: "review:template:delete", label: "Delete Performance Review Templates (only ones no review period uses)" },
 
   // Problems found after delivery to the customer, and the claims raised against suppliers because of them
   { key: "customer-issue:read",   label: "View Customer Issues (problems reported after delivery)" },
@@ -653,8 +654,8 @@ export const PERMISSION_BUNDLES: PermissionBundle[] = [
   {
     id: "performance-review-hr",
     label: "Performance Review: HR",
-    description: "Set up templates, open review periods, assign reviewers, sign off and see every review.",
-    permissions: ["review:read:own", "review:conduct", "review:manage"],
+    description: "Set up and delete templates, open review periods, assign reviewers, sign off and see every review.",
+    permissions: ["review:read:own", "review:conduct", "review:manage", "review:template:delete"],
   },
   {
     id: "intercompany-viewer",

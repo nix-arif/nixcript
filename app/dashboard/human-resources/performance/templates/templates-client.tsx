@@ -1,16 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { getReviewTemplates, saveReviewTemplate, setReviewTemplateActive, type TemplateWithCriteria } from "@/server/performance";
-import { RATING_WORDS } from "@/lib/performance/core";
+import { deleteReviewTemplate, getReviewTemplates, saveReviewTemplate, setReviewTemplateActive, type TemplateWithCriteria } from "@/server/performance";
+import { RATING_WORDS, freeTemplateName, templateNameKey } from "@/lib/performance/core";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { ArrowDownIcon, ArrowUpIcon, ClipboardListIcon, CopyIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, Building2Icon, ClipboardListIcon, CopyIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
 
 type Row = { key: string; section: string; name: string; description: string; weight: string };
 type QRow = { key: string; id?: string; label: string; help: string };
@@ -44,7 +44,36 @@ const FORM_NAME = "Employee Performance Review (F-HR05)";
 const formRows = (): Row[] => FORM_COMPETENCIES.map(([name, lines]) => ({ ...newRow("Core competencies"), name, description: lines.join("\n") }));
 const formQuestions = (): QRow[] => FORM_QUESTIONS.map(([label, help]) => newQRow(label, help));
 
-export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }) {
+function SectionHeading({ icon, title, count, hint }: { icon: ReactNode; title: string; count: number; hint: string }) {
+  return (
+    <div className="mb-3">
+      <h2 className="flex items-center gap-2 text-sm font-semibold">
+        <span className="text-muted-foreground">{icon}</span>{title}
+        <span className="rounded-full border border-border px-1.5 text-[10px] font-normal text-muted-foreground">{count}</span>
+      </h2>
+      <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>
+    </div>
+  );
+}
+
+function TemplateRow({ t, actions }: { t: TemplateWithCriteria; actions: ReactNode }) {
+  const sections = [...new Set(t.criteria.map((c) => c.section || "General"))];
+  const questions = (t.questions ?? []).length;
+  return (
+    <li className={`rounded-xl border border-border bg-background px-4 py-3 ${t.isActive ? "" : "opacity-60"}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold">{t.name}</span>
+        <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">{t.criteria.length} criteria{questions ? ` · ${questions} questions` : ""} · scale 1 to {t.scaleMax}</span>
+        {!t.isActive && <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">Inactive</span>}
+        <div className="ml-auto flex gap-1.5">{actions}</div>
+      </div>
+      {t.description && <p className="mt-1 text-xs text-muted-foreground">{t.description}</p>}
+      <p className="mt-1.5 text-[11px] text-muted-foreground">{sections.join(" · ")}</p>
+    </li>
+  );
+}
+
+export function TemplatesClient({ initial, canDelete, orgName }: { initial: TemplateWithCriteria[]; canDelete: boolean; orgName: string }) {
   const [templates, setTemplates] = useState(initial);
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | undefined>();
@@ -54,21 +83,25 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
   const [rows, setRows] = useState<Row[]>([]);
   const [qrows, setQRows] = useState<QRow[]>([]);
   const [saving, setSaving] = useState(false);
+  const [copyFrom, setCopyFrom] = useState<{ name: string; org: string } | null>(null);
+  // names are unique within this company (checked again on the server when saving)
+  const ownNames = templates.filter((t) => t.own).map((t) => t.name);
+  const nameTaken = !!name.trim() && templates.some((t) => t.own && t.id !== editingId && templateNameKey(t.name) === templateNameKey(name));
   const reload = async () => setTemplates(await getReviewTemplates());
 
   function openNew() {
-    setEditingId(undefined); setName(FORM_NAME); setDescription("The company's Employee Performance Review Form (F-HR05)"); setScaleMax(4); setRows(formRows()); setQRows(formQuestions());
+    setCopyFrom(null); setEditingId(undefined); setName(freeTemplateName(FORM_NAME, ownNames)); setDescription("The company's Employee Performance Review Form (F-HR05)"); setScaleMax(4); setRows(formRows()); setQRows(formQuestions());
     setOpen(true);
   }
   // a template of another company of the owner can be used as it is; to change it, copy it into this company first
   function openCopy(t: TemplateWithCriteria) {
-    setEditingId(undefined); setName(`${t.name} (copy)`); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
+    setCopyFrom({ name: t.name, org: t.organizationName }); setEditingId(undefined); setName(freeTemplateName(t.name, ownNames)); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
     setRows(t.criteria.map((c) => ({ key: Math.random().toString(36).slice(2), section: c.section, name: c.name, description: c.description ?? "", weight: c.weight })));
     setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help)));
     setOpen(true);
   }
   function openEdit(t: TemplateWithCriteria) {
-    setEditingId(t.id); setName(t.name); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
+    setCopyFrom(null); setEditingId(t.id); setName(t.name); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
     setRows(t.criteria.map((c) => ({ key: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: c.weight })));
     setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help, q.id)));
     setOpen(true);
@@ -88,6 +121,16 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
     const r = await setReviewTemplateActive(t.id, !t.isActive);
     if (!r.ok) toast.error(r.error); else await reload();
   }
+  const ownTemplates = templates.filter((t) => t.own);
+  const otherGroups = [...new Set(templates.filter((t) => !t.own).map((t) => t.organizationName))]
+    .map((name) => ({ name, templates: templates.filter((t) => !t.own && t.organizationName === name) }));
+
+  async function remove(t: TemplateWithCriteria) {
+    if (!confirm(`Delete the template "${t.name}"? This cannot be undone.`)) return;
+    const r = await deleteReviewTemplate(t.id);
+    if (!r.ok) { toast.error(r.error); await reload(); return; }
+    await reload(); toast.success("Template deleted");
+  }
 
   return (
     <div className="p-4 sm:p-6 max-w-4xl">
@@ -105,43 +148,79 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
           <Button variant="outline" size="sm" className="gap-2" onClick={openNew}><PlusIcon className="h-3.5 w-3.5" />Create the first template</Button>
         </div>
       ) : (
-        <ul className="space-y-2">
-          {templates.map((t) => {
-            const sections = [...new Set(t.criteria.map((c) => c.section || "General"))];
-            return (
-              <li key={t.id} className={`rounded-xl border border-border bg-background px-4 py-3 ${t.isActive ? "" : "opacity-60"}`}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold">{t.name}</span>
-                  <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">{t.criteria.length} criteria{(t.questions ?? []).length ? ` · ${(t.questions ?? []).length} questions` : ""} · scale 1 to {t.scaleMax}</span>
-                  {!t.isActive && <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">Inactive</span>}
-                  {!t.own && <span className="rounded-md border border-sky-200 bg-sky-50 px-1.5 py-px text-[10px] font-medium text-sky-800 dark:border-sky-700 dark:bg-sky-900/20 dark:text-sky-300">From {t.organizationName}</span>}
-                  <div className="ml-auto flex gap-1.5">
-                    {t.own ? (
-                      <>
-                        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => openEdit(t)}><PencilIcon className="h-3 w-3" />Edit</Button>
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => toggle(t)}>{t.isActive ? "Deactivate" : "Activate"}</Button>
-                      </>
-                    ) : (
-                      <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => openCopy(t)}><CopyIcon className="h-3 w-3" />Copy to my company</Button>
-                    )}
+        <div className="space-y-8">
+          {/* this company's own templates: the only ones that can be edited, deactivated or deleted here */}
+          <section>
+            <SectionHeading
+              icon={<Building2Icon className="h-4 w-4" />}
+              title={`${orgName || "This company"}'s templates`}
+              count={ownTemplates.length}
+              hint="Your company's own templates. You can edit, deactivate and delete these."
+            />
+            {ownTemplates.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-muted-foreground">
+                <p className="mb-3 text-xs">
+                  {orgName || "This company"} has no templates of its own yet.
+                  {otherGroups.length > 0 && " Create one, or copy one from your other companies below."}
+                </p>
+                <Button variant="outline" size="sm" className="gap-2" onClick={openNew}><PlusIcon className="h-3.5 w-3.5" />New template</Button>
+              </div>
+            ) : (
+              <ul className="space-y-2">{ownTemplates.map((t) => <TemplateRow key={t.id} t={t} actions={
+                <>
+                  <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => openEdit(t)}><PencilIcon className="h-3 w-3" />Edit</Button>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => toggle(t)}>{t.isActive ? "Deactivate" : "Activate"}</Button>
+                  {!canDelete ? null : t.periodCount === 0 ? (
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => remove(t)} aria-label="Delete template" title="Delete template"><TrashIcon className="h-3.5 w-3.5" /></Button>
+                  ) : (
+                    <span className="self-center text-[10px] text-muted-foreground" title="A template used by a review period can't be deleted. Deactivate it instead.">Used by {t.periodCount} {t.periodCount === 1 ? "period" : "periods"}</span>
+                  )}
+                </>
+              } />)}</ul>
+            )}
+          </section>
+
+          {/* templates of the owner's other companies: usable for a period as they are, read-only here */}
+          {otherGroups.length > 0 && (
+            <section>
+              <SectionHeading
+                icon={<Building2Icon className="h-4 w-4" />}
+                title="From your other companies"
+                count={otherGroups.reduce((n, g) => n + g.templates.length, 0)}
+                hint={`You can use these for a review period as they are, but you can only change them in their own company. To change one here, copy it into ${orgName || "this company"} first.`}
+              />
+              <div className="space-y-4">
+                {otherGroups.map((g) => (
+                  <div key={g.name} className="rounded-xl border border-border bg-muted/30 p-3">
+                    <div className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold text-muted-foreground">
+                      {g.name}
+                      <span className="rounded-full border border-border bg-background px-1.5 text-[10px] font-normal">{g.templates.length}</span>
+                    </div>
+                    <ul className="space-y-2">{g.templates.map((t) => <TemplateRow key={t.id} t={t} actions={
+                      <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => openCopy(t)}><CopyIcon className="h-3 w-3" />Copy to {orgName || "my company"}</Button>
+                    } />)}</ul>
                   </div>
-                </div>
-                {t.description && <p className="mt-1 text-xs text-muted-foreground">{t.description}</p>}
-                <p className="mt-1.5 text-[11px] text-muted-foreground">{sections.join(" · ")}</p>
-              </li>
-            );
-          })}
-        </ul>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
       )}
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent className="w-full max-w-2xl! overflow-y-auto px-6 sm:px-8">
           <SheetHeader className="mb-4">
-            <SheetTitle>{editingId ? "Edit template" : "New template"}</SheetTitle>
-            <SheetDescription>Changing a template does not change reviews that were already opened with it.</SheetDescription>
+            <SheetTitle>{editingId ? "Edit template" : copyFrom ? `Copy to ${orgName || "my company"}` : "New template"}</SheetTitle>
+            <SheetDescription>
+              {copyFrom
+                ? `Saving creates a separate template in ${orgName || "this company"}, copied from "${copyFrom.name}" of ${copyFrom.org}. The original in ${copyFrom.org} stays as it is.`
+                : "Changes apply to review periods opened from now on. Periods already open keep the form they started with, including for people added to them later."}
+            </SheetDescription>
           </SheetHeader>
           <div className="space-y-4">
-            <div className="space-y-1.5"><Label>Name <span className="text-destructive">*</span></Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Staff annual review" autoFocus={!editingId} /></div>
+            <div className="space-y-1.5"><Label>Name <span className="text-destructive">*</span></Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Staff annual review" autoFocus={!editingId} aria-invalid={nameTaken} className={nameTaken ? "border-destructive focus-visible:ring-destructive/30" : undefined} />
+              {nameTaken && <p className="text-xs text-destructive">{orgName || "This company"} already has a template with this name. Give it a different name.</p>}
+            </div>
             <div className="space-y-1.5"><Label>Description</Label><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Who this template is for (optional)" /></div>
             <div className="space-y-1.5">
               <Label>Rating scale</Label>
@@ -197,7 +276,7 @@ export function TemplatesClient({ initial }: { initial: TemplateWithCriteria[] }
             </div>
 
             <div className="flex gap-2 pt-2">
-              <Button className="flex-1" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save template"}</Button>
+              <Button className="flex-1" onClick={save} disabled={saving || nameTaken}>{saving ? "Saving…" : "Save template"}</Button>
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             </div>
           </div>

@@ -29,6 +29,7 @@ export async function cancelReview(id: string) { return S.cancelReview(await ctx
 export async function getReviewTemplates() { return S.listTemplates(await ctx()); }
 export async function saveReviewTemplate(input: S.TemplateInput) { return S.saveTemplate(await ctx(), input); }
 export async function setReviewTemplateActive(id: string, isActive: boolean) { return S.setTemplateActive(await ctx(), id, isActive); }
+export async function deleteReviewTemplate(id: string) { return S.deleteTemplate(await ctx(), id); }
 
 export async function getEligibleEmployees() { return S.listEligibleEmployees(await ctx()); }
 export async function createReviewPeriod(input: S.PeriodInput) { return S.createPeriod(await ctx(), input); }

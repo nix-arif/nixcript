@@ -171,7 +171,7 @@ export function PeriodDetailClient({ period, employees }: { period: PeriodDetail
 
       <Sheet open={addOpen} onOpenChange={setAddOpen}>
         <SheetContent className="w-full max-w-xl! overflow-y-auto px-6 sm:px-8">
-          <SheetHeader className="mb-4"><SheetTitle>Add people to {period.name}</SheetTitle><SheetDescription>They get a review with this period&apos;s template, in any of your companies.</SheetDescription></SheetHeader>
+          <SheetHeader className="mb-4"><SheetTitle>Add people to {period.name}</SheetTitle><SheetDescription>They get the same review form as everyone already in this period, even if its template has been changed since. They can be in any of your companies.</SheetDescription></SheetHeader>
           <EmployeePicker employees={employees} value={picked} onChange={setPicked} excludeIds={haveIds} />
           <div className="mt-4 flex gap-2">
             <Button className="flex-1" disabled={busy || Object.keys(picked).length === 0}

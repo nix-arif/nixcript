@@ -51,7 +51,7 @@ export const KEY_GROUP: Record<string, string> = {
   "customer-issue:read": "sales", "customer-issue:create": "sales", "customer-issue:update": "sales",
   "supplier-claim:read": "procurement", "supplier-claim:manage": "procurement", "supplier-claim:terms": "procurement",
   "sponsorship:read:own": "sales", "sponsorship:check": "sales", "sponsorship:approve": "sales", "sponsorship:manage": "sales",
-  "review:read:own": "hr", "review:conduct": "hr", "review:manage": "hr",
+  "review:read:own": "hr", "review:conduct": "hr", "review:manage": "hr", "review:template:delete": "hr",
 
   "member:read": "org", "member:invite": "org", "member:remove": "org",
   "department:read": "org", "department:create": "org", "department:delete": "org",
