@@ -1902,7 +1902,11 @@ export const reviewTemplate = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },
-  (t) => [index("review_template_org_idx").on(t.organizationId)],
+  (t) => [
+    index("review_template_org_idx").on(t.organizationId),
+    // the name is unique inside the company, ignoring capitals and extra spaces (templateNameKey in lib/performance/core.ts)
+    uniqueIndex("review_template_org_name_uidx").on(t.organizationId, sql`lower(btrim(regexp_replace(${t.name}, '\\s+', ' ', 'g')))`),
+  ],
 );
 
 export const reviewCriterion = pgTable(

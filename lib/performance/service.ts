@@ -20,6 +20,14 @@ const ok = <T>(value: T): Result<T> => ({ ok: true, value });
 const fail = (error: string): Result<never> => ({ ok: false, error });
 
 const can = (ctx: Ctx, key: string) => hasAccess(ctx.perms, key);
+
+// a Postgres unique violation (23505) of the given index; drizzle wraps the driver's error in `cause`
+function isUniqueViolation(e: unknown, index: string): boolean {
+  for (let err: any = e; err; err = err.cause) {
+    if (err.code === "23505") return err.constraint === index || String(err.message ?? "").includes(index);
+  }
+  return false;
+}
 const NO_ACCESS = fail("You don't have permission to do this.");
 const SCALES = [3, 4, 5, 10];
 const LINK = "/dashboard/human-resources/performance";
@@ -110,14 +118,20 @@ export async function saveTemplate(ctx: Ctx, input: TemplateInput): Promise<Resu
   }
 
   let id = input.id;
-  if (id) {
-    const [t] = await db.select({ id: reviewTemplate.id }).from(reviewTemplate).where(and(eq(reviewTemplate.id, id), eq(reviewTemplate.organizationId, ctx.orgId)));
-    if (!t) return fail("Template not found.");
-    await db.update(reviewTemplate).set({ name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, isActive: input.isActive ?? true }).where(eq(reviewTemplate.id, id));
-    await db.delete(reviewCriterion).where(eq(reviewCriterion.templateId, id)); // reviews keep their own copy, so this changes nothing already opened
-  } else {
-    id = nanoid();
-    await db.insert(reviewTemplate).values({ id, organizationId: ctx.orgId, name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, isActive: input.isActive ?? true, createdBy: ctx.userId });
+  try {
+    if (id) {
+      const [t] = await db.select({ id: reviewTemplate.id }).from(reviewTemplate).where(and(eq(reviewTemplate.id, id), eq(reviewTemplate.organizationId, ctx.orgId)));
+      if (!t) return fail("Template not found.");
+      await db.update(reviewTemplate).set({ name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, isActive: input.isActive ?? true }).where(eq(reviewTemplate.id, id));
+      await db.delete(reviewCriterion).where(eq(reviewCriterion.templateId, id)); // reviews keep their own copy, so this changes nothing already opened
+    } else {
+      id = nanoid();
+      await db.insert(reviewTemplate).values({ id, organizationId: ctx.orgId, name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, isActive: input.isActive ?? true, createdBy: ctx.userId });
+    }
+  } catch (e) {
+    // someone saved a template with the same name at the same moment: the unique index (0091) stops the second one
+    if (isUniqueViolation(e, "review_template_org_name_uidx")) return fail(`This company already has a template called "${name}". Give it a different name.`);
+    throw e;
   }
   await db.insert(reviewCriterion).values(criteria.map((c, i) => ({ id: nanoid(), templateId: id!, section: c.section, name: c.name, description: c.description || null, weight: String(c.weight), sortOrder: i })));
   return ok(id);
@@ -410,6 +424,7 @@ export async function listTeamReviews(ctx: Ctx): Promise<ReviewListRow[]> {
 // ── one review ──────────────────────────────────────────────────────────────
 export type ReviewView = {
   id: string;
+  organizationId: string; // the company the review is kept under (the employee's own): its letterhead goes on the PDF
   role: ReviewRole;
   status: ReviewStatus;
   periodName: string;
@@ -498,7 +513,7 @@ export async function getReview(ctx: Ctx, id: string): Promise<ReviewView | null
     };
   }
   return {
-    id: r.id, role, status: r.status as ReviewStatus, periodName: period?.name ?? "", periodOpen, templateName: r.templateName, scaleMax: r.scaleMax,
+    id: r.id, organizationId: r.organizationId, role, status: r.status as ReviewStatus, periodName: period?.name ?? "", periodOpen, templateName: r.templateName, scaleMax: r.scaleMax,
     criteria: r.criteria, employeeName: nameOf(r.employeeUserId) ?? "—", reviewerName: nameOf(r.reviewerUserId),
     periodStart: period?.startDate ?? "", periodEnd: period?.endDate ?? "",
     purpose: isPurpose(r.purpose) ? r.purpose : null,

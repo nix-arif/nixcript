@@ -17,7 +17,7 @@ export default async function InvoicePage({
   const status = sp.status ?? "";
 
   const [result, pendingDos, permissions, categories] = await Promise.all([
-    getInvoices({ page, search: search || undefined, status: status || undefined }),
+    getInvoices({ page, search: search || undefined, status: status || undefined, dateFrom: sp.from, dateTo: sp.to }),
     getPendingDosForInvoice().catch(() => []),
     getUserPermissions(session.user.id, session.session.activeOrganizationId!),
     getDocumentCategories().catch(() => []),
@@ -30,6 +30,8 @@ export default async function InvoicePage({
       page={result.page}
       pageSize={result.pageSize}
       overallStats={result.stats}
+      statsScope={result.statsScope}
+      range={result.range}
       initialSearch={search}
       initialStatus={status}
       pendingDos={pendingDos}

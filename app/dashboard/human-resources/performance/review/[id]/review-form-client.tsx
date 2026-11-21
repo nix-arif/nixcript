@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ArrowLeftIcon, CheckIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, DownloadIcon, Loader2Icon, PlusIcon, TrashIcon } from "lucide-react";
 import { ReviewStatusBadge } from "../../status-badge";
 
 const fmtDate = (d: Date | string | null) => (d ? new Date(d).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" }) : "");
@@ -105,6 +105,7 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
   const [signComment, setSignComment] = useState("");
   const [backOpen, setBackOpen] = useState(false);
   const [backNote, setBackNote] = useState("");
+  const [downloading, setDownloading] = useState(false);
 
   const liveScore = useMemo(() => weightedScore(view.criteria, ratings), [view.criteria, ratings]);
   const sections = useMemo(() => {
@@ -194,6 +195,30 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
+  // the PDF is made from the saved review, so unsaved changes are saved first (as a draft: nothing is submitted)
+  async function downloadPdf() {
+    setDownloading(true);
+    try {
+      if (dirty) {
+        const sent = snapshot;
+        const r = await callSave(false);
+        if (!r.ok) throw new Error(`Your changes could not be saved, so the PDF was not made: ${r.error}`);
+        setSavedSnapshot(sent); setSavedAt(new Date());
+      }
+      const res = await fetch(`/api/performance/review/${view.id}/pdf`);
+      if (!res.ok) throw new Error((await res.text().catch(() => "")).trim() || `The PDF could not be downloaded (HTTP ${res.status}).`);
+      const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? "Performance-Review.pdf";
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "The PDF could not be downloaded.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   const showSelf = view.criteria.some((c) => view.answers[c.id].selfRating != null || view.answers[c.id].selfNa) || view.selfSummary != null || view.previousGoals.length > 0 || Object.values(view.questionAnswers).some(Boolean);
   const showManager = view.status === "completed" || (view.role !== "employee" && (view.criteria.some((c) => view.answers[c.id].managerRating != null || view.answers[c.id].managerNa) || view.managerSummary != null || view.outcome != null));
   const showB = side === "manager" || showManager; // Section B of the form
@@ -208,7 +233,15 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
       <PageHeader
         title={view.role === "employee" ? "My performance review" : `Review of ${view.employeeName}`}
         description={`${view.periodName} · ${view.templateName}`}
-        action={<Button asChild variant="outline" size="sm" className="gap-1.5"><Link href={view.role === "hr" ? "/dashboard/human-resources/performance/periods" : view.role === "reviewer" ? "/dashboard/human-resources/performance/team" : "/dashboard/human-resources/performance"}><ArrowLeftIcon className="h-3.5 w-3.5" />Back</Link></Button>}
+        action={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5" disabled={downloading} onClick={downloadPdf}
+              title={dirty ? "Saves your changes as a draft, then downloads the PDF" : "Download this review as a PDF on the company letterhead"}>
+              {downloading ? <Loader2Icon className="h-3.5 w-3.5 animate-spin" /> : <DownloadIcon className="h-3.5 w-3.5" />}PDF
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-1.5"><Link href={view.role === "hr" ? "/dashboard/human-resources/performance/periods" : view.role === "reviewer" ? "/dashboard/human-resources/performance/team" : "/dashboard/human-resources/performance"}><ArrowLeftIcon className="h-3.5 w-3.5" />Back</Link></Button>
+          </div>
+        }
       />
 
       <div className="rounded-xl border border-border bg-background p-4 space-y-3">

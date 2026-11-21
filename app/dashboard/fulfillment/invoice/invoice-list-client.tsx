@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { toast } from "sonner";
 import { deleteInvoice, type InvoiceListRow, type InvoiceStatsRow } from "@/server/invoice";
@@ -28,7 +28,9 @@ import {
   UserIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CalendarIcon,
 } from "lucide-react";
+import { describeRange, hasRange, matchPreset, parseDay, presetRange, PRESETS, type DayRange, type PresetKey } from "@/lib/invoice/date-filter";
 import type { PendingDoForInvoiceRow } from "@/server/delivery-order";
 import { cn } from "@/lib/utils";
 
@@ -181,6 +183,8 @@ interface Props {
   page: number;
   pageSize: number;
   overallStats: InvoiceStatsRow | null;
+  statsScope: "all" | "range";
+  range: DayRange;
   initialSearch: string;
   initialStatus: string;
   pendingDos: PendingDoForInvoiceRow[];
@@ -195,6 +199,8 @@ export function InvoiceListClient({
   page,
   pageSize,
   overallStats,
+  statsScope,
+  range,
   initialSearch,
   initialStatus,
   pendingDos,
@@ -209,6 +215,8 @@ export function InvoiceListClient({
 
   const [searchInput, setSearchInput]   = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState(initialStatus);
+  const [dateFrom, setDateFrom]         = useState(range.from ?? "");
+  const [dateTo, setDateTo]             = useState(range.to ?? "");
   const [sortKey, setSortKey]           = useState<SortKey>("invoiceNo");
   const [sortDir, setSortDir]           = useState<"asc" | "desc">("desc");
   const [deleting, setDeleting]         = useState<string | null>(null);
@@ -221,6 +229,14 @@ export function InvoiceListClient({
   // Sync local state when server props change (org switch, back/forward)
   useEffect(() => { setSearchInput(initialSearch); }, [initialSearch]);
   useEffect(() => { setStatusFilter(initialStatus); }, [initialStatus]);
+  // the inputs follow the range as the server applied it (back/forward, a reversed range comes back swapped, a bad
+  // date dropped). Adjusted while rendering, as React recommends, rather than in an effect.
+  const rangeKey = `${range.from ?? ""}|${range.to ?? ""}`;
+  const [shownRangeKey, setShownRangeKey] = useState(rangeKey);
+  if (shownRangeKey !== rangeKey) {
+    setShownRangeKey(rangeKey);
+    setDateFrom(range.from ?? ""); setDateTo(range.to ?? "");
+  }
 
   // ── URL navigation ────────────────────────────────────────────────────
 
@@ -248,6 +264,28 @@ export function InvoiceListClient({
     setStatusFilter(v);
     pushParams({ status: v, page: "" });
   };
+
+  // Date range → URL. Typed dates wait a moment (typing a year goes 0002, 0020, 0202, 2026 ...); presets go at once.
+  const lastRange = useRef(`${range.from ?? ""}|${range.to ?? ""}`); // what the URL has, or was last sent
+  useEffect(() => { lastRange.current = `${range.from ?? ""}|${range.to ?? ""}`; }, [range.from, range.to]);
+  const applyRange = useCallback((from: string, to: string) => {
+    const f = parseDay(from) ?? "", t = parseDay(to) ?? "";
+    if (`${f}|${t}` === lastRange.current) return; // nothing new (also stops a preset being sent twice)
+    lastRange.current = `${f}|${t}`;
+    pushParams({ from: f, to: t, page: "" });
+  }, [pushParams]);
+  useEffect(() => {
+    const t = setTimeout(() => applyRange(dateFrom, dateTo), 500);
+    return () => clearTimeout(t);
+  }, [dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handlePreset = (key: PresetKey) => {
+    const r = presetRange(key);
+    setDateFrom(r.from ?? ""); setDateTo(r.to ?? "");
+    applyRange(r.from ?? "", r.to ?? "");
+  };
+  const clearRange = () => { setDateFrom(""); setDateTo(""); applyRange("", ""); };
+  const activePreset = matchPreset(range);
+  const rangeLabel = describeRange(range);
 
   const handlePage = (p: number) => {
     pushParams({ page: p === 1 ? "" : String(p) });
@@ -329,7 +367,7 @@ export function InvoiceListClient({
   }
 
   const totalPages = Math.ceil(total / pageSize);
-  const isFiltered = !!searchInput || !!statusFilter;
+  const isFiltered = !!searchInput || !!statusFilter || hasRange(range);
 
   // ── Render ────────────────────────────────────────────────────────────
 
@@ -402,7 +440,16 @@ export function InvoiceListClient({
         </div>
       )}
 
-      {/* Stats strip (overall — from invoice_stats cache) */}
+      {/* Stats strip: all-time (invoice_stats cache), or the invoices dated in the chosen range */}
+      <div className="flex items-center gap-2 -mb-2 text-[11px] text-muted-foreground">
+        {statsScope === "range" ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 font-medium text-sky-800 dark:border-sky-800 dark:bg-sky-900/20 dark:text-sky-300">
+            <CalendarIcon className="w-3 h-3" />Figures for invoices dated {rangeLabel.replace(/^From /, "from ").replace(/^Up to /, "up to ")}
+          </span>
+        ) : (
+          <span>All-time figures</span>
+        )}
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <Stat
           label="Total invoices"
@@ -470,9 +517,55 @@ export function InvoiceListClient({
         </div>
       </div>
 
+      {/* Date range (invoice date, Malaysia time) */}
+      <div className="flex flex-wrap items-center gap-2 -mt-1">
+        <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <span className="text-xs text-muted-foreground">Invoice date</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="date"
+            aria-label="Invoice date from"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="h-8 rounded-md border border-border bg-background px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring tabular-nums"
+          />
+          <span className="text-xs text-muted-foreground">to</span>
+          <input
+            type="date"
+            aria-label="Invoice date to"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="h-8 rounded-md border border-border bg-background px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring tabular-nums"
+          />
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          {PRESETS.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => handlePreset(p.key)}
+              className={cn(
+                "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                activePreset === p.key
+                  ? "bg-foreground text-background border-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30",
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {(dateFrom || dateTo) && (
+          <button onClick={clearRange} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <XIcon className="w-3 h-3" /> Clear dates
+          </button>
+        )}
+      </div>
+
       {/* Count */}
       <div className="text-xs text-muted-foreground tabular-nums -mt-2">
-        {total} invoice{total !== 1 ? "s" : ""} total
+        {total} invoice{total !== 1 ? "s" : ""} {hasRange(range) ? `dated ${rangeLabel.replace(/^From /, "from ").replace(/^Up to /, "up to ")}` : "total"}
         {isFiltered && ` · ${sorted.length} on this page`}
         {totalPages > 1 && ` · page ${page} / ${totalPages}`}
       </div>
