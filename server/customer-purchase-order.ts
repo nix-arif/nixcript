@@ -198,6 +198,14 @@ export type CustomerPoListRow = CustomerPo & { isIntercompany: boolean };
 // searches, customer pages and summaries, and only its creator sees it in the lists.
 const visibleTo = (userId: string) => or(ne(customerPurchaseOrder.status, "draft"), eq(customerPurchaseOrder.createdBy, userId));
 
+// Lists of customer POs: newest first by the date they show, the date received (or, when that is empty, the day the
+// PO was recorded), as a Malaysian calendar day; the same day newest-recorded first. As compareCpoNewestFirst in
+// lib/customer-po/cpo-date.ts. (A function, not a constant: the column objects are built at import.)
+const cpoNewestFirst = () => [
+  desc(sql`((coalesce(${customerPurchaseOrder.receivedDate}, ${customerPurchaseOrder.createdAt}) AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kuala_Lumpur')::date`),
+  desc(customerPurchaseOrder.createdAt),
+];
+
 export async function getCustomerPos(): Promise<CustomerPoListRow[]> {
   const { orgId, userId } = await requireAccess("customer-po:read");
   const rows = await db
@@ -205,7 +213,7 @@ export async function getCustomerPos(): Promise<CustomerPoListRow[]> {
     .from(customerPurchaseOrder)
     .leftJoin(customer, eq(customer.id, customerPurchaseOrder.customerId))
     .where(and(eq(customerPurchaseOrder.organizationId, orgId), visibleTo(userId)))
-    .orderBy(desc(customerPurchaseOrder.createdAt));
+    .orderBy(...cpoNewestFirst());
   return rows.map(({ po, linkedOrganizationId }) => ({ ...po, isIntercompany: !!linkedOrganizationId }));
 }
 
@@ -248,7 +256,7 @@ export async function getCustomerPosCentralized(): Promise<CentralizedCustomerPo
     .innerJoin(organization, eq(organization.id, customerPurchaseOrder.organizationId))
     .leftJoin(customer, eq(customer.id, customerPurchaseOrder.customerId))
     .where(and(inArray(customerPurchaseOrder.organizationId, ownerOrgIds), visibleTo(userId)))
-    .orderBy(desc(customerPurchaseOrder.createdAt));
+    .orderBy(...cpoNewestFirst());
 
   return rows.map(({ po, organizationName, linkedOrganizationId }) => ({ ...po, organizationName, isIntercompany: !!linkedOrganizationId }));
 }
@@ -757,7 +765,7 @@ export async function getCustomerPoSummary(): Promise<CustomerPoSummaryRow[]> {
       .select()
       .from(customerPurchaseOrder)
       .where(and(eq(customerPurchaseOrder.organizationId, orgId), ne(customerPurchaseOrder.status, "draft")))
-      .orderBy(desc(customerPurchaseOrder.createdAt))
+      .orderBy(...cpoNewestFirst())
   ).filter((c) => !c.customerId || !intercompanyCustomerIds.has(c.customerId));
 
   if (cpos.length === 0) return [];

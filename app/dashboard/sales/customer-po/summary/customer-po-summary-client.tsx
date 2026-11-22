@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CustomerPoSummaryRow, PaymentStatus } from "@/server/customer-purchase-order";
+import { compareCpoNewestFirst } from "@/lib/customer-po/cpo-date";
 
 // ── Formatters ─────────────────────────────────────────────────────────────
 const fmtAmt = (v: number) =>
@@ -102,7 +103,8 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
     return [...filtered].sort((a, b) => {
       let cmp = 0;
       if (sortKey === "date") {
-        cmp = new Date(a.cpo.createdAt).getTime() - new Date(b.cpo.createdAt).getTime();
+        // the date shown in the column (received, or recorded), not when the record was made
+        cmp = -compareCpoNewestFirst(a.cpo, b.cpo);
       } else if (sortKey === "customer") {
         const sa = (a.cpo.customerSnapshot as any)?.name ?? "";
         const sb = (b.cpo.customerSnapshot as any)?.name ?? "";

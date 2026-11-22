@@ -706,10 +706,24 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     toast.success(`${byKey.size} PO line${byKey.size === 1 ? "" : "s"} applied to the items${res.notOnPo.length ? `, ${res.notOnPo.length} item${res.notOnPo.length === 1 ? "" : "s"} switched off` : ""}`);
   }
 
+  // Linking a suggestion is the same as typing its number. The suggestions are hidden while any quotation is linked
+  // (however it was linked), and come back if it is removed, so a wrong pick is easy to undo.
   async function linkSuggestion(sg: Suggestion) {
     await selectQuotation(sg.id, sg.quotationNo);
-    // keep what was read (the PO's lines are matched to the items now that there are items), drop the suggestions
-    setPoRead((p) => (p.status === "done" ? { ...p, suggestions: [], linked: true } : { status: "idle" }));
+  }
+
+  // None of the suggestions is right: take the user to the quotation search, ready to type
+  const qtSectionRef = useRef<HTMLDivElement>(null);
+  const qtSearchRef = useRef<HTMLInputElement>(null);
+  const [qtFlash, setQtFlash] = useState(false);
+  function goToQuotationSearch() {
+    if (!isFirstQuotation) setShowAddSearch(true);
+    requestAnimationFrame(() => {
+      qtSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      qtSearchRef.current?.focus({ preventScroll: true });
+      setQtFlash(true);
+      setTimeout(() => setQtFlash(false), 1600);
+    });
   }
 
   function handlePdfSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -918,6 +932,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           <PoMatchResults
             result={poRead}
             onLink={linkSuggestion}
+            onTypeNumber={goToQuotationSearch}
+            hasQuotation={linkedQuotations.length > 0}
             onUsePoNumber={(v) => { setCustomerPoNo(v); setNoTaken(null); }}
             onUseDate={setReceivedDate}
             currentPoNo={customerPoNo}
@@ -927,14 +943,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           {poRead.status === "done" && (
             <PoLinesReview
               lines={poRead.lines}
-              items={items.map((i) => ({ key: i._key, productCode: i.productCode || "", description: i.description || "", qty: i.qty, unitPrice: i.unitPrice, included: i.included, inSet: !!i.setGroupId, label: `${i.productCode || "—"} ${i.description || ""}`.trim() }))}
+              items={items.map((i) => ({ key: i._key, productCode: i.productCode || "", description: i.description || "", qty: i.qty, unitPrice: i.unitPrice, included: i.included, inSet: !!i.setGroupId, group: i._quotationNo || undefined, label: `${i.productCode || "—"} ${i.description || ""}`.trim() }))}
               onApply={applyPoLines}
             />
           )}
         </div>
 
         {/* ── 2. Quotations (required, multiple) ── */}
-        <div className="border border-border rounded-xl p-4">
+        <div ref={qtSectionRef} className={cn("border rounded-xl p-4 transition-shadow duration-500", qtFlash ? "border-primary ring-4 ring-primary/20" : "border-border")}>
           <h2 className="text-sm font-semibold mb-3">
             Our quotation(s) <span className="text-destructive">*</span>
           </h2>
@@ -999,6 +1015,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                 <div className="relative">
                 <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none z-10" />
                 <Input
+                  ref={qtSearchRef}
                   value={qtSearch}
                   onChange={(e) => handleQtSearch(e.target.value)}
                   onKeyDown={handleQtKeyDown}

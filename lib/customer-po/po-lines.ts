@@ -55,14 +55,39 @@ export function parseGovLines(cells: Cell[]): PoLine[] {
 }
 
 // ── match the lines to the items ────────────────────────────────────────────
-export type MatchItem = { key: string; productCode: string; description: string; qty: string; unitPrice: string; included: boolean; inSet: boolean };
-export type LineMatch = { line: PoLine; itemKey: string | null; priceDiff: { po: number; ours: number } | null; qtyDiff: { po: number; ours: number } | null };
+// group: which quotation the item came from (shown when picking an item by hand)
+export type MatchItem = { key: string; productCode: string; description: string; qty: string; unitPrice: string; included: boolean; inSet: boolean; group?: string };
+// how sure the automatic match is: "strong" when the wording and the price agree, "weak" when only part of it does
+export type MatchConfidence = "strong" | "weak";
+export type LineMatch = {
+  line: PoLine;
+  itemKey: string | null;
+  priceDiff: { po: number; ours: number } | null;
+  qtyDiff: { po: number; ours: number } | null;
+  confidence?: MatchConfidence | null; // of the automatic match (none for a match picked by hand)
+};
 export type PoLinesResult = { matches: LineMatch[]; notOnPo: string[] };
 
 const words = (s: string) => (s ?? "").toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length >= 3);
 
+// Where a PO line and one of our items disagree: the price and the quantity. Used for the automatic matches and for
+// the ones the user picks, so both are checked the same way.
+export function lineDiffs(line: PoLine, it: MatchItem | null | undefined): Pick<LineMatch, "priceDiff" | "qtyDiff"> {
+  if (!it) return { priceDiff: null, qtyDiff: null };
+  const price = parseFloat(it.unitPrice);
+  return {
+    priceDiff: line.unitPrice != null && Number.isFinite(price) && price > 0 && Math.abs(price - line.unitPrice) >= 0.005 ? { po: line.unitPrice, ours: price } : null,
+    qtyDiff: line.qty != null && Number(it.qty) !== line.qty ? { po: line.qty, ours: Number(it.qty) } : null,
+  };
+}
+
+// A score of 4 or more is a match. It is "strong" only when nearly all the words agree AND the price or the quantity
+// does too: a matching price alone must not vouch for the wrong variant ("Reload 75mm GREEN" for "Reload 75mm BLUE"
+// shares 3 of 4 words and the price, and is still only "please check").
+const isStrong = (overlap: number, priceEq: boolean, qtyEq: boolean) => overlap >= 0.85 && (priceEq || qtyEq);
+
 export function matchPoLines(lines: PoLine[], items: MatchItem[]): PoLinesResult {
-  const pairs: { li: number; key: string; score: number }[] = [];
+  const pairs: { li: number; key: string; score: number; strong: boolean }[] = [];
   lines.forEach((l, li) => {
     const lw = new Set(words(l.description));
     for (const it of items) {
@@ -73,28 +98,52 @@ export function matchPoLines(lines: PoLine[], items: MatchItem[]): PoLinesResult
       const priceEq = l.unitPrice != null && Number.isFinite(price) && price > 0 && Math.abs(price - l.unitPrice) < 0.005;
       const qtyEq = l.qty != null && Number(it.qty) === l.qty;
       const score = overlap * 4 + (priceEq ? 3 : 0) + (qtyEq ? 1 : 0);
-      if (score >= 4) pairs.push({ li, key: it.key, score });
+      if (score >= 4) pairs.push({ li, key: it.key, score, strong: isStrong(overlap, priceEq, qtyEq) });
     }
   });
   // the best pairs first, each item and each line used once
   pairs.sort((a, b) => b.score - a.score || a.li - b.li);
-  const lineTo = new Map<number, string>();
+  const lineTo = new Map<number, { key: string; score: number; strong: boolean }>();
   const used = new Set<string>();
   for (const p of pairs) {
     if (lineTo.has(p.li) || used.has(p.key)) continue;
-    lineTo.set(p.li, p.key);
+    lineTo.set(p.li, p);
     used.add(p.key);
   }
   const matches: LineMatch[] = lines.map((line, li) => {
-    const itemKey = lineTo.get(li) ?? null;
-    const it = items.find((i) => i.key === itemKey);
-    const price = it ? parseFloat(it.unitPrice) : NaN;
-    return {
-      line,
-      itemKey,
-      priceDiff: it && line.unitPrice != null && Number.isFinite(price) && price > 0 && Math.abs(price - line.unitPrice) >= 0.005 ? { po: line.unitPrice, ours: price } : null,
-      qtyDiff: it && line.qty != null && Number(it.qty) !== line.qty ? { po: line.qty, ours: Number(it.qty) } : null,
-    };
+    const m = lineTo.get(li);
+    const it = m ? items.find((i) => i.key === m.key) : undefined;
+    return { line, itemKey: m?.key ?? null, ...lineDiffs(line, it), confidence: m ? (m.strong ? "strong" : "weak") : null };
   });
   return { matches, notOnPo: items.filter((i) => i.included && !used.has(i.key)).map((i) => i.key) };
+}
+
+// The matches as the user settled them: an automatic match, or the item they picked for a line (null: the line is not
+// one of ours). An item picked for one line is taken off any other line it was matched to.
+export function resolveMatches(
+  auto: PoLinesResult,
+  items: MatchItem[],
+  picks: Record<number, string | null>, // by PO line number
+): PoLinesResult & { picked: Set<number> } {
+  const known = new Set(items.map((i) => i.key));
+  const chosen = new Map<number, string | null>();
+  const picked = new Set<number>();
+  for (const m of auto.matches) {
+    const p = picks[m.line.no];
+    if (p !== undefined && (p === null || known.has(p))) { chosen.set(m.line.no, p); picked.add(m.line.no); }
+    else chosen.set(m.line.no, m.itemKey);
+  }
+  // an item picked by hand wins over the same item matched automatically elsewhere
+  const pickedItems = new Set([...picked].map((n) => chosen.get(n)).filter(Boolean) as string[]);
+  for (const m of auto.matches) {
+    const k = chosen.get(m.line.no);
+    if (k && !picked.has(m.line.no) && pickedItems.has(k)) chosen.set(m.line.no, null);
+  }
+  const matches: LineMatch[] = auto.matches.map((m) => {
+    const key = chosen.get(m.line.no) ?? null;
+    const byHand = picked.has(m.line.no);
+    return { line: m.line, itemKey: key, ...lineDiffs(m.line, items.find((i) => i.key === key)), confidence: byHand ? null : key ? m.confidence : null };
+  });
+  const used = new Set(matches.map((m) => m.itemKey).filter(Boolean) as string[]);
+  return { matches, notOnPo: items.filter((i) => i.included && !used.has(i.key)).map((i) => i.key), picked };
 }

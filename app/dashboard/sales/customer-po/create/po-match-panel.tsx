@@ -1,6 +1,6 @@
 "use client";
 
-import { LinkIcon, Loader2Icon, AlertTriangleIcon } from "lucide-react";
+import { LinkIcon, Loader2Icon, AlertTriangleIcon, KeyboardIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Suggestion } from "@/lib/customer-po/quotation-match";
@@ -18,10 +18,12 @@ const fmtDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(
 // What reading the customer's PO found: the matching quotation(s), the PO number and the date. Nothing is linked until
 // the user clicks Link.
 export function PoMatchResults({
-  result, onLink, onUsePoNumber, onUseDate, currentPoNo, currentDate, linking,
+  result, onLink, onTypeNumber, hasQuotation, onUsePoNumber, onUseDate, currentPoNo, currentDate, linking,
 }: {
   result: PoReadResult;
   onLink: (s: Suggestion) => void;
+  onTypeNumber: () => void;   // none of the suggestions is right: go to the quotation search
+  hasQuotation: boolean;      // a quotation is linked (picked here or typed in): the suggestions are done with
   onUsePoNumber: (v: string) => void;
   onUseDate: (v: string) => void;
   currentPoNo: string;
@@ -53,8 +55,13 @@ export function PoMatchResults({
   return (
     <div className="space-y-2.5">
       {filledNote}
-      {result.linked ? null : result.suggestions.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No quotation matched {result.fileName}. Search for the quotation number below. The document is still attached to this CPO.</p>
+      {result.linked || hasQuotation ? null : result.suggestions.length === 0 ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span>No quotation matched {result.fileName}. The document is still attached to this CPO.</span>
+          <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={onTypeNumber}>
+            <KeyboardIcon className="h-3 w-3" />Type the quotation number
+          </Button>
+        </div>
       ) : (
         <>
           <p className="text-xs font-medium">{result.suggestions.length === 1 ? "1 quotation matches" : `${result.suggestions.length} quotations may match`} {result.fileName}:</p>
@@ -85,6 +92,12 @@ export function PoMatchResults({
               </li>
             ))}
           </ul>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs">
+            <span className="text-muted-foreground">{result.suggestions.length === 1 ? "Not the right quotation?" : "None of these is right?"}</span>
+            <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={onTypeNumber}>
+              <KeyboardIcon className="h-3 w-3" />Type the quotation number
+            </Button>
+          </div>
         </>
       )}
 
