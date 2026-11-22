@@ -38,9 +38,11 @@ export async function POST(req: NextRequest) {
   if (!pdf.readable) {
     return NextResponse.json({ readable: false, reason: "No text could be read from this PDF (it may be a scan or a photo). Link the quotation yourself." });
   }
-  const suggestions = await findMatchingQuotations(orgId, pdf.text);
+  // the PO's own lines (a government order), used to tell whether everything on the PO is in a quotation
+  const lines = parseGovLines(pdf.cells);
+  const suggestions = await findMatchingQuotations(orgId, pdf.text, lines);
   return NextResponse.json({ readable: true, suggestions, poNumber: extractPoNumber(pdf.text), poDate: extractPoDate(pdf.text),
-    lines: parseGovLines(pdf.cells),
+    lines,
     deliveryDate: extractDeliveryDate(pdf.text), deliveryAddress: extractDeliveryAddress(pdf.text),
   });
 }

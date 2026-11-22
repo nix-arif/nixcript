@@ -12,6 +12,10 @@ export type MatchCandidate = {
   cpoCount: number;
 };
 
+// A line of the customer's PO, when the document's lines could be read (a government order): quantity and price
+// tell a right item from the same item quoted elsewhere.
+export type DocLine = { description: string; unitPrice: number | null };
+
 export type Suggestion = {
   id: string;
   quotationNo: string;
@@ -56,84 +60,202 @@ export const totalAppears = (nums: Set<string>, grandTotal: string | null | unde
   return Number.isFinite(v) && v > 0 && nums.has(v.toFixed(2));
 };
 
-// the customer: the organization's name, or the contact's full name
-export function customerAppears(text: string, c: Pick<MatchCandidate, "customerName" | "orgNames">): { org: boolean; person: boolean } {
-  const t = alnum(text);
-  const org = c.orgNames.some((o) => alnum(o).length >= 6 && t.includes(alnum(o)));
-  const person = !!c.customerName && alnum(c.customerName).length >= 6 && t.includes(alnum(c.customerName));
+const words = (s: string | null | undefined) => (s ?? "").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+
+// Words that say nothing about which customer or which product it is: kinds of places, company forms, and the
+// boilerplate of a PO. Left out when names and descriptions are compared word by word.
+const GENERIC = new Set([
+  "HOSPITAL", "KLINIK", "CLINIC", "PUSAT", "CENTRE", "CENTER", "MEDICAL", "PERUBATAN", "SPECIALIST", "PAKAR", "KESIHATAN",
+  "UNIVERSITI", "UNIVERSITY", "JABATAN", "INSTITUT", "INSTITUTE", "SDN", "BHD", "BERHAD", "THE", "AND", "DAN", "FOR", "WITH",
+  "PIECE", "PIECES", "PCS", "UNIT", "UNITS", "SET", "SETS", "BOX", "PACK", "SPEC", "CODE", "SIZE", "TYPE", "EACH",
+]);
+// How a word is compared: the short forms used in instrument names written out, and a plural made singular, so
+// "SCISSORS MAYO CVD" (ours) and "SCISSOR MAYO CURVED" (the PO) share every word.
+const ABBREV: Record<string, string> = {
+  CVD: "CURVED", CRVD: "CURVED", CUR: "CURVED", STR: "STRAIGHT", STRT: "STRAIGHT", STRAI: "STRAIGHT",
+  FCPS: "FORCEPS", FCP: "FORCEPS", FORC: "FORCEPS", RETR: "RETRACTOR", RETRAC: "RETRACTOR", SCISS: "SCISSORS", SCIS: "SCISSORS",
+  NDL: "NEEDLE", HLDR: "HOLDER", HOLD: "HOLDER", SST: "STEEL", INSTR: "INSTRUMENT", DISP: "DISPOSABLE", STER: "STERILE",
+};
+const norm = (w: string) => {
+  const a = ABBREV[w] ?? w;
+  return a.length >= 5 && a.endsWith("S") && !a.endsWith("SS") ? a.slice(0, -1) : a;
+};
+const normWords = (s: string | null | undefined) => words(s).map(norm);
+
+// the words of a name or description that tell it apart (3+ letters, not generic), compared as above
+const distinctive = (s: string | null | undefined) => [...new Set(normWords(s).filter((w) => w.length >= 3 && !GENERIC.has(w)))];
+
+// one letter typed wrong, added or left out ("MAGGIL" for "MAGGILL"): only for longer words, where it cannot turn one
+// real word into another
+function oneEditApart(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+
+// The document's words (compared as above), and its "tokens" (each run of non-spaces, without punctuation) to find
+// product codes in: "Code: 77-9995" gives 779995, "46.28.10" gives 462810.
+export type DocIndex = { text: string; alnum: string; words: Set<string>; byStart: Map<string, string[]>; tokens: Set<string>; nums: Set<string> };
+export function indexDoc(text: string): DocIndex {
+  const tokens = new Set<string>();
+  for (const t of text.toUpperCase().split(/\s+/)) { const a = alnum(t); if (a.length >= 3) tokens.add(a); }
+  const ws = new Set(normWords(text));
+  const byStart = new Map<string, string[]>();
+  for (const w of ws) if (w.length >= 5) { const k = w.slice(0, 2); byStart.set(k, [...(byStart.get(k) ?? []), w]); }
+  return { text, alnum: alnum(text), words: ws, byStart, tokens, nums: numbersIn(text) };
+}
+// a word of ours is on the document: as it is, or with one letter different (words of 6+ letters)
+function hasWord(doc: DocIndex, w: string): boolean {
+  if (doc.words.has(w)) return true;
+  if (w.length < 6) return false;
+  return (doc.byStart.get(w.slice(0, 2)) ?? []).some((d) => d.length >= 5 && oneEditApart(d, w));
+}
+
+// the customer: the organization's name, or the contact's full name. A name matches when it is on the document as
+// written, or when all its telling words are (in any order, across line breaks): "Hospital Sultanah Aminah Johor
+// Bahru (HSAJB)" is found in "HOSPITAL SULTANAH AMINAH, JOHOR BAHRU" without the "(HSAJB)", but "Hospital Sultanah
+// Bahiyah" is not found in it.
+function nameAppears(doc: DocIndex, name: string | null | undefined): boolean {
+  const dw = distinctive(name).filter((w) => !/^\d+$/.test(w));
+  if (dw.length === 0) return false; // only generic words ("Hospital", "Klinik Kesihatan"): says nothing about who
+  const a = alnum(name);
+  if (a.length >= 6 && doc.alnum.includes(a)) return true;
+  if (dw.length === 1 && dw[0].length < 5) return false; // one short word is too weak to go on
+  // names are matched exactly, word for word (no typo allowance: "Bahiyah" must not pass for another name)
+  const found = dw.filter((w) => doc.words.has(w)).length;
+  // all of them, or all but a short one when there are several (an abbreviation in brackets, a missing "JB")
+  return found === dw.length || (dw.length >= 3 && found === dw.length - 1 && dw.find((w) => !doc.words.has(w))!.length <= 5);
+}
+export function customerAppears(text: string | DocIndex, c: Pick<MatchCandidate, "customerName" | "orgNames">): { org: boolean; person: boolean } {
+  const doc = typeof text === "string" ? indexDoc(text) : text;
+  const org = c.orgNames.some((o) => nameAppears(doc, o));
+  const person = !!c.customerName && alnum(c.customerName).length >= 6 && doc.alnum.includes(alnum(c.customerName));
   return { org, person };
 }
 
-const words = (s: string | null | undefined) => (s ?? "").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+// How one of our items shows on the document:
+//  "strong": its product code is there, or its description AND its unit price are
+//  "weak":   most of its description is there but not the price (the customer's price may differ from ours)
+type ItemKind = "strong" | "weak" | null;
+const priceOf = (v: string | null | undefined) => { const p = parseFloat(String(v ?? "").replace(/,/g, "")); return Number.isFinite(p) && p > 0 ? p : null; };
+function descShare(itemDesc: string | null | undefined, doc: DocIndex): { share: number; n: number; found: number } {
+  const toks = distinctive(itemDesc).filter((w) => w.length >= 3);
+  if (toks.length === 0) return { share: 0, n: 0, found: 0 };
+  const found = toks.filter((w) => hasWord(doc, w)).length;
+  return { share: found / toks.length, n: toks.length, found };
+}
+function itemKind(doc: DocIndex, it: MatchCandidate["items"][number]): ItemKind {
+  const code = alnum(it.productCode);
+  if (code.length >= 4 && doc.tokens.has(code)) return "strong";
+  const d = alnum(it.description).slice(0, 28);
+  if (d.length >= 16 && doc.alnum.includes(d)) return "strong";
+  const { share, n } = descShare(it.description, doc);
+  const price = priceOf(it.unitPrice);
+  const priceOnDoc = price != null && doc.nums.has(price.toFixed(2));
+  if (priceOnDoc && (n >= 2 ? share >= 0.6 : n === 1 && share === 1)) return "strong";
+  if (n >= 3 && share >= 0.75) return "weak";
+  return null;
+}
 
-// how many of the quotation's items are on the document: by product code (as a whole word), else by the start of a long
-// description; and, when the document's numbers are given, by description AND unit price together (a government PO does
-// not carry our codes, and the customer may mistype a word, so most of the words plus the same price is enough)
-export function itemHits(text: string, items: MatchCandidate["items"], nums?: Set<string>): number {
-  const upper = text.toUpperCase();
-  const t = alnum(text);
-  const docWords = nums ? new Set(words(text)) : null;
-  let hits = 0;
-  for (const it of items) {
-    const code = (it.productCode ?? "").trim().toUpperCase();
-    let hit = false;
-    if (code.length >= 3) hit = new RegExp(`(?<![A-Z0-9])${escapeRe(code)}(?![A-Z0-9])`).test(upper);
-    if (!hit) {
-      const d = alnum(it.description).slice(0, 28);
-      hit = d.length >= 16 && t.includes(d);
-    }
-    if (!hit && nums && docWords) {
-      const price = parseFloat(String(it.unitPrice ?? "").replace(/,/g, ""));
-      if (Number.isFinite(price) && price > 0 && nums.has(price.toFixed(2))) {
-        const toks = words(it.description).filter((w) => w.length >= 4);
-        const found = toks.filter((w) => docWords.has(w)).length;
-        hit = toks.length >= 2 ? found / toks.length >= 0.6 : toks.length === 1 && toks[0].length >= 6 && found === 1;
+// how many of the quotation's items are on the document (strong and weak), for the score and the reasons
+export function itemHits(text: string | DocIndex, items: MatchCandidate["items"]): { strong: number; weak: number } {
+  const doc = typeof text === "string" ? indexDoc(text) : text;
+  let strong = 0, weak = 0;
+  for (const it of items) { const k = itemKind(doc, it); if (k === "strong") strong++; else if (k === "weak") weak++; }
+  return { strong, weak };
+}
+
+// How many of the PO's own lines this quotation covers. A PO is often for a few lines of a bigger quotation, so the
+// question "is everything on this PO in that quotation?" tells more than "how much of the quotation is on the PO?".
+// A line is covered:
+//  strongly when one of our items has its code, or most of its words and its unit price, or its exact unit price
+//            and at least one telling word ("CORD SCISSOR" at 366.00 is our "UMBILICAL SCISSORS" at 366.00)
+//  weakly   when only most of the words agree, or only the exact unit price does (the customer may name it its own way)
+export function lineCoverage(lines: DocLine[], items: MatchCandidate["items"]): { strong: number; weak: number; total: number } {
+  let strong = 0, weak = 0;
+  for (const l of lines) {
+    const lineDoc = { ...indexDoc(l.description), nums: new Set(l.unitPrice != null ? [l.unitPrice.toFixed(2)] : []) };
+    let best: ItemKind = null;
+    for (const it of items) {
+      let k = itemKind(lineDoc, it);
+      if (k !== "strong" && l.unitPrice != null) {
+        const p = priceOf(it.unitPrice);
+        if (p != null && Math.abs(p - l.unitPrice) < 0.005) k = descShare(it.description, lineDoc).found >= 1 ? "strong" : "weak";
       }
+      if (k === "strong") { best = "strong"; break; }
+      if (k === "weak") best = "weak";
     }
-    if (hit) hits++;
+    if (best === "strong") strong++; else if (best === "weak") weak++;
   }
-  return hits;
+  return { strong, weak, total: lines.length };
 }
 
-// cheap signals only (no items): enough to decide which quotations are worth a closer look
-export function quickSignals(text: string, nums: Set<string>, c: MatchCandidate) {
-  const cust = customerAppears(text, c);
-  return { ref: textHasQuotationNo(text, c.quotationNo), amount: totalAppears(nums, c.grandTotal), org: cust.org, person: cust.person };
-}
-
-export function scoreCandidate(text: string, nums: Set<string>, c: MatchCandidate): Suggestion | null {
-  const sig = quickSignals(text, nums, c);
-  const hits = itemHits(text, c.items, nums);
+export function scoreCandidate(text: string | DocIndex, nums: Set<string> | null, c: MatchCandidate, lines: DocLine[] = []): Suggestion | null {
+  const doc = typeof text === "string" ? indexDoc(text) : text;
+  const ref = textHasQuotationNo(doc.text, c.quotationNo);
+  const amount = totalAppears(nums ?? doc.nums, c.grandTotal);
+  const cust = customerAppears(doc, c);
+  const hits = itemHits(doc, c.items);
+  const cover = lines.length ? lineCoverage(lines, c.items) : null;
   const total = c.items.length;
   const reasons: string[] = [];
   let score = 0;
-  if (sig.ref) { score += 100; reasons.push("Our quotation number is on the document"); }
-  // a customer often orders only some of the quotation's lines, so a few matching lines count for something even when they are a small share
-  if (total > 0 && hits > 0) {
-    score += Math.max(Math.round((40 * hits) / total), Math.min(hits, 5) * 9);
-    reasons.push(`${hits} of ${total} items are on the document`);
-    if (hits < total && !sig.amount) reasons.push("The PO may be for part of the quotation");
+  if (ref) { score += 100; reasons.push("Our quotation number is on the document"); }
+  // The customer quoted the number this revision replaced ("…-0143" on the PO, and we revised it to "…-0143-R1"):
+  // as good as its own number. If the revision matches the PO as well as the original, the tie goes to the newer one.
+  const base = c.quotationNo.replace(/-R\d+$/i, "");
+  const baseRef = !ref && base !== c.quotationNo && textHasQuotationNo(doc.text, base);
+  if (baseRef) { score += 100; reasons.push(`The document quotes ${base}, which this quotation revises`); }
+  // items: a weak one (the words but not the price) counts for less than a strong one. A customer often orders only
+  // some of the quotation's lines, so a few matching lines count for something even when they are a small share.
+  const weighted = hits.strong + 0.4 * hits.weak;
+  if (total > 0 && weighted > 0) {
+    score += Math.max(Math.round((40 * weighted) / total), Math.round(Math.min(weighted, 5) * 9));
+    const n = hits.strong + hits.weak;
+    reasons.push(`${n} of ${total} items are on the document${hits.weak > 0 && hits.strong === 0 ? " (by description; the price differs)" : hits.weak > 0 ? ` (${hits.weak} by description only)` : ""}`);
   }
-  if (sig.amount) { score += 25; reasons.push("The total matches"); }
-  if (sig.org) { score += 15; reasons.push("The customer's organization is on the document"); }
-  if (sig.person) { score += 10; reasons.push("The contact's name is on the document"); }
-  const ratio = total > 0 ? hits / total : 0;
-  const veryLikely = sig.ref || (ratio >= 0.7 && (sig.amount || sig.org));
+  // every line of the PO is in this quotation: the PO is a part of it, whatever share of the quotation that is
+  if (cover && cover.total > 0) {
+    const covered = cover.strong + cover.weak;
+    if (covered === cover.total) {
+      score += cover.strong === cover.total ? 25 : 15;
+      reasons.push(cover.total === 1 ? "The PO's line is in this quotation" : `All ${cover.total} lines of the PO are in this quotation`);
+    } else if (covered > 0) {
+      score += Math.round((15 * covered) / cover.total);
+      reasons.push(`${covered} of the PO's ${cover.total} lines are in this quotation`);
+    }
+  }
+  if (total > 0 && hits.strong + hits.weak > 0 && hits.strong + hits.weak < total && !amount) reasons.push("The PO may be for part of the quotation");
+  if (amount) { score += 25; reasons.push("The total matches"); }
+  if (cust.org) { score += 15; reasons.push("The customer's organization is on the document"); }
+  if (cust.person) { score += 10; reasons.push("The contact's name is on the document"); }
+  const ratio = total > 0 ? hits.strong / total : 0;
+  const allStrong = !!cover && cover.total > 0 && cover.strong === cover.total;
+  const veryLikely = ref || baseRef || (ratio >= 0.7 && (amount || cust.org)) || (allStrong && (amount || cust.org));
   if (!veryLikely && score < 30) return null;
   return {
     id: c.id, quotationNo: c.quotationNo, customerName: c.customerName, grandTotal: c.grandTotal, score,
-    level: veryLikely ? "very-likely" : "possible", reasons, itemHits: hits, itemTotal: total,
-    refFound: sig.ref, amountMatch: sig.amount, customerFound: sig.org || sig.person, cpoCount: c.cpoCount,
+    level: veryLikely ? "very-likely" : "possible", reasons, itemHits: hits.strong + hits.weak, itemTotal: total,
+    refFound: ref, amountMatch: amount, customerFound: cust.org || cust.person, cpoCount: c.cpoCount,
   };
 }
 
-export function rankSuggestions(text: string, candidates: MatchCandidate[], max = 5): Suggestion[] {
-  const nums = numbersIn(text);
+// The best suggestions first. The candidates come newest first, and a tie keeps that order: of two quotations that
+// match equally (a quotation and its revision, two quotations to the same customer for the same total), the newer one
+// is the one the customer most likely ordered from.
+export function rankSuggestions(text: string, candidates: MatchCandidate[], max = 5, lines: DocLine[] = []): Suggestion[] {
+  const doc = indexDoc(text);
   return candidates
-    .map((c) => scoreCandidate(text, nums, c))
-    .filter((s): s is Suggestion => !!s)
-    .sort((a, b) => b.score - a.score || a.quotationNo.localeCompare(b.quotationNo))
-    .slice(0, max);
+    .map((c, i) => ({ s: scoreCandidate(doc, doc.nums, c, lines), i }))
+    .filter((x): x is { s: Suggestion; i: number } => !!x.s)
+    .sort((a, b) => b.s.score - a.s.score || a.i - b.i)
+    .slice(0, max)
+    .map((x) => x.s);
 }
 
 // ── the Malaysian government order (Pesanan Kerajaan, AM 75E): the labels sit below their values ──
