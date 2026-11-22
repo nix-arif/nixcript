@@ -287,7 +287,9 @@ export async function getInvoices(opts: {
   if (bounds.lt)  dateConditions.push(lt(invoice.invoiceDate, bounds.lt) as any);
 
   const conditions: ReturnType<typeof eq>[] = [eq(invoice.organizationId, orgId) as any, ...dateConditions];
-  if (opts.status) conditions.push(eq(invoice.status, opts.status) as any);
+  // "unpaid": issued and still waiting for payment (sent or overdue); drafts are not issued yet
+  if (opts.status === "unpaid") conditions.push(inArray(invoice.status, ["sent", "overdue"]) as any);
+  else if (opts.status) conditions.push(eq(invoice.status, opts.status) as any);
   if (opts.search?.trim()) {
     const q = `%${opts.search.trim()}%`;
     conditions.push(or(

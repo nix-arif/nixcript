@@ -27,7 +27,7 @@ import { descriptionState, unresolvedDifferences, unresolvedMessage, keepDescrip
 import { PoMatchResults, type PoReadResult } from "./po-match-panel";
 import { PoLinesReview } from "./po-lines-review";
 import type { PoLinesResult } from "@/lib/customer-po/po-lines";
-import type { Suggestion } from "@/lib/customer-po/quotation-match";
+import { lineKinds, type Suggestion } from "@/lib/customer-po/quotation-match";
 import { useDbDescriptionLookup } from "@/lib/sales-order/use-db-descriptions";
 import { applyCpoDescriptions, downloadItemsSheet, readItemsSheet } from "@/lib/customer-po/items-sheet";
 import {
@@ -93,6 +93,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   // ── Quotations (multiple) ──────────────────────────────────────────────────
   const [linkedQuotations, setLinkedQuotations] = useState<LinkedQuotation[]>([]);
+  const linkedRef = useRef<LinkedQuotation[]>([]); // the same, current at once (see selectQuotation)
   const [showAddSearch,    setShowAddSearch]    = useState(false);
   const [qtSearch,         setQtSearch]         = useState("");
   const [qtResults,        setQtResults]        = useState<Awaited<ReturnType<typeof searchQuotationsByNo>>>([]);
@@ -176,8 +177,13 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   }
 
   async function selectQuotation(qtId: string, qtNo: string) {
+    // The quotations linked so far, from the ref (always current), not from this render's state: when several are
+    // linked one after another ("Link all"), each one sees the ones linked just before it.
+    const linkedNow = linkedRef.current;
+    const primaryNow = linkedNow[0] ?? null;
+    const firstNow = linkedNow.length === 0;
     // Prevent duplicates
-    if (linkedQuotations.some((q) => q.id === qtId)) {
+    if (linkedNow.some((q) => q.id === qtId)) {
       toast.error("This quotation is already linked");
       setQtSearch(""); setQtResults([]);
       return;
@@ -223,9 +229,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
       // The same customer, or another contact of the same customer organization (allowed, with a gentle warning at
       // the customer field). A customer of a different organization cannot share a Customer PO.
-      if (primaryCustomer) {
+      if (primaryNow) {
         const rel = customerRelation(
-          { customerId: primaryCustomer.customerId, orgNames: primaryCustomer.customerOrgNames ?? [primaryCustomer.customerOrg], orgIds: primaryCustomer.customerOrgIds },
+          { customerId: primaryNow.customerId, orgNames: primaryNow.customerOrgNames ?? [primaryNow.customerOrg], orgIds: primaryNow.customerOrgIds },
           { customerId: qt.customerId, orgNames: customerOrgNames, orgIds: customerOrgIds },
         );
         if (rel === "different") {
@@ -246,6 +252,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         customerOrgMemberId,
       };
 
+      linkedRef.current = [...linkedRef.current, linked]; // at once, for a next link in the same click
       setLinkedQuotations((prev) => {
         if (qt.salesPersonName) {
           setSalesPersons((prevSps) => {
@@ -333,7 +340,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       });
 
       setShowAddSearch(false);
-      if (isFirstQuotation && !amountOverride) setAmount(qt.grandTotal);
+      if (firstNow && !amountOverride) setAmount(qt.grandTotal);
     } catch (e: any) {
       toast.error(e.message || "Failed to load quotation");
     } finally {
@@ -342,6 +349,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   }
 
   function removeQuotation(qtId: string) {
+    linkedRef.current = linkedRef.current.filter((q) => q.id !== qtId);
     setLinkedQuotations((prev) => prev.filter((q) => q.id !== qtId));
     setItems((prev) => {
       const next = prev.filter((i) => i._quotationId !== qtId);
@@ -685,7 +693,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       if (data.deliveryDate) { setDeliveryDate(data.deliveryDate); filled.push("due delivery date"); keys.push("due"); }
       if (data.deliveryAddress) { setDeliveryAddress(data.deliveryAddress); addressFromDoc.current = true; filled.push("delivery address"); keys.push("address"); }
       markFilled(keys);
-      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled, lines: data.lines ?? [], linked: !wantSuggestions, poTotal: typeof data.poTotal === "number" ? data.poTotal : null });
+      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled, lines: data.lines ?? [], linked: !wantSuggestions, poTotal: typeof data.poTotal === "number" ? data.poTotal : null, combination: wantSuggestions ? data.combination ?? null : null });
     } catch {
       setPoRead({ status: "unreadable", fileName: file.name, reason: "The document could not be read." });
     }
@@ -715,6 +723,23 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   async function linkSuggestion(sg: Suggestion) {
     await selectQuotation(sg.id, sg.quotationNo);
   }
+  // a PO spread over several quotations: link them all, one after another (each sees the ones before it)
+  async function linkSuggestions(sgs: Suggestion[]) {
+    for (const sg of sgs) await selectQuotation(sg.id, sg.quotationNo);
+  }
+
+  // The PO lines the linked quotations do not have yet (null when the PO's lines are not known); the panel then points
+  // at the quotations that have them. Every item of the linked quotations counts, ticked or not. A line they have only
+  // by description (the price differs) still counts as missing when another suggested quotation has it at the PO's
+  // own price: as in the combination of quotations (lib/customer-po/quotation-match.ts, findCombination).
+  const uncoveredLines = poRead.status === "done" && poRead.lines.length > 0 && linkedQuotations.length > 0
+    ? (() => {
+        const kinds = lineKinds(poRead.lines, items.map((i) => ({ productCode: i.productCode, description: i.description, unitPrice: i.unitPrice })));
+        const linkedIds = new Set(linkedQuotations.map((q) => q.id));
+        const strongElsewhere = (i: number) => poRead.suggestions.some((s) => !linkedIds.has(s.id) && s.strongLines.includes(i));
+        return kinds.flatMap((k, i) => (k === null || (k === "weak" && strongElsewhere(i)) ? [i] : []));
+      })()
+    : null;
 
   // None of the suggestions is right: take the user to the quotation search, ready to type
   const qtSectionRef = useRef<HTMLDivElement>(null);
@@ -944,8 +969,11 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
           <PoMatchResults
             result={poRead}
             onLink={linkSuggestion}
+            onLinkMany={linkSuggestions}
             onTypeNumber={goToQuotationSearch}
             hasQuotation={linkedQuotations.length > 0}
+            linkedIds={linkedQuotations.map((q) => q.id)}
+            uncoveredLines={uncoveredLines}
             onUsePoNumber={(v) => { setCustomerPoNo(v); setNoTaken(null); }}
             onUseDate={setReceivedDate}
             currentPoNo={customerPoNo}

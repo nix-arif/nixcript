@@ -128,6 +128,7 @@ function TableSkeleton() {
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
+  { value: "unpaid", label: "Unpaid" }, // sent + overdue: issued, still waiting for payment
   { value: "draft", label: "Draft" },
   { value: "sent", label: "Sent" },
   { value: "overdue", label: "Overdue" },

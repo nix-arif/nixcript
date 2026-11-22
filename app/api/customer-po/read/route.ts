@@ -76,8 +76,8 @@ export async function POST(req: NextRequest) {
   const lines = parseGovLines(pdf.cells);
   const poTotal = extractPoTotal(pdf.text, pdf.cells, lines); // the PO's total, to check the CPO's items against
   if (onlyTotal) return NextResponse.json({ readable: true, poTotal });
-  const suggestions = await findMatchingQuotations(orgId, pdf.text, lines);
-  return NextResponse.json({ readable: true, suggestions, poNumber: extractPoNumber(pdf.text), poDate: extractPoDate(pdf.text),
+  const { suggestions, combination } = await findMatchingQuotations(orgId, pdf.text, lines);
+  return NextResponse.json({ readable: true, suggestions, combination, poNumber: extractPoNumber(pdf.text), poDate: extractPoDate(pdf.text),
     lines, poTotal,
     deliveryDate: extractDeliveryDate(pdf.text), deliveryAddress: extractDeliveryAddress(pdf.text),
   });

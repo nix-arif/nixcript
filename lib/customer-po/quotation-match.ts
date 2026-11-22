@@ -30,6 +30,8 @@ export type Suggestion = {
   amountMatch: boolean;
   customerFound: boolean;
   orgFound: boolean; // the customer's organization is on the document: such quotations always come first
+  coversLines: number[]; // the PO's lines (by position) this quotation has: a PO may be spread over several quotations
+  strongLines: number[]; // of those, the ones it has by code, or by description and the PO's own price
   cpoCount: number;
 };
 
@@ -177,9 +179,9 @@ export function itemHits(text: string | DocIndex, items: MatchCandidate["items"]
 //  strongly when one of our items has its code, or most of its words and its unit price, or its exact unit price
 //            and at least one telling word ("CORD SCISSOR" at 366.00 is our "UMBILICAL SCISSORS" at 366.00)
 //  weakly   when only most of the words agree, or only the exact unit price does (the customer may name it its own way)
-export function lineCoverage(lines: DocLine[], items: MatchCandidate["items"]): { strong: number; weak: number; total: number } {
-  let strong = 0, weak = 0;
-  for (const l of lines) {
+// how each line of the PO is covered by these items: "strong", "weak" or null (in the PO's line order)
+export function lineKinds(lines: DocLine[], items: MatchCandidate["items"]): ItemKind[] {
+  return lines.map((l) => {
     const lineDoc = { ...indexDoc(l.description), nums: new Set(l.unitPrice != null ? [l.unitPrice.toFixed(2)] : []) };
     let best: ItemKind = null;
     for (const it of items) {
@@ -188,13 +190,22 @@ export function lineCoverage(lines: DocLine[], items: MatchCandidate["items"]): 
         const p = priceOf(it.unitPrice);
         if (p != null && Math.abs(p - l.unitPrice) < 0.005) k = descShare(it.description, lineDoc).found >= 1 ? "strong" : "weak";
       }
-      if (k === "strong") { best = "strong"; break; }
+      if (k === "strong") return "strong";
       if (k === "weak") best = "weak";
     }
-    if (best === "strong") strong++; else if (best === "weak") weak++;
-  }
-  return { strong, weak, total: lines.length };
+    return best;
+  });
 }
+
+export function lineCoverage(lines: DocLine[], items: MatchCandidate["items"]): { strong: number; weak: number; total: number } {
+  const kinds = lineKinds(lines, items);
+  return { strong: kinds.filter((k) => k === "strong").length, weak: kinds.filter((k) => k === "weak").length, total: lines.length };
+}
+
+// the PO lines (by position) that these items cover, strongly or weakly: used in the browser too, to tell which lines
+// of the PO the quotations linked so far do not cover yet
+export const coveredLineIndexes = (lines: DocLine[], items: MatchCandidate["items"]): number[] =>
+  lineKinds(lines, items).flatMap((k, i) => (k ? [i] : []));
 
 // Step 1: the customer's organization must be on the PO. A quotation for any other organization is not a match,
 // whatever else agrees (the same product is quoted to many hospitals, often at the same price).
@@ -207,7 +218,10 @@ export function scoreCandidate(text: string | DocIndex, nums: Set<string> | null
   const ref = textHasQuotationNo(doc.text, c.quotationNo);
   const amount = totalAppears(nums ?? doc.nums, c.grandTotal);
   const hits = itemHits(doc, c.items);
-  const cover = lines.length ? lineCoverage(lines, c.items) : null;
+  const kinds = lines.length ? lineKinds(lines, c.items) : [];
+  const cover = lines.length
+    ? { strong: kinds.filter((k) => k === "strong").length, weak: kinds.filter((k) => k === "weak").length, total: lines.length }
+    : null;
   const total = c.items.length;
   const reasons: string[] = [];
   let score = 0;
@@ -252,6 +266,8 @@ export function scoreCandidate(text: string | DocIndex, nums: Set<string> | null
     id: c.id, quotationNo: c.quotationNo, customerName: c.customerName, grandTotal: c.grandTotal, score,
     level: veryLikely ? "very-likely" : "possible", reasons, itemHits: hits.strong + hits.weak, itemTotal: total,
     refFound: ref, amountMatch: amount, customerFound: cust.org || cust.person, orgFound: cust.org, cpoCount: c.cpoCount,
+    coversLines: kinds.flatMap((k, i) => (k ? [i] : [])),
+    strongLines: kinds.flatMap((k, i) => (k === "strong" ? [i] : [])),
   };
 }
 
@@ -261,13 +277,68 @@ export function scoreCandidate(text: string | DocIndex, nums: Set<string> | null
 //  3. then the newer one (the candidates come newest first): of two that match equally (a quotation and its
 //     revision, two quotations for the same total) the customer most likely ordered the newer.
 export function rankSuggestions(text: string, candidates: MatchCandidate[], max = 5, lines: DocLine[] = []): Suggestion[] {
+  return rankWithCombination(text, candidates, max, lines).suggestions;
+}
+
+// A PO spread over several quotations: the quotations that between them have all (or most) of the PO's lines.
+export type Combination = {
+  ids: string[];
+  quotationNos: string[];
+  lines: number[][];   // per quotation (same order), the PO lines it brings (by position)
+  covered: number;     // PO lines covered by them together
+  total: number;       // PO lines in all
+};
+
+// Greedy, in two rounds: first take the quotation with the most PO lines it has STRONGLY (by code, or by description at
+// the PO's own price) that no pick has yet, then fill the lines still missing with what has them only weakly. A line
+// "has" in one quotation only by description, but at the PO's exact price in another, belongs to the other: that is
+// how a PO for lines of two quotations is told from one quotation with a different price. Worth showing only when it
+// takes 2+ quotations and does better than the best one alone (more lines strongly, and no fewer lines at all);
+// at most 4 quotations. A tie goes to the better score.
+export function findCombination(suggestions: Suggestion[], lineCount: number): Combination | null {
+  if (lineCount < 2) return null;
+  const bestAny = Math.max(0, ...suggestions.map((s) => s.coversLines.length));
+  const bestStrong = Math.max(0, ...suggestions.map((s) => s.strongLines.length));
+  if (bestStrong >= lineCount) return null; // one quotation has the whole PO, strongly
+  const uncovered = new Set(Array.from({ length: lineCount }, (_, i) => i));
+  const picked: { s: Suggestion; adds: number[] }[] = [];
+  const round = (linesOf: (s: Suggestion) => number[]) => {
+    while (uncovered.size > 0 && picked.length < 4) {
+      let pick: { s: Suggestion; adds: number[] } | null = null;
+      for (const s of suggestions) {
+        const adds = linesOf(s).filter((i) => uncovered.has(i));
+        if (adds.length === 0) continue;
+        if (!pick || adds.length > pick.adds.length || (adds.length === pick.adds.length && s.score > pick.s.score)) pick = { s, adds };
+      }
+      if (!pick) return;
+      const already = picked.find((p) => p.s.id === pick!.s.id);
+      if (already) already.adds.push(...pick.adds); else picked.push(pick);
+      for (const i of pick.adds) uncovered.delete(i);
+    }
+  };
+  round((s) => s.strongLines);
+  const strongCovered = lineCount - uncovered.size;
+  round((s) => s.coversLines);
+  const covered = lineCount - uncovered.size;
+  if (picked.length < 2 || strongCovered <= bestStrong || covered < bestAny) return null;
+  for (const p of picked) p.adds.sort((a, b) => a - b);
+  return { ids: picked.map((p) => p.s.id), quotationNos: picked.map((p) => p.s.quotationNo), lines: picked.map((p) => p.adds), covered, total: lineCount };
+}
+
+// The suggestions (best first, `max` of them) and, when the PO is spread over several quotations, the combination of
+// quotations that covers it. The combination may use quotations outside the top `max` (one that has a single line of
+// the PO scores low on its own); those are added to the suggestions so the page can show them.
+export function rankWithCombination(text: string, candidates: MatchCandidate[], max = 5, lines: DocLine[] = []): { suggestions: Suggestion[]; combination: Combination | null } {
   const doc = indexDoc(text);
-  return candidates
+  const all = candidates
     .map((c, i) => ({ s: scoreCandidate(doc, doc.nums, c, lines), i }))
     .filter((x): x is { s: Suggestion; i: number } => !!x.s)
     .sort((a, b) => b.s.score - a.s.score || a.i - b.i)
-    .slice(0, max)
     .map((x) => x.s);
+  const combination = findCombination(all, lines.length);
+  const top = all.slice(0, max);
+  if (combination) for (const id of combination.ids) if (!top.some((s) => s.id === id)) top.push(all.find((s) => s.id === id)!);
+  return { suggestions: top, combination };
 }
 
 // ── the Malaysian government order (Pesanan Kerajaan, AM 75E): the labels sit below their values ──
