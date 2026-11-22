@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
+import { AMOUNT_TONE, AmountCheckNote, amountCheck } from "../amount-check";
 import { sumLines, setTotal, bookSetPrices } from "@/lib/customer-po/set-price";
 import { isSetPriced } from "@/lib/quotation-set-price";
 import { uid } from "@/lib/uid";
@@ -868,6 +869,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   }
 
   const computedTotal = sumItems(items);
+  // the CPO amount against the items ticked (colour of the Amount box and the items' total, and a short note)
+  const selectedCount = items.filter((i) => i.included).length;
+  const amountState = amountCheck(amount, computedTotal, selectedCount).state;
   const showSearch = isFirstQuotation || showAddSearch;
 
   return (
@@ -1169,17 +1173,12 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                 type="number" min="0" step="0.01"
                 value={amount}
                 onChange={(e) => { setAmount(e.target.value); setAmountOverride(true); }}
-                className="h-9 text-sm tabular-nums"
+                className={cn("h-9 text-sm tabular-nums", AMOUNT_TONE[amountState].input)}
+                aria-invalid={amountState === "mismatch" || undefined}
               />
-              {items.length > 0 && amountOverride && (
-                <button
-                  className="text-[10px] text-primary"
-                  onClick={() => { setAmount(computedTotal); setAmountOverride(false); }}
-                >
-                  Reset to item total ({computedTotal})
-                </button>
-              )}
-              {items.length > 0 && !amountOverride && (
+              <AmountCheckNote amount={amount} itemsTotal={computedTotal} selectedCount={selectedCount} currency={currency}
+                onUseItemsTotal={() => { setAmount(computedTotal); setAmountOverride(false); }} />
+              {items.length > 0 && !amountOverride && amountState === "ok" && (
                 <p className="text-[10px] text-muted-foreground">Auto-calculated from items</p>
               )}
             </div>
@@ -1513,9 +1512,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                 <tfoot>
                   <tr>
                     <td colSpan={8} className="pt-3 pr-2 text-right text-[11px] md:text-[11px] text-muted-foreground font-medium">
-                      Total ({items.filter((i) => i.included).length} items)
+                      Total ({selectedCount} items)
+                      {amountState !== "ok" && amountState !== "none" && (
+                        <span className={cn("ml-2 font-semibold", AMOUNT_TONE[amountState].text)}>
+                          · CPO amount {parseFloat(amount || "0").toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                        </span>
+                      )}
                     </td>
-                    <td className="pt-3 text-right tabular-nums font-bold">
+                    <td className={cn("pt-3 text-right tabular-nums font-bold", AMOUNT_TONE[amountState].text)}>
                       {parseFloat(computedTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
