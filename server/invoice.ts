@@ -263,8 +263,8 @@ export type InvoiceListResult = {
   pageSize: number;
   stats: InvoiceStatsRow | null;
   // "all": the stats are the company's all-time totals (the invoice_stats cache);
-  // "range": they are worked out for the invoices dated inside `range` only
-  statsScope: "all" | "range";
+  // "filtered": they are worked out for the invoices the filters select (status, search, date range), all pages
+  statsScope: "all" | "filtered";
   range: DayRange; // the date range applied, after checking it (bad dates are dropped, a reversed range is swapped)
 };
 
@@ -308,21 +308,22 @@ export async function getInvoices(opts: {
 
   const where = and(...conditions);
 
-  // With a date range, the stats strip shows that period: worked out from the invoices dated in it (search and
-  // status do not narrow it, the same as the all-time figures). Without one, the all-time cache as before.
-  const ranged = hasRange(range);
+  // The stats strip shows the invoices the list shows: with any filter (status, search, date range) it is worked out
+  // from exactly those invoices, all pages of them, by the same rules as the all-time figures. Without a filter, the
+  // all-time cache as before.
+  const filtered = hasRange(range) || !!opts.status || !!opts.search?.trim();
   const [rows, [{ total }], stats] = await Promise.all([
     db.select().from(invoice).where(where)
       .orderBy(desc(invoice.invoiceNo))
       .limit(pageSize).offset(offset),
     db.select({ total: count() }).from(invoice).where(where),
-    ranged
+    filtered
       ? db.select({ status: invoice.status, grandTotal: invoice.grandTotal, paidAmount: invoice.paidAmount, soaVerified: invoice.soaVerified })
-          .from(invoice).where(and(eq(invoice.organizationId, orgId), ...dateConditions))
-          .then((r): InvoiceStatsRow => ({ id: "range", organizationId: orgId, ...computeInvoiceStats(r), updatedAt: new Date() }))
+          .from(invoice).where(where)
+          .then((r): InvoiceStatsRow => ({ id: "filtered", organizationId: orgId, ...computeInvoiceStats(r), updatedAt: new Date() }))
       : db.select().from(invoiceStats).where(eq(invoiceStats.organizationId, orgId)).then((r) => r[0] ?? null),
   ]);
-  const statsScope = ranged ? "range" as const : "all" as const;
+  const statsScope = filtered ? "filtered" as const : "all" as const;
 
   if (rows.length === 0) return { rows: [], total: Number(total), page, pageSize, stats, statsScope, range };
 

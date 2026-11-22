@@ -29,6 +29,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CalendarIcon,
+  FilterIcon,
 } from "lucide-react";
 import { describeRange, hasRange, matchPreset, parseDay, presetRange, PRESETS, type DayRange, type PresetKey } from "@/lib/invoice/date-filter";
 import type { PendingDoForInvoiceRow } from "@/server/delivery-order";
@@ -190,7 +191,7 @@ interface Props {
   page: number;
   pageSize: number;
   overallStats: InvoiceStatsRow | null;
-  statsScope: "all" | "range";
+  statsScope: "all" | "filtered";
   range: DayRange;
   initialSearch: string;
   initialStatus: string;
@@ -447,14 +448,19 @@ export function InvoiceListClient({
         </div>
       )}
 
-      {/* Stats strip: all-time (invoice_stats cache), or the invoices dated in the chosen range.
+      {/* Stats strip: all-time (invoice_stats cache), or the invoices the filters select (status, search, dates).
+          The label says which, from the filters the server applied (initialStatus / initialSearch / range).
           The label and the cards share one wrapper with a normal gap: no negative margin, so they cannot overlap. */}
       <div className="space-y-2">
       <div className="text-[11px] text-muted-foreground">
-        {statsScope === "range" ? (
+        {statsScope === "filtered" ? (
           <span className="inline-flex max-w-full items-start gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-2 py-0.5 font-medium leading-snug text-sky-800 dark:border-sky-800 dark:bg-sky-900/20 dark:text-sky-300">
-            <CalendarIcon className="mt-px w-3 h-3 shrink-0" />
-            <span className="min-w-0">Figures for invoices dated {rangeLabel.replace(/^From /, "from ").replace(/^Up to /, "up to ")}</span>
+            <FilterIcon className="mt-px w-3 h-3 shrink-0" />
+            <span className="min-w-0">
+              Figures for {initialStatus ? `${STATUS_FILTERS.find((f) => f.value === initialStatus)?.label ?? initialStatus} invoices` : "invoices"}
+              {hasRange(range) && ` · dated ${rangeLabel.replace(/^From /, "from ").replace(/^Up to /, "up to ")}`}
+              {initialSearch.trim() && <> · matching &ldquo;{initialSearch.trim()}&rdquo;</>}
+            </span>
           </span>
         ) : (
           <span>All-time figures</span>
