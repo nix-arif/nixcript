@@ -15,7 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
-import { AMOUNT_TONE, AmountCheckNote, amountCheck } from "../../amount-check";
+import { AMOUNT_TONE, AmountCheckNote, DocTotalCheck, amountCheck, usePoDocumentTotal } from "../../amount-check";
+import { useUnsavedUpload } from "../../use-unsaved-upload";
 import { sumLines, setTotal, bookSetPrices } from "@/lib/customer-po/set-price";
 import { isSetPriced } from "@/lib/quotation-set-price";
 import { uid } from "@/lib/uid";
@@ -212,7 +213,11 @@ export function EditCustomerPoClient({
   // ── PDF ────────────────────────────────────────────────────────────────────
   const [existingDocKey, setExistingDocKey] = useState<string | null>(cpo.documentKey ?? null);
   const [pdfFile,      setPdfFile]      = useState<File | null>(null);
-  const [pdfKey,       setPdfKey]       = useState<string | undefined>();
+  // a document uploaded in this visit: deleted from storage again if it is replaced, removed or left unsaved.
+  // (The document already saved with the CPO, existingDocKey, is deleted by the server only when the CPO is saved
+  // without it, so removing it here and then cancelling the edit loses nothing.)
+  const upload = useUnsavedUpload();
+  const pdfKey = upload.key;
   const [pdfUploading, setPdfUploading] = useState(false);
   const pdfRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -726,13 +731,14 @@ export function EditCustomerPoClient({
   async function attachFile(file: File) {
     setPdfFile(file);
     setPdfUploading(true);
+    const ticket = upload.begin();
     try {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/customer-po/upload", { method: "POST", body: form });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Upload failed (${res.status})`);
-      setPdfKey((await res.json()).key);
-      toast.success("Document uploaded");
+      // the previous unsaved file (if any) is deleted; a file replaced or removed while it uploaded is deleted instead
+      if (upload.finish(ticket, (await res.json()).key)) toast.success("Document uploaded");
     } catch (e: any) {
       toast.error(e.message || "Failed to upload document");
       setPdfFile(null);
@@ -844,7 +850,8 @@ export function EditCustomerPoClient({
           : undefined,
         amount,
         currency,
-        documentKey:     pdfKey ?? existingDocKey ?? undefined,
+        // the new file, else the one it had; null when it was removed (the server then deletes the old file once saved)
+        documentKey:     pdfKey ?? existingDocKey ?? null,
         salesPersonName: salesPersons[0]?.name || undefined,
         associateSalesPersons: salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined,
         notes:           notes || undefined,
@@ -853,6 +860,7 @@ export function EditCustomerPoClient({
         deliveryAddress: deliveryAddress.trim() || undefined,
         status: asDraft ? "draft" : status,
       });
+      upload.markSaved(); // the new document belongs to the CPO now: not deleted when the form closes
       toast.success(asDraft ? "Draft saved" : isDraft ? "Customer PO recorded" : "Customer PO updated");
       router.push(backHref);
     } catch (e: any) {
@@ -866,6 +874,9 @@ export function EditCustomerPoClient({
   // the CPO amount against the items ticked (colour of the Amount box and the items' total, and a short note)
   const selectedCount = items.filter((i) => i.included).length;
   const amountState = amountCheck(amount, computedTotal, selectedCount).state;
+  // the total on the customer's PO document (the one just attached, else the saved one): the items' Total is coloured against it
+  const docTotal = usePoDocumentTotal(pdfFile, existingDocKey);
+  const totalState = docTotal != null ? amountCheck(computedTotal, docTotal.toFixed(2), selectedCount).state : amountState;
   const showSearch = isFirstQuotation || showAddSearch;
 
   return (
@@ -918,7 +929,7 @@ export function EditCustomerPoClient({
               {pdfUploading && <span className="text-xs text-muted-foreground">Uploading…</span>}
               {!pdfUploading && pdfKey && <span className="text-xs text-green-600">Attached</span>}
               <button type="button" className="text-xs text-muted-foreground underline hover:text-foreground" onClick={() => pdfRef.current?.click()}>Replace</button>
-              <button type="button" aria-label="Remove the document" onClick={() => { setPdfFile(null); setPdfKey(undefined); setExistingDocKey(null); if (pdfRef.current) pdfRef.current.value = ""; }}>
+              <button type="button" aria-label="Remove the document" onClick={() => { setPdfFile(null); upload.clear(); setPdfUploading(false); setExistingDocKey(null); if (pdfRef.current) pdfRef.current.value = ""; }}>
                 <XIcon className="w-3.5 h-3.5 text-muted-foreground" />
               </button>
             </div>
@@ -1505,10 +1516,17 @@ export function EditCustomerPoClient({
                         </span>
                       )}
                     </td>
-                    <td className={cn("pt-3 text-right tabular-nums font-bold", AMOUNT_TONE[amountState].text)}>
+                    <td className={cn("pt-3 text-right tabular-nums font-bold", AMOUNT_TONE[totalState].text)}>
                       {parseFloat(computedTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
+                  {docTotal != null && (
+                    <tr>
+                      <td colSpan={9} className="pt-1">
+                        <DocTotalCheck docTotal={docTotal} itemsTotal={computedTotal} selectedCount={selectedCount} currency={currency} />
+                      </td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
             </div>

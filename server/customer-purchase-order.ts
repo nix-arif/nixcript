@@ -62,6 +62,13 @@ async function deleteDocument(key: string | null | undefined) {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }
 
+// After the CPO no longer points to a document: delete the file. Done after the database change, so a save that
+// fails never leaves the CPO pointing at a deleted file; a failed delete only leaves a stray file (logged), never a
+// failed save.
+async function deleteDocumentAfterSave(key: string | null | undefined) {
+  try { await deleteDocument(key); } catch (e) { console.error("customer PO: the old document could not be deleted from storage", key, e); }
+}
+
 
 
 
@@ -121,7 +128,7 @@ export interface CreateCustomerPoInput {
   items?: CpoItemInput[];
   amount?: string;
   currency?: string;
-  documentKey?: string;
+  documentKey?: string | null; // undefined: unchanged; null: removed (its file is deleted once saved)
   salesPersonName?: string;
   associateSalesPersons?: { id: string; name: string }[];
   notes?: string;
@@ -530,9 +537,8 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
       if (clash) throw new Error(clashMessage(clash));
     }
   }
-  if (input.documentKey !== undefined && existing.documentKey && existing.documentKey !== input.documentKey) {
-    await deleteDocument(existing.documentKey);
-  }
+  // the document was removed or replaced: its old file is deleted after the save below
+  const oldDocument = input.documentKey !== undefined && existing.documentKey && existing.documentKey !== input.documentKey ? existing.documentKey : null;
 
   const newNo = input.customerPoNo.trim();
   const oldNo = existing.customerPoNo;
@@ -566,6 +572,7 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
     })
     .where(eq(customerPurchaseOrder.id, input.id))
     .returning();
+  if (oldDocument) await deleteDocumentAfterSave(oldDocument);
   if (renamed) await renameCustomerPoNoOnDocuments(existing, oldNo, newNo);
   // recorded now: tell the sales approvers, as if it had just been received
   if (wasDraft && !staysDraft && nextStatus !== "cancelled") await notifyNewCpo(existing.organizationId, userId, existing.id, newNo, row.customerSnapshot);
@@ -897,6 +904,6 @@ export async function deleteCustomerPo(id: string): Promise<void> {
       `Cannot delete — this CPO is linked to sales order ${existing.salesOrderNo ?? existing.salesOrderId}. Remove the link from the sales order first.`,
     );
   }
-  if (existing.documentKey) await deleteDocument(existing.documentKey);
   await db.delete(customerPurchaseOrder).where(eq(customerPurchaseOrder.id, id));
+  await deleteDocumentAfterSave(existing.documentKey); // after the CPO is gone, as above
 }

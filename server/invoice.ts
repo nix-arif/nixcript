@@ -29,6 +29,7 @@ import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, or, sql, count, isNull, ne, gte, lt } from "drizzle-orm";
 import { hasRange, normalizeRange, rangeBounds, type DayRange } from "@/lib/invoice/date-filter";
+import { computeInvoiceStats } from "@/lib/invoice/stats";
 import { getOrgGroupIds } from "@/lib/document-number-group";
 import { invoiceNoForDo, standaloneInvoiceNo } from "@/lib/invoice-number";
 
@@ -603,40 +604,7 @@ export type OrgMemberForInvoice = Awaited<ReturnType<typeof getOrgMembersForInvo
 
 export type InvoiceStatsRow = typeof invoiceStats.$inferSelect;
 
-// The figures of the stats strip for a set of invoices: the all-time cache below, and a date range on the list
-type StatsInput = { status: string | null; grandTotal: string | null; paidAmount: string | null; soaVerified: boolean | null };
-function computeInvoiceStats(rows: StatsInput[]) {
-  let totalBilled = 0, totalCollected = 0, totalOutstanding = 0;
-  let draftCount = 0, sentCount = 0, paidCount = 0, overdueCount = 0, cancelledCount = 0, soaPendingCount = 0;
-
-  for (const r of rows) {
-    const gt  = parseFloat(r.grandTotal  ?? "0") || 0;
-    const pa  = parseFloat(r.paidAmount  ?? "0") || 0;
-    const st  = r.status ?? "draft";
-
-    if (st !== "cancelled") totalBilled += gt;
-    if (st === "paid")       { totalCollected += gt; }
-    else if (st !== "cancelled") { totalCollected += pa; }
-    if (st !== "paid" && st !== "cancelled") totalOutstanding += Math.max(0, gt - pa);
-
-    if (st === "draft")     draftCount++;
-    else if (st === "sent") sentCount++;
-    else if (st === "paid") paidCount++;
-    else if (st === "overdue") overdueCount++;
-    else if (st === "cancelled") cancelledCount++;
-
-    if (!r.soaVerified && st !== "draft" && st !== "cancelled") soaPendingCount++;
-  }
-
-  return {
-    totalCount: rows.length,
-    draftCount, sentCount, paidCount, overdueCount, cancelledCount,
-    totalBilled:      totalBilled.toFixed(2),
-    totalCollected:   totalCollected.toFixed(2),
-    totalOutstanding: totalOutstanding.toFixed(2),
-    soaPendingCount,
-  };
-}
+// computeInvoiceStats (the figures of the stats strip) lives in lib/invoice/stats.ts, shared with the sheet import script
 
 async function refreshInvoiceStats(orgId: string): Promise<void> {
   const rows = await db

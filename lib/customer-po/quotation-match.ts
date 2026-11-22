@@ -297,6 +297,48 @@ function parseGovOrder(text: string): GovOrder | null {
   return { no, date, due, address };
 }
 
+// ── the PO's total amount, to check the CPO's items against ─────────────────
+// The labels of a PO's total, the most telling first: "Jumlah Keseluruhan" (the grand total of a government order) wins
+// over its "Jumlah (RM)" (a page total), "Grand Total" over a plain "Total".
+const TOTAL_LABELS = [
+  /^Jumlah\s+Keseluruhan\b/i, /^Grand\s*Total\b/i, /^Jumlah\s+Besar\b/i, /^Total\s+Amount\b/i, /^Net\s+(?:Total|Amount)\b/i,
+  /^Total\s+Payable\b/i, /^Amount\s+Due\b/i, /^Total\s*\((?:RM|MYR)\)/i, /^Jumlah\s*\((?:RM|MYR)\)/i, /^Total\s*:?\s*$/i,
+];
+// the same labels, for finding them in running text (most telling first)
+const TOTAL_TEXT_LABELS = [
+  "Jumlah\\s+Keseluruhan(?:\\s*\\((?:RM|MYR)\\))?", "Grand\\s*Total", "Jumlah\\s+Besar", "Total\\s+Amount", "Net\\s+(?:Total|Amount)",
+  "Total\\s+Payable", "Amount\\s+Due", "Total\\s*\\((?:RM|MYR)\\)",
+];
+const MONEY = /^(?:RM|MYR)?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)$/i;
+const money = (s: string) => { const m = MONEY.exec(s.trim()); const v = m ? parseFloat(m[1].replace(/,/g, "")) : NaN; return Number.isFinite(v) && v > 0 ? v : null; };
+
+type Cell = { page: number; x: number; y: number; str: string };
+export function extractPoTotal(text: string, cells: Cell[] = [], lines: { amount: number | null }[] = []): number | null {
+  // 1. by position: the label, then the amount on the same row to its right (the text may put them on different lines)
+  for (const label of TOTAL_LABELS) {
+    const found = cells.filter((c) => label.test(c.str.trim()));
+    for (const l of found.reverse()) { // the last one: totals come at the end
+      const value = cells
+        .filter((c) => c.page === l.page && Math.abs(c.y - l.y) <= 3 && c.x > l.x && money(c.str) != null)
+        .sort((a, b) => a.x - b.x)[0];
+      if (value) return money(value.str);
+    }
+  }
+  // 2. by text: the label and the amount on one line ("Grand Total: RM 1,234.50")
+  for (const label of TOTAL_TEXT_LABELS) {
+    const re = new RegExp(`(?:^|\\n)[^\\n]*?${label}[^\\d\\n]{0,20}?((?:RM|MYR)?\\s*(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?)`, "gi");
+    const all = [...text.matchAll(re)];
+    const v = all.length ? money(all[all.length - 1][1]) : null;
+    if (v != null) return v;
+  }
+  // 3. a government order's lines, added up
+  if (lines.length > 0 && lines.every((l) => l.amount != null)) {
+    const sum = Math.round(lines.reduce((s, l) => s + (l.amount as number), 0) * 100) / 100;
+    return sum > 0 ? sum : null;
+  }
+  return null;
+}
+
 // ── the PO's own number and date, as a suggestion for the form ──────────────
 export function extractPoNumber(text: string): string | null {
   const gov = parseGovOrder(text)?.no;

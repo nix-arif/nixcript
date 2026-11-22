@@ -19,6 +19,14 @@
  *
  *   npx dotenv-cli -e .env -- npx tsx scripts/update-invoices-dos-from-sheet.ts
  *   npx dotenv-cli -e .env -- npx tsx scripts/update-invoices-dos-from-sheet.ts --apply
+ *
+ * --sheet-wins: also bring every other imported field of existing invoices in line with the sheet (amount, MRN, case
+ * type/time/date, LPO, SO no, surgeon/hospital). Blank cells, a 0 total, and shifted-column values are never written;
+ * a cancelled invoice zeroed in the sheet is left as it is; the sales person (a staff account in the system) is kept.
+ * After an apply, the invoice list's summary figures are refreshed.
+ *
+ * Without the Google service account (e.g. .env.local), read a CSV export of the tab instead:
+ *   npx dotenv-cli -e .env.local -- npx tsx scripts/update-invoices-dos-from-sheet.ts --csv case-detail.csv
  */
 
 import { createSign } from "crypto";
@@ -28,14 +36,16 @@ import { drizzle } from "drizzle-orm/neon-http";
 import { inArray, eq, and } from "drizzle-orm";
 import {
   invoice, caseCommission, customer, customerCompany, customerOrganization,
-  deliveryOrder, deliveryOrderItem, documentCategory,
+  deliveryOrder, deliveryOrderItem, documentCategory, invoiceStats,
 } from "../db/schema";
+import { computeInvoiceStats } from "../lib/invoice/stats";
 import {
   ORG, ALL_ORG_IDS, CREATED_BY, resolveOrgId,
   normalizeSurgeon, normalizeHospital, str, toMoney, toDate, mapStatus,
 } from "./seed-config";
 
 const APPLY = process.argv.includes("--apply");
+const SHEET_WINS = process.argv.includes("--sheet-wins"); // update every imported field of existing invoices, not only status/payment
 const SHEET_ID = "1q4-AlIajvMSloO_4dsnerTaKU-Yy1GrgeXqlLsq_AIA";
 const TAB_NAME = "Case Detail";
 
@@ -68,7 +78,37 @@ async function getAccessToken(email: string, privateKey: string): Promise<string
   return data.access_token;
 }
 
-async function fetchSheetRows(): Promise<Record<string, string>[]> {
+// --csv <file>: read the tab from a CSV export instead of the Sheets API (File → Download → CSV, or the sheet's
+// /export?format=csv&gid=862547153 link). It holds the same displayed values the API returns, for when the Google
+// service account is not set up (e.g. in .env.local).
+const CSV_ARG = process.argv.indexOf("--csv");
+const CSV_FILE = CSV_ARG >= 0 ? process.argv[CSV_ARG + 1] : null;
+
+// RFC 4180: quoted fields, "" inside quotes, line breaks inside quotes
+function parseCsv(text: string): string[][] {
+  const out: string[][] = [];
+  let row: string[] = [], field = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); out.push(row); row = []; field = "";
+    } else field += ch;
+  }
+  if (field || row.length) { row.push(field); out.push(row); }
+  return out;
+}
+
+async function readRows(): Promise<string[][]> {
+  if (CSV_FILE) {
+    const { readFileSync } = await import("fs");
+    return parseCsv(readFileSync(CSV_FILE, "utf8"));
+  }
   const token = await getAccessToken(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!, cleanPrivateKey(process.env.GOOGLE_PRIVATE_KEY!));
   const res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/'${TAB_NAME}'!A1:BA2000`,
@@ -76,7 +116,11 @@ async function fetchSheetRows(): Promise<Record<string, string>[]> {
   );
   const data = await res.json();
   if (!res.ok) throw new Error(`Sheets API error: ${JSON.stringify(data)}`);
-  const rows: string[][] = data.values ?? [];
+  return data.values ?? [];
+}
+
+async function fetchSheetRows(): Promise<Record<string, string>[]> {
+  const rows = await readRows();
 
   // The sheet has two "PAYMENT DATE" columns (invoice payment, then the surgeon
   // commission payment). Keep the first under its own name and suffix repeats
@@ -163,6 +207,13 @@ async function main() {
       id: invoice.id, invoiceNo: invoice.invoiceNo, organizationId: invoice.organizationId,
       status: invoice.status, paidAt: invoice.paidAt, paymentRef: invoice.paymentRef,
       deliveryOrderId: invoice.deliveryOrderId, customerId: invoice.customerId,
+      // compared only with --sheet-wins
+      grandTotal: invoice.grandTotal, subtotal: invoice.subtotal, paidAmount: invoice.paidAmount,
+      costTotal: invoice.costTotal, expensesTotal: invoice.expensesTotal, profit: invoice.profit,
+      mrnNo: invoice.mrnNo, caseType: invoice.caseType, caseTime: invoice.caseTime, caseDate: invoice.caseDate,
+      invoiceDate: invoice.invoiceDate, customerPoNo: invoice.customerPoNo, salesOrderNo: invoice.salesOrderNo,
+      salesPersonName: invoice.salesPersonName, applicationSpecialistName: invoice.applicationSpecialistName,
+      customerSnapshot: invoice.customerSnapshot, categoryIds: invoice.categoryIds,
     })
     .from(invoice)
     .where(inArray(invoice.organizationId, [...ALL_ORG_IDS]));
@@ -268,6 +319,91 @@ async function main() {
 
   // ── 2. updates to existing invoices ─────────────────────────────────────────
   type Upd = { id: string; invoiceNo: string; set: Partial<InvoiceInsert>; why: string[] };
+
+  // --sheet-wins: every field the import takes from the sheet is brought in line with it, not only status and payment.
+  // A sheet value is used only when it is a real value for that field:
+  //  - a blank cell never wipes what the system has
+  //  - a total of 0 (or not a number) never replaces a real total (a cancelled invoice zeroed in the sheet keeps its value)
+  //  - an SO / PO number that is just an amount (a row shifted by a column) is skipped
+  // When the total changes, a paid amount already recorded follows it, and so does the profit if it was in line.
+  type Cur = (typeof existing)[number];
+  const caseTypeChanges: { invoiceId: string; doId: string | null; orgId: string; from: string | null; to: string }[] = [];
+  // a few before → after examples of each kind of change, printed with the plan
+  const examples = new Map<string, string[]>();
+  const example = (label: string, line: string) => { const l = examples.get(label) ?? []; if (l.length < 4) l.push(line); examples.set(label, l); };
+  const looksLikeMoney = (s: string) => /^[\d,]+(\.\d+)?$/.test(s);
+  const klDay = (d: Date | string | null | undefined) => (d ? new Date(new Date(d).getTime() + 8 * 3600_000).toISOString().slice(0, 10) : null);
+  // toDate (seed-config) builds the date at local midnight: its calendar day is in local time, not UTC
+  const sheetDay = (d: Date | undefined) =>
+    d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : null;
+  // the case-type categories (evlt, milh, …) of every org, to swap them when the case type changes
+  const CASE_CATS = ["evlt", "milh", "pldd", "rfa", "filac", "silac"];
+  const caseCatIds = new Set(cats.filter((c) => CASE_CATS.includes(c.name.toLowerCase())).map((c) => c.id));
+  const withCaseCats = (orgId: string, ids: string[], caseType: string) => [
+    ...ids.filter((id) => !caseCatIds.has(id)),
+    ...caseTypeToCategoryNames(caseType).map((n) => catId.get(`${orgId}|${n}`)).filter((x): x is string => !!x),
+  ];
+  let salesPersonDiffers = 0; // counted, never changed: the system has the staff account, the sheet a team label
+
+  function sheetWins(cur: Cur, r: Record<string, string>, set: Partial<InvoiceInsert>, why: string[]) {
+    // a cancelled invoice zeroed in the sheet ("Reuse running at …"): its row is a placeholder, the system's record stays
+    if (mapStatus(str(r["STATUS"]) ?? "") === "cancelled" && !(Number(toMoney(r["TOTAL SO"])) > 0)) return;
+    const total = Number(toMoney(r["TOTAL SO"]));
+    if (Number.isFinite(total) && total > 0 && Math.abs(total - Number(cur.grandTotal ?? 0)) >= 0.005) {
+      const t = total.toFixed(2);
+      set.grandTotal = t; set.subtotal = t;
+      why.push(`amount ${cur.grandTotal}→${t}`);
+      const paid = Number(cur.paidAmount ?? 0);
+      if (paid > 0) { set.paidAmount = t; why.push("paid amount follows"); }
+      const cost = Number(cur.costTotal ?? 0), exp = Number(cur.expensesTotal ?? 0);
+      if (Math.abs(Number(cur.profit ?? 0) - (Number(cur.grandTotal ?? 0) - cost - exp)) < 0.005) set.profit = (total - cost - exp).toFixed(2);
+    }
+    const text = (field: keyof Cur & keyof InvoiceInsert, value: string | null, label: string, ok: (v: string) => boolean = () => true) => {
+      if (value && ok(value) && value !== (cur[field] ?? null)) {
+        (set as Record<string, unknown>)[field] = value; why.push(label);
+        example(label, `${cur.invoiceNo}: "${cur[field] ?? ""}" → "${value}"`);
+      }
+    };
+    text("mrnNo", str(r["MRN NO"]), "MRN", (v) => /^[A-Za-z0-9\-\/ ]{3,30}$/.test(v));
+    const caseType = str(r["CASE"]);
+    if (caseType && !/TOTAL/i.test(caseType) && caseType !== (cur.caseType ?? null)) {
+      set.caseType = caseType; why.push("case type");
+      example("case type", `${cur.invoiceNo}: "${cur.caseType ?? ""}" → "${caseType}"`);
+      // its case-type category follows (the other categories are kept), and so does its imported DO (below)
+      set.categoryIds = withCaseCats(cur.organizationId, (cur.categoryIds as string[] | null) ?? [], caseType);
+      caseTypeChanges.push({ invoiceId: cur.id, doId: cur.deliveryOrderId, orgId: cur.organizationId, from: cur.caseType, to: caseType });
+    }
+    // only a real change: "02:00:00 PM" and "02:00:00 pm" are the same time
+    const time = str(r["TIME"]);
+    if (time && time.toLowerCase() !== (cur.caseTime ?? "").toLowerCase()) { set.caseTime = time; why.push("case time"); example("case time", `${cur.invoiceNo}: "${cur.caseTime ?? ""}" → "${time}"`); }
+    text("customerPoNo", str(r["LPO"]), "LPO", (v) => !looksLikeMoney(v));
+    text("salesOrderNo", str(r["SALES ORDER NO"]), "SO no", (v) => !looksLikeMoney(v));
+    // Sales person: the system holds the staff account each invoice is credited to ("Zilarahim"), the sheet a team
+    // label ("Iwan & Zila") that is no account. Not overwritten; only counted for the report.
+    const sp = str(r["Sales Person"]);
+    if (sp && sp !== cur.salesPersonName && sp !== cur.applicationSpecialistName) salesPersonDiffers++;
+    // the case date is also the invoice date of imported invoices (see the insert above)
+    const d = toDate(r["DATE"]);
+    if (d && sheetDay(d) !== klDay(cur.caseDate)) { set.caseDate = d; why.push("case date"); example("case date", `${cur.invoiceNo}: ${klDay(cur.caseDate)} → ${sheetDay(d)}`); }
+    if (d && sheetDay(d) !== klDay(cur.invoiceDate)) { set.invoiceDate = d; why.push("invoice date"); example("invoice date", `${cur.invoiceNo}: ${klDay(cur.invoiceDate)} → ${sheetDay(d)}`); }
+    // the surgeon (customer) and hospital
+    const surgeonRaw = str(r["SURGEON"]);
+    if (surgeonRaw) {
+      const c = customerByName.get(normalizeSurgeon(surgeonRaw).name);
+      if (c) {
+        const snap = snapshotFor(c.id, str(r["HOSPITAL"]));
+        const curSnap = (cur.customerSnapshot ?? {}) as { name?: string; organizationName?: string };
+        if (c.id !== cur.customerId) { set.customerId = c.id; set.customerSnapshot = snap; why.push("surgeon"); example("surgeon", `${cur.invoiceNo}: "${curSnap.name ?? ""}" → "${snap?.name ?? ""}"`); }
+        // the hospital: only a real change. The system often has the sheet's own wording ("Gleneagles Medini") where the
+        // customer's hospital record has its full name ("Gleneagles Hospital Medini Johor"); that is the same hospital.
+        else if (snap?.organizationName && ![snap.organizationName, str(r["HOSPITAL"]), normalizeHospital(str(r["HOSPITAL"]) ?? "")]
+          .some((n) => n && n.toLowerCase() === (curSnap.organizationName ?? "").toLowerCase())) {
+          set.customerSnapshot = snap; why.push("hospital");
+          example("hospital", `${cur.invoiceNo}: "${curSnap.organizationName ?? ""}" → "${snap.organizationName}" (sheet: "${str(r["HOSPITAL"]) ?? ""}")`);
+        }
+      }
+    }
+  }
   const updates: Upd[] = [];
   for (const [key, { first: r }] of grouped) {
     const cur = existingByKey.get(key);
@@ -288,6 +424,8 @@ async function main() {
     }
     const sheetRef = str(r["PAYMENT REF"]);
     if (sheetRef && sheetRef !== cur.paymentRef) { set.paymentRef = sheetRef; why.push("payment ref"); }
+
+    if (SHEET_WINS) sheetWins(cur, r, set, why);
 
     if (why.length) updates.push({ id: cur.id, invoiceNo: cur.invoiceNo ?? key, set, why });
   }
@@ -364,9 +502,18 @@ async function main() {
   console.log(`Existing invoices to update: ${updates.length}`);
   console.log(`  changes: ${JSON.stringify(tally(updates.flatMap((u) => u.why.map((w) => w.replace(/→.*/, "→…")))))}`);
   for (const u of updates.slice(0, 12)) console.log(`   - ${u.invoiceNo}: ${u.why.join(", ")}`);
+  if (examples.size) {
+    console.log("  examples (system → sheet):");
+    for (const [label, lines] of examples) for (const l of lines) console.log(`   [${label}] ${l}`);
+  }
   console.log(`New delivery orders:     ${doInserts.length}`);
   console.log(`DO links to (re)attach:  ${doLinks.length - doInserts.length} existing DO(s) matched by number`);
   console.log(`DO status updates:       ${doStatusUpdates.length}  ${JSON.stringify(tally(doStatusUpdates.map((d) => `${d.from}→${d.to}`)))}`);
+
+  if (SHEET_WINS) {
+    console.log(`Case type changes:       ${caseTypeChanges.length}  (their category and imported DO follow)`);
+    console.log(`Sales person differs:    ${salesPersonDiffers}  (kept: the system has the staff account, the sheet a team label)`);
+  }
 
   if (!APPLY) { console.log("\nDry run — nothing written. Re-run with --apply to write."); return; }
 
@@ -388,6 +535,31 @@ async function main() {
 
   for (const d of doStatusUpdates) await db.update(deliveryOrder).set({ status: d.to }).where(eq(deliveryOrder.id, d.id));
   console.log(`✓ synced status on ${doStatusUpdates.length} delivery orders`);
+
+  // a changed case type: the imported DO's item (it is the case type) and its case-type category follow
+  let doCaseUpdated = 0;
+  for (const ch of caseTypeChanges) {
+    if (!ch.doId) continue;
+    const [d] = await db.select({ id: deliveryOrder.id, isCaseDo: deliveryOrder.isCaseDo, categoryIds: deliveryOrder.categoryIds }).from(deliveryOrder).where(eq(deliveryOrder.id, ch.doId));
+    if (!d || d.isCaseDo) continue; // a DO made in the app is not the import's to change
+    await db.update(deliveryOrder).set({ categoryIds: withCaseCats(ch.orgId, d.categoryIds ?? [], ch.to) }).where(eq(deliveryOrder.id, d.id));
+    if (ch.from) {
+      await db.update(deliveryOrderItem).set({ description: ch.to })
+        .where(and(eq(deliveryOrderItem.deliveryOrderId, d.id), eq(deliveryOrderItem.description, ch.from)));
+    }
+    doCaseUpdated++;
+  }
+  if (caseTypeChanges.length) console.log(`✓ case type followed on ${doCaseUpdated} delivery orders`);
+
+  // the invoice list's figures (billed, collected, outstanding …) are a saved summary: refresh it for both companies
+  for (const orgId of ALL_ORG_IDS) {
+    const rows = await db.select({ status: invoice.status, grandTotal: invoice.grandTotal, paidAmount: invoice.paidAmount, soaVerified: invoice.soaVerified })
+      .from(invoice).where(eq(invoice.organizationId, orgId));
+    const s = computeInvoiceStats(rows);
+    await db.insert(invoiceStats).values({ id: nanoid(), organizationId: orgId, ...s })
+      .onConflictDoUpdate({ target: invoiceStats.organizationId, set: { ...s, updatedAt: new Date() } });
+  }
+  console.log(`✓ refreshed the invoice summary figures of ${ALL_ORG_IDS.length} companies`);
 
   for (const [orgId, { year, num }] of maxSeq) {
     await sql`

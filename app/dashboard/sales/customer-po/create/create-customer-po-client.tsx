@@ -15,7 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
-import { AMOUNT_TONE, AmountCheckNote, amountCheck } from "../amount-check";
+import { AMOUNT_TONE, AmountCheckNote, DocTotalCheck, amountCheck } from "../amount-check";
+import { useUnsavedUpload } from "../use-unsaved-upload";
 import { sumLines, setTotal, bookSetPrices } from "@/lib/customer-po/set-price";
 import { isSetPriced } from "@/lib/quotation-set-price";
 import { uid } from "@/lib/uid";
@@ -134,7 +135,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
 
   // ── PDF ────────────────────────────────────────────────────────────────────
   const [pdfFile,      setPdfFile]      = useState<File | null>(null);
-  const [pdfKey,       setPdfKey]       = useState<string | undefined>();
+  // the uploaded document: deleted from storage again if it is replaced, removed or left unsaved
+  const upload = useUnsavedUpload();
+  const pdfKey = upload.key;
   const [pdfUploading, setPdfUploading] = useState(false);
   const pdfRef = useRef<HTMLInputElement>(null);
   // What reading the customer's PO document found (the matching quotation, the PO number and date)
@@ -682,7 +685,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       if (data.deliveryDate) { setDeliveryDate(data.deliveryDate); filled.push("due delivery date"); keys.push("due"); }
       if (data.deliveryAddress) { setDeliveryAddress(data.deliveryAddress); addressFromDoc.current = true; filled.push("delivery address"); keys.push("address"); }
       markFilled(keys);
-      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled, lines: data.lines ?? [], linked: !wantSuggestions });
+      setPoRead({ status: "done", fileName: file.name, suggestions: wantSuggestions ? data.suggestions ?? [] : [], poNumber: data.poNumber ?? null, poDate: data.poDate ?? null, filled, lines: data.lines ?? [], linked: !wantSuggestions, poTotal: typeof data.poTotal === "number" ? data.poTotal : null });
     } catch {
       setPoRead({ status: "unreadable", fileName: file.name, reason: "The document could not be read." });
     }
@@ -739,13 +742,14 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     setPdfUploading(true);
     // the document is read for its dates and delivery address, and (while no quotation is linked) to suggest the quotation
     void readDocument(file, linkedQuotations.length === 0);
+    const ticket = upload.begin();
     try {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/customer-po/upload", { method: "POST", body: form });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Upload failed (${res.status})`);
-      setPdfKey((await res.json()).key);
-      toast.success("Document uploaded");
+      // the previous file (if any) is deleted; a file replaced or removed while it uploaded is deleted instead
+      if (upload.finish(ticket, (await res.json()).key)) toast.success("Document uploaded");
     } catch (e: any) {
       toast.error(e.message || "Failed to upload document");
       setPdfFile(null);
@@ -859,6 +863,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         deliveryAddress: deliveryAddress.trim() || undefined,
         status: asDraft ? "draft" : status,
       });
+      upload.markSaved(); // the document belongs to the CPO now: not deleted when the form closes
       toast.success(asDraft ? "Draft saved. Finish it later from the Customer PO list." : "Customer PO recorded");
       router.push("/dashboard/sales/customer-po");
     } catch (e: any) {
@@ -872,6 +877,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
   // the CPO amount against the items ticked (colour of the Amount box and the items' total, and a short note)
   const selectedCount = items.filter((i) => i.included).length;
   const amountState = amountCheck(amount, computedTotal, selectedCount).state;
+  // the total on the customer's PO document, when it could be read: the items' Total is coloured against it
+  const docTotal = poRead.status === "done" ? poRead.poTotal ?? null : null;
+  const totalState = docTotal != null ? amountCheck(computedTotal, docTotal.toFixed(2), selectedCount).state : amountState;
   const showSearch = isFirstQuotation || showAddSearch;
 
   return (
@@ -914,7 +922,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
               {pdfUploading && <span className="text-xs text-muted-foreground">Uploading…</span>}
               {!pdfUploading && pdfKey && <span className="text-xs text-green-600">Attached</span>}
               <button type="button" className="text-xs text-muted-foreground underline hover:text-foreground" onClick={() => pdfRef.current?.click()}>Replace</button>
-              <button type="button" aria-label="Remove the document" onClick={() => { setPdfFile(null); setPdfKey(undefined); setPoRead({ status: "idle" }); }}>
+              <button type="button" aria-label="Remove the document" onClick={() => { setPdfFile(null); upload.clear(); setPdfUploading(false); setPoRead({ status: "idle" }); }}>
                 <XIcon className="w-3.5 h-3.5 text-muted-foreground" />
               </button>
             </div>
@@ -1519,10 +1527,17 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                         </span>
                       )}
                     </td>
-                    <td className={cn("pt-3 text-right tabular-nums font-bold", AMOUNT_TONE[amountState].text)}>
+                    <td className={cn("pt-3 text-right tabular-nums font-bold", AMOUNT_TONE[totalState].text)}>
                       {parseFloat(computedTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
+                  {docTotal != null && (
+                    <tr>
+                      <td colSpan={9} className="pt-1">
+                        <DocTotalCheck docTotal={docTotal} itemsTotal={computedTotal} selectedCount={selectedCount} currency={currency} />
+                      </td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
             </div>

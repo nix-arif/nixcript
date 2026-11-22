@@ -10,7 +10,7 @@ export type PoReadResult =
   | { status: "idle" }
   | { status: "loading"; fileName: string }
   | { status: "unreadable"; fileName: string; reason: string }
-  | { status: "done"; fileName: string; suggestions: Suggestion[]; poNumber: string | null; poDate: string | null; filled: string[]; lines: PoLine[]; linked?: boolean };
+  | { status: "done"; fileName: string; suggestions: Suggestion[]; poNumber: string | null; poDate: string | null; filled: string[]; lines: PoLine[]; linked?: boolean; poTotal?: number | null };
 
 const fmtMoney = (v: string | null) => (v ? Number(v).toLocaleString("en-MY", { minimumFractionDigits: 2 }) : "");
 const fmtDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
