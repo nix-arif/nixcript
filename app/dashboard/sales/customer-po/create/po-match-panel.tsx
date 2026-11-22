@@ -57,7 +57,7 @@ export function PoMatchResults({
       {filledNote}
       {result.linked || hasQuotation ? null : result.suggestions.length === 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span>No quotation matched {result.fileName}. The document is still attached to this CPO.</span>
+          <span>No quotation matched {result.fileName}: only quotations for the customer organization named on the PO are suggested, and none of ours is for it (or it is named differently in our customer records). The document is still attached to this CPO.</span>
           <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={onTypeNumber}>
             <KeyboardIcon className="h-3 w-3" />Type the quotation number
           </Button>
@@ -66,12 +66,8 @@ export function PoMatchResults({
         <>
           <p className="text-xs font-medium">{result.suggestions.length === 1 ? "1 quotation matches" : `${result.suggestions.length} quotations may match`} {result.fileName}:</p>
           <ul className="space-y-1.5">
-            {result.suggestions.map((s, i) => (
-              <li key={s.id} className="space-y-1.5">
-              {/* the organization comes first: the quotations for another organization are set apart under their own heading */}
-              {!s.orgFound && i > 0 && result.suggestions[i - 1].orgFound && (
-                <p className="pt-1 text-[11px] font-medium text-muted-foreground">Other organizations (not on this PO)</p>
-              )}
+            {result.suggestions.map((s) => (
+              <li key={s.id}>
               <div className={cn("rounded-lg border px-3 py-2", s.level === "very-likely" ? "border-green-300 bg-green-50/60 dark:border-green-800 dark:bg-green-900/10" : "border-border bg-background")}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-sm font-semibold">{s.quotationNo}</span>

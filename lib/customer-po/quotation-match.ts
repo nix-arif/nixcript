@@ -196,18 +196,23 @@ export function lineCoverage(lines: DocLine[], items: MatchCandidate["items"]): 
   return { strong, weak, total: lines.length };
 }
 
+// Step 1: the customer's organization must be on the PO. A quotation for any other organization is not a match,
+// whatever else agrees (the same product is quoted to many hospitals, often at the same price).
+export const orgMatches = (doc: DocIndex, c: Pick<MatchCandidate, "customerName" | "orgNames">) => customerAppears(doc, c).org;
+
 export function scoreCandidate(text: string | DocIndex, nums: Set<string> | null, c: MatchCandidate, lines: DocLine[] = []): Suggestion | null {
   const doc = typeof text === "string" ? indexDoc(text) : text;
+  const cust = customerAppears(doc, c);
+  if (!cust.org) return null; // step 1 failed: filtered out
   const ref = textHasQuotationNo(doc.text, c.quotationNo);
   const amount = totalAppears(nums ?? doc.nums, c.grandTotal);
-  const cust = customerAppears(doc, c);
   const hits = itemHits(doc, c.items);
   const cover = lines.length ? lineCoverage(lines, c.items) : null;
   const total = c.items.length;
   const reasons: string[] = [];
   let score = 0;
-  // the organization is checked first and said first: it decides the order (see rankSuggestions)
-  if (cust.org) { score += 15; reasons.push("The customer's organization is on the document"); }
+  // the organization was checked first (step 1) and is said first
+  score += 15; reasons.push("The customer's organization is on the document");
   if (ref) { score += 100; reasons.push("Our quotation number is on the document"); }
   // The customer quoted the number this revision replaced ("…-0143" on the PO, and we revised it to "…-0143-R1"):
   // as good as its own number. If the revision matches the PO as well as the original, the tie goes to the newer one.
@@ -238,12 +243,11 @@ export function scoreCandidate(text: string | DocIndex, nums: Set<string> | null
   if (cust.person) { score += 10; reasons.push("The contact's name is on the document"); }
   const ratio = total > 0 ? hits.strong / total : 0;
   const allStrong = !!cover && cover.total > 0 && cover.strong === cover.total;
-  const veryLikely = ref || baseRef || (ratio >= 0.7 && (amount || cust.org)) || (allStrong && (amount || cust.org));
-  // Shown when it scores enough, or when it is for the right organization and anything else agrees too (an item, a
-  // line of the PO, the total): the organization comes first, so its quotations are not hidden for a low score. The
-  // organization alone is not enough: every quotation ever made to that hospital would be listed.
+  const veryLikely = ref || baseRef || ratio >= 0.7 || allStrong;
+  // Step 2: the organization is right; something else must agree too (the quotation number, an item, a line of the
+  // PO, the total). The organization alone is not enough: every quotation ever made to that hospital would be listed.
   const somethingElse = ref || baseRef || amount || hits.strong + hits.weak > 0 || (!!cover && cover.strong + cover.weak > 0);
-  if (!veryLikely && score < 30 && !(cust.org && somethingElse)) return null;
+  if (!somethingElse) return null;
   return {
     id: c.id, quotationNo: c.quotationNo, customerName: c.customerName, grandTotal: c.grandTotal, score,
     level: veryLikely ? "very-likely" : "possible", reasons, itemHits: hits.strong + hits.weak, itemTotal: total,
@@ -251,17 +255,17 @@ export function scoreCandidate(text: string | DocIndex, nums: Set<string> | null
   };
 }
 
-// The order of the suggestions:
-//  1. the customer's organization first: a quotation for the organization on the PO comes before any other,
-//  2. then by how well the rest agrees (the quotation number, the items, the PO's lines, the total),
+// The suggestions:
+//  1. only quotations for the customer organization on the PO (the others are filtered out),
+//  2. best first by how well the rest agrees (the quotation number, the items, the PO's lines, the total),
 //  3. then the newer one (the candidates come newest first): of two that match equally (a quotation and its
-//     revision, two quotations to the same customer for the same total) the customer most likely ordered the newer.
+//     revision, two quotations for the same total) the customer most likely ordered the newer.
 export function rankSuggestions(text: string, candidates: MatchCandidate[], max = 5, lines: DocLine[] = []): Suggestion[] {
   const doc = indexDoc(text);
   return candidates
     .map((c, i) => ({ s: scoreCandidate(doc, doc.nums, c, lines), i }))
     .filter((x): x is { s: Suggestion; i: number } => !!x.s)
-    .sort((a, b) => Number(b.s.orgFound) - Number(a.s.orgFound) || b.s.score - a.s.score || a.i - b.i)
+    .sort((a, b) => b.s.score - a.s.score || a.i - b.i)
     .slice(0, max)
     .map((x) => x.s);
 }
