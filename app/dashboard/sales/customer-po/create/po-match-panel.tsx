@@ -66,8 +66,13 @@ export function PoMatchResults({
         <>
           <p className="text-xs font-medium">{result.suggestions.length === 1 ? "1 quotation matches" : `${result.suggestions.length} quotations may match`} {result.fileName}:</p>
           <ul className="space-y-1.5">
-            {result.suggestions.map((s) => (
-              <li key={s.id} className={cn("rounded-lg border px-3 py-2", s.level === "very-likely" ? "border-green-300 bg-green-50/60 dark:border-green-800 dark:bg-green-900/10" : "border-border bg-background")}>
+            {result.suggestions.map((s, i) => (
+              <li key={s.id} className="space-y-1.5">
+              {/* the organization comes first: the quotations for another organization are set apart under their own heading */}
+              {!s.orgFound && i > 0 && result.suggestions[i - 1].orgFound && (
+                <p className="pt-1 text-[11px] font-medium text-muted-foreground">Other organizations (not on this PO)</p>
+              )}
+              <div className={cn("rounded-lg border px-3 py-2", s.level === "very-likely" ? "border-green-300 bg-green-50/60 dark:border-green-800 dark:bg-green-900/10" : "border-border bg-background")}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-sm font-semibold">{s.quotationNo}</span>
                   <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold", s.level === "very-likely" ? "bg-green-600 text-white" : "bg-muted text-muted-foreground")}>
@@ -89,6 +94,7 @@ export function PoMatchResults({
                     <LinkIcon className="h-3 w-3" />Link this quotation
                   </Button>
                 </div>
+              </div>
               </li>
             ))}
           </ul>
