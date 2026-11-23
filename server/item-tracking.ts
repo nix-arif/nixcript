@@ -18,7 +18,7 @@ import {
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
-import { and, asc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNotNull, isNull, max, or, sql } from "drizzle-orm";
 
 const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
 
@@ -106,22 +106,39 @@ export async function getPoForTracking(purchaseOrderId: string): Promise<TrackPo
   if (!po) return null;
 
   const items = await db.select().from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, po.id)).orderBy(asc(purchaseOrderItem.rowNo));
+  const [lines, [org]] = await Promise.all([
+    summarizeLines(items),
+    db.select({ name: organization.name }).from(organization).where(eq(organization.id, po.organizationId)),
+  ]);
+  return {
+    id: po.id,
+    poNo: po.poNo,
+    prNo: po.prNo,
+    status: po.status,
+    supplierName: (po.supplierSnapshot as { name?: string } | null)?.name ?? null,
+    organizationId: po.organizationId,
+    organizationName: org?.name ?? null,
+    lines,
+  };
+}
+
+// Accepted / pending-return / packing-list counts for a set of PO lines.
+async function summarizeLines(items: (typeof purchaseOrderItem.$inferSelect)[]): Promise<TrackLine[]> {
   const itemIds = items.map((i) => i.id);
-  const [grItems, plItems, [org]] = await Promise.all([
-    itemIds.length === 0 ? [] : db
+  if (itemIds.length === 0) return [];
+  const [grItems, plItems] = await Promise.all([
+    db
       .select({ poItemId: goodsReceiptItem.purchaseOrderItemId, qtyGood: goodsReceiptItem.qtyGood, qtyReceived: goodsReceiptItem.qtyReceived, qtyReturn: goodsReceiptItem.qtyReturn, returnStatus: goodsReceiptItem.returnStatus })
       .from(goodsReceiptItem)
       .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
       .where(and(inArray(goodsReceiptItem.purchaseOrderItemId, itemIds), eq(goodsReceipt.status, "confirmed"))),
-    itemIds.length === 0 ? [] : db
+    db
       .select({ poItemId: packingListItem.purchaseOrderItemId })
       .from(packingListItem)
       .innerJoin(packingList, eq(packingListItem.packingListId, packingList.id))
       .where(and(inArray(packingListItem.purchaseOrderItemId, itemIds), inArray(packingList.status, ["pending", "completed"]), isNull(packingListItem.removedAt))),
-    db.select({ name: organization.name }).from(organization).where(eq(organization.id, po.organizationId)),
   ]);
-
-  const lines: TrackLine[] = items.map((i) => {
+  return items.map((i) => {
     const mine = grItems.filter((g) => g.poItemId === i.id);
     return {
       id: i.id,
@@ -135,15 +152,74 @@ export async function getPoForTracking(purchaseOrderId: string): Promise<TrackPo
       packingListCount: plItems.filter((p) => p.poItemId === i.id).length,
     };
   });
+}
+
+export type TrackProductHit = {
+  productCode: string;
+  description: string | null;
+  poCount: number;
+};
+
+// Type-ahead by product code: distinct codes found on SPO lines across every
+// org the caller owns, with how many SPOs carry each.
+export async function searchProductCodesForTracking(query: string): Promise<TrackProductHit[]> {
+  const { orgIds } = await requireCentralizedRead();
+  const q = query.trim();
+  if (q.length < 2) return [];
+  const rows = await db
+    .select({
+      productCode: purchaseOrderItem.productCode,
+      description: max(purchaseOrderItem.description),
+      poCount: count(sql`distinct ${purchaseOrderItem.purchaseOrderId}`),
+    })
+    .from(purchaseOrderItem)
+    .innerJoin(purchaseOrder, eq(purchaseOrderItem.purchaseOrderId, purchaseOrder.id))
+    .where(and(inArray(purchaseOrder.organizationId, orgIds), isNotNull(purchaseOrderItem.productCode), ilike(purchaseOrderItem.productCode, `%${q}%`)))
+    .groupBy(purchaseOrderItem.productCode)
+    .orderBy(asc(purchaseOrderItem.productCode))
+    .limit(20);
+  return rows.map((r) => ({ productCode: r.productCode!, description: r.description, poCount: r.poCount }));
+}
+
+export type TrackProductLine = TrackLine & {
+  po: { id: string; poNo: string | null; prNo: string | null; status: string; poDate: string | null; supplierName: string | null; organizationName: string | null };
+};
+
+export type TrackProduct = {
+  productCode: string;
+  description: string | null;
+  lines: TrackProductLine[];
+};
+
+// Every SPO line carrying this product code, newest SPO first.
+export async function getProductForTracking(productCode: string): Promise<TrackProduct> {
+  const { orgIds } = await requireCentralizedRead();
+  const rows = await db
+    .select({ item: purchaseOrderItem, po: purchaseOrder })
+    .from(purchaseOrderItem)
+    .innerJoin(purchaseOrder, eq(purchaseOrderItem.purchaseOrderId, purchaseOrder.id))
+    .where(and(inArray(purchaseOrder.organizationId, orgIds), eq(purchaseOrderItem.productCode, productCode)))
+    .orderBy(desc(sql`coalesce(${purchaseOrder.poDate}, ${purchaseOrder.createdAt}::date)`), desc(purchaseOrder.createdAt), asc(purchaseOrderItem.rowNo));
+  const [summaries, orgs] = await Promise.all([
+    summarizeLines(rows.map((r) => r.item)),
+    db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, orgIds)),
+  ]);
+  const orgName = new Map(orgs.map((o) => [o.id, o.name]));
   return {
-    id: po.id,
-    poNo: po.poNo,
-    prNo: po.prNo,
-    status: po.status,
-    supplierName: (po.supplierSnapshot as { name?: string } | null)?.name ?? null,
-    organizationId: po.organizationId,
-    organizationName: org?.name ?? null,
-    lines,
+    productCode,
+    description: rows.find((r) => r.item.description)?.item.description ?? null,
+    lines: rows.map(({ po }, i) => ({
+      ...summaries[i],
+      po: {
+        id: po.id,
+        poNo: po.poNo,
+        prNo: po.prNo,
+        status: po.status,
+        poDate: po.poDate ?? po.createdAt.toISOString().slice(0, 10),
+        supplierName: (po.supplierSnapshot as { name?: string } | null)?.name ?? null,
+        organizationName: orgName.get(po.organizationId) ?? null,
+      },
+    })),
   };
 }
 

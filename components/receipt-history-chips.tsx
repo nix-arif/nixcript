@@ -120,11 +120,13 @@ export function PoLineLedger({ history, thisQty, current, uom }: {
             </td>
             <td className={cn(td, "font-bold")}>{n(total)}</td>
           </tr>
+          <tr className={cn("border-t border-slate-200 dark:border-slate-700", totalRejected > 1e-9 ? "font-semibold text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+            <td className="px-1.5 py-0.5" colSpan={2}>Total rejected{unit && ` (${uom})`}</td>
+            <td className={td}>{n(totalRejected)}</td>
+            <td />
+          </tr>
         </tbody>
       </table>
-      <p className={cn("border-t border-slate-200 px-1.5 py-0.5 dark:border-slate-700", totalRejected > 1e-9 ? "font-semibold text-red-600 dark:text-red-400" : "text-muted-foreground")}>
-        Total rejected: {n(totalRejected)}{unit}
-      </p>
     </div>
   );
 }

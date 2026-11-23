@@ -14,14 +14,21 @@ import {
   ExternalLinkIcon,
   PackageIcon,
   BuildingIcon,
+  BarcodeIcon,
+  CalendarIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   searchPurchaseOrdersForTracking,
   getPoForTracking,
   getItemTrace,
+  searchProductCodesForTracking,
+  getProductForTracking,
   type TrackPoHit,
   type TrackPo,
+  type TrackLine,
+  type TrackProductHit,
+  type TrackProduct,
   type ItemTrace,
   type TraceEvent,
 } from "@/server/item-tracking";
@@ -69,9 +76,14 @@ function Stat({ label, value, tone }: { label: string; value: React.ReactNode; t
   );
 }
 
+type Mode = "po" | "product";
+
 export function ItemTrackingClient() {
+  const [mode, setMode] = useState<Mode>("po");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<TrackPoHit[]>([]);
+  const [productHits, setProductHits] = useState<TrackProductHit[]>([]);
+  const [product, setProduct] = useState<TrackProduct | null>(null);
   const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
   const [po, setPo] = useState<TrackPo | null>(null);
@@ -82,19 +94,21 @@ export function ItemTrackingClient() {
   const boxRef = useRef<HTMLDivElement>(null);
   const traceRef = useRef<HTMLElement>(null);
 
-  // Debounced PO number search
+  // Debounced search — PO number or product code depending on the mode
   useEffect(() => {
     const q = query.trim();
     if (q.length < 2) return;
     setSearching(true);
     const t = setTimeout(() => {
-      searchPurchaseOrdersForTracking(q)
-        .then((r) => { setHits(r); setOpen(true); })
+      const run = mode === "po"
+        ? searchPurchaseOrdersForTracking(q).then((r) => { setHits(r); setOpen(true); })
+        : searchProductCodesForTracking(q).then((r) => { setProductHits(r); setOpen(true); });
+      run
         .catch((e) => toast.error(e instanceof Error ? e.message : "Search failed"))
         .finally(() => setSearching(false));
     }, 250);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [query, mode]);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -110,6 +124,7 @@ export function ItemTrackingClient() {
     setLineFilter("");
     try {
       setPo(await getPoForTracking(hit.id));
+      setProduct(null);
       setHits([]);
       setOpen(false);
       setQuery(hit.poNo ?? hit.prNo ?? "");
@@ -118,6 +133,29 @@ export function ItemTrackingClient() {
     } finally {
       setLoadingPo(false);
     }
+  }
+
+  async function pickProduct(hit: TrackProductHit) {
+    setLoadingPo(true);
+    setTrace(null);
+    setLineFilter("");
+    try {
+      setProduct(await getProductForTracking(hit.productCode));
+      setPo(null);
+      setProductHits([]);
+      setOpen(false);
+      setQuery(hit.productCode);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't load this product");
+    } finally {
+      setLoadingPo(false);
+    }
+  }
+
+  function switchMode(m: Mode) {
+    if (m === mode) return;
+    setMode(m);
+    clearAll();
   }
 
   async function pickLine(lineId: string) {
@@ -135,7 +173,7 @@ export function ItemTrackingClient() {
   }
 
   function clearAll() {
-    setQuery(""); setHits([]); setPo(null); setTrace(null); setLineFilter("");
+    setQuery(""); setHits([]); setProductHits([]); setPo(null); setProduct(null); setTrace(null); setLineFilter("");
   }
 
   const lines = useMemo(() => {
@@ -147,138 +185,69 @@ export function ItemTrackingClient() {
     );
   }, [po, lineFilter]);
 
+  const productLines = useMemo(() => {
+    if (!product) return [];
+    const f = lineFilter.trim().toLowerCase();
+    if (!f) return product.lines;
+    return product.lines.filter((l) =>
+      `${l.po.poNo ?? ""} ${l.po.prNo ?? ""} ${l.po.supplierName ?? ""} ${l.po.organizationName ?? ""} ${l.po.status}`.toLowerCase().includes(f),
+    );
+  }, [product, lineFilter]);
+
+  const productTotals = useMemo(() => {
+    if (!product) return null;
+    const live = product.lines.filter((l) => l.po.status !== "cancelled");
+    return {
+      spos: new Set(product.lines.map((l) => l.po.id)).size,
+      ordered: live.reduce((a, l) => a + l.qtyOrdered, 0),
+      accepted: live.reduce((a, l) => a + l.qtyAccepted, 0),
+      pendingReturn: live.reduce((a, l) => a + l.qtyPendingReturn, 0),
+      uom: product.lines.find((l) => l.uom)?.uom ?? "",
+    };
+  }, [product]);
+
   const s = trace?.summary;
 
-  return (
-    <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
-      <PageHeader
-        title="Item Tracking"
-        description="Follow one PO line from the order to its latest packing list — every inspection, return, repair and replacement along the way"
-      />
-
-      {/* Search */}
-      <div ref={boxRef} className="relative max-w-xl">
-        <SearchIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => hits.length > 0 && setOpen(true)}
-          placeholder="Search by PO number, e.g. PO/066-26"
-          className="pl-9 pr-9 h-10 text-sm"
-        />
-        {searching ? (
-          <Loader2Icon className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-muted-foreground" />
-        ) : query ? (
-          <button type="button" onClick={clearAll} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" title="Clear">
-            <XIcon className="w-4 h-4" />
-          </button>
-        ) : null}
-        {open && query.trim().length >= 2 && !searching && (
-          <div className="absolute z-20 mt-1.5 w-full border rounded-lg bg-background shadow-lg max-h-80 overflow-auto">
-            {hits.length === 0 ? (
-              <p className="px-3 py-3 text-sm text-muted-foreground">No purchase order matches “{query.trim()}”.</p>
-            ) : hits.map((h) => (
-              <button key={h.id} type="button" onClick={() => pickPo(h)} className="w-full text-left px-3 py-2.5 hover:bg-muted/60 border-b last:border-0 flex items-center gap-3">
-                <span className="min-w-0 flex-1">
-                  <span className="block font-mono text-sm font-medium">{h.poNo ?? h.prNo}</span>
-                  <span className="block text-xs text-muted-foreground truncate">{h.supplierName ?? "—"} · {h.organizationName ?? "—"}</span>
-                </span>
-                <Chip className={statusChip(h.status)}>{h.status}</Chip>
-              </button>
-            ))}
-          </div>
+  // One clickable line: progress bar + chips. `head` is what identifies it
+  // (product code on a PO, or the SPO when browsing by product).
+  const lineButton = (l: TrackLine, badge: React.ReactNode, head: React.ReactNode) => {
+    const selected = trace?.line.id === l.id;
+    const pct = l.qtyOrdered > 0 ? Math.min(100, Math.round((l.qtyAccepted / l.qtyOrdered) * 100)) : 0;
+    const complete = l.qtyOrdered > 0 && l.qtyAccepted >= l.qtyOrdered;
+    return (
+      <button
+        key={l.id}
+        type="button"
+        onClick={() => pickLine(l.id)}
+        className={cn(
+          "w-full text-left px-3 py-3 text-xs flex items-start gap-2.5 sm:gap-3 hover:bg-muted/50 border-l-2 transition-colors",
+          selected ? "bg-blue-50/70 dark:bg-blue-950/30 border-l-blue-500" : "border-l-transparent",
         )}
-      </div>
-
-      {loadingPo && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2Icon className="w-4 h-4 animate-spin" /> Loading purchase order…
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!po && !loadingPo && (
-        <div className="rounded-lg border border-dashed py-12 px-4 sm:py-16 sm:px-6 text-center">
-          <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
-            <ClipboardListIcon className="w-6 h-6 text-muted-foreground" />
-          </div>
-          <p className="text-sm font-medium">Find a purchase order to start</p>
-          <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-            Type a PO number above, pick a line, and you’ll see its full journey — packing lists, inspections, returns and replacements.
-          </p>
-        </div>
-      )}
-
-      {po && (
-        <div className="space-y-4">
-          {/* PO header */}
-          <div className="rounded-lg border bg-muted/50 px-3 py-2.5 sm:px-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:gap-x-4">
-            <span className="font-mono text-base font-semibold">{po.poNo ?? po.prNo}</span>
-            <Chip className={statusChip(po.status)}>{po.status}</Chip>
-            <span className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
-              <PackageIcon className="w-3.5 h-3.5" />{po.supplierName ?? "—"}
+      >
+        {badge}
+        <span className="min-w-0 flex-1 space-y-1.5">
+          {head}
+          <span className="flex items-center gap-2">
+            <span className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+              <span className={cn("block h-full rounded-full", complete ? "bg-green-500" : "bg-blue-500")} style={{ width: `${pct}%` }} />
             </span>
-            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <BuildingIcon className="w-3.5 h-3.5" />{po.organizationName ?? "—"}
+            <span className="tabular-nums text-muted-foreground whitespace-nowrap">
+              {l.qtyAccepted}/{l.qtyOrdered} {l.uom ?? ""}
             </span>
-            <span className="text-xs text-muted-foreground sm:ml-auto">{po.lines.length} line{po.lines.length === 1 ? "" : "s"}</span>
-          </div>
+          </span>
+          <span className="flex flex-wrap gap-1">
+            {l.qtyPendingReturn > 0 && (
+              <Chip className="bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">{l.qtyPendingReturn} to return</Chip>
+            )}
+            <Chip className="bg-muted text-muted-foreground border-border normal-case">{l.packingListCount} PL</Chip>
+          </span>
+        </span>
+        <ChevronRightIcon className={cn("w-4 h-4 mt-1 shrink-0", selected ? "text-blue-500" : "text-muted-foreground/40")} />
+      </button>
+    );
+  };
 
-          <div className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-start">
-            {/* Lines */}
-            <section className="rounded-lg border overflow-hidden">
-              <div className="px-3 py-2 border-b bg-muted/30 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lines</h2>
-                <div className="relative w-full sm:w-44 sm:ml-auto order-last sm:order-none">
-                  <SearchIcon className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input value={lineFilter} onChange={(e) => setLineFilter(e.target.value)} placeholder="Filter lines" className="h-7 pl-7 text-xs" />
-                </div>
-              </div>
-              <div className="lg:max-h-[70vh] lg:overflow-auto divide-y">
-                {lines.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">No lines match.</p>}
-                {lines.map((l) => {
-                  const selected = trace?.line.id === l.id;
-                  const pct = l.qtyOrdered > 0 ? Math.min(100, Math.round((l.qtyAccepted / l.qtyOrdered) * 100)) : 0;
-                  const complete = l.qtyOrdered > 0 && l.qtyAccepted >= l.qtyOrdered;
-                  return (
-                    <button
-                      key={l.id}
-                      type="button"
-                      onClick={() => pickLine(l.id)}
-                      className={cn(
-                        "w-full text-left px-3 py-3 text-xs flex items-start gap-2.5 sm:gap-3 hover:bg-muted/50 border-l-2 transition-colors",
-                        selected ? "bg-blue-50/70 dark:bg-blue-950/30 border-l-blue-500" : "border-l-transparent",
-                      )}
-                    >
-                      <span className="w-6 h-6 shrink-0 rounded-md bg-muted text-[10px] font-medium text-muted-foreground flex items-center justify-center">{l.rowNo}</span>
-                      <span className="min-w-0 flex-1 space-y-1.5">
-                        <span className="block">
-                          <span className="font-mono text-[13px] font-medium text-foreground">{l.productCode ?? "—"}</span>
-                          <span className="block text-muted-foreground line-clamp-2 leading-snug">{l.description}</span>
-                        </span>
-                        <span className="flex items-center gap-2">
-                          <span className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
-                            <span className={cn("block h-full rounded-full", complete ? "bg-green-500" : "bg-blue-500")} style={{ width: `${pct}%` }} />
-                          </span>
-                          <span className="tabular-nums text-muted-foreground whitespace-nowrap">
-                            {l.qtyAccepted}/{l.qtyOrdered} {l.uom ?? ""}
-                          </span>
-                        </span>
-                        <span className="flex flex-wrap gap-1">
-                          {l.qtyPendingReturn > 0 && (
-                            <Chip className="bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">{l.qtyPendingReturn} to return</Chip>
-                          )}
-                          <Chip className="bg-muted text-muted-foreground border-border normal-case">{l.packingListCount} PL</Chip>
-                        </span>
-                      </span>
-                      <ChevronRightIcon className={cn("w-4 h-4 mt-1 shrink-0", selected ? "text-blue-500" : "text-muted-foreground/40")} />
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* Trace */}
+  const traceSection = (
             <section ref={traceRef} className="rounded-lg border min-h-40 scroll-mt-4 lg:sticky lg:top-4">
               {loadingTrace && (
                 <div className="p-5 flex items-center gap-2 text-sm text-muted-foreground">
@@ -363,6 +332,187 @@ export function ItemTrackingClient() {
                 </div>
               )}
             </section>
+  );
+
+  return (
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
+      <PageHeader
+        title="Item Tracking"
+        description="Follow a PO line — or every SPO for a product code — from the order to its latest packing list, with every inspection, return, repair and replacement along the way"
+      />
+
+      {/* Search */}
+      <div className="flex flex-col sm:flex-row gap-2 max-w-2xl">
+      <div className="inline-flex shrink-0 self-start rounded-lg border p-0.5 bg-muted/40 h-10">
+        {([["po", "PO number", ClipboardListIcon], ["product", "Product code", BarcodeIcon]] as const).map(([m, label, Icon]) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => switchMode(m)}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 rounded-md text-xs font-medium transition-colors",
+              mode === m ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Icon className="w-3.5 h-3.5" />{label}
+          </button>
+        ))}
+      </div>
+      <div ref={boxRef} className="relative flex-1 min-w-0">
+        <SearchIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => (mode === "po" ? hits : productHits).length > 0 && setOpen(true)}
+          placeholder={mode === "po" ? "Search by PO number, e.g. PO/066-26" : "Key in a product code"}
+          className="pl-9 pr-9 h-10 text-sm"
+        />
+        {searching ? (
+          <Loader2Icon className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-muted-foreground" />
+        ) : query ? (
+          <button type="button" onClick={clearAll} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" title="Clear">
+            <XIcon className="w-4 h-4" />
+          </button>
+        ) : null}
+        {open && query.trim().length >= 2 && !searching && (
+          <div className="absolute z-20 mt-1.5 w-full border rounded-lg bg-background shadow-lg max-h-80 overflow-auto">
+            {mode === "product" ? (
+              productHits.length === 0 ? (
+                <p className="px-3 py-3 text-sm text-muted-foreground">No SPO line has a product code matching “{query.trim()}”.</p>
+              ) : productHits.map((h) => (
+                <button key={h.productCode} type="button" onClick={() => pickProduct(h)} className="w-full text-left px-3 py-2.5 hover:bg-muted/60 border-b last:border-0 flex items-center gap-3">
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-mono text-sm font-medium">{h.productCode}</span>
+                    <span className="block text-xs text-muted-foreground truncate">{h.description ?? "—"}</span>
+                  </span>
+                  <Chip className="bg-muted text-muted-foreground border-border normal-case">{h.poCount} SPO{h.poCount === 1 ? "" : "s"}</Chip>
+                </button>
+              ))
+            ) : hits.length === 0 ? (
+              <p className="px-3 py-3 text-sm text-muted-foreground">No purchase order matches “{query.trim()}”.</p>
+            ) : hits.map((h) => (
+              <button key={h.id} type="button" onClick={() => pickPo(h)} className="w-full text-left px-3 py-2.5 hover:bg-muted/60 border-b last:border-0 flex items-center gap-3">
+                <span className="min-w-0 flex-1">
+                  <span className="block font-mono text-sm font-medium">{h.poNo ?? h.prNo}</span>
+                  <span className="block text-xs text-muted-foreground truncate">{h.supplierName ?? "—"} · {h.organizationName ?? "—"}</span>
+                </span>
+                <Chip className={statusChip(h.status)}>{h.status}</Chip>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      </div>
+
+      {loadingPo && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2Icon className="w-4 h-4 animate-spin" /> {mode === "po" ? "Loading purchase order…" : "Loading SPOs…"}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!po && !product && !loadingPo && (
+        <div className="rounded-lg border border-dashed py-12 px-4 sm:py-16 sm:px-6 text-center">
+          <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+            <ClipboardListIcon className="w-6 h-6 text-muted-foreground" />
+          </div>
+          <p className="text-sm font-medium">{mode === "po" ? "Find a purchase order to start" : "Key in a product code to start"}</p>
+          <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+            {mode === "po"
+              ? "Type a PO number above, pick a line, and you’ll see its full journey — packing lists, inspections, returns and replacements."
+              : "Type a product code above to list every SPO that ordered it, then pick one to see its full journey — packing lists, inspections, returns and replacements."}
+          </p>
+        </div>
+      )}
+
+      {po && (
+        <div className="space-y-4">
+          {/* PO header */}
+          <div className="rounded-lg border bg-muted/50 px-3 py-2.5 sm:px-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:gap-x-4">
+            <span className="font-mono text-base font-semibold">{po.poNo ?? po.prNo}</span>
+            <Chip className={statusChip(po.status)}>{po.status}</Chip>
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5 min-w-0">
+              <PackageIcon className="w-3.5 h-3.5" />{po.supplierName ?? "—"}
+            </span>
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <BuildingIcon className="w-3.5 h-3.5" />{po.organizationName ?? "—"}
+            </span>
+            <span className="text-xs text-muted-foreground sm:ml-auto">{po.lines.length} line{po.lines.length === 1 ? "" : "s"}</span>
+          </div>
+
+          <div className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-start">
+            {/* Lines */}
+            <section className="rounded-lg border overflow-hidden">
+              <div className="px-3 py-2 border-b bg-muted/30 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lines</h2>
+                <div className="relative w-full sm:w-44 sm:ml-auto order-last sm:order-none">
+                  <SearchIcon className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input value={lineFilter} onChange={(e) => setLineFilter(e.target.value)} placeholder="Filter lines" className="h-7 pl-7 text-xs" />
+                </div>
+              </div>
+              <div className="lg:max-h-[70vh] lg:overflow-auto divide-y">
+                {lines.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">No lines match.</p>}
+                {lines.map((l) => lineButton(
+                  l,
+                  <span className="w-6 h-6 shrink-0 rounded-md bg-muted text-[10px] font-medium text-muted-foreground flex items-center justify-center">{l.rowNo}</span>,
+                  <span className="block">
+                    <span className="font-mono text-[13px] font-medium text-foreground">{l.productCode ?? "—"}</span>
+                    <span className="block text-muted-foreground line-clamp-2 leading-snug">{l.description}</span>
+                  </span>,
+                ))}
+              </div>
+            </section>
+
+            {traceSection}
+          </div>
+        </div>
+      )}
+
+      {product && productTotals && (
+        <div className="space-y-4">
+          {/* Product header */}
+          <div className="rounded-lg border bg-muted/50 px-3 py-2.5 sm:px-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:gap-x-4">
+            <span className="font-mono text-base font-semibold break-all">{product.productCode}</span>
+            <span className="text-xs text-muted-foreground min-w-0 line-clamp-1 flex-1">{product.description ?? "—"}</span>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {productTotals.spos} SPO{productTotals.spos === 1 ? "" : "s"} · accepted {productTotals.accepted}/{productTotals.ordered} {productTotals.uom}
+              {productTotals.pendingReturn > 0 && <span className="text-red-600 dark:text-red-400"> · {productTotals.pendingReturn} to return</span>}
+            </span>
+          </div>
+
+          <div className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-start">
+            <section className="rounded-lg border overflow-hidden">
+              <div className="px-3 py-2 border-b bg-muted/30 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">SPOs with this product</h2>
+                <div className="relative w-full sm:w-44 sm:ml-auto order-last sm:order-none">
+                  <SearchIcon className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input value={lineFilter} onChange={(e) => setLineFilter(e.target.value)} placeholder="Filter SPOs" className="h-7 pl-7 text-xs" />
+                </div>
+              </div>
+              <div className="lg:max-h-[70vh] lg:overflow-auto divide-y">
+                {productLines.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">No SPOs match.</p>}
+                {productLines.map((l) => lineButton(
+                  l,
+                  <span className="w-6 h-6 shrink-0 rounded-md bg-muted text-muted-foreground flex items-center justify-center" title={`Line ${l.rowNo}`}>
+                    <ClipboardListIcon className="w-3 h-3" />
+                  </span>,
+                  <span className="block space-y-0.5">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono text-[13px] font-medium text-foreground">{l.po.poNo ?? l.po.prNo ?? "—"}</span>
+                      <span className="text-[10px] text-muted-foreground">line {l.rowNo}</span>
+                      <Chip className={statusChip(l.po.status)}>{l.po.status}</Chip>
+                    </span>
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground">
+                      <span className="inline-flex items-center gap-1"><CalendarIcon className="w-3 h-3" />{fmtDate(l.po.poDate)}</span>
+                      <span className="inline-flex items-center gap-1 min-w-0"><PackageIcon className="w-3 h-3 shrink-0" /><span className="truncate">{l.po.supplierName ?? "—"}</span></span>
+                      <span className="inline-flex items-center gap-1"><BuildingIcon className="w-3 h-3" />{l.po.organizationName ?? "—"}</span>
+                    </span>
+                  </span>,
+                ))}
+              </div>
+            </section>
+
+            {traceSection}
           </div>
         </div>
       )}
