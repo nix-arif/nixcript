@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { db } from "@/db";
-import { department, member, memberDepartment, userPermission } from "@/db/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { department, member, memberDepartment, review, reviewReviewer, userPermission } from "@/db/schema";
+import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { DEPT_ROLE_PERMISSIONS, ROLE_PERMISSIONS } from "@/lib/permissions/constants";
 
 const OWNER_ALL_PERMISSIONS = "*";
@@ -10,6 +10,32 @@ export const getUserPermissions = cache(async function getUserPermissions(
   userId: string,
   organizationId: string,
 ): Promise<string[]> {
+  const perms = await basePermissions(userId, organizationId);
+  if (perms.includes(OWNER_ALL_PERMISSIONS) || perms.includes(REVIEW_CONDUCT)) return perms;
+  // Access that follows the work: whoever HR names as a reviewer (lead or co-reviewer) on a performance review gets
+  // the Team Reviews page for as long as they have such a review, without anyone granting it by hand.
+  return (await isReviewer(userId)) ? [...perms, REVIEW_CONDUCT] : perms;
+});
+
+const REVIEW_CONDUCT = "review:conduct";
+
+// a reviewer of any review that is not cancelled, in any company (the Team Reviews list is not tied to one)
+async function isReviewer(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ one: sql<number>`1` })
+    .from(review)
+    .where(and(
+      ne(review.status, "cancelled"),
+      or(
+        eq(review.reviewerUserId, userId),
+        inArray(review.id, db.select({ id: reviewReviewer.reviewId }).from(reviewReviewer).where(eq(reviewReviewer.userId, userId))),
+      ),
+    ))
+    .limit(1);
+  return !!row;
+}
+
+async function basePermissions(userId: string, organizationId: string): Promise<string[]> {
   // 1. Direct membership check
   const [memberData] = await db
     .select()
@@ -50,7 +76,7 @@ export const getUserPermissions = cache(async function getUserPermissions(
   if (siblingMembership.role === "owner") return [OWNER_ALL_PERMISSIONS];
 
   return resolvePermissions(userId, siblingMembership.id, siblingMembership.organizationId, siblingMembership.role);
-});
+}
 
 async function resolvePermissions(
   userId: string,

@@ -146,3 +146,17 @@
 .testing-mode [data-app-header] {
   top: var(--testing-bar);
 }
+
+/* While a sheet or dialog is open, the page behind sits under a faded overlay. A blurred (backdrop-filter) element
+   there, like the sticky top bar, is redrawn on every frame the sheet scrolls and flickers through the overlay, so
+   it goes plain while the overlay is up; the overlay gets its own layer so the page behind is drawn once. */
+body:has([data-slot="sheet-overlay"]) [data-app-header],
+body:has([data-slot="dialog-overlay"]) [data-app-header],
+body:has([data-slot="alert-dialog-overlay"]) [data-app-header] {
+  backdrop-filter: none;
+}
+[data-slot="sheet-overlay"],
+[data-slot="dialog-overlay"],
+[data-slot="alert-dialog-overlay"] {
+  transform: translateZ(0);
+}

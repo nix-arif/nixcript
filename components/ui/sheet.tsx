@@ -104,7 +104,7 @@ function SheetFormContent({
       {...props}
     >
       <div
-        className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 will-change-scroll sm:px-8", bodyClassName)}
+        className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 sm:px-8", bodyClassName)}
         onWheel={(e) => {
           const t = e.target
           if (t instanceof HTMLInputElement && t.type === "number" && t === document.activeElement) t.blur()
