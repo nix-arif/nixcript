@@ -316,7 +316,19 @@ export type PackingListListRow = PackingListRow & {
 // holders as usual for those; for a sibling org's packing list, the caller
 // gets view-only (switching active org and using the regular flow is the
 // path to act on it, matching how the app's org-switcher already works).
-export type CentralizedPackingList = PackingListListRow & { organizationName: string; isOwnOrg: boolean; canInspect: boolean };
+// How much of what was received was accepted. Completed lists read the
+// confirmed goods receipts (so approved amendments count); a list still being
+// inspected reads the inspectors' figures on the lines already inspected.
+export type PackingListAcceptance = {
+  received: number;
+  accepted: number;
+  returned: number;
+  expected: number; // of the lines counted
+  linesCounted: number;
+  linesTotal: number;
+  partial: boolean; // inspection still in progress
+};
+export type CentralizedPackingList = PackingListListRow & { organizationName: string; isOwnOrg: boolean; canInspect: boolean; acceptance: PackingListAcceptance | null };
 export type CentralizedPackingListWithItems = PackingListWithItems & { organizationName: string; isOwnOrg: boolean; businessType: string; canInspect: boolean };
 
 export type PackableSupplier = { id: string; name: string; poCount: number };
@@ -1271,11 +1283,53 @@ export async function getPackingListsCentralized(): Promise<CentralizedPackingLi
   const listIds = rows.map((r) => r.pl.id);
   const [users, items] = await Promise.all([
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [...new Set(rows.map((r) => r.pl.createdBy))])),
-    db.select({ packingListId: packingListItem.packingListId }).from(packingListItem).where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt))),
+    db.select({
+      id: packingListItem.id,
+      packingListId: packingListItem.packingListId,
+      qtyExpected: packingListItem.qtyExpected,
+      draftQtyReceived: packingListItem.draftQtyReceived,
+      draftQtyReturn: packingListItem.draftQtyReturn,
+      draftInspectedAt: packingListItem.draftInspectedAt,
+    }).from(packingListItem).where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt))),
   ]);
   const userMap = Object.fromEntries(users.map((u) => [u.id, u.name]));
   const itemCounts: Record<string, number> = {};
   for (const it of items) itemCounts[it.packingListId] = (itemCounts[it.packingListId] ?? 0) + 1;
+
+  // Acceptance per packing list
+  const completedIds = new Set(rows.filter((r) => r.pl.status === "completed").map((r) => r.pl.id));
+  const completedLineIds = items.filter((i) => completedIds.has(i.packingListId)).map((i) => i.id);
+  const grLines = completedLineIds.length === 0 ? [] : await db
+    .select({ lineId: goodsReceiptItem.packingListItemId, qtyReceived: goodsReceiptItem.qtyReceived, qtyGood: goodsReceiptItem.qtyGood, qtyReturn: goodsReceiptItem.qtyReturn })
+    .from(goodsReceiptItem)
+    .innerJoin(goodsReceipt, eq(goodsReceiptItem.goodsReceiptId, goodsReceipt.id))
+    .where(and(inArray(goodsReceiptItem.packingListItemId, completedLineIds), eq(goodsReceipt.status, "confirmed")));
+  const grByLine = new Map<string, typeof grLines>();
+  for (const g of grLines) if (g.lineId) grByLine.set(g.lineId, [...(grByLine.get(g.lineId) ?? []), g]);
+  const f = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
+  const acceptance: Record<string, PackingListAcceptance> = {};
+  for (const it of items) {
+    const a = (acceptance[it.packingListId] ??= { received: 0, accepted: 0, returned: 0, expected: 0, linesCounted: 0, linesTotal: 0, partial: !completedIds.has(it.packingListId) });
+    a.linesTotal++;
+    if (completedIds.has(it.packingListId)) {
+      const gs = grByLine.get(it.id);
+      if (!gs?.length) continue;
+      for (const g of gs) {
+        a.received += f(g.qtyReceived);
+        a.accepted += f(g.qtyGood ?? g.qtyReceived);
+        a.returned += f(g.qtyReturn);
+      }
+    } else {
+      if (!it.draftInspectedAt) continue;
+      const received = f(it.draftQtyReceived ?? it.qtyExpected);
+      const ret = f(it.draftQtyReturn);
+      a.received += received;
+      a.accepted += Math.max(0, received - ret);
+      a.returned += ret;
+    }
+    a.expected += f(it.qtyExpected);
+    a.linesCounted++;
+  }
   const pendingRows = await db
     .select({ packingListId: packingListAmendment.packingListId })
     .from(packingListAmendment)
@@ -1305,6 +1359,7 @@ export async function getPackingListsCentralized(): Promise<CentralizedPackingLi
       supplierName: snap?.name ?? null,
       itemCount: itemCounts[pl.id] ?? 0,
       pendingChanges: pendingCounts[pl.id] ?? 0,
+      acceptance: pl.status === "cancelled" || !acceptance[pl.id]?.linesCounted ? null : acceptance[pl.id],
       organizationName,
       isOwnOrg: pl.organizationId === orgId,
       canInspect: hasCentralizedInspect || hasAccess(orgPermsMap.get(pl.organizationId) ?? [], "packing-list:inspect"),

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { getPackingListsCentralized, type CentralizedPackingList } from "@/server/packing-list";
+import { getPackingListsCentralized, type CentralizedPackingList, type PackingListAcceptance } from "@/server/packing-list";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
@@ -22,6 +22,44 @@ const STATUS: Record<string, { label: string; className: string }> = {
   completed: { label: "Completed",          className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
   cancelled: { label: "Cancelled",          className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
+
+const q = (v: number) => String(Math.round(v * 1000) / 1000);
+const pctOf = (a: PackingListAcceptance) => (a.received > 0 ? (a.accepted / a.received) * 100 : null);
+// 100% shows as 100 only when nothing at all was rejected
+const fmtPct = (p: number) => (p >= 100 ? "100" : p >= 99.95 ? "99.9" : p.toFixed(p < 10 ? 1 : 0));
+const tone = (p: number) =>
+  p >= 100 ? { text: "text-green-700 dark:text-green-400", bar: "bg-green-500" }
+  : p >= 90 ? { text: "text-amber-700 dark:text-amber-400", bar: "bg-amber-500" }
+  : { text: "text-red-600 dark:text-red-400", bar: "bg-red-500" };
+
+// Share of received units accepted on one packing list
+function AcceptanceGauge({ a, status }: { a: PackingListAcceptance | null; status: string }) {
+  if (!a) return <div className="w-28 shrink-0 text-right text-[10px] text-muted-foreground">{status === "cancelled" ? "—" : "Not inspected yet"}</div>;
+  const p = pctOf(a);
+  if (p === null) return <div className="w-28 shrink-0 text-right text-[10px] text-muted-foreground">Nothing received</div>;
+  const t = tone(p);
+  const title = [
+    `Accepted ${q(a.accepted)} of ${q(a.received)} received`,
+    a.returned > 0 ? `${q(a.returned)} rejected` : null,
+    a.received < a.expected ? `${q(a.expected - a.received)} short of ${q(a.expected)} expected` : null,
+    a.partial ? `inspection in progress — ${a.linesCounted} of ${a.linesTotal} lines inspected so far` : null,
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className="w-28 shrink-0 text-right" title={title}>
+      <div className="flex items-baseline justify-end gap-1">
+        <span className={cn("text-base font-semibold tabular-nums leading-none", t.text)}>{fmtPct(p)}%</span>
+        <span className="text-[10px] text-muted-foreground">{a.partial ? "so far" : "accepted"}</span>
+      </div>
+      <div className="mt-1 h-1 rounded-full bg-muted overflow-hidden">
+        <div className={cn("h-full rounded-full", t.bar, a.partial && "opacity-60")} style={{ width: `${Math.min(100, p)}%` }} />
+      </div>
+      <div className="mt-0.5 text-[10px] text-muted-foreground tabular-nums">
+        {a.partial ? `${a.linesCounted}/${a.linesTotal} lines` : `${q(a.accepted)}/${q(a.received)}`}
+        {a.returned > 0 && <span className="text-red-600 dark:text-red-400"> · {q(a.returned)} rej.</span>}
+      </div>
+    </div>
+  );
+}
 
 interface Props {
   initialLists: CentralizedPackingList[];
@@ -50,6 +88,13 @@ export function CentralizedPackingListClient({ initialLists }: Props) {
       p.organizationName.toLowerCase().includes(s)
     );
   });
+
+  // Overall acceptance across the completed packing lists in view
+  const overall = filtered.reduce(
+    (t, p) => (p.acceptance && !p.acceptance.partial ? { received: t.received + p.acceptance.received, accepted: t.accepted + p.acceptance.accepted, count: t.count + 1 } : t),
+    { received: 0, accepted: 0, count: 0 },
+  );
+  const overallPct = overall.received > 0 ? (overall.accepted / overall.received) * 100 : null;
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -118,8 +163,15 @@ export function CentralizedPackingListClient({ initialLists }: Props) {
         )}
       </div>
 
-      <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-        {filtered.length} record{filtered.length !== 1 ? "s" : ""}
+      <div className="text-xs text-muted-foreground mb-3 tabular-nums flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
+        {overallPct !== null && (
+          <span title={`Accepted ${q(overall.accepted)} of ${q(overall.received)} units received on ${overall.count} completed packing list${overall.count !== 1 ? "s" : ""}`}>
+            Overall acceptance{" "}
+            <span className={cn("font-semibold", tone(overallPct).text)}>{fmtPct(overallPct)}%</span>
+            <span> across {overall.count} completed</span>
+          </span>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -193,6 +245,10 @@ export function CentralizedPackingListClient({ initialLists }: Props) {
                         </span>
                       )}
                     </div>
+                  </div>
+
+                  <div className="pl-3 border-l border-border/60 self-stretch flex items-center">
+                    <AcceptanceGauge a={p.acceptance} status={p.status} />
                   </div>
                 </div>
               </div>
