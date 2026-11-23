@@ -4,14 +4,15 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { setReviewPeriodShowReviewerMarks, addReviewsToPeriod, cancelReview, reassignReviewer, remindReviewPeriod, setReviewPeriodStatus, type EligibleEmployee, type PeriodDetail } from "@/server/performance";
-import { formatScore, OUTCOMES, PURPOSES, sharePercent, STATUS_LABEL, type ReviewStatus } from "@/lib/performance/core";
+import { setReviewPeriodShowReviewerMarks, addReviewsToPeriod, cancelReview, remindReviewPeriod, setReviewPeriodStatus, type EligibleEmployee, type PeriodDetail } from "@/server/performance";
+import { formatScore, OUTCOMES, PURPOSES, STATUS_LABEL, type ReviewStatus } from "@/lib/performance/core";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetFormContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ArrowLeftIcon, BellRingIcon, CheckIcon, DownloadIcon, PlusIcon } from "lucide-react";
 import { ReviewStatusBadge } from "../../status-badge";
 import { EmployeePicker, type Picked } from "../employee-picker";
+import { ReviewerCell } from "./reviewer-cell";
 
 const fmt = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
 const fmtDT = (d: Date | string | null) => (d ? new Date(d).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" }) : "");
@@ -144,42 +145,7 @@ export function PeriodDetailClient({ period, employees }: { period: PeriodDetail
                     </div>
                   </td>
                   <td className="px-4 py-2 align-top">
-                    {(() => {
-                      const weights = [r.leadWeight, ...r.coReviewers.map((c) => c.weight)];
-                      const shared = r.coReviewers.length > 0;
-                      const pill = (pct: number, lead?: boolean) => (
-                        <span className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium tabular-nums ${lead ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300" : "bg-muted text-muted-foreground"}`}>{pct}%</span>
-                      );
-                      return (
-                        <div className="w-52 space-y-1" title={shared ? "Lead reviewer and co-reviewers with their share of the score (change co-reviewers on the review)" : undefined}>
-                          <div className="flex items-center gap-1.5">
-                            {editable ? (
-                              <select className={`h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs ${r.reviewerUserId ? "border-input" : "border-amber-400 text-amber-800 dark:text-amber-300"}`} value={r.reviewerUserId ?? ""} disabled={busy} aria-label="Lead reviewer"
-                                onChange={(e) => e.target.value && run(() => reassignReviewer(r.id, e.target.value), "Reviewer changed")}>
-                                {!r.reviewerUserId && <option value="">Assign a reviewer…</option>}
-                                {employees.filter((x) => x.userId !== r.employeeUserId).map((x) => <option key={x.userId} value={x.userId}>{x.name}{several ? ` (${x.organizationName})` : ""}</option>)}
-                              </select>
-                            ) : (
-                              <span className="min-w-0 flex-1 truncate text-xs font-medium">{r.reviewerName ?? <span className="font-normal text-muted-foreground">Not assigned</span>}</span>
-                            )}
-                            {shared && pill(sharePercent(r.leadWeight, weights), true)}
-                          </div>
-                          {shared && (
-                            <ul className="space-y-0.5 border-l-2 border-border pl-2 ml-2">
-                              {r.coReviewers.map((c) => (
-                                <li key={c.userId} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                  {r.status === "manager" && (c.submitted
-                                    ? <CheckIcon className="h-3 w-3 shrink-0 text-green-600" aria-label="Submitted" />
-                                    : <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-label="Not submitted yet" />)}
-                                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                                  {pill(sharePercent(c.weight, weights))}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      );
-                    })()}
+                    <ReviewerCell review={r} employees={employees} editable={editable} several={several} onChanged={refresh} />
                   </td>
                   <td className="px-4 py-2">
                     <ReviewStatusBadge status={r.status} short />
