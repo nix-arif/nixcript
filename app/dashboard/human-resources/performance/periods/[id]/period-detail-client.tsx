@@ -143,26 +143,43 @@ export function PeriodDetailClient({ period, employees }: { period: PeriodDetail
                       {r.purpose && <span className="rounded border border-border px-1">{PURPOSES[r.purpose]}</span>}
                     </div>
                   </td>
-                  <td className="px-4 py-2">
-                    {editable ? (
-                      <select className="h-8 max-w-44 rounded-md border border-input bg-background px-2 text-xs" value={r.reviewerUserId ?? ""} disabled={busy}
-                        onChange={(e) => e.target.value && run(() => reassignReviewer(r.id, e.target.value), "Reviewer changed")}>
-                        <option value="">{r.reviewerUserId ? "" : "Not assigned"}</option>
-                        {employees.filter((x) => x.userId !== r.employeeUserId).map((x) => <option key={x.userId} value={x.userId}>{x.name}{several ? ` (${x.organizationName})` : ""}</option>)}
-                      </select>
-                    ) : <span className="text-xs">{r.reviewerName ?? <span className="text-muted-foreground">Not assigned</span>}</span>}
-                    {!r.reviewerUserId && r.status !== "cancelled" && r.status !== "completed" && <div className="text-[10px] text-amber-700 dark:text-amber-400">Assign a reviewer</div>}
-                    {r.coReviewers.length > 0 && (
-                      <div className="mt-0.5 space-y-px text-[10px] text-muted-foreground" title="Other reviewers and their share of the score (change them on the review)">
-                        <div>lead · {sharePercent(r.leadWeight, [r.leadWeight, ...r.coReviewers.map((c) => c.weight)])}%</div>
-                        {r.coReviewers.map((c) => (
-                          <div key={c.userId} className="flex items-center gap-1">
-                            {r.status === "manager" && (c.submitted ? <CheckIcon className="h-3 w-3 text-green-600" /> : <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />)}
-                            {c.name} · {sharePercent(c.weight, [r.leadWeight, ...r.coReviewers.map((x) => x.weight)])}%
+                  <td className="px-4 py-2 align-top">
+                    {(() => {
+                      const weights = [r.leadWeight, ...r.coReviewers.map((c) => c.weight)];
+                      const shared = r.coReviewers.length > 0;
+                      const pill = (pct: number, lead?: boolean) => (
+                        <span className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium tabular-nums ${lead ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300" : "bg-muted text-muted-foreground"}`}>{pct}%</span>
+                      );
+                      return (
+                        <div className="w-52 space-y-1" title={shared ? "Lead reviewer and co-reviewers with their share of the score (change co-reviewers on the review)" : undefined}>
+                          <div className="flex items-center gap-1.5">
+                            {editable ? (
+                              <select className={`h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs ${r.reviewerUserId ? "border-input" : "border-amber-400 text-amber-800 dark:text-amber-300"}`} value={r.reviewerUserId ?? ""} disabled={busy} aria-label="Lead reviewer"
+                                onChange={(e) => e.target.value && run(() => reassignReviewer(r.id, e.target.value), "Reviewer changed")}>
+                                {!r.reviewerUserId && <option value="">Assign a reviewer…</option>}
+                                {employees.filter((x) => x.userId !== r.employeeUserId).map((x) => <option key={x.userId} value={x.userId}>{x.name}{several ? ` (${x.organizationName})` : ""}</option>)}
+                              </select>
+                            ) : (
+                              <span className="min-w-0 flex-1 truncate text-xs font-medium">{r.reviewerName ?? <span className="font-normal text-muted-foreground">Not assigned</span>}</span>
+                            )}
+                            {shared && pill(sharePercent(r.leadWeight, weights), true)}
                           </div>
-                        ))}
-                      </div>
-                    )}
+                          {shared && (
+                            <ul className="space-y-0.5 border-l-2 border-border pl-2 ml-2">
+                              {r.coReviewers.map((c) => (
+                                <li key={c.userId} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                  {r.status === "manager" && (c.submitted
+                                    ? <CheckIcon className="h-3 w-3 shrink-0 text-green-600" aria-label="Submitted" />
+                                    : <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-label="Not submitted yet" />)}
+                                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                                  {pill(sharePercent(c.weight, weights))}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-2">
                     <ReviewStatusBadge status={r.status} short />
