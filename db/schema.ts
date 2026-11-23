@@ -5878,6 +5878,9 @@ export type PackingListRevisionLine = {
   description: string | null;
   qty: number;
   uom: string | null;
+  // Added from the "Complete items" tab: the PO line had nothing left to pack,
+  // so this quantity is on top of what was ordered
+  complete?: boolean;
 };
 
 // Lines taken off / PO lines added to a packing list whose inspection is
@@ -5895,7 +5898,7 @@ export const packingListRevision = pgTable(
       .notNull()
       .references(() => packingList.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
-    addItems: json("add_items").$type<{ purchaseOrderItemId: string; qty: number }[]>().notNull(),
+    addItems: json("add_items").$type<{ purchaseOrderItemId: string; qty: number; complete?: boolean }[]>().notNull(),
     removeItemIds: json("remove_item_ids").$type<string[]>().notNull(),
     summary: json("summary").$type<{ add: PackingListRevisionLine[]; remove: PackingListRevisionLine[] }>().notNull(),
     reason: text("reason").notNull(),

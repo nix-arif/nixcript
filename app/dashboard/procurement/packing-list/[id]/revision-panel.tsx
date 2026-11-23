@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { CheckIcon, ListPlusIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
+import { CheckIcon, ListPlusIcon, Loader2Icon, MinusIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from "@/lib/utils";
 import {
   getAddableLinesForPackingList,
+  getCompleteLinesForPackingList,
   requestPackingListRevision,
   decidePackingListRevision,
   cancelPackingListRevision,
@@ -29,11 +30,17 @@ const n = (v: number) => String(Math.round(v * 1000) / 1000);
 export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItems; poLabel: (poId: string) => string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"remove" | "add">("remove");
+  const [tab, setTab] = useState<"remove" | "add" | "complete">("remove");
   const [remove, setRemove] = useState<Set<string>>(new Set());
   const [addable, setAddable] = useState<PackableItem[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [add, setAdd] = useState<Record<string, string>>({}); // purchaseOrderItemId → qty
+  // "Complete items" tab: lines with nothing left to pack, found by SPO number.
+  // Picked ones are kept here so they survive a new search.
+  const [spoQuery, setSpoQuery] = useState("");
+  const [completeHits, setCompleteHits] = useState<PackableItem[] | null>(null);
+  const [searchingComplete, setSearchingComplete] = useState(false);
+  const [completePicked, setCompletePicked] = useState<Record<string, PackableItem>>({});
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -53,8 +60,35 @@ export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItem
     return [...m.entries()].sort(([, a], [, b]) => a.label.localeCompare(b.label));
   }, [addable]);
 
+  // Debounced SPO number search for the "Complete items" tab
+  useEffect(() => {
+    if (!open || tab !== "complete") return;
+    const q = spoQuery.trim();
+    if (q.length < 2) return;
+    let live = true;
+    const t = setTimeout(() => {
+      setSearchingComplete(true);
+      getCompleteLinesForPackingList(pl.id, q)
+        .then((r) => { if (live) setCompleteHits(r); })
+        .catch((e) => toast.error(e instanceof Error ? e.message : "Search failed"))
+        .finally(() => { if (live) setSearchingComplete(false); });
+    }, 300);
+    return () => { live = false; clearTimeout(t); };
+  }, [open, tab, spoQuery, pl.id]);
+
+  const completeByPo = useMemo(() => {
+    const m = new Map<string, { label: string; items: PackableItem[] }>();
+    for (const a of spoQuery.trim().length >= 2 ? completeHits ?? [] : []) {
+      const g = m.get(a.purchaseOrderId) ?? { label: a.poNo ?? a.prNo ?? a.purchaseOrderId, items: [] };
+      g.items.push(a);
+      m.set(a.purchaseOrderId, g);
+    }
+    return [...m.entries()].sort(([, a], [, b]) => a.label.localeCompare(b.label));
+  }, [completeHits, spoQuery]);
+
   async function start() {
     setTab("remove"); setRemove(new Set()); setAdd({}); setReason(""); setAddable(null);
+    setSpoQuery(""); setCompleteHits(null); setCompletePicked({});
     setOpen(true);
     setLoading(true);
     try {
@@ -73,6 +107,19 @@ export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItem
     if (it.purchaseOrderItemId in next) delete next[it.purchaseOrderItemId]; else next[it.purchaseOrderItemId] = n(it.qtyRemaining);
     return next;
   });
+  const toggleComplete = (it: PackableItem) => {
+    const on = it.purchaseOrderItemId in add;
+    setAdd((cur) => {
+      const next = { ...cur };
+      if (on) delete next[it.purchaseOrderItemId]; else next[it.purchaseOrderItemId] = "";
+      return next;
+    });
+    setCompletePicked((cur) => {
+      const next = { ...cur };
+      if (on) delete next[it.purchaseOrderItemId]; else next[it.purchaseOrderItemId] = it;
+      return next;
+    });
+  };
   const toggleWholePo = (items: PackableItem[]) => setAdd((cur) => {
     const next = { ...cur };
     const all = items.every((i) => i.purchaseOrderItemId in next);
@@ -81,10 +128,13 @@ export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItem
   });
 
   const addEntries = Object.entries(add);
+  const completeCount = addEntries.filter(([id]) => id in completePicked).length;
   const addInvalid = addEntries.some(([id, q]) => {
-    const it = addable?.find((a) => a.purchaseOrderItemId === id);
     const v = Number(q);
-    return !it || !(Number.isFinite(v) && v > 0) || v > it.qtyRemaining + 1e-9;
+    if (!(q.trim() !== "" && Number.isFinite(v) && v > 0)) return true;
+    if (id in completePicked) return false; // over the PO by design — no upper limit
+    const it = addable?.find((a) => a.purchaseOrderItemId === id);
+    return !it || v > it.qtyRemaining + 1e-9;
   });
   const canSend = (remove.size > 0 || addEntries.length > 0) && !addInvalid && !!reason.trim() && !saving;
 
@@ -93,7 +143,7 @@ export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItem
     try {
       await requestPackingListRevision(pl.id, {
         remove: [...remove],
-        add: addEntries.map(([purchaseOrderItemId, q]) => ({ purchaseOrderItemId, qty: Number(q) })),
+        add: addEntries.map(([purchaseOrderItemId, q]) => ({ purchaseOrderItemId, qty: Number(q), ...(purchaseOrderItemId in completePicked ? { complete: true } : {}) })),
         reason,
       });
       toast.success("Change sent for approval");
@@ -121,17 +171,62 @@ export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItem
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-md bg-muted text-xs">
+          <div className="grid grid-cols-3 gap-1 p-1 rounded-md bg-muted text-xs">
             <button type="button" onClick={() => setTab("remove")} className={cn("rounded px-2 py-1.5 font-medium", tab === "remove" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
               Remove lines{remove.size > 0 && ` (${remove.size})`}
             </button>
             <button type="button" onClick={() => setTab("add")} className={cn("rounded px-2 py-1.5 font-medium", tab === "add" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
-              Add PO lines{addEntries.length > 0 && ` (${addEntries.length})`}
+              Add PO lines{addEntries.length - completeCount > 0 && ` (${addEntries.length - completeCount})`}
+            </button>
+            <button type="button" onClick={() => setTab("complete")} className={cn("rounded px-2 py-1.5 font-medium", tab === "complete" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+              Complete items{completeCount > 0 && ` (${completeCount})`}
             </button>
           </div>
 
+          {tab === "complete" && (
+            <div className="space-y-1.5">
+              <div className="relative">
+                <SearchIcon className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  autoFocus
+                  value={spoQuery}
+                  onChange={(e) => setSpoQuery(e.target.value)}
+                  placeholder="Key in the SPO number, e.g. PO/066-26"
+                  className="h-8 pl-8 pr-8 text-xs"
+                />
+                {searchingComplete && <Loader2Icon className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-muted-foreground" />}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Lines of this supplier&apos;s SPOs that have nothing left to pack. Whatever you add comes on top of what was ordered — e.g. the supplier sent extra.
+              </p>
+            </div>
+          )}
+
           <div className="max-h-[45vh] overflow-auto border rounded-md">
-            {tab === "remove" ? (
+            {tab === "complete" ? (
+              <table className="w-full text-xs">
+                <tbody>
+                  {Object.values(completePicked).filter((it) => !completeByPo.some(([, g]) => g.items.some((x) => x.purchaseOrderItemId === it.purchaseOrderItemId))).length > 0 && (
+                    <FragmentGroup title="Picked from earlier searches">
+                      {Object.values(completePicked)
+                        .filter((it) => !completeByPo.some(([, g]) => g.items.some((x) => x.purchaseOrderItemId === it.purchaseOrderItemId)))
+                        .map((it) => <CompleteRow key={it.purchaseOrderItemId} it={it} qty={add[it.purchaseOrderItemId]} onToggle={() => toggleComplete(it)} onQty={(v) => setAdd((cur) => ({ ...cur, [it.purchaseOrderItemId]: v }))} showPo />)}
+                    </FragmentGroup>
+                  )}
+                  {spoQuery.trim().length < 2 ? (
+                    <tr><td className="p-4 text-muted-foreground">Type at least 2 characters of the SPO number.</td></tr>
+                  ) : completeByPo.length === 0 && !searchingComplete && completeHits !== null ? (
+                    <tr><td className="p-4 text-muted-foreground">No complete lines on an SPO of this supplier matching “{spoQuery.trim()}”.</td></tr>
+                  ) : completeByPo.map(([poId, g]) => (
+                    <FragmentGroup key={poId} title={g.label}>
+                      {g.items.map((it) => (
+                        <CompleteRow key={it.purchaseOrderItemId} it={it} qty={add[it.purchaseOrderItemId]} onToggle={() => toggleComplete(it)} onQty={(v) => setAdd((cur) => ({ ...cur, [it.purchaseOrderItemId]: v }))} />
+                      ))}
+                    </FragmentGroup>
+                  ))}
+                </tbody>
+              </table>
+            ) : tab === "remove" ? (
               <table className="w-full text-xs">
                 <tbody>
                   {linesByPo.map(([poId, items]) => (
@@ -201,6 +296,7 @@ export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItem
           <Textarea placeholder="Why? (required — the approver sees this)" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="text-sm" />
           <p className="text-xs text-muted-foreground">
             {remove.size} line{remove.size !== 1 ? "s" : ""} to remove · {addEntries.length} PO line{addEntries.length !== 1 ? "s" : ""} to add
+            {completeCount > 0 && <span className="text-amber-700 dark:text-amber-400"> ({completeCount} complete — over the PO)</span>}
             {addInvalid && <span className="text-destructive"> · a quantity to add is missing or more than what&apos;s left</span>}
           </p>
 
@@ -214,11 +310,37 @@ export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItem
   );
 }
 
+// A PO line with nothing left to pack, on the "Complete items" tab
+function CompleteRow({ it, qty, onToggle, onQty, showPo }: { it: PackableItem; qty: string | undefined; onToggle: () => void; onQty: (v: string) => void; showPo?: boolean }) {
+  const on = qty !== undefined;
+  const bad = on && !(qty.trim() !== "" && Number(qty) > 0);
+  return (
+    <tr className={cn("border-b last:border-b-0", on && "bg-amber-50 dark:bg-amber-950/30")}>
+      <td className="py-1.5 px-2 w-6"><input type="checkbox" checked={on} onChange={onToggle} className="w-3.5 h-3.5 cursor-pointer" /></td>
+      <td className="py-1.5 pr-2 tabular-nums text-muted-foreground w-10 whitespace-nowrap">{showPo && <span className="font-mono">{it.poNo ?? it.prNo} </span>}#{it.poLineNo}</td>
+      <td className="py-1.5 pr-2 font-mono">{it.productCode || "—"}</td>
+      <td className="py-1.5 pr-2 text-muted-foreground truncate max-w-64">{it.description}</td>
+      <td className="py-1.5 pr-2 text-right whitespace-nowrap">
+        <span className="rounded bg-green-100 px-1 text-[10px] font-semibold text-green-800 dark:bg-green-950/50 dark:text-green-400">complete</span>
+        <span className="block text-[10px] text-muted-foreground tabular-nums">{n(it.qtyAccepted)}/{n(Number(it.qtyOrdered) || 0)} {it.uom} received</span>
+      </td>
+      <td className="py-1.5 pr-2 w-24">
+        <Input
+          type="number" min="0" step="any" disabled={!on} placeholder={on ? "Qty" : ""}
+          value={on ? qty : ""}
+          onChange={(e) => onQty(e.target.value)}
+          className={cn("h-7 text-xs text-right", bad && "border-destructive")}
+        />
+      </td>
+    </tr>
+  );
+}
+
 function FragmentGroup({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <>
       <tr className="bg-muted/60 sticky top-0">
-        <td colSpan={5} className="py-1 px-2">
+        <td colSpan={6} className="py-1 px-2">
           <div className="flex items-center justify-between gap-2">
             <span className="font-mono text-[11px] font-semibold">{title}</span>
             {action}
@@ -267,6 +389,7 @@ export function RevisionPanel({ revisions, approval }: { revisions: PackingListR
   const line = (l: PackingListRevisionView["add"][number], i: number) => (
     <li key={i} className="font-mono">
       {l.poNo ?? "PO"}{l.lineNo != null && ` #${l.lineNo}`} · {l.code || "—"} <span className="font-sans text-muted-foreground">· {n(l.qty)} {l.uom}</span>
+      {l.complete && <span className="ml-1 font-sans rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">over PO — line was complete</span>}
     </li>
   );
 

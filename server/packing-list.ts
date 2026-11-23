@@ -431,7 +431,8 @@ export async function getPackableItemsForSupplier(supplierId: string): Promise<P
 // What can still be packed for a supplier within one org — shared by the
 // create page and by change requests on an open packing list (which may
 // belong to a sibling org, so the org is passed in, never assumed).
-async function computePackableItems(orgId: string, supplierId: string): Promise<PackableItem[]> {
+// includeComplete keeps every line, even ones with nothing left to pack.
+async function computePackableItems(orgId: string, supplierId: string, opts?: { includeComplete?: boolean }): Promise<PackableItem[]> {
 
   const pos = await db
     .select()
@@ -585,6 +586,7 @@ async function computePackableItems(orgId: string, supplierId: string): Promise<
   );
 
   // Lines with nothing left to pack are dropped, except ones tied to an earlier problem
+  if (opts?.includeComplete) return result;
   return result.filter((i) => i.qtyRemaining > 0 || i.covered !== null);
 }
 
@@ -2808,7 +2810,9 @@ export async function decidePackingListAmendment(
 // removedAt, which everything else ignores.
 
 export interface RequestPackingListRevisionInput {
-  add: { purchaseOrderItemId: string; qty: number }[];
+  // complete: a PO line with nothing left to pack (picked by SPO number) —
+  // any quantity is allowed, on top of what was ordered
+  add: { purchaseOrderItemId: string; qty: number; complete?: boolean }[];
   remove: string[]; // packing_list_item ids on this packing list
   reason: string;
 }
@@ -2858,10 +2862,33 @@ export async function getAddableLinesForPackingList(packingListId: string): Prom
   return packable.filter((i) => i.qtyRemaining > 0 && !taken.has(i.purchaseOrderItemId));
 }
 
+// "Complete items" tab: lines of this supplier's SPOs whose number matches
+// the query and that have nothing left to pack — fully received, or already
+// sitting on other open packing lists — and aren't on this packing list.
+// Adding one brings in units over what was ordered (e.g. the supplier sent extra).
+export async function getCompleteLinesForPackingList(packingListId: string, spoQuery: string): Promise<PackableItem[]> {
+  const { orgId, userId } = await getSession();
+  const pl = await loadOpenPackingList(packingListId);
+  await assertCanAmendPackingList(pl.organizationId, orgId, userId);
+  const q = spoQuery.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const onList = await db
+    .select({ id: packingListItem.purchaseOrderItemId })
+    .from(packingListItem)
+    .where(and(eq(packingListItem.packingListId, pl.id), isNull(packingListItem.removedAt)));
+  const taken = new Set(onList.map((r) => r.id));
+  const all = await computePackableItems(pl.organizationId, pl.supplierId, { includeComplete: true });
+  return all.filter((i) =>
+    i.qtyRemaining <= 1e-9 &&
+    !taken.has(i.purchaseOrderItemId) &&
+    [i.poNo, i.prNo].some((no) => no?.toLowerCase().includes(q)),
+  );
+}
+
 // Checks a requested change against the packing list as it is now. Used when
 // the request is made and again on approval. Returns what to apply plus the
 // summary the approver reads.
-async function validateRevision(pl: PackingListRow, input: { add: { purchaseOrderItemId: string; qty: number }[]; remove: string[] }) {
+async function validateRevision(pl: PackingListRow, input: { add: { purchaseOrderItemId: string; qty: number; complete?: boolean }[]; remove: string[] }) {
   const removeIds = [...new Set(input.remove)];
   const lines = await db
     .select()
@@ -2879,16 +2906,21 @@ async function validateRevision(pl: PackingListRow, input: { add: { purchaseOrde
     seen.add(a.purchaseOrderItemId);
   }
   const staying = new Set(lines.filter((l) => !removeIds.includes(l.id)).map((l) => l.purchaseOrderItemId));
-  const packable = input.add.length > 0 ? await computePackableItems(pl.organizationId, pl.supplierId) : [];
+  const packable = input.add.length > 0
+    ? await computePackableItems(pl.organizationId, pl.supplierId, { includeComplete: input.add.some((a) => a.complete) })
+    : [];
   const packableById = new Map(packable.map((p) => [p.purchaseOrderItemId, p]));
   const adds = input.add.map((a) => {
     const p = packableById.get(a.purchaseOrderItemId);
-    if (!p || p.qtyRemaining <= 0) throw new Error("One of the PO lines to add has nothing left to pack any more");
+    const complete = !!a.complete;
+    if (!p) throw new Error("One of the PO lines to add is no longer on a confirmed PO of this supplier");
+    if (!complete && p.qtyRemaining <= 0) throw new Error("One of the PO lines to add has nothing left to pack any more");
     if (staying.has(a.purchaseOrderItemId)) throw new Error(`${p.productCode ?? "A PO line"} is already on this packing list`);
     const qty = Number(a.qty);
     if (!(Number.isFinite(qty) && qty > 0)) throw new Error(`Quantity for ${p.productCode ?? "an item"} must be greater than 0`);
-    if (qty > p.qtyRemaining + 1e-9) throw new Error(`Quantity for ${p.productCode ?? "an item"} exceeds what's left to pack (${p.qtyRemaining})`);
-    return { item: p, qty };
+    // a complete line has nothing left by definition — what's added is over the PO
+    if (!complete && qty > p.qtyRemaining + 1e-9) throw new Error(`Quantity for ${p.productCode ?? "an item"} exceeds what's left to pack (${p.qtyRemaining})`);
+    return { item: p, qty, complete };
   });
 
   const poNoById = new Map<string, string | null>();
@@ -2905,7 +2937,7 @@ async function validateRevision(pl: PackingListRow, input: { add: { purchaseOrde
     : new Map<string, number>();
 
   const summary = {
-    add: adds.map(({ item, qty }) => ({ poNo: item.poNo ?? item.prNo, lineNo: addRowNos.get(item.purchaseOrderItemId) ?? null, code: item.productCode, description: item.description, qty, uom: item.uom })),
+    add: adds.map(({ item, qty, complete }) => ({ poNo: item.poNo ?? item.prNo, lineNo: addRowNos.get(item.purchaseOrderItemId) ?? null, code: item.productCode, description: item.description, qty, uom: item.uom, ...(complete ? { complete: true } : {}) })),
     remove: removeIds.map((id) => {
       const l = lineById.get(id)!;
       return { poNo: poNoById.get(l.purchaseOrderId) ?? null, lineNo: rowNoById.get(l.purchaseOrderItemId) ?? null, code: l.productCode, description: l.description, qty: parseFloat(l.qtyExpected) || 0, uom: l.uom };
@@ -2935,7 +2967,7 @@ export async function requestPackingListRevision(packingListId: string, input: R
     organizationId: pl.organizationId,
     packingListId: pl.id,
     status: "pending",
-    addItems: v.adds.map((a) => ({ purchaseOrderItemId: a.item.purchaseOrderItemId, qty: a.qty })),
+    addItems: v.adds.map((a) => ({ purchaseOrderItemId: a.item.purchaseOrderItemId, qty: a.qty, ...(a.complete ? { complete: true } : {}) })),
     removeItemIds: v.removeIds,
     summary: v.summary,
     reason,
