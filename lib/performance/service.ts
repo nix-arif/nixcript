@@ -10,7 +10,7 @@ import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { hasAccess } from "@/lib/permissions/has-access";
 import {
-  canEditNow, combineScores, isOutcome, isPurpose, isValidWeight, sharePercent, templateNameKey, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
+  canEditNow, combineScores, missingAnswers, missingExtremeComments, naAllowed, isOutcome, isPurpose, isValidWeight, sharePercent, templateNameKey, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
   type ActionPlanRow, type Criterion, type PreviousGoal, type ReviewOutcome, type ReviewPurpose, type ReviewQuestion, type ReviewRole, type ReviewStatus,
 } from "@/lib/performance/core";
 
@@ -80,9 +80,12 @@ export type TemplateInput = {
   description?: string;
   scaleMax: number;
   isActive?: boolean;
-  criteria: { section?: string; name: string; description?: string; weight: number | string }[];
-  // written questions the employee answers (achievements, challenges, career planning ...)
-  questions?: { id?: string; label: string; help?: string }[];
+  criteria: { section?: string; name: string; description?: string; weight: number | string; allowNa?: boolean; commentOnExtremes?: boolean }[];
+  // written questions the employee answers (achievements, challenges, career planning ...); required: must be answered
+  questions?: { id?: string; label: string; help?: string; required?: boolean }[];
+  // the reviewer's part HR makes required
+  requireNextReviewDate?: boolean;
+  requireActionPlan?: boolean;
 };
 
 export async function listTemplates(ctx: Ctx) {
@@ -114,7 +117,7 @@ export async function saveTemplate(ctx: Ctx, input: TemplateInput): Promise<Resu
     return fail(`This company already has a template called "${name}". Give it a different name.`);
   }
   if (!SCALES.includes(input.scaleMax)) return fail("Choose a rating scale of 3, 4, 5 or 10.");
-  const criteria = (input.criteria ?? []).map((c) => ({ section: c.section?.trim() ?? "", name: c.name?.trim() ?? "", description: c.description?.trim() ?? "", weight: Number(c.weight) }));
+  const criteria = (input.criteria ?? []).map((c) => ({ section: c.section?.trim() ?? "", name: c.name?.trim() ?? "", description: c.description?.trim() ?? "", weight: Number(c.weight), allowNa: c.allowNa !== false, commentOnExtremes: !!c.commentOnExtremes }));
   if (criteria.length === 0) return fail("Add at least one criterion.");
   const blank = criteria.findIndex((c) => !c.name);
   if (blank >= 0) return fail(`Criterion ${blank + 1} has no name.`);
@@ -124,26 +127,27 @@ export async function saveTemplate(ctx: Ctx, input: TemplateInput): Promise<Resu
   for (const [i, q] of (input.questions ?? []).entries()) {
     const label = q.label?.trim();
     if (!label) return fail(`Question ${i + 1} is empty. Write the question or remove it.`);
-    questions.push({ id: q.id || nanoid(), label, help: q.help?.trim() ?? "" });
+    questions.push({ id: q.id || nanoid(), label, help: q.help?.trim() ?? "", required: !!q.required });
   }
 
+  const rules = { requireNextReviewDate: !!input.requireNextReviewDate, requireActionPlan: !!input.requireActionPlan };
   let id = input.id;
   try {
     if (id) {
       const [t] = await db.select({ id: reviewTemplate.id }).from(reviewTemplate).where(and(eq(reviewTemplate.id, id), eq(reviewTemplate.organizationId, ctx.orgId)));
       if (!t) return fail("Template not found.");
-      await db.update(reviewTemplate).set({ name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, isActive: input.isActive ?? true }).where(eq(reviewTemplate.id, id));
+      await db.update(reviewTemplate).set({ name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, ...rules, isActive: input.isActive ?? true }).where(eq(reviewTemplate.id, id));
       await db.delete(reviewCriterion).where(eq(reviewCriterion.templateId, id)); // reviews keep their own copy, so this changes nothing already opened
     } else {
       id = nanoid();
-      await db.insert(reviewTemplate).values({ id, organizationId: ctx.orgId, name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, isActive: input.isActive ?? true, createdBy: ctx.userId });
+      await db.insert(reviewTemplate).values({ id, organizationId: ctx.orgId, name, description: input.description?.trim() || null, scaleMax: input.scaleMax, questions, ...rules, isActive: input.isActive ?? true, createdBy: ctx.userId });
     }
   } catch (e) {
     // someone saved a template with the same name at the same moment: the unique index (0091) stops the second one
     if (isUniqueViolation(e, "review_template_org_name_uidx")) return fail(`This company already has a template called "${name}". Give it a different name.`);
     throw e;
   }
-  await db.insert(reviewCriterion).values(criteria.map((c, i) => ({ id: nanoid(), templateId: id!, section: c.section, name: c.name, description: c.description || null, weight: String(c.weight), sortOrder: i })));
+  await db.insert(reviewCriterion).values(criteria.map((c, i) => ({ id: nanoid(), templateId: id!, section: c.section, name: c.name, description: c.description || null, weight: String(c.weight), allowNa: c.allowNa, commentOnExtremes: c.commentOnExtremes, sortOrder: i })));
   return ok(id);
 }
 
@@ -234,7 +238,7 @@ export type PeriodInput = {
 
 // The form every review of a period is filled in on: the template's name, scale, criteria and questions, copied into
 // each review so that later edits to the template change nothing already opened.
-type ReviewForm = { templateName: string; scaleMax: number; criteria: Criterion[]; questions: ReviewQuestionSnapshot[] };
+type ReviewForm = { templateName: string; scaleMax: number; criteria: Criterion[]; questions: ReviewQuestionSnapshot[]; requireNextReviewDate: boolean; requireActionPlan: boolean };
 
 // the form as the template is today; a new period may only be opened with an active template
 async function formFromTemplate(orgIds: string[], templateId: string, opts: { requireActive: boolean }): Promise<Result<ReviewForm>> {
@@ -245,18 +249,19 @@ async function formFromTemplate(orgIds: string[], templateId: string, opts: { re
   if (criteria.length === 0) return fail("That template has no criteria.");
   return ok({
     templateName: tpl.name, scaleMax: tpl.scaleMax,
-    criteria: criteria.map((c) => ({ id: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: Number(c.weight) })),
+    criteria: criteria.map((c) => ({ id: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: Number(c.weight), allowNa: c.allowNa, commentOnExtremes: c.commentOnExtremes })),
     questions: (tpl.questions ?? []) as ReviewQuestionSnapshot[],
+    requireNextReviewDate: tpl.requireNextReviewDate, requireActionPlan: tpl.requireActionPlan,
   });
 }
 
 // the form the period was opened with, taken from its first review (reviews are never deleted, only cancelled), so a
 // late joiner is rated on the same criteria as everyone else even if the template was edited, deactivated or deleted since
 async function formOfPeriod(periodId: string): Promise<ReviewForm | null> {
-  const [first] = await db.select({ templateName: review.templateName, scaleMax: review.scaleMax, criteria: review.criteria, questions: review.questions })
+  const [first] = await db.select({ templateName: review.templateName, scaleMax: review.scaleMax, criteria: review.criteria, questions: review.questions, requireNextReviewDate: review.requireNextReviewDate, requireActionPlan: review.requireActionPlan })
     .from(review).where(eq(review.periodId, periodId)).orderBy(asc(review.createdAt)).limit(1);
   if (!first) return null;
-  return { templateName: first.templateName, scaleMax: first.scaleMax, criteria: first.criteria as Criterion[], questions: (first.questions ?? []) as ReviewQuestionSnapshot[] };
+  return { templateName: first.templateName, scaleMax: first.scaleMax, criteria: first.criteria as Criterion[], questions: (first.questions ?? []) as ReviewQuestionSnapshot[], requireNextReviewDate: first.requireNextReviewDate, requireActionPlan: first.requireActionPlan };
 }
 
 // the lead reviewer and the others of one review: members of the owner's companies, nobody twice, nobody reviewing
@@ -318,6 +323,7 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, form:
     id: nanoid(), organizationId: orgOfEmployee(e), periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null, leadWeight: e.leadWeight ?? 100,
     status: "self" as const, templateName: form.templateName, scaleMax: form.scaleMax, criteria: form.criteria,
     questions: form.questions,
+    requireNextReviewDate: form.requireNextReviewDate, requireActionPlan: form.requireActionPlan,
     purpose: e.purpose ?? null,
     employeeDesignation: profileOf(e.userId)?.jobTitle ?? null, employeeDepartment: profileOf(e.userId)?.department ?? null,
     reviewerDesignation: profileOf(e.reviewerUserId)?.jobTitle ?? null,
@@ -520,6 +526,8 @@ export type ReviewView = {
   outcome: ReviewOutcome | null;
   nextReviewDate: string | null;
   actionPlan: ActionPlanRow[];
+  requireNextReviewDate: boolean; // from the template: the lead reviewer must fill these in to submit
+  requireActionPlan: boolean;
   acknowledgedAt: Date | null;
   // the employee's answer to the signed-off review, and how HR settled a disagreement
   employeeResponse: EmployeeResponse | null;
@@ -666,6 +674,8 @@ export async function getReview(ctx: Ctx, id: string): Promise<ReviewView | null
     outcome: showManager && isOutcome(r.outcome) ? r.outcome : null,
     nextReviewDate: showManager ? r.nextReviewDate : null,
     actionPlan: showManager ? r.actionPlan ?? [] : [],
+    requireNextReviewDate: r.requireNextReviewDate,
+    requireActionPlan: r.requireActionPlan,
     acknowledgedAt: r.acknowledgedAt,
     employeeResponse: r.employeeResponse === "agree" || r.employeeResponse === "disagree" ? r.employeeResponse : null,
     employeeComment: r.employeeComment,
@@ -733,6 +743,8 @@ function checkAnswers(r: typeof review.$inferSelect, answers: AnswerInput[]): st
   for (const a of answers) {
     if (!known.has(a.criterionId)) return "A criterion in the form does not exist any more. Reload the page.";
     if (a.rating != null && !isValidRating(a.rating, r.scaleMax)) return `Ratings are from 1 to ${r.scaleMax}.`;
+    const c = r.criteria.find((x) => x.id === a.criterionId)!;
+    if (a.na && !naAllowed(c)) return `"${c.name}" can't be marked not applicable. Give it a rating.`;
   }
   return null;
 }
@@ -743,6 +755,12 @@ async function ratingsOf(reviewId: string, side: "self" | "manager") {
     ratings: Object.fromEntries(rows.map((a) => [a.criterionId, side === "self" ? a.selfRating : a.managerRating])) as Record<string, number | null>,
     na: Object.fromEntries(rows.map((a) => [a.criterionId, side === "self" ? a.selfNa : a.managerNa])) as Record<string, boolean>,
   };
+}
+
+// a reviewer's lowest / highest rating without a comment, where the template asks for one
+function extremeCommentError(r: typeof review.$inferSelect, marks: MarkMap): string | null {
+  const miss = missingExtremeComments(r.criteria, ratingsIn(marks), Object.fromEntries(Object.entries(marks).map(([k, v]) => [k, v.comment])), r.scaleMax);
+  return miss.length ? `Explain your lowest or highest rating in a comment (${miss.slice(0, 3).map((m) => m.name).join(", ")}${miss.length > 3 ? ` and ${miss.length - 3} more` : ""}).` : null;
 }
 
 // ── reviewers besides the lead ──────────────────────────────────────────────
@@ -835,6 +853,8 @@ export async function saveSelf(ctx: Ctx, id: string, input: { answers: AnswerInp
   const mine = await ratingsOf(id, "self");
   const missing = missingRatings(r.criteria, mine.ratings, mine.na);
   if (missing.length > 0) return fail(`Rate every criterion before submitting (missing: ${missing.slice(0, 3).map((m) => m.name).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}).`);
+  const unanswered = missingAnswers(r.questions ?? [], parts.questionAnswers);
+  if (unanswered.length > 0) return fail(`Answer the required ${unanswered.length === 1 ? "question" : "questions"} before submitting: ${unanswered.map((q) => q.label).join(", ")}.`);
   await db.update(review).set({ status: "manager", selfSubmittedAt: new Date(), returnNote: null }).where(eq(review.id, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
   if (r.reviewerUserId) {
@@ -869,6 +889,8 @@ export async function saveManager(ctx: Ctx, id: string, input: { answers: Answer
     const mine = (await coReviewersOf(id)).find((x) => x.id === co.id)!;
     const missing = missingRatings(r.criteria, ratingsIn(mine.marks), naIn(mine.marks));
     if (missing.length > 0) return fail(`Rate every criterion before submitting (missing: ${missing.slice(0, 3).map((m) => m.name).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}).`);
+    const why = extremeCommentError(r, mine.marks);
+    if (why) return fail(why);
     await db.update(reviewReviewer).set({ submittedAt: new Date() }).where(and(eq(reviewReviewer.id, co.id), isNull(reviewReviewer.submittedAt)));
     const left = (await coReviewersOf(id)).filter((x) => !x.submittedAt).length;
     const [[me], [emp]] = await Promise.all([
@@ -894,6 +916,10 @@ export async function saveManager(ctx: Ctx, id: string, input: { answers: Answer
   if (missing.length > 0) return fail(`Rate every criterion before submitting (missing: ${missing.slice(0, 3).map((m) => m.name).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}).`);
   if (!parts.outcome) return fail("Choose the overall review outcome before submitting.");
   if (!input.summary?.trim()) return fail("Write the reviewer's comments before submitting.");
+  const why = extremeCommentError(r, await leadMarksOf(id));
+  if (why) return fail(why);
+  if (r.requireNextReviewDate && !parts.nextReviewDate) return fail("Enter the next review date before submitting.");
+  if (r.requireActionPlan && parts.actionPlan.length === 0) return fail("Add at least one goal to the action plan before submitting.");
   const waiting = (await coReviewersOf(id)).filter((c) => !c.submittedAt);
   if (waiting.length > 0) {
     const names = await db.select({ name: user.name }).from(user).where(inArray(user.id, waiting.map((w) => w.userId)));

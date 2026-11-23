@@ -13,14 +13,22 @@ import {
   bigint,
   primaryKey,
   type AnyPgColumn,
+  customType,
 } from "drizzle-orm/pg-core";
+
+// A person's account name, shown in lowercase everywhere in the app (the owner's choice). Only reading changes: the
+// name is stored as typed, so removing this brings the original capitals back. A plain text column in the database.
+const displayName = customType<{ data: string; driverData: string }>({
+  dataType: () => "text",
+  fromDriver: (v) => (typeof v === "string" ? v.toLowerCase() : v),
+});
 
 /* =========================
    USER
 ========================= */
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
-  name: text("name").notNull(),
+  name: displayName("name").notNull(),
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
@@ -1897,6 +1905,9 @@ export const reviewTemplate = pgTable(
     scaleMax: integer("scale_max").notNull().default(5),
     // written questions answered by the employee (e.g. achievements, challenges), copied into each review when it is opened
     questions: json("questions").$type<ReviewQuestionSnapshot[]>().notNull().default([]),
+    // the reviewer's part HR makes required (the outcome and the reviewer's comments always are)
+    requireNextReviewDate: boolean("require_next_review_date").notNull().default(false),
+    requireActionPlan: boolean("require_action_plan").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -1918,6 +1929,8 @@ export const reviewCriterion = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     weight: text("weight").notNull().default("1"),
+    allowNa: boolean("allow_na").notNull().default(true), // "not applicable" may be chosen
+    commentOnExtremes: boolean("comment_on_extremes").notNull().default(false), // a reviewer's lowest / highest rating needs a comment
     sortOrder: integer("sort_order").notNull().default(0),
   },
   (t) => [index("review_criterion_template_idx").on(t.templateId)],
@@ -1942,8 +1955,9 @@ export const reviewPeriod = pgTable(
   (t) => [index("review_period_org_idx").on(t.organizationId)],
 );
 
-export type ReviewCriterionSnapshot = { id: string; section: string; name: string; description: string; weight: number };
-export type ReviewQuestionSnapshot = { id: string; label: string; help: string };
+// allowNa / commentOnExtremes / required are absent on reviews opened before they existed: N/A allowed, nothing required
+export type ReviewCriterionSnapshot = { id: string; section: string; name: string; description: string; weight: number; allowNa?: boolean; commentOnExtremes?: boolean };
+export type ReviewQuestionSnapshot = { id: string; label: string; help: string; required?: boolean };
 export type ReviewPreviousGoal = { goal: string; action: string; completed: "Y" | "N" | ""; comments: string };
 export type ReviewActionPlanRow = { goal: string; action: string; targetDate: string };
 // One earlier round of a review that HR reopened after the employee disagreed: the manager's side as it was signed
@@ -1998,6 +2012,9 @@ export const review = pgTable(
     outcome: text("outcome"), // satisfactory | unsatisfactory | extension
     nextReviewDate: date("next_review_date"),
     actionPlan: json("action_plan").$type<ReviewActionPlanRow[]>().notNull().default([]),
+    // copied from the template when the review was opened
+    requireNextReviewDate: boolean("require_next_review_date").notNull().default(false),
+    requireActionPlan: boolean("require_action_plan").notNull().default(false),
     acknowledgedAt: timestamp("acknowledged_at"), // the employee has read the signed-off review
     // given with the acknowledgment: agree | disagree, and the employee's comment (required when they disagree)
     employeeResponse: text("employee_response"),

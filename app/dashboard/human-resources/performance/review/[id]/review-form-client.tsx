@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { saveSelfReview, saveManagerReview, signOffReview, acknowledgeReview, returnReviewToManager, reassignReviewer, resolveReviewDispute, reopenDisputedReview, setReviewReviewers, type EligibleEmployee, type EmployeeResponse, type ReviewView } from "@/server/performance";
-import { formatScore, isOutcome, sharePercent, OUTCOMES, PURPOSES, RATING_WORDS, ratingWord, weightedScore, type ActionPlanRow, type PreviousGoal, type ReviewOutcome, type ReviewStatus } from "@/lib/performance/core";
+import { formatScore, isExtreme, isOutcome, missingAnswers, missingExtremeComments, naAllowed, sharePercent, OUTCOMES, PURPOSES, RATING_WORDS, ratingWord, weightedScore, type ActionPlanRow, type PreviousGoal, type ReviewOutcome, type ReviewStatus } from "@/lib/performance/core";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,7 @@ function Stepper({ status }: { status: ReviewStatus }) {
   );
 }
 
-function RatingPicker({ value, na, max, onChange, onNa }: { value: number | null; na: boolean; max: number; onChange: (n: number) => void; onNa: () => void }) {
+function RatingPicker({ value, na, max, onChange, onNa, allowNa = true }: { value: number | null; na: boolean; max: number; onChange: (n: number) => void; onNa: () => void; allowNa?: boolean }) {
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap gap-1.5" role="radiogroup">
@@ -49,8 +49,8 @@ function RatingPicker({ value, na, max, onChange, onNa }: { value: number | null
           <button key={n} type="button" role="radio" aria-checked={value === n} title={ratingWord(n, max)} onClick={() => onChange(n)}
             className={`h-9 min-w-9 rounded-lg border px-2 text-sm tabular-nums transition-colors ${value === n && !na ? "border-indigo-500 bg-indigo-500 font-semibold text-white" : "border-border hover:bg-muted/40"}`}>{n}</button>
         ))}
-        <button type="button" role="radio" aria-checked={na} title="Not applicable" onClick={onNa}
-          className={`h-9 min-w-9 rounded-lg border px-2 text-sm transition-colors ${na ? "border-slate-500 bg-slate-500 font-semibold text-white" : "border-border text-muted-foreground hover:bg-muted/40"}`}>N/A</button>
+        {(allowNa || na) && <button type="button" role="radio" aria-checked={na} title="Not applicable" onClick={onNa}
+          className={`h-9 min-w-9 rounded-lg border px-2 text-sm transition-colors ${na ? "border-slate-500 bg-slate-500 font-semibold text-white" : "border-border text-muted-foreground hover:bg-muted/40"}`}>N/A</button>}
       </div>
       <div className="h-4 text-[11px] text-muted-foreground">{na ? "Not applicable" : value ? ratingWord(value, max) : "Not rated"}</div>
     </div>
@@ -184,7 +184,7 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
   }, [view]);
   const rated = view.criteria.filter((c) => ratings[c.id] != null || na[c.id]).length;
   // what is still missing when someone tries to submit: shown on the cards, not only in a message
-  const [missing, setMissing] = useState<{ criteria: string[]; outcome: boolean; summary: boolean }>({ criteria: [], outcome: false, summary: false });
+  const [missing, setMissing] = useState<{ criteria: string[]; outcome: boolean; summary: boolean; comments: string[]; questions: string[]; nextReview: boolean; plan: boolean }>({ criteria: [], outcome: false, summary: false, comments: [], questions: [], nextReview: false, plan: false });
   const unrated = view.criteria.filter((c) => ratings[c.id] == null && !na[c.id]);
   // autosave: the form as it is now against the form as it was last saved
   const snapshot = JSON.stringify([ratings, na, comments, summary, qa, goals, outcome, nextReview, plan]);
@@ -216,12 +216,25 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
   const save = (submit: boolean) => {
     if (submit) {
       // say exactly what is missing, on the page, before asking the server
-      const miss = { criteria: unrated.map((c) => c.id), outcome: editB && !outcome, summary: editB && !summary.trim() };
+      const miss = {
+        criteria: unrated.map((c) => c.id), outcome: editB && !outcome, summary: editB && !summary.trim(),
+        // what the template made required
+        comments: side === "manager" ? missingExtremeComments(view.criteria, Object.fromEntries(view.criteria.map((c) => [c.id, na[c.id] ? null : ratings[c.id]])), comments, view.scaleMax).map((c) => c.id) : [],
+        questions: side === "self" ? missingAnswers(view.questions, qa).map((q) => q.id) : [],
+        nextReview: editB && view.requireNextReviewDate && !nextReview,
+        plan: editB && view.requireActionPlan && !plan.some((g) => g.goal.trim()),
+      };
       setMissing(miss);
-      if (miss.criteria.length > 0 || miss.outcome || miss.summary) {
-        const bits = [miss.criteria.length > 0 && `${miss.criteria.length} not rated`, miss.outcome && "the overall outcome", miss.summary && "the reviewer's comments"].filter(Boolean);
+      if (miss.criteria.length > 0 || miss.outcome || miss.summary || miss.comments.length > 0 || miss.questions.length > 0 || miss.nextReview || miss.plan) {
+        const bits = [
+          miss.criteria.length > 0 && `${miss.criteria.length} not rated`, miss.comments.length > 0 && `${miss.comments.length} lowest / highest ${miss.comments.length === 1 ? "rating" : "ratings"} without a comment`,
+          miss.questions.length > 0 && `${miss.questions.length} required ${miss.questions.length === 1 ? "question" : "questions"} not answered`,
+          miss.outcome && "the overall outcome", miss.summary && "the reviewer's comments", miss.nextReview && "the next review date", miss.plan && "the action plan",
+        ].filter(Boolean);
         toast.error(`Not ready to submit: ${bits.join(", ")}. They are marked on the page.`, { duration: 8000 });
-        goToFirstMissing(miss.criteria);
+        if (miss.criteria.length || miss.comments.length) goToFirstMissing(miss.criteria.length ? miss.criteria : miss.comments);
+        else if (miss.questions.length) document.getElementById(`q-${miss.questions[0]}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        else goToFirstMissing([]);
         return;
       }
       if (editB && view.waitingFor.length > 0) { toast.error(`Waiting for ${view.waitingFor.join(", ")} to submit their marks first. Save your draft meanwhile.`, { duration: 8000 }); return; }
@@ -384,9 +397,13 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
 
       {view.questions.map((q) => (
         (side === "self" || seeEmployeeParts) && (
-          <Card key={q.id} title={q.label} hint={q.help || undefined}>
+          <Card key={q.id} title={`${q.label}${q.required && side === "self" ? " *" : ""}`} hint={q.help || undefined}>
             {side === "self"
-              ? <Textarea rows={4} value={qa[q.id] ?? ""} onChange={(e) => setQa((m) => ({ ...m, [q.id]: e.target.value }))} placeholder="Your answer" />
+              ? <div id={`q-${q.id}`} className="space-y-1">
+                  <Textarea rows={4} value={qa[q.id] ?? ""} onChange={(e) => setQa((m) => ({ ...m, [q.id]: e.target.value }))} placeholder={q.required ? "Your answer (required)" : "Your answer"}
+                    className={missing.questions.includes(q.id) && !qa[q.id]?.trim() ? "border-red-400" : ""} />
+                  {missing.questions.includes(q.id) && !qa[q.id]?.trim() && <p className="text-xs font-medium text-red-600">Answer this question to submit.</p>}
+                </div>
               : <p className="whitespace-pre-wrap rounded-lg bg-muted/30 px-3 py-2 text-sm">{view.questionAnswers[q.id] || <span className="text-muted-foreground">No answer</span>}</p>}
           </Card>
         )
@@ -417,10 +434,21 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
                 )}
                 {side ? (
                   <div className="space-y-2">
-                    <RatingPicker value={ratings[c.id] ?? null} na={!!na[c.id]} max={view.scaleMax}
+                    <RatingPicker value={ratings[c.id] ?? null} na={!!na[c.id]} max={view.scaleMax} allowNa={naAllowed(c)}
                       onChange={(n) => { setRatings((r) => ({ ...r, [c.id]: n })); setNa((m) => ({ ...m, [c.id]: false })); }}
                       onNa={() => { setNa((m) => ({ ...m, [c.id]: !m[c.id] })); setRatings((r) => ({ ...r, [c.id]: null })); }} />
-                    <Textarea rows={2} className="text-sm" value={comments[c.id] ?? ""} onChange={(e) => setComments((m) => ({ ...m, [c.id]: e.target.value }))} placeholder={side === "self" ? "Examples or comments (optional)" : "Your comments on this criterion (optional)"} />
+                    {(() => {
+                      // the template asks a reviewer to say why they gave the lowest or highest rating
+                      const needWhy = side === "manager" && !!c.commentOnExtremes && !na[c.id] && isExtreme(ratings[c.id], view.scaleMax);
+                      const flagged = needWhy && missing.comments.includes(c.id) && !comments[c.id]?.trim();
+                      return (
+                        <>
+                          <Textarea rows={2} className={`text-sm ${flagged ? "border-red-400" : ""}`} value={comments[c.id] ?? ""} onChange={(e) => setComments((m) => ({ ...m, [c.id]: e.target.value }))}
+                            placeholder={side === "self" ? "Examples or comments (optional)" : needWhy ? `Required: why ${ratings[c.id]} (the ${ratings[c.id] === 1 ? "lowest" : "highest"} rating)?` : "Your comments on this criterion (optional)"} />
+                          {needWhy && !comments[c.id]?.trim() && <p className={`text-xs ${flagged ? "font-medium text-red-600" : "text-amber-700 dark:text-amber-400"}`}>A comment is required for the lowest or highest rating on this criterion.</p>}
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2">
@@ -473,7 +501,8 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
                       className={`rounded-lg border px-3 py-2 text-sm ${outcome === k ? "border-indigo-500 bg-indigo-50 font-semibold dark:bg-indigo-900/20" : "border-border hover:bg-muted/30"}`}>{OUTCOMES[k]}</button>
                   ))}
                 </div>
-                <div className="max-w-xs space-y-1.5"><Label>Next review date</Label><Input type="date" value={nextReview} onChange={(e) => setNextReview(e.target.value)} /></div>
+                <div className="max-w-xs space-y-1.5"><Label>Next review date{view.requireNextReviewDate && <span className="text-destructive"> *</span>}</Label><Input type="date" value={nextReview} onChange={(e) => setNextReview(e.target.value)} className={missing.nextReview && !nextReview ? "border-red-400" : ""} />
+                  {missing.nextReview && !nextReview && <p className="text-xs font-medium text-red-600">Enter the next review date to submit.</p>}</div>
               </div>
             ) : (
               <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
@@ -483,9 +512,10 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
             )}
           </Card>
 
-          <Card title="Action plan (goals for the next review period)">
+          <Card title={`Action plan (goals for the next review period)${editB && view.requireActionPlan ? " *" : ""}`}>
             {editB ? (
               <div className="space-y-2">
+                {missing.plan && !plan.some((g) => g.goal.trim()) && <p className="text-xs font-medium text-red-600">Add at least one goal to submit.</p>}
                 {plan.map((g, i) => (
                   <div key={i} className="rounded-lg border border-border p-2.5 space-y-2">
                     <div className="flex gap-2">

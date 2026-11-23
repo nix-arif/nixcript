@@ -12,10 +12,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ArrowDownIcon, ArrowUpIcon, Building2Icon, ClipboardListIcon, CopyIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
 
-type Row = { key: string; section: string; name: string; description: string; weight: string };
-type QRow = { key: string; id?: string; label: string; help: string };
-const newRow = (section = ""): Row => ({ key: Math.random().toString(36).slice(2), section, name: "", description: "", weight: "1" });
-const newQRow = (label = "", help = "", id?: string): QRow => ({ key: Math.random().toString(36).slice(2), id, label, help });
+type Row = { key: string; section: string; name: string; description: string; weight: string; allowNa: boolean; commentOnExtremes: boolean };
+type QRow = { key: string; id?: string; label: string; help: string; required: boolean };
+const newRow = (section = ""): Row => ({ key: Math.random().toString(36).slice(2), section, name: "", description: "", weight: "1", allowNa: true, commentOnExtremes: false });
+const newQRow = (label = "", help = "", id?: string, required = false): QRow => ({ key: Math.random().toString(36).slice(2), id, label, help, required });
+
+// a small on/off choice inside a criterion or question
+function Toggle({ checked, onChange, children, title }: { checked: boolean; onChange: (v: boolean) => void; children: ReactNode; title?: string }) {
+  return (
+    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground" title={title}>
+      <input type="checkbox" className="h-3.5 w-3.5" checked={checked} onChange={(e) => onChange(e.target.checked)} />{children}
+    </label>
+  );
+}
 const SCALES = [3, 4, 5, 10];
 
 // The company's own form (F-HR05, Employee Performance Review Form): its core competencies and its written questions.
@@ -64,6 +73,16 @@ function TemplateRow({ t, actions }: { t: TemplateWithCriteria; actions: ReactNo
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold">{t.name}</span>
         <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">{t.criteria.length} criteria{questions ? ` · ${questions} questions` : ""} · scale 1 to {t.scaleMax}</span>
+        {(() => {
+          const req = [
+            (t.questions ?? []).filter((q) => q.required).length && `${(t.questions ?? []).filter((q) => q.required).length} required ${(t.questions ?? []).filter((q) => q.required).length === 1 ? "question" : "questions"}`,
+            t.criteria.some((c) => !c.allowNa) && `${t.criteria.filter((c) => !c.allowNa).length} without N/A`,
+            t.criteria.some((c) => c.commentOnExtremes) && `${t.criteria.filter((c) => c.commentOnExtremes).length} need a comment on 1 / ${t.scaleMax}`,
+            t.requireNextReviewDate && "next review date",
+            t.requireActionPlan && "action plan",
+          ].filter(Boolean);
+          return req.length ? <span className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-px text-[10px] text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300" title="Required in this template">Required: {req.join(" · ")}</span> : null;
+        })()}
         {!t.isActive && <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">Inactive</span>}
         <div className="ml-auto flex gap-1.5">{actions}</div>
       </div>
@@ -82,6 +101,9 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
   const [scaleMax, setScaleMax] = useState(5);
   const [rows, setRows] = useState<Row[]>([]);
   const [qrows, setQRows] = useState<QRow[]>([]);
+  // the reviewer's part HR makes required (the outcome and the reviewer's comments always are)
+  const [requireNextReviewDate, setRequireNextReviewDate] = useState(false);
+  const [requireActionPlan, setRequireActionPlan] = useState(false);
   const [saving, setSaving] = useState(false);
   const [copyFrom, setCopyFrom] = useState<{ name: string; org: string } | null>(null);
   // names are unique within this company (checked again on the server when saving)
@@ -91,19 +113,22 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
 
   function openNew() {
     setCopyFrom(null); setEditingId(undefined); setName(freeTemplateName(FORM_NAME, ownNames)); setDescription("The company's Employee Performance Review Form (F-HR05)"); setScaleMax(4); setRows(formRows()); setQRows(formQuestions());
+    setRequireNextReviewDate(false); setRequireActionPlan(false);
     setOpen(true);
   }
   // a template of another company of the owner can be used as it is; to change it, copy it into this company first
   function openCopy(t: TemplateWithCriteria) {
     setCopyFrom({ name: t.name, org: t.organizationName }); setEditingId(undefined); setName(freeTemplateName(t.name, ownNames)); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
-    setRows(t.criteria.map((c) => ({ key: Math.random().toString(36).slice(2), section: c.section, name: c.name, description: c.description ?? "", weight: c.weight })));
-    setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help)));
+    setRows(t.criteria.map((c) => ({ key: Math.random().toString(36).slice(2), section: c.section, name: c.name, description: c.description ?? "", weight: c.weight, allowNa: c.allowNa, commentOnExtremes: c.commentOnExtremes })));
+    setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help, undefined, !!q.required)));
+    setRequireNextReviewDate(t.requireNextReviewDate); setRequireActionPlan(t.requireActionPlan);
     setOpen(true);
   }
   function openEdit(t: TemplateWithCriteria) {
     setCopyFrom(null); setEditingId(t.id); setName(t.name); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
-    setRows(t.criteria.map((c) => ({ key: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: c.weight })));
-    setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help, q.id)));
+    setRows(t.criteria.map((c) => ({ key: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: c.weight, allowNa: c.allowNa, commentOnExtremes: c.commentOnExtremes })));
+    setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help, q.id, !!q.required)));
+    setRequireNextReviewDate(t.requireNextReviewDate); setRequireActionPlan(t.requireActionPlan);
     setOpen(true);
   }
   const patch = (key: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)));
@@ -112,7 +137,7 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
   async function save() {
     setSaving(true);
     try {
-      const r = await saveReviewTemplate({ id: editingId, name, description, scaleMax, criteria: rows.map((x) => ({ section: x.section, name: x.name, description: x.description, weight: x.weight })), questions: qrows.map((q) => ({ id: q.id, label: q.label, help: q.help })) });
+      const r = await saveReviewTemplate({ id: editingId, name, description, scaleMax, criteria: rows.map((x) => ({ section: x.section, name: x.name, description: x.description, weight: x.weight, allowNa: x.allowNa, commentOnExtremes: x.commentOnExtremes })), questions: qrows.map((q) => ({ id: q.id, label: q.label, help: q.help, required: q.required })), requireNextReviewDate, requireActionPlan });
       if (!r.ok) { toast.error(r.error); return; }
       await reload(); setOpen(false); toast.success("Template saved");
     } catch (e: any) { toast.error(e.message); } finally { setSaving(false); }
@@ -249,6 +274,10 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
                     </div>
                   </div>
                   <Textarea rows={Math.min(6, Math.max(2, r.description.split("\n").length))} className="text-xs" value={r.description} onChange={(e) => patch(r.key, { description: e.target.value })} placeholder="What this criterion looks at (shown to the employee and manager). One line per point." />
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    <Toggle checked={r.allowNa} onChange={(v) => patch(r.key, { allowNa: v })} title="Off: everyone must be given a rating on this one (e.g. attendance)">Allow N/A</Toggle>
+                    <Toggle checked={r.commentOnExtremes} onChange={(v) => patch(r.key, { commentOnExtremes: v })} title={`A reviewer who gives 1 or ${scaleMax} must say why in a comment`}>Reviewer must comment on the lowest / highest rating (1 or {scaleMax})</Toggle>
+                  </div>
                 </div>
               ))}
               <datalist id="review-sections">{[...new Set(rows.map((r) => r.section).filter(Boolean))].map((s) => <option key={s} value={s} />)}</datalist>
@@ -265,13 +294,23 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
                     <Button variant="ghost" size="icon" className="h-8 w-7 text-muted-foreground hover:text-destructive" onClick={() => setQRows((qs) => qs.filter((x) => x.key !== q.key))} aria-label="Remove question"><TrashIcon className="h-3.5 w-3.5" /></Button>
                   </div>
                   <Textarea rows={2} className="text-xs" value={q.help} onChange={(e) => setQRows((qs) => qs.map((x) => (x.key === q.key ? { ...x, help: e.target.value } : x)))} placeholder="The question the employee answers" />
+                  <Toggle checked={q.required} onChange={(v) => setQRows((qs) => qs.map((x) => (x.key === q.key ? { ...x, required: v } : x)))}>Required: the employee must answer it to submit</Toggle>
                 </div>
               ))}
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setQRows((qs) => [...qs, newQRow()])}><PlusIcon className="h-3.5 w-3.5" />Add question</Button>
             </div>
 
+            <div className="space-y-1.5">
+              <Label>Reviewer&apos;s part</Label>
+              <p className="text-[11px] text-muted-foreground">The lead reviewer always has to choose the overall outcome and write their comments. You can also require:</p>
+              <div className="flex flex-col gap-1">
+                <Toggle checked={requireNextReviewDate} onChange={setRequireNextReviewDate}>Next review date</Toggle>
+                <Toggle checked={requireActionPlan} onChange={setRequireActionPlan}>Action plan (at least one goal for the next period)</Toggle>
+              </div>
+            </div>
+
             <div className="rounded-lg border border-dashed border-border px-3 py-2 text-[11px] text-muted-foreground">
-              Employees also report progress on the goals of their last review, and the reviewer records the overall outcome, the next review date and the action plan for the next period. Those parts are the same in every template.
+              Employees also report progress on the goals of their last review (optional), and the reviewer records the overall outcome, the next review date and the action plan for the next period.
               <button type="button" className="ml-1 underline hover:text-foreground" onClick={() => { if (confirm("Replace the criteria and questions below with the company form (F-HR05)?")) { setName((n) => n || FORM_NAME); setScaleMax(4); setRows(formRows()); setQRows(formQuestions()); } }}>Reset to the company form (F-HR05)</button>
             </div>
 

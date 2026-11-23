@@ -24,10 +24,12 @@ export function freeTemplateName(name: string, taken: string[]): string {
   }
 }
 
-export type Criterion ={ id: string; section: string; name: string; description: string; weight: number };
+// allowNa: "not applicable" may be chosen (absent = yes). commentOnExtremes: a reviewer giving the lowest or highest
+// rating must say why (absent = no).
+export type Criterion = { id: string; section: string; name: string; description: string; weight: number; allowNa?: boolean; commentOnExtremes?: boolean };
 
-// The written parts of the company's review form (F-HR05)
-export type ReviewQuestion = { id: string; label: string; help: string };
+// The written parts of the company's review form (F-HR05); required: the employee must answer it to submit
+export type ReviewQuestion = { id: string; label: string; help: string; required?: boolean };
 export type PreviousGoal = { goal: string; action: string; completed: "Y" | "N" | ""; comments: string };
 export type ActionPlanRow = { goal: string; action: string; targetDate: string };
 
@@ -62,6 +64,16 @@ export function weightedScore(criteria: Criterion[], ratings: Record<string, num
   }
   return weights > 0 ? Math.round((sum / weights) * 100) / 100 : null;
 }
+
+// ── what HR made required in the template ──
+export const naAllowed = (c: Criterion) => c.allowNa !== false;
+export const isExtreme = (rating: number | null | undefined, scaleMax: number) => rating === 1 || rating === scaleMax;
+// the criteria where a reviewer gave the lowest or highest rating without saying why, when the template asks for it
+export const missingExtremeComments = (criteria: Criterion[], ratings: Record<string, number | null | undefined>, comments: Record<string, string | null | undefined>, scaleMax: number) =>
+  criteria.filter((c) => c.commentOnExtremes && isExtreme(ratings[c.id], scaleMax) && !comments[c.id]?.trim());
+// the required written questions the employee has not answered
+export const missingAnswers = (questions: ReviewQuestion[], answers: Record<string, string | null | undefined>) =>
+  questions.filter((q) => q.required && !answers[q.id]?.trim());
 
 // The final score with more than one reviewer: each reviewer's own (criterion-weighted) score, combined by their share.
 // A reviewer with no score at all (everything N/A) is left out; null if nobody has a score.
