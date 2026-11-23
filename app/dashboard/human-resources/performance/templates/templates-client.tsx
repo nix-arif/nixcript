@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { deleteReviewTemplate, getReviewTemplates, saveReviewTemplate, setReviewTemplateActive, type TemplateWithCriteria } from "@/server/performance";
-import { RATING_WORDS, freeTemplateName, templateNameKey } from "@/lib/performance/core";
+import { MAX_SELF_SHARE, RATING_WORDS, freeTemplateName, templateNameKey } from "@/lib/performance/core";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,7 +81,9 @@ function TemplateRow({ t, actions }: { t: TemplateWithCriteria; actions: ReactNo
             t.requireNextReviewDate && "next review date",
             t.requireActionPlan && "action plan",
           ].filter(Boolean);
-          return req.length ? <span className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-px text-[10px] text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300" title="Required in this template">Required: {req.join(" · ")}</span> : null;
+          const share = t.selfShare > 0 ? <span className="rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-px text-[10px] text-indigo-800 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-indigo-300">Self-assessment counts {t.selfShare}%</span> : null;
+          if (!req.length) return share;
+          return <>{share}{req.length ? <span className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-px text-[10px] text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300" title="Required in this template">Required: {req.join(" · ")}</span> : null}</>;
         })()}
         {!t.isActive && <span className="rounded-md border border-border px-1.5 py-px text-[10px] text-muted-foreground">Inactive</span>}
         <div className="ml-auto flex gap-1.5">{actions}</div>
@@ -104,6 +106,8 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
   // the reviewer's part HR makes required (the outcome and the reviewer's comments always are)
   const [requireNextReviewDate, setRequireNextReviewDate] = useState(false);
   const [requireActionPlan, setRequireActionPlan] = useState(false);
+  // how much the employee's own ratings count in the final score, in percent (0 = not at all)
+  const [selfShare, setSelfShare] = useState(0);
   const [saving, setSaving] = useState(false);
   const [copyFrom, setCopyFrom] = useState<{ name: string; org: string } | null>(null);
   // names are unique within this company (checked again on the server when saving)
@@ -113,7 +117,7 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
 
   function openNew() {
     setCopyFrom(null); setEditingId(undefined); setName(freeTemplateName(FORM_NAME, ownNames)); setDescription("The company's Employee Performance Review Form (F-HR05)"); setScaleMax(4); setRows(formRows()); setQRows(formQuestions());
-    setRequireNextReviewDate(false); setRequireActionPlan(false);
+    setRequireNextReviewDate(false); setRequireActionPlan(false); setSelfShare(0);
     setOpen(true);
   }
   // a template of another company of the owner can be used as it is; to change it, copy it into this company first
@@ -121,14 +125,14 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
     setCopyFrom({ name: t.name, org: t.organizationName }); setEditingId(undefined); setName(freeTemplateName(t.name, ownNames)); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
     setRows(t.criteria.map((c) => ({ key: Math.random().toString(36).slice(2), section: c.section, name: c.name, description: c.description ?? "", weight: c.weight, allowNa: c.allowNa, commentOnExtremes: c.commentOnExtremes })));
     setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help, undefined, !!q.required)));
-    setRequireNextReviewDate(t.requireNextReviewDate); setRequireActionPlan(t.requireActionPlan);
+    setRequireNextReviewDate(t.requireNextReviewDate); setRequireActionPlan(t.requireActionPlan); setSelfShare(t.selfShare);
     setOpen(true);
   }
   function openEdit(t: TemplateWithCriteria) {
     setCopyFrom(null); setEditingId(t.id); setName(t.name); setDescription(t.description ?? ""); setScaleMax(t.scaleMax);
     setRows(t.criteria.map((c) => ({ key: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: c.weight, allowNa: c.allowNa, commentOnExtremes: c.commentOnExtremes })));
     setQRows((t.questions ?? []).map((q) => newQRow(q.label, q.help, q.id, !!q.required)));
-    setRequireNextReviewDate(t.requireNextReviewDate); setRequireActionPlan(t.requireActionPlan);
+    setRequireNextReviewDate(t.requireNextReviewDate); setRequireActionPlan(t.requireActionPlan); setSelfShare(t.selfShare);
     setOpen(true);
   }
   const patch = (key: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)));
@@ -137,7 +141,7 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
   async function save() {
     setSaving(true);
     try {
-      const r = await saveReviewTemplate({ id: editingId, name, description, scaleMax, criteria: rows.map((x) => ({ section: x.section, name: x.name, description: x.description, weight: x.weight, allowNa: x.allowNa, commentOnExtremes: x.commentOnExtremes })), questions: qrows.map((q) => ({ id: q.id, label: q.label, help: q.help, required: q.required })), requireNextReviewDate, requireActionPlan });
+      const r = await saveReviewTemplate({ id: editingId, name, description, scaleMax, criteria: rows.map((x) => ({ section: x.section, name: x.name, description: x.description, weight: x.weight, allowNa: x.allowNa, commentOnExtremes: x.commentOnExtremes })), questions: qrows.map((q) => ({ id: q.id, label: q.label, help: q.help, required: q.required })), requireNextReviewDate, requireActionPlan, selfShare });
       if (!r.ok) { toast.error(r.error); return; }
       await reload(); setOpen(false); toast.success("Template saved");
     } catch (e: any) { toast.error(e.message); } finally { setSaving(false); }
@@ -256,6 +260,22 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
                 ))}
               </div>
               <p className="text-[11px] text-muted-foreground">{RATING_WORDS[scaleMax]?.map((w, i) => `${i + 1} ${w}`).join(" · ")}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Does the self-assessment count in the final score?</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {[0, 10, 20, 30, 50].map((n) => (
+                  <button key={n} type="button" aria-pressed={selfShare === n} onClick={() => setSelfShare(n)}
+                    className={`rounded-lg border px-3 py-1.5 text-sm ${selfShare === n ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20" : "border-border hover:bg-muted/30"}`}>{n === 0 ? "No" : `${n}%`}</button>
+                ))}
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">or
+                  <input type="number" min={0} max={MAX_SELF_SHARE} className="h-8 w-16 rounded-md border border-input bg-background px-1.5 text-sm text-foreground" value={selfShare}
+                    onChange={(e) => setSelfShare(Math.max(0, Math.min(MAX_SELF_SHARE, Math.round(Number(e.target.value) || 0))))} aria-label="Self-assessment share in percent" />%</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground">{selfShare === 0
+                ? "No: only the reviewers' ratings make the score. The employee's own ratings are shown next to them for comparison."
+                : `Final score = reviewers' score × ${100 - selfShare}% + the employee's own score × ${selfShare}%. At most ${MAX_SELF_SHARE}%, so the reviewers always carry at least half.`}</p>
             </div>
 
             <div className="space-y-2">

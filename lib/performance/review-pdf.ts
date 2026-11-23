@@ -238,6 +238,7 @@ function scoreCard(ctx: Ctx) {
     v.outcome ? `Outcome: ${OUTCOMES[v.outcome]}` : null,
     v.signedOffAt ? `Signed off${v.signedOffByName ? ` by ${v.signedOffByName}` : ""} on ${fmtDate(v.signedOffAt)}` : null,
     v.nextReviewDate ? `Next review: ${fmtDate(v.nextReviewDate)}` : null,
+    v.scoreParts ? `Reviewers ${formatScore(v.scoreParts.reviewers, v.scaleMax)} x ${100 - v.selfShare}% + self-assessment ${formatScore(v.scoreParts.self, v.scaleMax)} x ${v.selfShare}%` : null,
   ].filter((s): s is string => !!s);
   facts.forEach((f, i) => ctx.page.drawText(fitText(f, i === 0 ? ctx.fontB : ctx.fontR, 8.5, w2), { x: x2, y: top - 16 - i * 12, size: 8.5, font: i === 0 ? ctx.fontB : ctx.fontR, color: INK }));
   ctx.y -= h + 12;

@@ -112,6 +112,7 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
               {chosenTemplate && (
                 <p className="text-[11px] text-muted-foreground">
                   {chosenTemplate.criteria.length} criteria{(chosenTemplate.questions ?? []).length ? ` · ${(chosenTemplate.questions ?? []).length} written questions` : ""} · scale 1 to {chosenTemplate.scaleMax} ({RATING_WORDS[chosenTemplate.scaleMax]?.[0]} to {RATING_WORDS[chosenTemplate.scaleMax]?.slice(-1)[0]})
+                  {chosenTemplate.selfShare > 0 ? ` · self-assessment counts ${chosenTemplate.selfShare}%` : " · self-assessment not counted"}
                   {!chosenTemplate.own ? ` · from ${chosenTemplate.organizationName}` : ""}
                 </p>
               )}

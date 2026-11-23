@@ -334,10 +334,12 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
           <div className="flex flex-wrap items-center gap-4 rounded-lg bg-green-50 px-4 py-3 dark:bg-green-900/10">
             <div><div className="text-[10px] font-semibold uppercase tracking-wide text-green-800 dark:text-green-300">Final score</div><div className="text-2xl font-semibold tabular-nums">{formatScore(view.finalScore, view.scaleMax)}</div></div>
             <div className="text-xs text-muted-foreground">Signed off{view.signedOffByName ? ` by ${view.signedOffByName}` : ""} on {fmtDate(view.signedOffAt)}{view.signoffComment ? <><br />&ldquo;{view.signoffComment}&rdquo;</> : null}</div>
+            {view.scoreParts && <div className="w-full text-xs text-muted-foreground">Reviewers {formatScore(view.scoreParts.reviewers, view.scaleMax)} × {100 - view.selfShare}% + self-assessment {formatScore(view.scoreParts.self, view.scaleMax)} × {view.selfShare}%</div>}
             {eachReviewer && <div className="w-full text-xs text-muted-foreground">{view.reviewers.map((x) => `${x.name}${x.isLead ? " (lead)" : ""} ${formatScore(x.score, view.scaleMax)} × ${x.share}%`).join(" · ")}</div>}
             {!eachReviewer && view.multipleReviewers && <div className="w-full text-xs text-muted-foreground">Combined from the marks of {view.reviewers.length || "several"} reviewers.</div>}
           </div>
         )}
+        {side === "self" && <p className="text-xs text-muted-foreground">{view.selfShare > 0 ? `Your own ratings count for ${view.selfShare}% of the final score; your reviewers' ratings count for ${100 - view.selfShare}%.` : "Your own ratings are not part of the final score: your reviewer sees them next to theirs, so explain them well."}</p>}
         {view.rounds.length > 0 && view.status === "manager" && view.role !== "employee" && (() => {
           const last = view.rounds[view.rounds.length - 1];
           return <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200"><span className="font-semibold">Reopened after {view.employeeName} disagreed</span> (round {last.round} score {formatScore(last.finalScore, view.scaleMax)}): &ldquo;{last.employeeComment}&rdquo;. Your earlier marks are filled in below; change what needs changing and submit again. The earlier round is kept at the bottom of the page.</div>;

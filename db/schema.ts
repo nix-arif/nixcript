@@ -1908,6 +1908,8 @@ export const reviewTemplate = pgTable(
     // the reviewer's part HR makes required (the outcome and the reviewer's comments always are)
     requireNextReviewDate: boolean("require_next_review_date").notNull().default(false),
     requireActionPlan: boolean("require_action_plan").notNull().default(false),
+    // how much the employee's own ratings count in the final score, in percent (0 = not at all, at most 50)
+    selfShare: integer("self_share").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -2015,6 +2017,7 @@ export const review = pgTable(
     // copied from the template when the review was opened
     requireNextReviewDate: boolean("require_next_review_date").notNull().default(false),
     requireActionPlan: boolean("require_action_plan").notNull().default(false),
+    selfShare: integer("self_share").notNull().default(0), // percent of the final score from the employee's own ratings
     acknowledgedAt: timestamp("acknowledged_at"), // the employee has read the signed-off review
     // given with the acknowledgment: agree | disagree, and the employee's comment (required when they disagree)
     employeeResponse: text("employee_response"),

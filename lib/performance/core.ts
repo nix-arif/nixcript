@@ -65,6 +65,11 @@ export function weightedScore(criteria: Criterion[], ratings: Record<string, num
   return weights > 0 ? Math.round((sum / weights) * 100) / 100 : null;
 }
 
+// How much the employee's own ratings count in the final score, in percent. HR sets it per template; the reviewers
+// always carry at least half of the score.
+export const MAX_SELF_SHARE = 50;
+export const isValidSelfShare = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= MAX_SELF_SHARE;
+
 // ── what HR made required in the template ──
 export const naAllowed = (c: Criterion) => c.allowNa !== false;
 export const isExtreme = (rating: number | null | undefined, scaleMax: number) => rating === 1 || rating === scaleMax;

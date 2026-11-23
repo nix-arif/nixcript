@@ -10,7 +10,7 @@ import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { hasAccess } from "@/lib/permissions/has-access";
 import {
-  canEditNow, combineScores, missingAnswers, missingExtremeComments, naAllowed, isOutcome, isPurpose, isValidWeight, sharePercent, templateNameKey, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
+  canEditNow, combineScores, isValidSelfShare, MAX_SELF_SHARE, missingAnswers, missingExtremeComments, naAllowed, isOutcome, isPurpose, isValidWeight, sharePercent, templateNameKey, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
   type ActionPlanRow, type Criterion, type PreviousGoal, type ReviewOutcome, type ReviewPurpose, type ReviewQuestion, type ReviewRole, type ReviewStatus,
 } from "@/lib/performance/core";
 
@@ -86,6 +86,8 @@ export type TemplateInput = {
   // the reviewer's part HR makes required
   requireNextReviewDate?: boolean;
   requireActionPlan?: boolean;
+  // percent of the final score from the employee's own ratings (0 = they do not count)
+  selfShare?: number;
 };
 
 export async function listTemplates(ctx: Ctx) {
@@ -130,7 +132,9 @@ export async function saveTemplate(ctx: Ctx, input: TemplateInput): Promise<Resu
     questions.push({ id: q.id || nanoid(), label, help: q.help?.trim() ?? "", required: !!q.required });
   }
 
-  const rules = { requireNextReviewDate: !!input.requireNextReviewDate, requireActionPlan: !!input.requireActionPlan };
+  const selfShare = input.selfShare ?? 0;
+  if (!isValidSelfShare(selfShare)) return fail(`The self-assessment share is a whole number from 0 to ${MAX_SELF_SHARE} percent.`);
+  const rules = { requireNextReviewDate: !!input.requireNextReviewDate, requireActionPlan: !!input.requireActionPlan, selfShare };
   let id = input.id;
   try {
     if (id) {
@@ -238,7 +242,7 @@ export type PeriodInput = {
 
 // The form every review of a period is filled in on: the template's name, scale, criteria and questions, copied into
 // each review so that later edits to the template change nothing already opened.
-type ReviewForm = { templateName: string; scaleMax: number; criteria: Criterion[]; questions: ReviewQuestionSnapshot[]; requireNextReviewDate: boolean; requireActionPlan: boolean };
+type ReviewForm = { templateName: string; scaleMax: number; criteria: Criterion[]; questions: ReviewQuestionSnapshot[]; requireNextReviewDate: boolean; requireActionPlan: boolean; selfShare: number };
 
 // the form as the template is today; a new period may only be opened with an active template
 async function formFromTemplate(orgIds: string[], templateId: string, opts: { requireActive: boolean }): Promise<Result<ReviewForm>> {
@@ -251,17 +255,17 @@ async function formFromTemplate(orgIds: string[], templateId: string, opts: { re
     templateName: tpl.name, scaleMax: tpl.scaleMax,
     criteria: criteria.map((c) => ({ id: c.id, section: c.section, name: c.name, description: c.description ?? "", weight: Number(c.weight), allowNa: c.allowNa, commentOnExtremes: c.commentOnExtremes })),
     questions: (tpl.questions ?? []) as ReviewQuestionSnapshot[],
-    requireNextReviewDate: tpl.requireNextReviewDate, requireActionPlan: tpl.requireActionPlan,
+    requireNextReviewDate: tpl.requireNextReviewDate, requireActionPlan: tpl.requireActionPlan, selfShare: tpl.selfShare,
   });
 }
 
 // the form the period was opened with, taken from its first review (reviews are never deleted, only cancelled), so a
 // late joiner is rated on the same criteria as everyone else even if the template was edited, deactivated or deleted since
 async function formOfPeriod(periodId: string): Promise<ReviewForm | null> {
-  const [first] = await db.select({ templateName: review.templateName, scaleMax: review.scaleMax, criteria: review.criteria, questions: review.questions, requireNextReviewDate: review.requireNextReviewDate, requireActionPlan: review.requireActionPlan })
+  const [first] = await db.select({ templateName: review.templateName, scaleMax: review.scaleMax, criteria: review.criteria, questions: review.questions, requireNextReviewDate: review.requireNextReviewDate, requireActionPlan: review.requireActionPlan, selfShare: review.selfShare })
     .from(review).where(eq(review.periodId, periodId)).orderBy(asc(review.createdAt)).limit(1);
   if (!first) return null;
-  return { templateName: first.templateName, scaleMax: first.scaleMax, criteria: first.criteria as Criterion[], questions: (first.questions ?? []) as ReviewQuestionSnapshot[], requireNextReviewDate: first.requireNextReviewDate, requireActionPlan: first.requireActionPlan };
+  return { templateName: first.templateName, scaleMax: first.scaleMax, criteria: first.criteria as Criterion[], questions: (first.questions ?? []) as ReviewQuestionSnapshot[], requireNextReviewDate: first.requireNextReviewDate, requireActionPlan: first.requireActionPlan, selfShare: first.selfShare };
 }
 
 // the lead reviewer and the others of one review: members of the owner's companies, nobody twice, nobody reviewing
@@ -323,7 +327,7 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, form:
     id: nanoid(), organizationId: orgOfEmployee(e), periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null, leadWeight: e.leadWeight ?? 100,
     status: "self" as const, templateName: form.templateName, scaleMax: form.scaleMax, criteria: form.criteria,
     questions: form.questions,
-    requireNextReviewDate: form.requireNextReviewDate, requireActionPlan: form.requireActionPlan,
+    requireNextReviewDate: form.requireNextReviewDate, requireActionPlan: form.requireActionPlan, selfShare: form.selfShare,
     purpose: e.purpose ?? null,
     employeeDesignation: profileOf(e.userId)?.jobTitle ?? null, employeeDepartment: profileOf(e.userId)?.department ?? null,
     reviewerDesignation: profileOf(e.reviewerUserId)?.jobTitle ?? null,
@@ -528,6 +532,10 @@ export type ReviewView = {
   actionPlan: ActionPlanRow[];
   requireNextReviewDate: boolean; // from the template: the lead reviewer must fill these in to submit
   requireActionPlan: boolean;
+  // the employee's own ratings count for this percent of the final score (0 = not at all); with the two parts of the
+  // score once the review is completed
+  selfShare: number;
+  scoreParts: { reviewers: number | null; self: number | null } | null;
   acknowledgedAt: Date | null;
   // the employee's answer to the signed-off review, and how HR settled a disagreement
   employeeResponse: EmployeeResponse | null;
@@ -676,6 +684,8 @@ export async function getReview(ctx: Ctx, id: string): Promise<ReviewView | null
     actionPlan: showManager ? r.actionPlan ?? [] : [],
     requireNextReviewDate: r.requireNextReviewDate,
     requireActionPlan: r.requireActionPlan,
+    selfShare: r.selfShare,
+    scoreParts: r.selfShare > 0 && showManager && r.finalScore != null ? { reviewers: await reviewersScoreOf(r), self: await selfScoreOf(r) } : null,
     acknowledgedAt: r.acknowledgedAt,
     employeeResponse: r.employeeResponse === "agree" || r.employeeResponse === "disagree" ? r.employeeResponse : null,
     employeeComment: r.employeeComment,
@@ -788,12 +798,26 @@ function combinedByCriterion(criteria: Criterion[], parts: { weight: number; mar
   return Object.fromEntries(criteria.map((c) => [c.id, combineScores(parts.map((p) => ({ score: p.marks[c.id]?.na ? null : p.marks[c.id]?.rating ?? null, weight: p.weight })))]));
 }
 
-// the final score: each reviewer's criterion-weighted score, combined by share. With only the lead it is the lead's score.
-async function finalScoreOf(r: typeof review.$inferSelect): Promise<number | null> {
+// The reviewers' score: each reviewer's criterion-weighted score, combined by share (with only the lead, the lead's score).
+async function reviewersScoreOf(r: typeof review.$inferSelect): Promise<number | null> {
   const lead = weightedScore(r.criteria, ratingsIn(await leadMarksOf(r.id)));
   const co = await coReviewersOf(r.id);
   if (co.length === 0) return lead;
   return combineScores([{ score: lead, weight: r.leadWeight }, ...co.map((c) => ({ score: weightedScore(r.criteria, ratingsIn(c.marks)), weight: c.weight }))]);
+}
+
+// the employee's own criterion-weighted score (N/A left out)
+async function selfScoreOf(r: typeof review.$inferSelect): Promise<number | null> {
+  const { ratings, na } = await ratingsOf(r.id, "self");
+  return weightedScore(r.criteria, Object.fromEntries(Object.entries(ratings).map(([k, v]) => [k, na[k] ? null : v])));
+}
+
+// The final score: the reviewers' score, and the employee's own score for the share HR gave it in the template
+// (0 = the self-assessment does not count). If one side has no score at all, the other is the final score.
+async function finalScoreOf(r: typeof review.$inferSelect): Promise<number | null> {
+  const reviewers = await reviewersScoreOf(r);
+  if (!(r.selfShare > 0)) return reviewers;
+  return combineScores([{ score: reviewers, weight: 100 - r.selfShare }, { score: await selfScoreOf(r), weight: r.selfShare }]);
 }
 
 async function upsertCoAnswers(reviewerId: string, answers: AnswerInput[]) {
