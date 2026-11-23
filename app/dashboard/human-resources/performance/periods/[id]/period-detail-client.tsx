@@ -8,7 +8,7 @@ import { setReviewPeriodShowReviewerMarks, addReviewsToPeriod, cancelReview, rea
 import { formatScore, OUTCOMES, PURPOSES, sharePercent, STATUS_LABEL, type ReviewStatus } from "@/lib/performance/core";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetFormContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ArrowLeftIcon, BellRingIcon, CheckIcon, DownloadIcon, PlusIcon } from "lucide-react";
 import { ReviewStatusBadge } from "../../status-badge";
 import { EmployeePicker, type Picked } from "../employee-picker";
@@ -192,8 +192,8 @@ export function PeriodDetailClient({ period, employees }: { period: PeriodDetail
       </div>
 
       <Sheet open={addOpen} onOpenChange={setAddOpen}>
-        <SheetContent className="w-full max-w-xl! overflow-y-auto px-6 sm:px-8">
-          <SheetHeader className="mb-4"><SheetTitle>Add people to {period.name}</SheetTitle><SheetDescription>They get the same review form as everyone already in this period, even if its template has been changed since. They can be in any of your companies.</SheetDescription></SheetHeader>
+        <SheetFormContent className="w-full max-w-xl!">
+          <SheetHeader className="mb-4 px-0"><SheetTitle>Add people to {period.name}</SheetTitle><SheetDescription>They get the same review form as everyone already in this period, even if its template has been changed since. They can be in any of your companies.</SheetDescription></SheetHeader>
           <EmployeePicker employees={employees} value={picked} onChange={setPicked} excludeIds={haveIds} />
           <div className="mt-4 flex gap-2">
             <Button className="flex-1" disabled={busy || Object.keys(picked).length === 0}
@@ -202,7 +202,7 @@ export function PeriodDetailClient({ period, employees }: { period: PeriodDetail
             </Button>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
           </div>
-        </SheetContent>
+        </SheetFormContent>
       </Sheet>
     </div>
   );

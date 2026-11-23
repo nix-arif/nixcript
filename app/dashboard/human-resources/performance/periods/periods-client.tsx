@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetFormContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { CalendarRangeIcon, PlusIcon, ArrowRightIcon } from "lucide-react";
 import { EmployeePicker, type Picked } from "./employee-picker";
 import { RATING_WORDS } from "@/lib/performance/core";
@@ -86,8 +86,8 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
       )}
 
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent className="w-full max-w-xl! overflow-y-auto px-6 sm:px-8">
-          <SheetHeader className="mb-4">
+        <SheetFormContent className="w-full max-w-xl!">
+          <SheetHeader className="mb-4 px-0">
             <SheetTitle>New review period</SheetTitle>
             <SheetDescription>Each selected employee gets a review and is notified to start their self-assessment.</SheetDescription>
           </SheetHeader>
@@ -135,7 +135,7 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             </div>
           </div>
-        </SheetContent>
+        </SheetFormContent>
       </Sheet>
     </div>
   );

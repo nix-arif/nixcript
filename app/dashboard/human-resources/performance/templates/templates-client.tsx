@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetFormContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ArrowDownIcon, ArrowUpIcon, Building2Icon, ClipboardListIcon, CopyIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
 
 type Row = { key: string; section: string; name: string; description: string; weight: string; allowNa: boolean; commentOnExtremes: boolean };
@@ -237,11 +237,7 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
       )}
 
       <Sheet open={open} onOpenChange={setOpen}>
-        {/* a long form: it scrolls in its own layer (not the sliding panel), over a plain backdrop (a blurred one is
-            repainted on every scroll frame), so scrolling stays smooth */}
-        <SheetContent className="w-full max-w-2xl! gap-0 p-0" overlayClassName="supports-backdrop-filter:backdrop-blur-none bg-black/30">
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 sm:px-8 will-change-scroll"
-            onWheel={(e) => { const t = e.target as HTMLElement; if (t instanceof HTMLInputElement && t.type === "number" && t === document.activeElement) t.blur(); }}>
+        <SheetFormContent className="w-full max-w-2xl!">
           <SheetHeader className="mb-4 px-0">
             <SheetTitle>{editingId ? "Edit template" : copyFrom ? `Copy to ${orgName || "my company"}` : "New template"}</SheetTitle>
             <SheetDescription>
@@ -343,8 +339,7 @@ export function TemplatesClient({ initial, canDelete, orgName }: { initial: Temp
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             </div>
           </div>
-          </div>
-        </SheetContent>
+        </SheetFormContent>
       </Sheet>
     </div>
   );

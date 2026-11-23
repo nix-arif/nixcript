@@ -88,6 +88,34 @@ function SheetContent({
   )
 }
 
+// A sheet holding a long form. The form scrolls in its own area (not the sliding panel), over a plain backdrop
+// (a blurred one is repainted on every scroll frame and makes scrolling stutter), and a focused number box gives up
+// focus on the wheel so scrolling over it moves the page instead of changing its value.
+function SheetFormContent({
+  className,
+  bodyClassName,
+  children,
+  ...props
+}: React.ComponentProps<typeof SheetContent> & { bodyClassName?: string }) {
+  return (
+    <SheetContent
+      className={cn("gap-0 p-0", className)}
+      overlayClassName="supports-backdrop-filter:backdrop-blur-none bg-black/30"
+      {...props}
+    >
+      <div
+        className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 will-change-scroll sm:px-8", bodyClassName)}
+        onWheel={(e) => {
+          const t = e.target
+          if (t instanceof HTMLInputElement && t.type === "number" && t === document.activeElement) t.blur()
+        }}
+      >
+        {children}
+      </div>
+    </SheetContent>
+  )
+}
+
 function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -142,6 +170,7 @@ export {
   SheetTrigger,
   SheetClose,
   SheetContent,
+  SheetFormContent,
   SheetHeader,
   SheetFooter,
   SheetTitle,
