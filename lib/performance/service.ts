@@ -41,7 +41,9 @@ async function ownerOrgsOf(orgId: string): Promise<{ id: string; name: string }[
     : [];
   const ids = [...new Set([orgId, ...owned.map((o) => o.id)])];
   const orgs = await db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, ids));
-  return ids.map((id) => orgs.find((o) => o.id === id)).filter((o): o is { id: string; name: string } => !!o);
+  // this one first, the others by name, so "the first company" a person is in is always the same one
+  const self = orgs.filter((o) => o.id === orgId);
+  return [...self, ...orgs.filter((o) => o.id !== orgId).sort((a, b) => a.name.localeCompare(b.name))];
 }
 
 // ── notifications ───────────────────────────────────────────────────────────
@@ -158,7 +160,10 @@ export async function deleteTemplate(ctx: Ctx, id: string): Promise<Result> {
 // ── employees and periods ───────────────────────────────────────────────────
 export type EligibleEmployee = {
   userId: string; name: string; email: string; departments: string[]; defaultReviewer: { userId: string; name: string } | null;
-  organizationId: string; organizationName: string; // the company the review is kept under (the person's own)
+  organizationId: string; organizationName: string; // the company the review is kept under by default (the person's own)
+  // every company of the owner the person belongs to; HR picks which one keeps the review. Each brings the manager of
+  // the person's department there as its default reviewer.
+  companies: { id: string; name: string; defaultReviewer: { userId: string; name: string } | null }[];
 };
 
 // everyone who can be reviewed, in every company of this owner, with the manager of their own department as the default reviewer
@@ -183,15 +188,23 @@ export async function listEligibleEmployees(ctx: Ctx): Promise<EligibleEmployee[
     const cur = first.get(m.userId);
     if (!cur || rank(m.organizationId) < rank(cur.organizationId)) first.set(m.userId, m);
   }
-  return [...first.values()].map((m) => {
-    const mine = assigns.filter((a) => a.memberId === m.memberId);
-    let defaultReviewer: EligibleEmployee["defaultReviewer"] = null;
-    for (const a of mine) {
+  // the manager of the person's department in that company (one membership = one company)
+  const managerOf = (m: (typeof members)[number]): EligibleEmployee["defaultReviewer"] => {
+    for (const a of assigns.filter((x) => x.memberId === m.memberId)) {
       const mgr = assigns.find((x) => x.organizationId === m.organizationId && x.departmentId === a.departmentId && x.role === "manager" && x.memberId !== m.memberId);
       const u = mgr && userOf.get(mgr.memberId);
-      if (u) { defaultReviewer = { userId: u.userId, name: u.name }; break; }
+      if (u) return { userId: u.userId, name: u.name };
     }
-    return { userId: m.userId, name: m.name, email: m.email, departments: mine.map((a) => a.departmentName), defaultReviewer, organizationId: m.organizationId, organizationName: orgs.find((o) => o.id === m.organizationId)?.name ?? "" };
+    return null;
+  };
+  const orgName = (id: string) => orgs.find((o) => o.id === id)?.name ?? "";
+  return [...first.values()].map((m) => {
+    const companies = members.filter((x) => x.userId === m.userId).sort((a, b) => rank(a.organizationId) - rank(b.organizationId))
+      .map((x) => ({ id: x.organizationId, name: orgName(x.organizationId), defaultReviewer: managerOf(x) }));
+    return {
+      userId: m.userId, name: m.name, email: m.email, departments: assigns.filter((a) => a.memberId === m.memberId).map((a) => a.departmentName),
+      defaultReviewer: managerOf(m), organizationId: m.organizationId, organizationName: orgName(m.organizationId), companies,
+    };
   }).sort((a, b) => rank(a.organizationId) - rank(b.organizationId) || a.name.localeCompare(b.name));
 }
 
@@ -200,7 +213,9 @@ export type PeriodInput = {
   startDate: string;
   endDate: string;
   templateId: string;
-  employees: { userId: string; reviewerUserId?: string | null; purpose?: ReviewPurpose | null }[];
+  // organizationId: the company the review is kept under; must be one the person belongs to. Left out = this company
+  // when they are in it, else the first of theirs.
+  employees: { userId: string; reviewerUserId?: string | null; purpose?: ReviewPurpose | null; organizationId?: string | null }[];
 };
 
 // The form every review of a period is filled in on: the template's name, scale, criteria and questions, copied into
@@ -237,13 +252,16 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, form:
   const ids = [...new Set([...employees.map((e) => e.userId), ...employees.map((e) => e.reviewerUserId).filter((v): v is string => !!v)])];
   const members = await db.select({ userId: member.userId, organizationId: member.organizationId }).from(member).where(and(inArray(member.organizationId, orgIds), isNull(member.deletedAt), inArray(member.userId, ids)));
   const inOrg = new Set(members.map((m) => m.userId));
-  // the review is kept under the employee's own company (this one when they are in it), so they and their manager see it there
-  const orgOfEmployee = (u: string) => {
-    const mine = members.filter((m) => m.userId === u).map((m) => m.organizationId);
+  // the review is kept under the company HR chose for the person, else their own (this one when they are in it)
+  const orgsOf = (u: string) => members.filter((m) => m.userId === u).map((m) => m.organizationId);
+  const orgOfEmployee = (e: PeriodInput["employees"][number]) => {
+    const mine = orgsOf(e.userId);
+    if (e.organizationId && mine.includes(e.organizationId)) return e.organizationId;
     return mine.includes(ctx.orgId) ? ctx.orgId : mine.sort((a, b) => orgIds.indexOf(a) - orgIds.indexOf(b))[0] ?? ctx.orgId;
   };
   for (const e of employees) {
     if (!inOrg.has(e.userId)) return fail("One of the selected employees is not a member of your companies.");
+    if (e.organizationId && !orgsOf(e.userId).includes(e.organizationId)) return fail("A review can only be kept under a company the employee belongs to.");
     if (e.reviewerUserId && !inOrg.has(e.reviewerUserId)) return fail("A reviewer must be a member of one of your companies.");
     if (e.reviewerUserId === e.userId) return fail("Nobody can be their own reviewer.");
   }
@@ -259,7 +277,7 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, form:
     return plan.map((g) => ({ goal: g.goal, action: "", completed: "" as const, comments: "" }));
   };
   const rows = employees.map((e) => ({
-    id: nanoid(), organizationId: orgOfEmployee(e.userId), periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null,
+    id: nanoid(), organizationId: orgOfEmployee(e), periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null,
     status: "self" as const, templateName: form.templateName, scaleMax: form.scaleMax, criteria: form.criteria,
     questions: form.questions,
     purpose: e.purpose ?? null,

@@ -29,13 +29,13 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
   const chosenTemplate = templates.find((t) => t.id === templateId);
   const companyNames = [...new Set(templates.map((t) => t.organizationName))];
   const pickedList = Object.keys(picked);
-  const pickedCompanies = new Set(employees.filter((e) => picked[e.userId]).map((e) => e.organizationName));
+  const pickedCompanies = new Set(Object.values(picked).map((v) => v.organizationId));
   const missingBits = [!name.trim() && "a name", (!startDate || !endDate) && "the period dates", !templateId && "a template", pickedList.length === 0 && "at least one person"].filter(Boolean);
 
   async function create() {
     setSaving(true);
     try {
-      const r = await createReviewPeriod({ name, startDate, endDate, templateId, employees: Object.entries(picked).map(([userId, v]) => ({ userId, reviewerUserId: v.reviewerUserId, purpose: v.purpose })) });
+      const r = await createReviewPeriod({ name, startDate, endDate, templateId, employees: Object.entries(picked).map(([userId, v]) => ({ userId, reviewerUserId: v.reviewerUserId, purpose: v.purpose, organizationId: v.organizationId })) });
       if (!r.ok) { toast.error(r.error); return; }
       toast.success("Review period opened. Employees were notified.");
       setPeriods(await getReviewPeriods()); setOpen(false); router.push(`/dashboard/human-resources/performance/periods/${r.value}`);

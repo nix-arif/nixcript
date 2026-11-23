@@ -6,10 +6,12 @@ import { Input } from "@/components/ui/input";
 import { PURPOSES, type ReviewPurpose } from "@/lib/performance/core";
 import type { EligibleEmployee } from "@/server/performance";
 
-export type Picked = Record<string, { reviewerUserId: string | null; purpose: ReviewPurpose }>; // userId -> reviewer and purpose of the review
+// userId -> reviewer, purpose of the review, and the company the review is kept under
+export type Picked = Record<string, { reviewerUserId: string | null; purpose: ReviewPurpose; organizationId: string }>;
 
 // Choose who is reviewed and by whom, across every company of the owner. The reviewer starts as the manager of the
 // person's own department; HR can change one by one, or set the purpose / reset the reviewers for everyone selected.
+// Someone in several companies has their review kept under one of them, which HR picks (their own one to start with).
 export function EmployeePicker({
   employees, value, onChange, excludeIds = [],
 }: {
@@ -42,7 +44,15 @@ export function EmployeePicker({
     return out;
   }, [shown]);
 
-  const entryFor = (e: EligibleEmployee): Picked[string] => ({ reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual" });
+  // the department manager in the company the review is kept under
+  const reviewerIn = (e: EligibleEmployee, orgId: string) => (e.companies.find((c) => c.id === orgId)?.defaultReviewer ?? (orgId === e.organizationId ? e.defaultReviewer : null))?.userId ?? null;
+  const entryFor = (e: EligibleEmployee): Picked[string] => ({ reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual", organizationId: e.organizationId });
+  // a new company brings its department manager as reviewer, unless HR had already picked someone else
+  const setCompanyOf = (e: EligibleEmployee, orgId: string) => {
+    const cur = value[e.userId];
+    const keepReviewer = cur.reviewerUserId !== reviewerIn(e, cur.organizationId);
+    onChange({ ...value, [e.userId]: { ...cur, organizationId: orgId, reviewerUserId: keepReviewer ? cur.reviewerUserId : reviewerIn(e, orgId) } });
+  };
   const setMany = (list: EligibleEmployee[], on: boolean) => {
     const next = { ...value };
     for (const e of list) { if (on) { if (!next[e.userId]) next[e.userId] = entryFor(e); } else delete next[e.userId]; }
@@ -52,7 +62,7 @@ export function EmployeePicker({
   const picked = pool.filter((e) => value[e.userId]);
   const everyone = pool.length > 0 && picked.length === pool.length;
   const noReviewer = picked.filter((e) => !value[e.userId].reviewerUserId);
-  const pickedCompanies = new Set(picked.map((e) => e.organizationId)).size;
+  const pickedCompanies = new Set(picked.map((e) => value[e.userId].organizationId)).size;
 
   const setPurposeForAll = (purpose: ReviewPurpose) => {
     const next = { ...value };
@@ -61,7 +71,7 @@ export function EmployeePicker({
   };
   const resetReviewers = () => {
     const next = { ...value };
-    for (const e of picked) next[e.userId] = { ...next[e.userId], reviewerUserId: e.defaultReviewer?.userId ?? null };
+    for (const e of picked) next[e.userId] = { ...next[e.userId], reviewerUserId: reviewerIn(e, next[e.userId].organizationId) };
     onChange(next);
   };
 
@@ -131,6 +141,12 @@ export function EmployeePicker({
                           <span className="block truncate text-[11px] text-muted-foreground">{e.departments.join(", ") || "No department"}</span>
                         </span>
                       </label>
+                      {on && e.companies.length > 1 && (
+                        <select className="h-8 max-w-44 rounded-md border border-input bg-background px-2 text-xs" value={value[e.userId].organizationId}
+                          onChange={(ev) => setCompanyOf(e, ev.target.value)} aria-label={`Company the review of ${e.name} is kept under`} title="The company this review is kept under: its letterhead, its HR and its department manager">
+                          {e.companies.map((c) => <option key={c.id} value={c.id}>Under {c.name}</option>)}
+                        </select>
+                      )}
                       {on && (
                         <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={value[e.userId].purpose}
                           onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], purpose: ev.target.value as ReviewPurpose } })} aria-label={`Purpose of the review for ${e.name}`}>
@@ -141,7 +157,7 @@ export function EmployeePicker({
                         <select className={`h-8 max-w-48 rounded-md border bg-background px-2 text-xs ${value[e.userId].reviewerUserId ? "border-input" : "border-amber-400"}`} value={value[e.userId].reviewerUserId ?? ""}
                           onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], reviewerUserId: ev.target.value || null } })} aria-label={`Reviewer for ${e.name}`}>
                           <option value="">{e.defaultReviewer ? "No reviewer yet" : "No manager found, pick one"}</option>
-                          {employees.filter((x) => x.userId !== e.userId).map((x) => <option key={x.userId} value={x.userId}>{x.name}{several ? ` (${x.organizationName})` : ""}{x.userId === e.defaultReviewer?.userId ? " · dept. manager" : ""}</option>)}
+                          {employees.filter((x) => x.userId !== e.userId).map((x) => <option key={x.userId} value={x.userId}>{x.name}{several ? ` (${x.organizationName})` : ""}{x.userId === reviewerIn(e, value[e.userId].organizationId) ? " · dept. manager" : ""}</option>)}
                         </select>
                       )}
                     </div>

@@ -33,9 +33,9 @@ import { createSign } from "crypto";
 import { nanoid } from "nanoid";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
-import { inArray, eq, and } from "drizzle-orm";
+import { inArray, eq, and, isNull } from "drizzle-orm";
 import {
-  invoice, caseCommission, customer, customerCompany, customerOrganization,
+  invoice, caseCommission, customer, customerCompany, customerOrganization, user, member,
   deliveryOrder, deliveryOrderItem, documentCategory, invoiceStats,
 } from "../db/schema";
 import { computeInvoiceStats } from "../lib/invoice/stats";
@@ -252,6 +252,23 @@ async function main() {
     };
   }
 
+  // The staff the sheet's "Sales Person" names: the users of both companies. The sheet often writes a short form of
+  // the username ("syahidah" for syahidahsubari, "Zila" for Zilarahim); the system uses the username, linked to the
+  // account. An exact username (any case) wins; else the one username starting with it (4+ letters, only if exactly
+  // one does). Anything else (a team label such as "Iwan & Zila") is kept as written, with no account.
+  const staff = await db
+    .selectDistinct({ id: user.id, name: user.name })
+    .from(member).innerJoin(user, eq(user.id, member.userId))
+    .where(inArray(member.organizationId, [...ALL_ORG_IDS]));
+  function staffFor(raw: string | null): { id: string | null; name: string | null } {
+    if (!raw) return { id: null, name: null };
+    const v = raw.trim().toLowerCase();
+    const exact = staff.find((s) => s.name.toLowerCase() === v);
+    if (exact) return exact;
+    const starts = v.length >= 4 && /^[a-z]+$/.test(v) ? staff.filter((s) => s.name.toLowerCase().startsWith(v)) : [];
+    return starts.length === 1 ? starts[0] : { id: null, name: raw.trim() };
+  }
+
   const cats = await db
     .select({ id: documentCategory.id, organizationId: documentCategory.organizationId, name: documentCategory.name })
     .from(documentCategory)
@@ -289,7 +306,11 @@ async function main() {
       id, organizationId: orgId, invoiceNo,
       // existing records use the case date as the invoice date — stay consistent
       invoiceDate: toDate(r["DATE"]) ?? new Date(),
-      salesPersonName: str(r["Sales Person"]), applicationSpecialistName: str(r["Sales Person"]),
+      // the staff account the sheet's name stands for ("syahidah" → syahidahsubari), linked; a team label stays text
+      ...(() => {
+        const sp = staffFor(str(r["Sales Person"]));
+        return { salesPersonId: sp.id, salesPersonName: sp.name, applicationSpecialistId: sp.id, applicationSpecialistName: sp.name };
+      })(),
       customerId, customerSnapshot,
       customerPoNo: str(r["LPO"]), salesOrderNo: str(r["SALES ORDER NO"]),
       grandTotal: toMoney(r["TOTAL SO"]), subtotal: toMoney(r["TOTAL SO"]),
@@ -328,6 +349,8 @@ async function main() {
   // When the total changes, a paid amount already recorded follows it, and so does the profit if it was in line.
   type Cur = (typeof existing)[number];
   const caseTypeChanges: { invoiceId: string; doId: string | null; orgId: string; from: string | null; to: string }[] = [];
+  // invoices given their customer now (it was missing): their DO gets the same customer
+  const customerLinks: { doId: string | null; customerId: string; snapshot: InvoiceInsert["customerSnapshot"] }[] = [];
   // a few before → after examples of each kind of change, printed with the plan
   const examples = new Map<string, string[]>();
   const example = (label: string, line: string) => { const l = examples.get(label) ?? []; if (l.length < 4) l.push(line); examples.set(label, l); };
@@ -425,6 +448,19 @@ async function main() {
     const sheetRef = str(r["PAYMENT REF"]);
     if (sheetRef && sheetRef !== cur.paymentRef) { set.paymentRef = sheetRef; why.push("payment ref"); }
 
+    // An invoice imported before its surgeon was a customer has no customer: link it now that the customer exists
+    // (with the hospital the sheet names), and its DO too (below). Always, not only with --sheet-wins.
+    if (!cur.customerId) {
+      const surgeonRaw = str(r["SURGEON"]);
+      const c = surgeonRaw ? customerByName.get(normalizeSurgeon(surgeonRaw).name) : undefined;
+      if (c) {
+        const snap = snapshotFor(c.id, str(r["HOSPITAL"]));
+        set.customerId = c.id; set.customerSnapshot = snap; why.push("customer link");
+        example("customer link", `${cur.invoiceNo}: → "${snap?.name ?? c.name}" at "${snap?.organizationName ?? "-"}"`);
+        customerLinks.push({ doId: cur.deliveryOrderId, customerId: c.id, snapshot: snap });
+      }
+    }
+
     if (SHEET_WINS) sheetWins(cur, r, set, why);
 
     if (why.length) updates.push({ id: cur.id, invoiceNo: cur.invoiceNo ?? key, set, why });
@@ -510,6 +546,7 @@ async function main() {
   console.log(`DO links to (re)attach:  ${doLinks.length - doInserts.length} existing DO(s) matched by number`);
   console.log(`DO status updates:       ${doStatusUpdates.length}  ${JSON.stringify(tally(doStatusUpdates.map((d) => `${d.from}→${d.to}`)))}`);
 
+  console.log(`Customer links:          ${customerLinks.length}  (invoices that had no customer; their DOs follow)`);
   if (SHEET_WINS) {
     console.log(`Case type changes:       ${caseTypeChanges.length}  (their category and imported DO follow)`);
     console.log(`Sales person differs:    ${salesPersonDiffers}  (kept: the system has the staff account, the sheet a team label)`);
@@ -535,6 +572,16 @@ async function main() {
 
   for (const d of doStatusUpdates) await db.update(deliveryOrder).set({ status: d.to }).where(eq(deliveryOrder.id, d.id));
   console.log(`✓ synced status on ${doStatusUpdates.length} delivery orders`);
+
+  // an invoice that got its customer now: its DO gets it too, if it has none (a customer set in the app is kept)
+  let doCustomerLinked = 0;
+  for (const l of customerLinks) {
+    if (!l.doId) continue;
+    const res = await db.update(deliveryOrder).set({ customerId: l.customerId, customerSnapshot: l.snapshot })
+      .where(and(eq(deliveryOrder.id, l.doId), isNull(deliveryOrder.customerId))).returning({ id: deliveryOrder.id });
+    doCustomerLinked += res.length;
+  }
+  if (customerLinks.length) console.log(`✓ customer linked on ${customerLinks.length} invoices and ${doCustomerLinked} delivery orders`);
 
   // a changed case type: the imported DO's item (it is the case type) and its case-type category follow
   let doCaseUpdated = 0;

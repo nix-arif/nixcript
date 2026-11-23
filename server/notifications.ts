@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { notification, member, memberDepartment, department, user, userPermission } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, or, desc, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 // ── Auth ───────────────────────────────────────────────────────────────────
@@ -177,13 +177,20 @@ export async function notifyUsersWithPermission(
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
+// A notification shows in the org it was raised in. Performance reviews are the exception: one review covers the
+// owner's sibling companies and is kept under the employee's own company, so its notifications show whichever
+// company is active (the review itself opens from any of them).
+function visibleIn(orgId: string) {
+  return or(eq(notification.organizationId, orgId), eq(notification.type, "review"));
+}
+
 export async function getNotifications() {
   const { userId, orgId } = await getSession();
 
   return db
     .select()
     .from(notification)
-    .where(and(eq(notification.userId, userId), eq(notification.organizationId, orgId)))
+    .where(and(eq(notification.userId, userId), visibleIn(orgId)))
     .orderBy(desc(notification.createdAt))
     .limit(50);
 }
@@ -197,7 +204,7 @@ export async function getUnreadNotificationCount(): Promise<number> {
     .where(
       and(
         eq(notification.userId, userId),
-        eq(notification.organizationId, orgId),
+        visibleIn(orgId),
         eq(notification.isRead, 0),
       ),
     );
@@ -225,7 +232,7 @@ export async function markAllNotificationsRead() {
     .where(
       and(
         eq(notification.userId, userId),
-        eq(notification.organizationId, orgId),
+        visibleIn(orgId),
         eq(notification.isRead, 0),
       ),
     );

@@ -175,7 +175,7 @@ export function PeriodDetailClient({ period, employees }: { period: PeriodDetail
           <EmployeePicker employees={employees} value={picked} onChange={setPicked} excludeIds={haveIds} />
           <div className="mt-4 flex gap-2">
             <Button className="flex-1" disabled={busy || Object.keys(picked).length === 0}
-              onClick={() => run(() => addReviewsToPeriod(period.id, Object.entries(picked).map(([userId, v]) => ({ userId, reviewerUserId: v.reviewerUserId, purpose: v.purpose }))), "Reviews opened").then(() => setAddOpen(false))}>
+              onClick={() => run(() => addReviewsToPeriod(period.id, Object.entries(picked).map(([userId, v]) => ({ userId, reviewerUserId: v.reviewerUserId, purpose: v.purpose, organizationId: v.organizationId }))), "Reviews opened").then(() => setAddOpen(false))}>
               Add {Object.keys(picked).length || ""}
             </Button>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
