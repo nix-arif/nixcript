@@ -26,6 +26,7 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
   const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
   const [picked, setPicked] = useState<Picked>({});
   const [saving, setSaving] = useState(false);
+  const [showReviewerMarks, setShowReviewerMarks] = useState(true); // with several reviewers: marks by name, or combined only
   const chosenTemplate = templates.find((t) => t.id === templateId);
   const companyNames = [...new Set(templates.map((t) => t.organizationName))];
   const pickedList = Object.keys(picked);
@@ -35,7 +36,7 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
   async function create() {
     setSaving(true);
     try {
-      const r = await createReviewPeriod({ name, startDate, endDate, templateId, employees: Object.entries(picked).map(([userId, v]) => ({ userId, reviewerUserId: v.reviewerUserId, purpose: v.purpose, organizationId: v.organizationId })) });
+      const r = await createReviewPeriod({ name, startDate, endDate, templateId, showReviewerMarks, employees: Object.entries(picked).map(([userId, v]) => ({ userId, reviewerUserId: v.reviewerUserId, purpose: v.purpose, organizationId: v.organizationId, leadWeight: v.leadWeight, coReviewers: v.coReviewers })) });
       if (!r.ok) { toast.error(r.error); return; }
       toast.success("Review period opened. Employees were notified.");
       setPeriods(await getReviewPeriods()); setOpen(false); router.push(`/dashboard/human-resources/performance/periods/${r.value}`);
@@ -119,6 +120,10 @@ export function PeriodsClient({ initialPeriods, templates, employees }: { initia
               <Label>Employees <span className="text-destructive">*</span></Label>
               <EmployeePicker employees={employees} value={picked} onChange={setPicked} />
             </div>
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+              <input type="checkbox" className="mt-0.5 h-3.5 w-3.5" checked={showReviewerMarks} onChange={(e) => setShowReviewerMarks(e.target.checked)} />
+              <span><span className="font-medium">Employees see each reviewer&apos;s marks by name</span><br /><span className="text-muted-foreground">For reviews with more than one reviewer, once completed. Off: employees see only the combined marks and the lead reviewer&apos;s comments. HR always sees everything.</span></span>
+            </label>
             <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
               {missingBits.length > 0
                 ? <span className="text-muted-foreground">Still needed: {missingBits.join(", ")}.</span>

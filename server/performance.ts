@@ -5,7 +5,7 @@ import { getCachedSession } from "@/lib/auth/cached-session";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import * as S from "@/lib/performance/service";
 
-export type { Result, TemplateInput, PeriodInput, AnswerInput, EligibleEmployee, ReviewView, ReviewListRow, PeriodSummary, PeriodDetail, TemplateWithCriteria } from "@/lib/performance/service";
+export type { Result, TemplateInput, PeriodInput, AnswerInput, EligibleEmployee, ReviewView, ReviewListRow, PeriodSummary, PeriodDetail, TemplateWithCriteria, EmployeeResponse, ReviewerMarks } from "@/lib/performance/service";
 
 async function ctx(): Promise<S.Ctx> {
   const session = await getCachedSession();
@@ -20,10 +20,14 @@ export async function getTeamReviews() { return S.listTeamReviews(await ctx()); 
 export async function getReviewView(id: string) { return S.getReview(await ctx(), id); }
 export async function saveSelfReview(id: string, input: Parameters<typeof S.saveSelf>[2]) { return S.saveSelf(await ctx(), id, input); }
 export async function saveManagerReview(id: string, input: Parameters<typeof S.saveManager>[2]) { return S.saveManager(await ctx(), id, input); }
-export async function acknowledgeReview(id: string) { return S.acknowledgeReview(await ctx(), id); }
+export async function acknowledgeReview(id: string, input: { response: S.EmployeeResponse; comment?: string }) { return S.acknowledgeReview(await ctx(), id, input); }
+export async function resolveReviewDispute(id: string, note: string) { return S.resolveDispute(await ctx(), id, note); }
+export async function reopenDisputedReview(id: string, note: string) { return S.reopenReview(await ctx(), id, note); }
 export async function signOffReview(id: string, comment?: string) { return S.signOff(await ctx(), id, comment); }
 export async function returnReviewToManager(id: string, note: string) { return S.returnToManager(await ctx(), id, note); }
 export async function reassignReviewer(id: string, reviewerUserId: string) { return S.reassignReviewer(await ctx(), id, reviewerUserId); }
+export async function setReviewReviewers(id: string, input: { leadWeight: number; coReviewers: { userId: string; weight: number }[] }) { return S.setReviewers(await ctx(), id, input); }
+export async function setReviewPeriodShowReviewerMarks(id: string, value: boolean) { return S.setPeriodShowReviewerMarks(await ctx(), id, value); }
 export async function cancelReview(id: string) { return S.cancelReview(await ctx(), id); }
 
 export async function getReviewTemplates() { return S.listTemplates(await ctx()); }

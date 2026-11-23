@@ -1933,6 +1933,8 @@ export const reviewPeriod = pgTable(
     endDate: date("end_date").notNull(),
     templateId: text("template_id").references(() => reviewTemplate.id, { onDelete: "set null" }),
     status: text("status").notNull().default("open"), // open | closed
+    // HR's choice: the employee sees each reviewer's marks by name (true), or only the combined marks (false)
+    showReviewerMarks: boolean("show_reviewer_marks").notNull().default(true),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     closedAt: timestamp("closed_at"),
@@ -1944,6 +1946,30 @@ export type ReviewCriterionSnapshot = { id: string; section: string; name: strin
 export type ReviewQuestionSnapshot = { id: string; label: string; help: string };
 export type ReviewPreviousGoal = { goal: string; action: string; completed: "Y" | "N" | ""; comments: string };
 export type ReviewActionPlanRow = { goal: string; action: string; targetDate: string };
+// One earlier round of a review that HR reopened after the employee disagreed: the manager's side as it was signed
+// off, the employee's response, and why HR reopened it. Kept so the record shows what changed and why.
+export type ReviewRound = {
+  round: number;
+  managerAnswers: Record<string, { rating: number | null; na: boolean; comment: string | null }>; // criterion id ->
+  managerSummary: string | null;
+  outcome: string | null;
+  nextReviewDate: string | null;
+  actionPlan: ReviewActionPlanRow[];
+  finalScore: string | null;
+  managerSubmittedAt: string | null;
+  signedOffBy: string | null;
+  signedOffAt: string | null;
+  signoffComment: string | null;
+  acknowledgedAt: string | null;
+  employeeResponse: "agree" | "disagree" | null;
+  employeeComment: string | null;
+  reopenedBy: string;
+  reopenedAt: string;
+  reopenNote: string;
+  // with more than one reviewer: the lead's share and the other reviewers' marks as they were (absent on older rounds)
+  leadWeight?: number;
+  coReviewers?: { userId: string; weight: number; summary: string | null; score: number | null; answers: Record<string, { rating: number | null; na: boolean; comment: string | null }> }[];
+};
 
 export const review = pgTable(
   "review",
@@ -1952,7 +1978,8 @@ export const review = pgTable(
     organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
     periodId: text("period_id").notNull().references(() => reviewPeriod.id, { onDelete: "cascade" }),
     employeeUserId: text("employee_user_id").notNull().references(() => user.id),
-    reviewerUserId: text("reviewer_user_id").references(() => user.id),
+    reviewerUserId: text("reviewer_user_id").references(() => user.id), // the lead reviewer (others: review_reviewer)
+    leadWeight: integer("lead_weight").notNull().default(100), // the lead's share of the score, against the others' weights
     status: text("status").notNull().default("self"), // self | manager | signoff | completed | cancelled
     templateName: text("template_name").notNull(),
     scaleMax: integer("scale_max").notNull().default(5),
@@ -1972,6 +1999,15 @@ export const review = pgTable(
     nextReviewDate: date("next_review_date"),
     actionPlan: json("action_plan").$type<ReviewActionPlanRow[]>().notNull().default([]),
     acknowledgedAt: timestamp("acknowledged_at"), // the employee has read the signed-off review
+    // given with the acknowledgment: agree | disagree, and the employee's comment (required when they disagree)
+    employeeResponse: text("employee_response"),
+    employeeComment: text("employee_comment"),
+    // HR closed a disagreement by keeping the marks (the other way is reopening the review to the manager)
+    disputeResolution: text("dispute_resolution"),
+    disputeResolvedBy: text("dispute_resolved_by").references(() => user.id),
+    disputeResolvedAt: timestamp("dispute_resolved_at"),
+    // the earlier rounds, oldest first, when HR reopened the review after a disagreement
+    history: json("history").$type<ReviewRound[]>().notNull().default([]),
     selfSummary: text("self_summary"),
     selfSubmittedAt: timestamp("self_submitted_at"),
     managerSummary: text("manager_summary"),
@@ -2005,6 +2041,36 @@ export const reviewAnswer = pgTable(
     managerComment: text("manager_comment"),
   },
   (t) => [uniqueIndex("review_answer_uidx").on(t.reviewId, t.criterionId)],
+);
+
+// The reviewers of a review besides the lead (review.reviewerUserId). Each rates every criterion on their own; the
+// final score combines every reviewer's score by weight (review.leadWeight for the lead).
+export const reviewReviewer = pgTable(
+  "review_reviewer",
+  {
+    id: text("id").primaryKey(),
+    reviewId: text("review_id").notNull().references(() => review.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => user.id),
+    weight: integer("weight").notNull().default(100),
+    designation: text("designation"),
+    summary: text("summary"),
+    submittedAt: timestamp("submitted_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("review_reviewer_uidx").on(t.reviewId, t.userId), index("review_reviewer_user_idx").on(t.userId)],
+);
+
+export const reviewReviewerAnswer = pgTable(
+  "review_reviewer_answer",
+  {
+    id: text("id").primaryKey(),
+    reviewerId: text("reviewer_id").notNull().references(() => reviewReviewer.id, { onDelete: "cascade" }),
+    criterionId: text("criterion_id").notNull(),
+    rating: integer("rating"),
+    na: boolean("na").notNull().default(false),
+    comment: text("comment"),
+  },
+  (t) => [uniqueIndex("review_reviewer_answer_uidx").on(t.reviewerId, t.criterionId)],
 );
 
 /* =========================

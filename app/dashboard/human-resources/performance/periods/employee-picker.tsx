@@ -1,13 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { SearchIcon, UsersIcon } from "lucide-react";
+import { PlusIcon, SearchIcon, UsersIcon, XIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { PURPOSES, type ReviewPurpose } from "@/lib/performance/core";
+import { PURPOSES, sharePercent, type ReviewPurpose } from "@/lib/performance/core";
 import type { EligibleEmployee } from "@/server/performance";
 
-// userId -> reviewer, purpose of the review, and the company the review is kept under
-export type Picked = Record<string, { reviewerUserId: string | null; purpose: ReviewPurpose; organizationId: string }>;
+// userId -> lead reviewer, purpose of the review, the company the review is kept under, and the other reviewers with
+// everyone's share of the score
+export type Picked = Record<string, {
+  reviewerUserId: string | null; purpose: ReviewPurpose; organizationId: string;
+  leadWeight: number; coReviewers: { userId: string; weight: number }[];
+}>;
 
 // Choose who is reviewed and by whom, across every company of the owner. The reviewer starts as the manager of the
 // person's own department; HR can change one by one, or set the purpose / reset the reviewers for everyone selected.
@@ -46,7 +50,8 @@ export function EmployeePicker({
 
   // the department manager in the company the review is kept under
   const reviewerIn = (e: EligibleEmployee, orgId: string) => (e.companies.find((c) => c.id === orgId)?.defaultReviewer ?? (orgId === e.organizationId ? e.defaultReviewer : null))?.userId ?? null;
-  const entryFor = (e: EligibleEmployee): Picked[string] => ({ reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual", organizationId: e.organizationId });
+  const entryFor = (e: EligibleEmployee): Picked[string] => ({ reviewerUserId: e.defaultReviewer?.userId ?? null, purpose: "annual", organizationId: e.organizationId, leadWeight: 100, coReviewers: [] });
+  const patch = (e: EligibleEmployee, p: Partial<Picked[string]>) => onChange({ ...value, [e.userId]: { ...value[e.userId], ...p } });
   // a new company brings its department manager as reviewer, unless HR had already picked someone else
   const setCompanyOf = (e: EligibleEmployee, orgId: string) => {
     const cur = value[e.userId];
@@ -155,11 +160,12 @@ export function EmployeePicker({
                       )}
                       {on && (
                         <select className={`h-8 max-w-48 rounded-md border bg-background px-2 text-xs ${value[e.userId].reviewerUserId ? "border-input" : "border-amber-400"}`} value={value[e.userId].reviewerUserId ?? ""}
-                          onChange={(ev) => onChange({ ...value, [e.userId]: { ...value[e.userId], reviewerUserId: ev.target.value || null } })} aria-label={`Reviewer for ${e.name}`}>
+                          onChange={(ev) => patch(e, { reviewerUserId: ev.target.value || null, coReviewers: value[e.userId].coReviewers.filter((c) => c.userId !== ev.target.value) })} aria-label={`Reviewer for ${e.name}`}>
                           <option value="">{e.defaultReviewer ? "No reviewer yet" : "No manager found, pick one"}</option>
                           {employees.filter((x) => x.userId !== e.userId).map((x) => <option key={x.userId} value={x.userId}>{x.name}{several ? ` (${x.organizationName})` : ""}{x.userId === reviewerIn(e, value[e.userId].organizationId) ? " · dept. manager" : ""}</option>)}
                         </select>
                       )}
+                      {on && <MoreReviewers e={e} entry={value[e.userId]} employees={employees} several={several} onChange={(p) => patch(e, p)} />}
                     </div>
                   );
                 })}
@@ -187,6 +193,50 @@ export function EmployeePicker({
             </p>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// The reviewers besides the lead, and everyone's share of the score (equal unless changed)
+function MoreReviewers({ e, entry, employees, several, onChange }: {
+  e: EligibleEmployee; entry: Picked[string]; employees: EligibleEmployee[]; several: boolean;
+  onChange: (p: Partial<Picked[string]>) => void;
+}) {
+  const co = entry.coReviewers;
+  const taken = new Set([e.userId, entry.reviewerUserId, ...co.map((c) => c.userId)]);
+  const weights = [entry.leadWeight, ...co.map((c) => c.weight)];
+  const num = (v: string) => Math.max(1, Math.min(100, Math.round(Number(v) || 1)));
+  const shareInput = (w: number, set: (n: number) => void, label: string) => (
+    <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+      <input type="number" min={1} max={100} className="h-7 w-14 rounded-md border border-input bg-background px-1.5 text-xs text-foreground" value={w} onChange={(ev) => set(num(ev.target.value))} aria-label={label} />
+      <span className="tabular-nums">= {sharePercent(w, weights)}%</span>
+    </span>
+  );
+  if (!entry.reviewerUserId) return null;
+  return (
+    <div className="w-full space-y-1.5 pl-6.5">
+      {co.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted-foreground">Lead reviewer&apos;s share</span>
+          {shareInput(entry.leadWeight, (n) => onChange({ leadWeight: n }), `Lead reviewer's share for ${e.name}`)}
+        </div>
+      )}
+      {co.map((c, i) => (
+        <div key={c.userId} className="flex flex-wrap items-center gap-2 text-xs">
+          <select className="h-7 max-w-48 rounded-md border border-input bg-background px-2 text-xs" value={c.userId} aria-label={`Reviewer ${i + 2} for ${e.name}`}
+            onChange={(ev) => onChange({ coReviewers: co.map((x, j) => (j === i ? { ...x, userId: ev.target.value } : x)) })}>
+            {employees.filter((x) => x.userId === c.userId || !taken.has(x.userId)).map((x) => <option key={x.userId} value={x.userId}>{x.name}{several ? ` (${x.organizationName})` : ""}</option>)}
+          </select>
+          {shareInput(c.weight, (n) => onChange({ coReviewers: co.map((x, j) => (j === i ? { ...x, weight: n } : x)) }), `Share of reviewer ${i + 2} for ${e.name}`)}
+          <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => onChange({ coReviewers: co.filter((_, j) => j !== i) })} aria-label="Remove reviewer"><XIcon className="h-3.5 w-3.5" /></button>
+        </div>
+      ))}
+      {co.length < 5 && (
+        <button type="button" className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline hover:text-foreground"
+          onClick={() => { const next = employees.find((x) => !taken.has(x.userId)); if (next) onChange({ coReviewers: [...co, { userId: next.userId, weight: entry.leadWeight }] }); }}>
+          <PlusIcon className="h-3 w-3" />Add another reviewer
+        </button>
       )}
     </div>
   );

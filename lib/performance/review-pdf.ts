@@ -325,9 +325,17 @@ export async function generateReviewPdf(view: ReviewView, lh: Letterhead, genera
   // ── core competencies ──
   heading(ctx, "Core competencies", `Rating scale: ${(RATING_WORDS[v.scaleMax] ?? []).map((w, i) => `${i + 1} = ${w}`).join(" · ")} · N/A = Not applicable`);
   const showWeight = v.criteria.some((c) => c.weight !== 1);
+  // several reviewers: a column each (when their marks may be shown) and the combined mark; else one Manager column
+  const each = seeManager ? v.reviewers.filter((x) => x.isLead || x.submittedAt) : [];
+  const showCombined = seeManager && v.multipleReviewers && !!v.combined;
+  const markCols = (seeSelf ? 1 : 0) + (v.multipleReviewers ? each.length + (showCombined ? 1 : 0) : seeManager ? 1 : 0);
+  const rw = markCols > 4 ? 46 : 62;
+  const firstName = (n: string) => n.split(/\s+/)[0];
   const ratingCols: Col[] = [
-    ...(seeSelf ? [{ label: "Self", width: 66, align: "center" as const }] : []),
-    ...(seeManager ? [{ label: "Manager", width: 66, align: "center" as const }] : []),
+    ...(seeSelf ? [{ label: "Self", width: rw, align: "center" as const }] : []),
+    ...(seeManager && !v.multipleReviewers ? [{ label: "Manager", width: rw, align: "center" as const }] : []),
+    ...each.map((x) => ({ label: `${firstName(x.name)} ${x.share}%`, width: rw, align: "center" as const })),
+    ...(showCombined ? [{ label: "Combined", width: rw, align: "center" as const }] : []),
   ];
   const fixed = 22 + (showWeight ? 40 : 0) + ratingCols.reduce((s, c) => s + c.width, 0);
   const cols: Col[] = [
@@ -349,20 +357,24 @@ export async function generateReviewPdf(view: ReviewView, lh: Letterhead, genera
         { text: c.name, bold: true, size: 8.5 },
         ...points.map((p) => ({ text: points.length > 1 ? `•  ${p}` : p, muted: true, size: 7 })),
         ...(seeSelf && a.selfComment ? [{ text: `Employee: ${a.selfComment}`, size: 7.5 }] : []),
-        ...(seeManager && a.managerComment ? [{ text: `Manager: ${a.managerComment}`, size: 7.5 }] : []),
+        ...(seeManager && a.managerComment && !each.length ? [{ text: `${v.multipleReviewers ? "Lead reviewer" : "Manager"}: ${a.managerComment}`, size: 7.5 }] : []),
+        ...each.filter((x) => x.answers[c.id]?.comment).map((x) => ({ text: `${x.name}: ${x.answers[c.id]!.comment}`, size: 7.5 })),
       ];
       return [
         String(n), crit,
         ...(showWeight ? [String(c.weight)] : []),
         ...(seeSelf ? [rating(a.selfRating, a.selfNa, v.scaleMax)] : []),
-        ...(seeManager ? [rating(a.managerRating, a.managerNa, v.scaleMax)] : []),
+        ...(seeManager && !v.multipleReviewers ? [rating(a.managerRating, a.managerNa, v.scaleMax)] : []),
+        ...each.map((x) => rating(x.answers[c.id]?.rating ?? null, !!x.answers[c.id]?.na, v.scaleMax)),
+        ...(showCombined ? [v.combined![c.id] == null ? [{ text: "—", muted: true }] : [{ text: v.combined![c.id]!.toFixed(2), bold: true, size: 9 }]] as Run[][] : []),
       ];
     }));
   }
 
   // ── comments ──
   if (seeSelf) { heading(ctx, "Employee's other comments"); answerBox(ctx, v.selfSummary, "None"); }
-  if (seeManager) { heading(ctx, "Reviewer's comments"); answerBox(ctx, v.managerSummary, "None"); }
+  if (seeManager && !each.length) { heading(ctx, v.multipleReviewers ? "Lead reviewer's comments" : "Reviewer's comments"); answerBox(ctx, v.managerSummary, "None"); }
+  for (const x of each) { heading(ctx, `${x.name}'s comments${x.isLead ? " (lead reviewer)" : ""}`, `Share of the score: ${x.share}% · own score ${formatScore(x.score, v.scaleMax)}`); answerBox(ctx, x.summary, "None"); }
 
   // ── Section B: completed by the reviewer ──
   if (seeManager) {
@@ -376,6 +388,25 @@ export async function generateReviewPdf(view: ReviewView, lh: Letterhead, genera
     else table(ctx, [{ label: "Goal", width: CW * 0.38 }, { label: "Action required", width: CW * 0.44 }, { label: "Target date", width: CW * 0.18 }],
       v.actionPlan.map((g) => [g.goal, g.action || "—", g.targetDate ? fmtDate(g.targetDate) : "—"]));
     if (v.signoffComment) { heading(ctx, "HR sign-off comment"); answerBox(ctx, v.signoffComment); }
+  }
+
+  // the employee's answer with the acknowledgment, how HR settled a disagreement, and earlier rounds
+  if (v.employeeResponse) {
+    heading(ctx, "Employee's response");
+    paragraph(ctx, v.employeeResponse === "agree" ? "The employee agrees with this review." : "The employee disagrees with this review.");
+    if (v.employeeComment) answerBox(ctx, v.employeeComment);
+    if (v.disputeResolvedAt) {
+      subheading(ctx, `HR kept the marks${v.disputeResolvedByName ? ` (${v.disputeResolvedByName})` : ""}, ${fmtDate(v.disputeResolvedAt)}`);
+      if (v.disputeResolution) answerBox(ctx, v.disputeResolution);
+    }
+  }
+  if (v.rounds.length > 0) {
+    heading(ctx, "Earlier rounds");
+    for (const h of v.rounds) {
+      paragraph(ctx, `Round ${h.round}: score ${formatScore(h.finalScore, v.scaleMax)}, signed off ${h.signedOffAt ? fmtDate(h.signedOffAt) : "—"}. Reopened ${fmtDate(h.reopenedAt)}${h.reopenedByName ? ` by ${h.reopenedByName}` : ""} after the employee disagreed.`);
+      if (h.employeeComment) answerBox(ctx, `Employee: ${h.employeeComment}`);
+      answerBox(ctx, `HR: ${h.reopenNote}`);
+    }
   }
 
   signatures(ctx);

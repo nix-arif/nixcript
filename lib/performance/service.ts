@@ -2,15 +2,15 @@
 // The server actions in server/performance.ts only add the session and call these.
 import { db } from "@/db";
 import {
-  review, reviewAnswer, reviewCriterion, reviewPeriod, reviewTemplate,
+  review, reviewAnswer, reviewCriterion, reviewPeriod, reviewTemplate, reviewReviewer, reviewReviewerAnswer,
   member, memberDepartment, department, user, notification, userPermission, profile, organization,
-  type ReviewQuestionSnapshot,
+  type ReviewQuestionSnapshot, type ReviewRound,
 } from "@/db/schema";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { hasAccess } from "@/lib/permissions/has-access";
 import {
-  canEditNow, isOutcome, isPurpose, templateNameKey, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
+  canEditNow, combineScores, isOutcome, isPurpose, isValidWeight, sharePercent, templateNameKey, isValidRating, managerSideVisible, missingRatings, selfSideVisible, weightedScore,
   type ActionPlanRow, type Criterion, type PreviousGoal, type ReviewOutcome, type ReviewPurpose, type ReviewQuestion, type ReviewRole, type ReviewStatus,
 } from "@/lib/performance/core";
 
@@ -63,6 +63,14 @@ async function reviewManagerIds(orgId: string): Promise<string[]> {
 
 async function notifyManagers(orgId: string, n: { title: string; body: string; link: string }, except?: string) {
   for (const id of await reviewManagerIds(orgId)) if (id !== except) await notifyUser(orgId, id, n);
+}
+
+// HR of the company that opened the period and of the company the review is kept under (both can act on it), once each
+async function notifyReviewHr(r: { organizationId: string }, periodOrgId: string, n: { title: string; body: string; link: string }, except: string[] = []) {
+  const done = new Set(except);
+  for (const orgId of [...new Set([periodOrgId, r.organizationId])]) {
+    for (const id of await reviewManagerIds(orgId)) if (!done.has(id)) { done.add(id); await notifyUser(orgId, id, n); }
+  }
 }
 
 // ── templates ───────────────────────────────────────────────────────────────
@@ -215,7 +223,13 @@ export type PeriodInput = {
   templateId: string;
   // organizationId: the company the review is kept under; must be one the person belongs to. Left out = this company
   // when they are in it, else the first of theirs.
-  employees: { userId: string; reviewerUserId?: string | null; purpose?: ReviewPurpose | null; organizationId?: string | null }[];
+  // reviewerUserId is the lead reviewer; coReviewers rate alongside them. Weights are shares of the score (1-100 each).
+  employees: {
+    userId: string; reviewerUserId?: string | null; purpose?: ReviewPurpose | null; organizationId?: string | null;
+    leadWeight?: number; coReviewers?: { userId: string; weight: number }[];
+  }[];
+  // whether the employee sees each reviewer's marks by name once completed (default), or only the combined marks
+  showReviewerMarks?: boolean;
 };
 
 // The form every review of a period is filled in on: the template's name, scale, criteria and questions, copied into
@@ -245,11 +259,33 @@ async function formOfPeriod(periodId: string): Promise<ReviewForm | null> {
   return { templateName: first.templateName, scaleMax: first.scaleMax, criteria: first.criteria as Criterion[], questions: (first.questions ?? []) as ReviewQuestionSnapshot[] };
 }
 
+// the lead reviewer and the others of one review: members of the owner's companies, nobody twice, nobody reviewing
+// themselves, shares from 1 to 100
+const MAX_CO_REVIEWERS = 5;
+function checkReviewerSet(employeeId: string, leadId: string | null, leadWeight: number, co: { userId: string; weight: number }[], inOrg: Set<string>): string | null {
+  if (!isValidWeight(leadWeight)) return "A reviewer's share is a whole number from 1 to 100.";
+  if (co.length === 0) return null;
+  if (!leadId) return "Choose the lead reviewer before adding other reviewers.";
+  if (co.length > MAX_CO_REVIEWERS) return `A review can have at most ${MAX_CO_REVIEWERS + 1} reviewers.`;
+  const seen = new Set([leadId]);
+  for (const c of co) {
+    if (!inOrg.has(c.userId)) return "A reviewer must be a member of one of your companies.";
+    if (c.userId === employeeId) return "Nobody can be their own reviewer.";
+    if (seen.has(c.userId)) return "The same person is chosen as a reviewer twice.";
+    if (!isValidWeight(c.weight)) return "A reviewer's share is a whole number from 1 to 100.";
+    seen.add(c.userId);
+  }
+  return null;
+}
+
 async function openReviews(ctx: Ctx, periodId: string, periodName: string, form: ReviewForm, employees: PeriodInput["employees"]): Promise<Result<number>> {
   const orgs = await ownerOrgsOf(ctx.orgId);
   const orgIds = orgs.map((o) => o.id);
 
-  const ids = [...new Set([...employees.map((e) => e.userId), ...employees.map((e) => e.reviewerUserId).filter((v): v is string => !!v)])];
+  const ids = [...new Set([
+    ...employees.map((e) => e.userId), ...employees.map((e) => e.reviewerUserId).filter((v): v is string => !!v),
+    ...employees.flatMap((e) => (e.coReviewers ?? []).map((c) => c.userId)),
+  ])];
   const members = await db.select({ userId: member.userId, organizationId: member.organizationId }).from(member).where(and(inArray(member.organizationId, orgIds), isNull(member.deletedAt), inArray(member.userId, ids)));
   const inOrg = new Set(members.map((m) => m.userId));
   // the review is kept under the company HR chose for the person, else their own (this one when they are in it)
@@ -264,6 +300,8 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, form:
     if (e.organizationId && !orgsOf(e.userId).includes(e.organizationId)) return fail("A review can only be kept under a company the employee belongs to.");
     if (e.reviewerUserId && !inOrg.has(e.reviewerUserId)) return fail("A reviewer must be a member of one of your companies.");
     if (e.reviewerUserId === e.userId) return fail("Nobody can be their own reviewer.");
+    const bad = checkReviewerSet(e.userId, e.reviewerUserId ?? null, e.leadWeight ?? 100, e.coReviewers ?? [], inOrg);
+    if (bad) return fail(bad);
   }
   for (const e of employees) if (e.purpose && !isPurpose(e.purpose)) return fail("The purpose of a review is Annual Review or Confirmation.");
   // the header of the paper form: designation and department as they are on the staff profile today
@@ -277,7 +315,7 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, form:
     return plan.map((g) => ({ goal: g.goal, action: "", completed: "" as const, comments: "" }));
   };
   const rows = employees.map((e) => ({
-    id: nanoid(), organizationId: orgOfEmployee(e), periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null,
+    id: nanoid(), organizationId: orgOfEmployee(e), periodId, employeeUserId: e.userId, reviewerUserId: e.reviewerUserId || null, leadWeight: e.leadWeight ?? 100,
     status: "self" as const, templateName: form.templateName, scaleMax: form.scaleMax, criteria: form.criteria,
     questions: form.questions,
     purpose: e.purpose ?? null,
@@ -286,6 +324,10 @@ async function openReviews(ctx: Ctx, periodId: string, periodName: string, form:
     previousGoals: goalsOf(e.userId),
   }));
   if (rows.length > 0) await db.insert(review).values(rows);
+  const coRows = rows.flatMap((r, i) => (employees[i].coReviewers ?? []).map((c) => ({
+    id: nanoid(), reviewId: r.id, userId: c.userId, weight: c.weight, designation: profileOf(c.userId)?.jobTitle ?? null,
+  })));
+  if (coRows.length > 0) await db.insert(reviewReviewer).values(coRows);
   for (const r of rows) {
     await notifyUser(r.organizationId, r.employeeUserId, { title: `Performance review: ${periodName}`, body: "Your self-assessment is waiting. Please complete it.", link: `${LINK}/review/${r.id}` });
   }
@@ -306,7 +348,7 @@ export async function createPeriod(ctx: Ctx, input: PeriodInput): Promise<Result
   if (!form.ok) return form;
 
   const id = nanoid();
-  await db.insert(reviewPeriod).values({ id, organizationId: ctx.orgId, name, startDate: input.startDate, endDate: input.endDate, templateId: input.templateId, createdBy: ctx.userId });
+  await db.insert(reviewPeriod).values({ id, organizationId: ctx.orgId, name, startDate: input.startDate, endDate: input.endDate, templateId: input.templateId, showReviewerMarks: input.showReviewerMarks ?? true, createdBy: ctx.userId });
   const r = await openReviews(ctx, id, name, form.value, input.employees);
   if (!r.ok) { await db.delete(reviewPeriod).where(eq(reviewPeriod.id, id)); return r; } // nothing is left half-made
   return ok(id);
@@ -350,7 +392,8 @@ export async function getPeriod(ctx: Ctx, id: string) {
   if (!p) return null;
   const rows = await db.select().from(review).where(eq(review.periodId, id));
   const orgs = await ownerOrgsOf(ctx.orgId);
-  const ids = [...new Set(rows.flatMap((r) => [r.employeeUserId, r.reviewerUserId].filter((v): v is string => !!v)))];
+  const cos = rows.length ? await db.select().from(reviewReviewer).where(inArray(reviewReviewer.reviewId, rows.map((r) => r.id))).orderBy(asc(reviewReviewer.createdAt)) : [];
+  const ids = [...new Set([...rows.flatMap((r) => [r.employeeUserId, r.reviewerUserId].filter((v): v is string => !!v)), ...cos.map((c) => c.userId)])];
   const names = ids.length ? await db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, ids)) : [];
   const nameOf = (u: string | null) => names.find((n) => n.id === u)?.name ?? null;
   return {
@@ -359,6 +402,11 @@ export async function getPeriod(ctx: Ctx, id: string) {
       .map((r) => ({
         id: r.id, employeeUserId: r.employeeUserId, employeeName: nameOf(r.employeeUserId) ?? "—", reviewerUserId: r.reviewerUserId, reviewerName: nameOf(r.reviewerUserId),
         status: r.status as ReviewStatus, finalScore: r.finalScore, scaleMax: r.scaleMax,
+        // the employee disagreed and HR has not settled it yet; round 2+ = reopened after a disagreement
+        disputed: isOpenDispute(r), round: (r.history ?? []).length + 1, employeeResponse: r.employeeResponse,
+        // the reviewers besides the lead, and their share
+        leadWeight: r.leadWeight,
+        coReviewers: cos.filter((c) => c.reviewId === r.id).map((c) => ({ userId: c.userId, name: nameOf(c.userId) ?? "—", weight: c.weight, submitted: !!c.submittedAt })),
         // for the filters and the export
         organizationId: r.organizationId, organizationName: orgs.find((o) => o.id === r.organizationId)?.name ?? "", department: r.employeeDepartment, designation: r.employeeDesignation,
         purpose: isPurpose(r.purpose) ? r.purpose : null, outcome: isOutcome(r.outcome) ? r.outcome : null,
@@ -392,8 +440,10 @@ export async function remindPeriod(ctx: Ctx, periodId: string): Promise<Result<{
     recent.push({ userId, link });
     reminded++;
   };
+  const cos = await db.select().from(reviewReviewer).where(and(inArray(reviewReviewer.reviewId, rows.map((r) => r.id)), isNull(reviewReviewer.submittedAt)));
   for (const r of rows) {
     const link = `${LINK}/review/${r.id}`;
+    if (r.status === "manager") for (const c of cos.filter((x) => x.reviewId === r.id)) await send(r.organizationId, c.userId, `Reminder: review of ${nameOf(r.employeeUserId)}`, `Your marks for ${nameOf(r.employeeUserId)} (${p.name}) are still waiting.`, link);
     if (r.status === "self") await send(r.organizationId, r.employeeUserId, `Reminder: ${p.name}`, "Your self-assessment is still waiting. Please complete it.", link);
     else if (r.status === "manager") await send(r.organizationId, r.reviewerUserId, `Reminder: review of ${nameOf(r.employeeUserId)}`, `Your review of ${nameOf(r.employeeUserId)} for ${p.name} is still waiting.`, link);
     else if (r.status === "signoff") {
@@ -435,7 +485,10 @@ export async function listMyReviews(ctx: Ctx): Promise<ReviewListRow[]> {
 }
 
 export async function listTeamReviews(ctx: Ctx): Promise<ReviewListRow[]> {
-  const rows = await db.select().from(review).where(eq(review.reviewerUserId, ctx.userId)).orderBy(desc(review.createdAt));
+  const asCo = await db.select({ reviewId: reviewReviewer.reviewId }).from(reviewReviewer).where(eq(reviewReviewer.userId, ctx.userId));
+  const rows = await db.select().from(review)
+    .where(asCo.length ? or(eq(review.reviewerUserId, ctx.userId), inArray(review.id, asCo.map((x) => x.reviewId))) : eq(review.reviewerUserId, ctx.userId))
+    .orderBy(desc(review.createdAt));
   return withContext(rows.filter((r) => r.status !== "cancelled"));
 }
 
@@ -468,6 +521,31 @@ export type ReviewView = {
   nextReviewDate: string | null;
   actionPlan: ActionPlanRow[];
   acknowledgedAt: Date | null;
+  // the employee's answer to the signed-off review, and how HR settled a disagreement
+  employeeResponse: EmployeeResponse | null;
+  employeeComment: string | null;
+  disputeResolution: string | null;
+  disputeResolvedAt: Date | null;
+  disputeResolvedByName: string | null;
+  canResolveDispute: boolean; // HR: keep the marks or reopen to the manager
+  // earlier rounds, oldest first, when the review was reopened after a disagreement
+  rounds: (Omit<ReviewRound, "signedOffBy" | "reopenedBy" | "coReviewers"> & {
+    signedOffByName: string | null; reopenedByName: string | null;
+    coReviewers: { name: string; share: number; score: number | null; answers: Record<string, { rating: number | null; na: boolean; comment: string | null }> }[];
+    leadShare: number;
+  })[];
+  // more than one reviewer
+  isLead: boolean; // the caller is the lead reviewer (writes Section B, submits for sign-off)
+  multipleReviewers: boolean;
+  // every reviewer the caller may see marks of, the lead first (empty with a single reviewer). Marks of a reviewer who
+  // has not submitted yet are left out (drafts are private).
+  reviewers: ReviewerMarks[];
+  // per criterion, the reviewers' ratings combined by share (null with a single reviewer, or when not visible)
+  combined: Record<string, number | null> | null;
+  waitingFor: string[]; // lead / HR: the other reviewers who have not submitted yet
+  showReviewerMarks: boolean; // the period's setting: employees see each reviewer's marks by name
+  // HR: who reviews and their shares, to change them
+  reviewerSetup: { leadWeight: number; coReviewers: { userId: string; name: string; weight: number; submitted: boolean }[] } | null;
   canAcknowledge: boolean;
   canEdit: boolean;
   canSignOff: boolean;
@@ -484,11 +562,23 @@ export type ReviewView = {
   answers: Record<string, { selfRating: number | null; selfNa: boolean; selfComment: string | null; managerRating: number | null; managerNa: boolean; managerComment: string | null }>;
 };
 
+export type ReviewerMarks = {
+  key: string; // "lead" or the review_reviewer id
+  name: string;
+  designation: string | null;
+  isLead: boolean;
+  share: number; // percent of the score
+  submittedAt: Date | null;
+  summary: string | null;
+  score: number | null; // this reviewer's own criterion-weighted score
+  answers: Record<string, { rating: number | null; na: boolean; comment: string | null }>;
+};
+
 // who the caller is on this review. Your own review never gives you reviewer or HR powers over it.
-function roleOf(ctx: Ctx, r: typeof review.$inferSelect, periodOrgId: string | null): ReviewRole | null {
+function roleOf(ctx: Ctx, r: typeof review.$inferSelect, periodOrgId: string | null, isCoReviewer = false): ReviewRole | null {
   const isEmployee = r.employeeUserId === ctx.userId;
   if (isEmployee) return "employee";
-  const isReviewer = r.reviewerUserId === ctx.userId;
+  const isReviewer = r.reviewerUserId === ctx.userId || isCoReviewer;
   if (isReviewer && r.status === "manager") return "reviewer";
   // HR of the company that opened the period, or of the company the review is kept under
   if (can(ctx, "review:manage") && (r.organizationId === ctx.orgId || periodOrgId === ctx.orgId)) return "hr";
@@ -499,37 +589,71 @@ function roleOf(ctx: Ctx, r: typeof review.$inferSelect, periodOrgId: string | n
 async function loadReview(ctx: Ctx, id: string) {
   const [r] = await db.select().from(review).where(eq(review.id, id));
   if (!r) return null;
-  const [p] = await db.select({ organizationId: reviewPeriod.organizationId }).from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId));
-  const role = roleOf(ctx, r, p?.organizationId ?? null);
-  return role ? { r, role } : null;
+  const [[p], [co]] = await Promise.all([
+    db.select({ organizationId: reviewPeriod.organizationId }).from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId)),
+    db.select().from(reviewReviewer).where(and(eq(reviewReviewer.reviewId, id), eq(reviewReviewer.userId, ctx.userId))),
+  ]);
+  const role = roleOf(ctx, r, p?.organizationId ?? null, !!co);
+  // the lead reviewer writes Section B and submits for sign-off; another reviewer ("co") only gives their own marks
+  return role ? { r, role, co: role === "reviewer" && r.reviewerUserId !== ctx.userId ? co ?? null : null, isLead: role === "reviewer" && r.reviewerUserId === ctx.userId } : null;
 }
 
 export async function getReview(ctx: Ctx, id: string): Promise<ReviewView | null> {
   const found = await loadReview(ctx, id);
   if (!found) return null;
-  const { r, role } = found;
+  const { r, role, co: myCo, isLead } = found;
   if (r.status === "cancelled" && role !== "hr") return null;
+  const cos = await coReviewersOf(id);
   const [period, answers, names] = await Promise.all([
     db.select().from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId)).then((x) => x[0]),
     db.select().from(reviewAnswer).where(eq(reviewAnswer.reviewId, id)),
-    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [r.employeeUserId, ...(r.reviewerUserId ? [r.reviewerUserId] : []), ...(r.signedOffBy ? [r.signedOffBy] : [])])),
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, [...new Set([
+      r.employeeUserId, r.reviewerUserId, r.signedOffBy, r.disputeResolvedBy, ...cos.map((c) => c.userId),
+      ...(r.history ?? []).flatMap((h) => [h.signedOffBy, h.reopenedBy, ...(h.coReviewers ?? []).map((c) => c.userId)]),
+    ].filter((v): v is string => !!v))])),
   ]);
   const nameOf = (u: string | null) => names.find((n) => n.id === u)?.name ?? null;
   const showManager = managerSideVisible(role, r.status as ReviewStatus);
   const showSelf = selfSideVisible(role, r.status as ReviewStatus);
   const periodOpen = period?.status === "open";
+  const status = r.status as ReviewStatus;
+  const multi = cos.length > 0;
+  const byName = period?.showReviewerMarks ?? true;
+  // the employee in a "combined marks only" period sees no reviewer's own ratings
+  const combinedOnly = role === "employee" && multi && !byName;
+  // whose marks one by one: HR and the lead always; another reviewer once they have submitted their own; the employee
+  // once the review is completed, if the period shows marks by name
+  const seeEach = multi && (role === "hr" || isLead || (!!myCo && !!myCo.submittedAt) || (role === "employee" && status === "completed" && byName));
+  const leadMarks: MarkMap = Object.fromEntries(answers.map((a) => [a.criterionId, { rating: a.managerNa ? null : a.managerRating, na: a.managerNa, comment: a.managerComment }]));
+  const weights = [r.leadWeight, ...cos.map((c) => c.weight)];
+  const reviewers: ReviewerMarks[] = !seeEach ? [] : [
+    { key: "lead", name: nameOf(r.reviewerUserId) ?? "Lead reviewer", designation: r.reviewerDesignation, isLead: true, share: sharePercent(r.leadWeight, weights), submittedAt: r.managerSubmittedAt, summary: r.managerSummary, score: weightedScore(r.criteria, ratingsIn(leadMarks)), answers: leadMarks },
+    ...cos.map((c) => ({
+      key: c.id, name: nameOf(c.userId) ?? "Reviewer", designation: c.designation, isLead: false, share: sharePercent(c.weight, weights), submittedAt: c.submittedAt,
+      // drafts are private: only what was submitted (and your own) is shown
+      summary: c.submittedAt || c.userId === ctx.userId ? c.summary : null,
+      score: c.submittedAt || c.userId === ctx.userId ? weightedScore(r.criteria, ratingsIn(c.marks)) : null,
+      answers: c.submittedAt || c.userId === ctx.userId ? c.marks : {},
+    })),
+  ];
+  const combined = multi && showManager && (role !== "reviewer" || isLead || !!myCo?.submittedAt)
+    ? combinedByCriterion(r.criteria, [{ weight: r.leadWeight, marks: leadMarks }, ...cos.filter((c) => c.submittedAt).map((c) => ({ weight: c.weight, marks: c.marks }))])
+    : null;
   const answerMap: ReviewView["answers"] = {};
   for (const c of r.criteria) {
     const a = answers.find((x) => x.criterionId === c.id);
+    // for another reviewer, "manager" is their own marks; for everyone else it is the lead's
+    const mine = myCo ? cos.find((x) => x.id === myCo.id)?.marks[c.id] : undefined;
     answerMap[c.id] = {
       selfRating: showSelf || role === "employee" ? a?.selfRating ?? null : null,
       selfNa: showSelf || role === "employee" ? a?.selfNa ?? false : false,
       selfComment: showSelf || role === "employee" ? a?.selfComment ?? null : null,
-      managerRating: showManager ? a?.managerRating ?? null : null,
-      managerNa: showManager ? a?.managerNa ?? false : false,
-      managerComment: showManager ? a?.managerComment ?? null : null,
+      managerRating: myCo ? mine?.rating ?? null : showManager && !combinedOnly ? a?.managerRating ?? null : null,
+      managerNa: myCo ? mine?.na ?? false : showManager && !combinedOnly ? a?.managerNa ?? false : false,
+      managerComment: myCo ? mine?.comment ?? null : showManager ? a?.managerComment ?? null : null,
     };
   }
+  const myCoRow = myCo ? cos.find((x) => x.id === myCo.id) : undefined;
   return {
     id: r.id, organizationId: r.organizationId, role, status: r.status as ReviewStatus, periodName: period?.name ?? "", periodOpen, templateName: r.templateName, scaleMax: r.scaleMax,
     criteria: r.criteria, employeeName: nameOf(r.employeeUserId) ?? "—", reviewerName: nameOf(r.reviewerUserId),
@@ -543,13 +667,42 @@ export async function getReview(ctx: Ctx, id: string): Promise<ReviewView | null
     nextReviewDate: showManager ? r.nextReviewDate : null,
     actionPlan: showManager ? r.actionPlan ?? [] : [],
     acknowledgedAt: r.acknowledgedAt,
+    employeeResponse: r.employeeResponse === "agree" || r.employeeResponse === "disagree" ? r.employeeResponse : null,
+    employeeComment: r.employeeComment,
+    disputeResolution: r.disputeResolution,
+    disputeResolvedAt: r.disputeResolvedAt,
+    disputeResolvedByName: nameOf(r.disputeResolvedBy),
+    canResolveDispute: role === "hr" && isOpenDispute(r),
+    // every round in the history was signed off and shown to the employee, so everyone on the review may read it
+    rounds: (r.history ?? []).map(({ signedOffBy, reopenedBy, coReviewers, ...h }) => {
+      const co = coReviewers ?? [];
+      const w = [h.leadWeight ?? 100, ...co.map((c) => c.weight)];
+      // in a "combined marks only" period the employee sees the combined marks of earlier rounds too
+      const hideEach = role === "employee" && co.length > 0 && !byName;
+      return {
+        ...h,
+        managerAnswers: hideEach
+          ? Object.fromEntries(Object.entries(combinedByCriterion(r.criteria, [{ weight: h.leadWeight ?? 100, marks: h.managerAnswers }, ...co.map((c) => ({ weight: c.weight, marks: c.answers }))])).map(([k, v]) => [k, { rating: v, na: false, comment: null }]))
+          : h.managerAnswers,
+        signedOffByName: nameOf(signedOffBy), reopenedByName: nameOf(reopenedBy),
+        leadShare: sharePercent(h.leadWeight ?? 100, w),
+        coReviewers: hideEach ? [] : co.map((c) => ({ name: nameOf(c.userId) ?? "Reviewer", share: sharePercent(c.weight, w), score: c.score, answers: c.answers })),
+      };
+    }),
+    isLead,
+    multipleReviewers: multi,
+    reviewers,
+    combined,
+    waitingFor: isLead || role === "hr" ? cos.filter((c) => !c.submittedAt).map((c) => nameOf(c.userId) ?? "a reviewer") : [],
+    showReviewerMarks: byName,
+    reviewerSetup: role === "hr" ? { leadWeight: r.leadWeight, coReviewers: cos.map((c) => ({ userId: c.userId, name: nameOf(c.userId) ?? "—", weight: c.weight, submitted: !!c.submittedAt })) } : null,
     canAcknowledge: role === "employee" && r.status === "completed" && !r.acknowledgedAt,
-    canEdit: periodOpen && canEditNow(role, r.status as ReviewStatus),
+    canEdit: periodOpen && (myCo ? status === "manager" && !myCoRow?.submittedAt : canEditNow(role, status)),
     canSignOff: periodOpen && role === "hr" && r.status === "signoff",
     canReassign: periodOpen && role === "hr" && (r.status === "self" || r.status === "manager"),
     returnNote: role === "employee" ? null : r.returnNote,
     selfSummary: showSelf || role === "employee" ? r.selfSummary : null,
-    managerSummary: showManager ? r.managerSummary : null,
+    managerSummary: myCo ? myCoRow?.summary ?? null : showManager ? r.managerSummary : null,
     signoffComment: showManager ? r.signoffComment : null,
     finalScore: showManager ? r.finalScore : null,
     selfSubmittedAt: showSelf || role === "employee" ? r.selfSubmittedAt : null,
@@ -590,6 +743,50 @@ async function ratingsOf(reviewId: string, side: "self" | "manager") {
     ratings: Object.fromEntries(rows.map((a) => [a.criterionId, side === "self" ? a.selfRating : a.managerRating])) as Record<string, number | null>,
     na: Object.fromEntries(rows.map((a) => [a.criterionId, side === "self" ? a.selfNa : a.managerNa])) as Record<string, boolean>,
   };
+}
+
+// ── reviewers besides the lead ──────────────────────────────────────────────
+type MarkMap = Record<string, { rating: number | null; na: boolean; comment: string | null }>; // criterion id ->
+
+async function coReviewersOf(reviewId: string) {
+  const rows = await db.select().from(reviewReviewer).where(eq(reviewReviewer.reviewId, reviewId)).orderBy(asc(reviewReviewer.createdAt));
+  const answers = rows.length ? await db.select().from(reviewReviewerAnswer).where(inArray(reviewReviewerAnswer.reviewerId, rows.map((x) => x.id))) : [];
+  return rows.map((x) => ({
+    ...x,
+    marks: Object.fromEntries(answers.filter((a) => a.reviewerId === x.id).map((a) => [a.criterionId, { rating: a.na ? null : a.rating, na: a.na, comment: a.comment }])) as MarkMap,
+  }));
+}
+
+const ratingsIn = (m: MarkMap) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v.na ? null : v.rating])) as Record<string, number | null>;
+const naIn = (m: MarkMap) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v.na])) as Record<string, boolean>;
+
+async function leadMarksOf(reviewId: string): Promise<MarkMap> {
+  const rows = await db.select().from(reviewAnswer).where(eq(reviewAnswer.reviewId, reviewId));
+  return Object.fromEntries(rows.map((a) => [a.criterionId, { rating: a.managerNa ? null : a.managerRating, na: a.managerNa, comment: a.managerComment }]));
+}
+
+// per criterion: the reviewers' ratings combined by share (a reviewer's N/A leaves only their mark out)
+function combinedByCriterion(criteria: Criterion[], parts: { weight: number; marks: MarkMap }[]): Record<string, number | null> {
+  return Object.fromEntries(criteria.map((c) => [c.id, combineScores(parts.map((p) => ({ score: p.marks[c.id]?.na ? null : p.marks[c.id]?.rating ?? null, weight: p.weight })))]));
+}
+
+// the final score: each reviewer's criterion-weighted score, combined by share. With only the lead it is the lead's score.
+async function finalScoreOf(r: typeof review.$inferSelect): Promise<number | null> {
+  const lead = weightedScore(r.criteria, ratingsIn(await leadMarksOf(r.id)));
+  const co = await coReviewersOf(r.id);
+  if (co.length === 0) return lead;
+  return combineScores([{ score: lead, weight: r.leadWeight }, ...co.map((c) => ({ score: weightedScore(r.criteria, ratingsIn(c.marks)), weight: c.weight }))]);
+}
+
+async function upsertCoAnswers(reviewerId: string, answers: AnswerInput[]) {
+  const existing = await db.select().from(reviewReviewerAnswer).where(eq(reviewReviewerAnswer.reviewerId, reviewerId));
+  for (const a of answers) {
+    const na = !!a.na;
+    const set = { rating: na ? null : a.rating, na, comment: a.comment?.trim() || null };
+    const hit = existing.find((e) => e.criterionId === a.criterionId);
+    if (hit) await db.update(reviewReviewerAnswer).set(set).where(eq(reviewReviewerAnswer.id, hit.id));
+    else await db.insert(reviewReviewerAnswer).values({ id: nanoid(), reviewerId, criterionId: a.criterionId, ...set });
+  }
 }
 
 // the written parts the employee fills in: answers keyed by a question of this review, and rows of progress on the last goals
@@ -642,6 +839,9 @@ export async function saveSelf(ctx: Ctx, id: string, input: { answers: AnswerInp
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
   if (r.reviewerUserId) {
     await notifyUser(r.organizationId, r.reviewerUserId, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "An employee"} submitted a self-assessment for ${period.name}. Please review it.`, link: `${LINK}/review/${id}` });
+    for (const c of await db.select({ userId: reviewReviewer.userId }).from(reviewReviewer).where(eq(reviewReviewer.reviewId, id))) {
+      await notifyUser(r.organizationId, c.userId, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "An employee"} submitted a self-assessment for ${period.name}. Please give your marks.`, link: `${LINK}/review/${id}` });
+    }
   } else {
     await notifyManagers(period.organizationId, { title: `No reviewer for ${emp?.name ?? "an employee"}`, body: `${emp?.name ?? "An employee"} submitted a self-assessment for ${period.name} but has no reviewer. Assign one.`, link: `${LINK}/periods/${r.periodId}` });
   }
@@ -652,12 +852,37 @@ export async function saveSelf(ctx: Ctx, id: string, input: { answers: AnswerInp
 export async function saveManager(ctx: Ctx, id: string, input: { answers: AnswerInput[]; summary?: string; submit: boolean; outcome?: string | null; nextReviewDate?: string | null; actionPlan?: ActionPlanRow[] }): Promise<Result<{ status: ReviewStatus }>> {
   const found = await loadReview(ctx, id);
   if (!found || found.role !== "reviewer") return NO_ACCESS;
-  const { r } = found;
+  const { r, co, isLead } = found;
   if (r.status !== "manager") return fail("This review is not waiting for you.");
   const [period] = await db.select().from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId));
   if (period?.status !== "open") return fail("This review period is closed.");
   const bad = checkAnswers(r, input.answers);
   if (bad) return fail(bad);
+
+  // another reviewer: only their own marks and comments; the lead finishes the review
+  if (!isLead) {
+    if (!co) return NO_ACCESS;
+    if (co.submittedAt) return fail("You have already submitted your marks.");
+    await upsertCoAnswers(co.id, input.answers);
+    await db.update(reviewReviewer).set({ summary: input.summary?.trim() || null }).where(eq(reviewReviewer.id, co.id));
+    if (!input.submit) return ok({ status: "manager" });
+    const mine = (await coReviewersOf(id)).find((x) => x.id === co.id)!;
+    const missing = missingRatings(r.criteria, ratingsIn(mine.marks), naIn(mine.marks));
+    if (missing.length > 0) return fail(`Rate every criterion before submitting (missing: ${missing.slice(0, 3).map((m) => m.name).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}).`);
+    await db.update(reviewReviewer).set({ submittedAt: new Date() }).where(and(eq(reviewReviewer.id, co.id), isNull(reviewReviewer.submittedAt)));
+    const left = (await coReviewersOf(id)).filter((x) => !x.submittedAt).length;
+    const [[me], [emp]] = await Promise.all([
+      db.select({ name: user.name }).from(user).where(eq(user.id, ctx.userId)),
+      db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId)),
+    ]);
+    await notifyUser(r.organizationId, r.reviewerUserId, {
+      title: `Marks in: ${emp?.name ?? "employee"}`,
+      body: `${me?.name ?? "A reviewer"} submitted their marks for ${emp?.name ?? "the employee"}.${left === 0 ? " Every other reviewer is done: you can submit the review for sign-off." : ` ${left} more to come.`}`,
+      link: `${LINK}/review/${id}`,
+    });
+    return ok({ status: "manager" });
+  }
+
   const parts = checkReviewerParts(input);
   if (parts.error) return fail(parts.error);
   await upsertAnswers(id, "manager", input.answers);
@@ -669,7 +894,12 @@ export async function saveManager(ctx: Ctx, id: string, input: { answers: Answer
   if (missing.length > 0) return fail(`Rate every criterion before submitting (missing: ${missing.slice(0, 3).map((m) => m.name).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}).`);
   if (!parts.outcome) return fail("Choose the overall review outcome before submitting.");
   if (!input.summary?.trim()) return fail("Write the reviewer's comments before submitting.");
-  const score = weightedScore(r.criteria, ratings);
+  const waiting = (await coReviewersOf(id)).filter((c) => !c.submittedAt);
+  if (waiting.length > 0) {
+    const names = await db.select({ name: user.name }).from(user).where(inArray(user.id, waiting.map((w) => w.userId)));
+    return fail(`Waiting for ${names.map((n) => n.name).join(", ")} to submit their marks. Your draft is saved.`);
+  }
+  const score = await finalScoreOf(r);
   await db.update(review).set({ status: "signoff", managerSubmittedAt: new Date(), finalScore: score == null ? null : String(score), returnNote: null }).where(eq(review.id, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
   await notifyManagers(period.organizationId, { title: `Review to sign off: ${emp?.name ?? "employee"}`, body: `The manager review of ${emp?.name ?? "an employee"} (${period.name}) is ready for sign-off.`, link: `${LINK}/review/${id}` }, ctx.userId);
@@ -688,16 +918,95 @@ export async function signOff(ctx: Ctx, id: string, comment?: string): Promise<R
   return ok(undefined);
 }
 
-// The employee confirms they have read the signed-off review: the signature and date on the paper form
-export async function acknowledgeReview(ctx: Ctx, id: string): Promise<Result> {
+// The employee confirms they have read the signed-off review (the signature and date on the paper form), and says
+// whether they agree with it. Disagreeing needs a comment, and puts the review in front of HR, who either keeps the
+// marks (resolveDispute) or reopens it to the manager (reopenReview).
+export type EmployeeResponse = "agree" | "disagree";
+export async function acknowledgeReview(ctx: Ctx, id: string, input: { response: EmployeeResponse; comment?: string }): Promise<Result> {
   const found = await loadReview(ctx, id);
   if (!found || found.role !== "employee") return NO_ACCESS;
   const { r } = found;
   if (r.status !== "completed") return fail("You can acknowledge a review once HR has signed it off.");
-  if (r.acknowledgedAt) return ok(undefined);
-  await db.update(review).set({ acknowledgedAt: new Date() }).where(eq(review.id, id));
+  if (r.acknowledgedAt) return fail("You have already acknowledged this review.");
+  if (input?.response !== "agree" && input?.response !== "disagree") return fail("Say whether you agree with the review.");
+  const comment = input.comment?.trim() || null;
+  if (input.response === "disagree" && !comment) return fail("Say what you disagree with, so HR and your manager can look at it.");
+  await db.update(review).set({ acknowledgedAt: new Date(), employeeResponse: input.response, employeeComment: comment }).where(eq(review.id, id));
+  const [[emp], [period]] = await Promise.all([
+    db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId)),
+    db.select({ organizationId: reviewPeriod.organizationId, name: reviewPeriod.name }).from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId)),
+  ]);
+  const who = emp?.name ?? "The employee";
+  const link = `${LINK}/review/${id}`;
+  if (input.response === "agree") {
+    if (r.reviewerUserId) await notifyUser(r.organizationId, r.reviewerUserId, { title: `Review acknowledged: ${who}`, body: `${who} has read the review and agrees with it.`, link });
+    return ok(undefined);
+  }
+  const body = `${who} disagrees with the review (${period?.name ?? "review"}): "${comment}"`;
+  if (r.reviewerUserId) await notifyUser(r.organizationId, r.reviewerUserId, { title: `Review disputed: ${who}`, body, link });
+  await notifyReviewHr(r, period?.organizationId ?? r.organizationId, { title: `Review disputed: ${who}`, body: `${body} Keep the marks or reopen it to the manager.`, link }, [r.employeeUserId, ...(r.reviewerUserId ? [r.reviewerUserId] : [])]);
+  return ok(undefined);
+}
+
+// a disagreement HR has not settled yet
+const isOpenDispute = (r: typeof review.$inferSelect) => r.status === "completed" && r.employeeResponse === "disagree" && !r.disputeResolvedAt;
+
+// HR keeps the marks: the review stays completed, with HR's reason next to the employee's comment
+export async function resolveDispute(ctx: Ctx, id: string, note: string): Promise<Result> {
+  const found = await loadReview(ctx, id);
+  if (!found || found.role !== "hr") return NO_ACCESS;
+  const { r } = found;
+  if (!isOpenDispute(r)) return fail("This review has no open disagreement.");
+  if (!note?.trim()) return fail("Say why the marks stay as they are. The employee can read it.");
+  await db.update(review).set({ disputeResolution: note.trim(), disputeResolvedBy: ctx.userId, disputeResolvedAt: new Date() }).where(eq(review.id, id));
+  const link = `${LINK}/review/${id}`;
+  await notifyUser(r.organizationId, r.employeeUserId, { title: "Your review: HR has replied", body: `The marks stay as they are. ${note.trim()}`, link });
+  if (r.reviewerUserId && r.reviewerUserId !== ctx.userId) {
+    const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
+    await notifyUser(r.organizationId, r.reviewerUserId, { title: `Disagreement closed: ${emp?.name ?? "employee"}`, body: `HR kept the marks. ${note.trim()}`, link });
+  }
+  return ok(undefined);
+}
+
+// HR reopens a disputed review to the manager. The round as it was signed off goes into the history (marks, score,
+// sign-off and the employee's response), and the review goes through manager review, sign-off and acknowledgment again.
+// The manager starts from their earlier marks.
+export async function reopenReview(ctx: Ctx, id: string, note: string): Promise<Result> {
+  const found = await loadReview(ctx, id);
+  if (!found || found.role !== "hr") return NO_ACCESS;
+  const { r } = found;
+  if (!isOpenDispute(r)) return fail("Only a review the employee disagreed with, and that is not settled yet, can be reopened.");
+  if (!note?.trim()) return fail("Say what the manager should look at again.");
+  if (!r.reviewerUserId) return fail("This review has no reviewer. Assign one first.");
+  const [period] = await db.select().from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId));
+  if (period?.status !== "open") return fail("This review period is closed. Reopen the period first.");
+  const answers = await db.select().from(reviewAnswer).where(eq(reviewAnswer.reviewId, id));
+  const iso = (d: Date | null) => (d ? d.toISOString() : null);
+  const round: ReviewRound = {
+    round: (r.history ?? []).length + 1,
+    managerAnswers: Object.fromEntries(answers.map((a) => [a.criterionId, { rating: a.managerRating, na: a.managerNa, comment: a.managerComment }])),
+    managerSummary: r.managerSummary, outcome: r.outcome, nextReviewDate: r.nextReviewDate, actionPlan: r.actionPlan ?? [], finalScore: r.finalScore,
+    managerSubmittedAt: iso(r.managerSubmittedAt), signedOffBy: r.signedOffBy, signedOffAt: iso(r.signedOffAt), signoffComment: r.signoffComment,
+    acknowledgedAt: iso(r.acknowledgedAt), employeeResponse: r.employeeResponse === "agree" || r.employeeResponse === "disagree" ? r.employeeResponse : null, employeeComment: r.employeeComment,
+    reopenedBy: ctx.userId, reopenedAt: new Date().toISOString(), reopenNote: note.trim(),
+    leadWeight: r.leadWeight,
+    coReviewers: (await coReviewersOf(id)).map((c) => ({ userId: c.userId, weight: c.weight, summary: c.summary, score: weightedScore(r.criteria, ratingsIn(c.marks)), answers: c.marks })),
+  };
+  // the status guard makes a second reopen of the same round (double click, two HR at once) change nothing
+  const done = await db.update(review).set({
+    status: "manager", history: [...(r.history ?? []), round], returnNote: note.trim(),
+    managerSubmittedAt: null, finalScore: null, signedOffBy: null, signedOffAt: null, signoffComment: null,
+    acknowledgedAt: null, employeeResponse: null, employeeComment: null,
+  }).where(and(eq(review.id, id), eq(review.status, "completed"))).returning({ id: review.id });
+  if (done.length === 0) return fail("This review has changed in the meantime. Reload the page.");
+  // every reviewer looks again (they keep their marks)
+  await db.update(reviewReviewer).set({ submittedAt: null }).where(eq(reviewReviewer.reviewId, id));
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
-  if (r.reviewerUserId) await notifyUser(r.organizationId, r.reviewerUserId, { title: `Review acknowledged: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "The employee"} has read and acknowledged the review.`, link: `${LINK}/review/${id}` });
+  const link = `${LINK}/review/${id}`;
+  for (const u of [r.reviewerUserId, ...round.coReviewers!.map((c) => c.userId)]) {
+    await notifyUser(r.organizationId, u, { title: `Review reopened: ${emp?.name ?? "employee"}`, body: `${emp?.name ?? "The employee"} disagreed: "${r.employeeComment ?? ""}". HR: ${note.trim()}`, link });
+  }
+  await notifyUser(r.organizationId, r.employeeUserId, { title: "Your review was reopened", body: "HR has sent your review back to your manager after your disagreement. You will be notified when it is ready again.", link });
   return ok(undefined);
 }
 
@@ -709,8 +1018,10 @@ export async function returnToManager(ctx: Ctx, id: string, note: string): Promi
   if (!note?.trim()) return fail("Say what the manager should change.");
   if (!r.reviewerUserId) return fail("This review has no reviewer. Assign one first.");
   await db.update(review).set({ status: "manager", returnNote: note.trim(), managerSubmittedAt: null }).where(eq(review.id, id));
+  // every reviewer looks again (they keep their marks); the lead submits once they are all done
+  const cos = await db.update(reviewReviewer).set({ submittedAt: null }).where(eq(reviewReviewer.reviewId, id)).returning({ userId: reviewReviewer.userId });
   const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
-  await notifyUser(r.organizationId, r.reviewerUserId, { title: `Review sent back: ${emp?.name ?? "employee"}`, body: note.trim(), link: `${LINK}/review/${id}` });
+  for (const u of [r.reviewerUserId, ...cos.map((c) => c.userId)]) await notifyUser(r.organizationId, u, { title: `Review sent back: ${emp?.name ?? "employee"}`, body: note.trim(), link: `${LINK}/review/${id}` });
   return ok(undefined);
 }
 
@@ -723,12 +1034,53 @@ export async function reassignReviewer(ctx: Ctx, id: string, reviewerUserId: str
   const owned = (await ownerOrgsOf(ctx.orgId)).map((o) => o.id);
   const [m] = await db.select({ id: member.id }).from(member).where(and(inArray(member.organizationId, owned), eq(member.userId, reviewerUserId), isNull(member.deletedAt)));
   if (!m) return fail("A reviewer must be a member of one of your companies.");
+  const [asCo] = await db.select({ id: reviewReviewer.id }).from(reviewReviewer).where(and(eq(reviewReviewer.reviewId, id), eq(reviewReviewer.userId, reviewerUserId)));
+  if (asCo) return fail("That person is already one of the other reviewers. Remove them there first to make them the lead.");
   const [rp] = await db.select({ jobTitle: profile.jobTitle }).from(profile).where(eq(profile.userId, reviewerUserId));
   await db.update(review).set({ reviewerUserId, reviewerDesignation: rp?.jobTitle ?? null }).where(eq(review.id, id));
   if (r.status === "manager") {
     const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
     await notifyUser(r.organizationId, reviewerUserId, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: "You were assigned as the reviewer.", link: `${LINK}/review/${id}` });
   }
+  return ok(undefined);
+}
+
+// HR sets the reviewers besides the lead, and everyone's share, before the review is submitted for sign-off.
+// Someone kept on keeps their marks; someone taken off loses theirs.
+export async function setReviewers(ctx: Ctx, id: string, input: { leadWeight: number; coReviewers: { userId: string; weight: number }[] }): Promise<Result> {
+  const found = await loadReview(ctx, id);
+  if (!found || found.role !== "hr") return NO_ACCESS;
+  const { r } = found;
+  if (r.status !== "self" && r.status !== "manager") return fail("The reviewers can only be changed before the review is submitted for sign-off.");
+  const [period] = await db.select({ status: reviewPeriod.status }).from(reviewPeriod).where(eq(reviewPeriod.id, r.periodId));
+  if (period?.status !== "open") return fail("This review period is closed.");
+  const co = input.coReviewers ?? [];
+  const owned = (await ownerOrgsOf(ctx.orgId)).map((o) => o.id);
+  const members = co.length ? await db.select({ userId: member.userId }).from(member).where(and(inArray(member.organizationId, owned), inArray(member.userId, co.map((c) => c.userId)), isNull(member.deletedAt))) : [];
+  const bad = checkReviewerSet(r.employeeUserId, r.reviewerUserId, input.leadWeight, co, new Set(members.map((m) => m.userId)));
+  if (bad) return fail(bad);
+  const existing = await db.select().from(reviewReviewer).where(eq(reviewReviewer.reviewId, id));
+  const keep = new Set(co.map((c) => c.userId));
+  const gone = existing.filter((x) => !keep.has(x.userId));
+  if (gone.length) await db.delete(reviewReviewer).where(inArray(reviewReviewer.id, gone.map((x) => x.id)));
+  const fresh: string[] = [];
+  const profiles = co.length ? await db.select({ userId: profile.userId, jobTitle: profile.jobTitle }).from(profile).where(inArray(profile.userId, co.map((c) => c.userId))) : [];
+  for (const c of co) {
+    const hit = existing.find((x) => x.userId === c.userId);
+    if (hit) { if (hit.weight !== c.weight) await db.update(reviewReviewer).set({ weight: c.weight }).where(eq(reviewReviewer.id, hit.id)); }
+    else { await db.insert(reviewReviewer).values({ id: nanoid(), reviewId: id, userId: c.userId, weight: c.weight, designation: profiles.find((p) => p.userId === c.userId)?.jobTitle ?? null }); fresh.push(c.userId); }
+  }
+  await db.update(review).set({ leadWeight: input.leadWeight }).where(eq(review.id, id));
+  if (r.status === "manager" && fresh.length) {
+    const [emp] = await db.select({ name: user.name }).from(user).where(eq(user.id, r.employeeUserId));
+    for (const u of fresh) await notifyUser(r.organizationId, u, { title: `Review to complete: ${emp?.name ?? "employee"}`, body: "You were added as one of the reviewers. Please give your marks.", link: `${LINK}/review/${id}` });
+  }
+  return ok(undefined);
+}
+
+export async function setPeriodShowReviewerMarks(ctx: Ctx, id: string, value: boolean): Promise<Result> {
+  if (!can(ctx, "review:manage")) return NO_ACCESS;
+  await db.update(reviewPeriod).set({ showReviewerMarks: !!value }).where(and(eq(reviewPeriod.id, id), eq(reviewPeriod.organizationId, ctx.orgId)));
   return ok(undefined);
 }
 

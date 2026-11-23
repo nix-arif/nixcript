@@ -63,6 +63,26 @@ export function weightedScore(criteria: Criterion[], ratings: Record<string, num
   return weights > 0 ? Math.round((sum / weights) * 100) / 100 : null;
 }
 
+// The final score with more than one reviewer: each reviewer's own (criterion-weighted) score, combined by their share.
+// A reviewer with no score at all (everything N/A) is left out; null if nobody has a score.
+export function combineScores(parts: { score: number | null; weight: number }[]): number | null {
+  let sum = 0;
+  let weights = 0;
+  for (const p of parts) {
+    if (p.score == null || !(p.weight > 0)) continue;
+    sum += p.score * p.weight;
+    weights += p.weight;
+  }
+  return weights > 0 ? Math.round((sum / weights) * 100) / 100 : null;
+}
+
+// a reviewer's share in percent, of the weights given (70 and 30 -> 70%, 30%; 100 and 100 -> 50%, 50%)
+export const sharePercent = (weight: number, all: number[]) => {
+  const total = all.reduce((s, w) => s + (w > 0 ? w : 0), 0);
+  return total > 0 ? Math.round((weight / total) * 100) : 0;
+};
+export const isValidWeight = (w: unknown): w is number => Number.isInteger(w) && (w as number) >= 1 && (w as number) <= 100;
+
 // the criteria that still have no rating. One marked "not applicable" is answered, and is left out of the score.
 export const missingRatings = (criteria: Criterion[], ratings: Record<string, number | null | undefined>, notApplicable: Record<string, boolean | undefined> = {}) =>
   criteria.filter((c) => ratings[c.id] == null && !notApplicable[c.id]);
