@@ -175,6 +175,7 @@ export function RequestRevisionButton({ pl, poLabel }: { pl: PackingListWithItem
                           return (
                             <tr key={it.purchaseOrderItemId} className={cn("border-b last:border-b-0", on && "bg-green-50 dark:bg-green-950/30")}>
                               <td className="py-1.5 px-2 w-6"><input type="checkbox" checked={on} onChange={() => toggleAdd(it)} className="w-3.5 h-3.5 cursor-pointer" /></td>
+                              <td className="py-1.5 pr-2 tabular-nums text-muted-foreground w-10">#{it.poLineNo}</td>
                               <td className="py-1.5 pr-2 font-mono">{it.productCode || "—"}</td>
                               <td className="py-1.5 pr-2 text-muted-foreground truncate max-w-64">{it.description}</td>
                               <td className="py-1.5 pr-2 text-right text-muted-foreground whitespace-nowrap">{n(it.qtyRemaining)} {it.uom} left</td>

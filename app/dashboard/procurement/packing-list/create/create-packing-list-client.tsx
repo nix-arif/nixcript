@@ -385,6 +385,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                         <thead>
                           <tr className="text-muted-foreground">
                             <th className="w-6" />
+                            <th className="text-right py-1 pr-3 font-medium w-8" title="Line number on the supplier PO">#</th>
                             {showSourcing && (
                               <>
                                 <th className="text-left py-1 pr-3 font-medium w-24">Design Brand</th>
@@ -411,6 +412,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
                                 <td className="py-2 pl-3 pr-2 w-6">
                                   <input type="checkbox" checked={checked} onChange={() => toggle(item.purchaseOrderItemId)} />
                                 </td>
+                                <td className="py-2 pr-3 text-right font-mono tabular-nums text-muted-foreground w-8">{item.poLineNo}</td>
                                 {showSourcing && (
                                   <>
                                     <td className="py-2 pr-3 align-top">

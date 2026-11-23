@@ -347,6 +347,9 @@ export type PackableItem = {
   poNo: string | null;
   prNo: string | null;
   purchaseOrderItemId: string;
+  // the line's number on its supplier PO (purchase_order_item.row_no): fixed, so a line keeps its number even when
+  // earlier lines are already packed and not shown
+  poLineNo: number;
   productId: string | null;
   productCode: string | null;
   description: string | null;
@@ -533,6 +536,7 @@ async function computePackableItems(orgId: string, supplierId: string): Promise<
         poNo: po?.poNo ?? null,
         prNo: po?.prNo ?? null,
         purchaseOrderItemId: item.id,
+        poLineNo: item.rowNo,
         productId: item.productId,
         productCode: item.productCode,
         description: item.description,
